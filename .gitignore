@@ -1,0 +1,16 @@
+# lumine-specific / local-only material (S39)
+local/
+*.lumine.*
+
+# build outputs
+dist/
+bin/
+node_modules/
+*.img
+*.img.xz
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
