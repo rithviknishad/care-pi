@@ -55,7 +55,11 @@ The installer writes `/etc/systemd/system/care-pi.service`, enables it, and star
 container and needs more system calls. Phase 7 (hardening) adds them.
 
 The agent runs `podman pull` in a transient unit (`systemd-run --wait --pipe --collect`): an image pull needs
-more memory than the cap of the agent. Each other host command runs in the agent process.
+more memory than the cap of the agent. The agent runs `podman exec` with `nsenter --target 1 --mount`, in the
+mount namespace of the host: the sandbox gives the agent its own mount namespace, and podman mounts the root
+file system of a container that starts after the agent only in the host namespace (containers/storage keeps its
+overlay mounts private). Without `nsenter`, `podman exec --user postgres` (and an exec into `care-api`, whose image
+user is `django`) fails with "unable to find user" (lumine, wave 4c). Each other host command runs in the agent process.
 
 Logs: the agent writes one line for each request and each event to its standard output in the `key=value`
 format of `log/slog` (no time: journald adds it). Read them with `care-pi logs agent` or

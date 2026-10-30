@@ -143,3 +143,37 @@ func TestDevKeepsSecretsAndStops(t *testing.T) {
 		t.Fatalf("a Dev without state has no secrets: %v", n)
 	}
 }
+
+func TestTransientWrap(t *testing.T) {
+	sandbox := Transient{HostMountNS: func() bool { return false }}
+	host := Transient{HostMountNS: func() bool { return true }}
+	env := []string{"DJANGO_SUPERUSER_PASSWORD=x"}
+	cases := []struct {
+		name string
+		t    Transient
+		in   Cmd
+		want string
+	}{
+		{"pull", sandbox, Cmd{Name: "podman", Args: []string{"pull", "redis:8"}},
+			"systemd-run --quiet --wait --pipe --collect --description=care-pi image pull -- podman pull redis:8"},
+		// The sandbox of care-pi.service: podman exec runs in the mount namespace of PID 1 (wave 4c on lumine).
+		{"exec in the sandbox", sandbox, Cmd{Name: "podman", Args: []string{"exec", "--user", "postgres", "care-db", "pg_isready"}, Env: env},
+			"nsenter --target 1 --mount -- podman exec --user postgres care-db pg_isready"},
+		{"exec in the host namespace", host, Cmd{Name: "podman", Args: []string{"exec", "care-caddy", "caddy", "reload"}},
+			"podman exec care-caddy caddy reload"},
+		{"other podman command", sandbox, Cmd{Name: "podman", Args: []string{"secret", "ls"}}, "podman secret ls"},
+		{"not podman", sandbox, Cmd{Name: "systemctl", Args: []string{"start", "care.target"}}, "systemctl start care.target"},
+	}
+	for _, c := range cases {
+		got := c.t.Wrap(c.in)
+		if got.String() != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, got.String(), c.want)
+		}
+		if !reflect.DeepEqual(got.Env, c.in.Env) {
+			t.Errorf("%s: the environment changed: %v", c.name, got.Env)
+		}
+	}
+	if !sameMountNS() {
+		t.Log("the test process is not in the mount namespace of PID 1")
+	}
+}

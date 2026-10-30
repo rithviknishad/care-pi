@@ -144,18 +144,59 @@ func (e Exec) Stream(ctx context.Context, c Cmd, fn func(line []byte) error) err
 	return nil
 }
 
-// Transient runs "podman pull" in a transient service unit (systemd-run --wait --pipe), and each
-// other command like Exec. "care-pi serve" uses it: an image pull needs more memory than the
-// MemoryMax of care-pi.service, and a transient unit has its own cgroup and no sandbox of the agent.
+// Transient runs "podman pull" in a transient service unit (systemd-run --wait --pipe), "podman exec"
+// in the mount namespace of PID 1, and each other command like Exec. "care-pi serve" uses it:
+//   - An image pull needs more memory than the MemoryMax of care-pi.service. A transient unit has its
+//     own cgroup and no sandbox of the agent.
+//   - The sandbox of care-pi.service (ProtectSystem=strict) gives the agent its own mount namespace.
+//     podman mounts the root file system of a container that starts after the agent only in the host
+//     namespace (containers/storage keeps its overlay mounts private). "podman exec" reads the passwd
+//     file of the container there for a user name ("--user postgres", or the image user "django"),
+//     so in the agent namespace it fails with "unable to find user". nsenter runs it in the host namespace.
 type Transient struct {
 	Exec
+	// HostMountNS reports whether the agent runs in the mount namespace of PID 1.
+	// Nil: compare /proc/self/ns/mnt with /proc/1/ns/mnt.
+	HostMountNS func() bool
 }
 
 // Run implements Runner.
 func (t Transient) Run(ctx context.Context, c Cmd) ([]byte, error) {
-	if c.Name == "podman" && len(c.Args) > 0 && c.Args[0] == "pull" {
-		args := []string{"--quiet", "--wait", "--pipe", "--collect", "--description=care-pi image pull", "--", "podman"}
-		c = Cmd{Name: "systemd-run", Args: append(args, c.Args...), Stdin: c.Stdin, Env: c.Env, Attach: c.Attach}
+	return t.Exec.Run(ctx, t.Wrap(c))
+}
+
+// Wrap returns the command that Run runs for c.
+func (t Transient) Wrap(c Cmd) Cmd {
+	if c.Name != "podman" || len(c.Args) == 0 {
+		return c
 	}
-	return t.Exec.Run(ctx, c)
+	switch c.Args[0] {
+	case "pull":
+		args := []string{"--quiet", "--wait", "--pipe", "--collect", "--description=care-pi image pull", "--", "podman"}
+		return Cmd{Name: "systemd-run", Args: append(args, c.Args...), Stdin: c.Stdin, Env: c.Env, Attach: c.Attach}
+	case "exec":
+		inHost := t.HostMountNS
+		if inHost == nil {
+			inHost = sameMountNS
+		}
+		if !inHost() {
+			args := []string{"--target", "1", "--mount", "--", "podman"}
+			return Cmd{Name: "nsenter", Args: append(args, c.Args...), Stdin: c.Stdin, Env: c.Env, Attach: c.Attach}
+		}
+	}
+	return c
+}
+
+// sameMountNS reports whether this process runs in the mount namespace of PID 1.
+// When it cannot read the links (not root), it reports true: then nsenter cannot help.
+func sameMountNS() bool {
+	self, err := os.Readlink("/proc/self/ns/mnt")
+	if err != nil {
+		return true
+	}
+	init, err := os.Readlink("/proc/1/ns/mnt")
+	if err != nil {
+		return true
+	}
+	return self == init
 }
