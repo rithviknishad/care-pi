@@ -154,6 +154,7 @@ It runs `systemctl disable --now care-pi-firewall.service` (the stop deletes the
 It removes the quadlets, the unit files, the NetworkManager hook, `/etc/care-pi/firewall.nft`, the files of an older install.sh (`/etc/nftables.d/care-pi.nft` and the `include` line), and the agent binary.
 It keeps the avahi and journald settings.
 It keeps `/etc/care-pi` and `/var/lib/care-pi` unless you add `--purge-data`.
+`--purge-data` also removes the podman secrets `care-pi-*`. The container images stay.
 `--purge-data` asks two questions, unless you add `--yes`.
 
 ```sh

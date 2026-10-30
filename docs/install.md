@@ -363,7 +363,7 @@ The script:
 
 1. runs `systemctl disable --now care-pi.service` (the console agent) and removes its socket,
 2. stops `care.target` and `care-clock.service`, and disables `care-start.service`, `care.target`, and `care-clock.service` with `systemctl`,
-3. waits until every `care-*` unit is inactive,
+3. waits until every `care-*` unit is inactive (except `care-pi-firewall.service`, which step 4 stops),
 4. runs `systemctl disable --now care-pi-firewall.service`. The stop deletes the table `inet care-pi`,
 5. removes the quadlets (`/etc/containers/systemd/care*`), the unit files (also `care-pi.service`), the NetworkManager hook, `/etc/care-pi/firewall.nft`, the files of an older install.sh, and the agent binary,
 6. removes a leftover pod `care` with `podman pod rm -f`.
@@ -371,12 +371,13 @@ The script:
 The script never stops the pod unit with `systemctl`.
 
 The script keeps `/etc/care-pi` and `/var/lib/care-pi`.
-With `--purge-data`, it deletes them.
+With `--purge-data`, it deletes them and the podman secrets `care-pi-*` (copies of `/etc/care-pi/secrets`).
 The data includes the database, the files, the secrets, and the backups on this host.
 The script asks two questions before it does this, unless you add `--yes`.
 
 The script does not undo the host preparation.
 The packages, the kernel command line, the zram, avahi, and journald settings, the host name, the apt holds, and the unattended-upgrades settings stay in place.
+The container images stay in the podman storage, so a new install does not download them again.
 
 ## If the script fails
 

@@ -42,8 +42,9 @@ This is a development tool. Run it as root.
 
 Options:
   --yes          Do not ask for confirmation.
-  --purge-data   Also delete /etc/care-pi and /var/lib/care-pi. This removes the
-                 database, the files, the secrets, and the backups on this host.
+  --purge-data   Also delete /etc/care-pi, /var/lib/care-pi, and the podman secrets
+                 care-pi-*. This removes the database, the files, the secrets, and
+                 the backups on this host.
                  The script asks twice, unless you add --yes.
   --help         Print this text.
 
@@ -87,9 +88,11 @@ ensure_root() {
   die "Run this script as root, for example: sudo sh uninstall.sh"
 }
 
-# active_care_units prints the care-* units that are not inactive.
+# active_care_units prints the care-* units that are not inactive. It ignores
+# care-pi-firewall.service: it stays active until remove_firewall stops it.
 active_care_units() {
-  systemctl list-units --plain --no-legend --state=active,activating,deactivating 'care-*' 2>/dev/null
+  systemctl list-units --plain --no-legend --state=active,activating,deactivating 'care-*' 2>/dev/null \
+    | grep -v '^care-pi-firewall\.service ' || true
 }
 
 stop_care() {
@@ -197,6 +200,22 @@ remove_binary() {
 purge_data() {
   log "Delete /etc/care-pi and /var/lib/care-pi."
   rm -rf /etc/care-pi /var/lib/care-pi
+  remove_secrets
+}
+
+# remove_secrets deletes the podman secrets of the agent (care-pi-*). They hold
+# copies of the files in /etc/care-pi/secrets.
+remove_secrets() {
+  if ! command -v podman >/dev/null 2>&1; then
+    return 0
+  fi
+  for secret in $(podman secret ls --format '{{.Name}}' 2>/dev/null); do
+    case $secret in
+      care-pi-*)
+        podman secret rm "$secret" >/dev/null || warn "podman could not remove the secret $secret."
+        ;;
+    esac
+  done
 }
 
 main() {
