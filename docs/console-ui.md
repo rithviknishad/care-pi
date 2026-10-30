@@ -182,6 +182,7 @@ Other rules for the server:
 |---|---|---|
 | Unit | Vitest, Testing Library, jsdom | The API client (CSRF, 401, problems), recovery codes, the wizard logic, the job events, the env editor, the stable order, the formats. |
 | e2e | Playwright against the stateful mock and `vite preview` | Desktop (Chromium, 1280 px), iPhone 13 (WebKit, 390 px), and 360 px (Chromium). Claim to ready, login and dashboard, logs, certificate, settings, lockout, theme. Each test checks that each request stays on the origin. |
+| e2e on a device | Playwright against a real device (`e2e/real`, `playwright.real.config.ts`) | Desktop (Chromium, 1280 × 800) and iPhone 13 (WebKit). Claim to ready on a new install, the phone journey (dashboard, certificate, logs, TOTP), a resume after a reboot. The Phase 2 exit test on lumine used them. |
 
 The mock implements the contract for the console (`console/README.md` section 3). When the contract changes,
 change the mock, run `npm run api:types`, and run the tests.

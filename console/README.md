@@ -34,6 +34,7 @@ Run each script in `console/`.
 | `npm run format`                  | Formats each file with Prettier.                                                                                                                        |
 | `npm run test`                    | Unit tests (Vitest, Testing Library, jsdom).                                                                                                            |
 | `npm run test:e2e`                | Builds, then starts the mock and `vite preview`, then runs the Playwright tests.                                                                        |
+| `npm run test:e2e:real`           | Runs the Playwright journeys of `e2e/real` against a real device (`playwright.real.config.ts`, `e2e/real/README.md`).                                   |
 | `npm run api:types`               | Makes `src/api/types.gen.ts` from `docs/api/openapi.yaml`.                                                                                              |
 | `npm run api:check`               | Exits with code 1 when `src/api/types.gen.ts` is not the same as a new file.                                                                            |
 | `npm run careui:add -- <name>...` | Adds careui components from the registry (section 6).                                                                                                   |
@@ -148,3 +149,7 @@ The tests run one after the other, because each test resets the mock.
 | `e2e/settings.spec.ts`        | A config change with `If-Match`, the plan preview, the apply job, and a `501` page.                   |
 
 Each test also checks that each request of the page goes to the origin of the console.
+
+`e2e/real` holds the journeys against a real device: claim and setup on a laptop, the phone journey on a ready
+device, a resume after a reboot, a revoked session, and a missing job. `npm run test:e2e` ignores them.
+`npm run test:e2e:real` runs them with `playwright.real.config.ts`. `e2e/real/README.md` lists the variables.

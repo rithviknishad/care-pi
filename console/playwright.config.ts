@@ -1,12 +1,15 @@
 import { defineConfig, devices } from "@playwright/test";
 
 // The e2e tests run against the production build (vite preview) and the stateful mock.
+// The journeys against a real device are in e2e/real (npm run test:e2e:real, playwright.real.config.ts).
 // Run `npm run build` first (npm run test:e2e does it).
 const MOCK_PORT = 4711;
 const PREVIEW_PORT = 4773;
 
 export default defineConfig({
   testDir: "e2e",
+  // e2e/real runs against a real device: playwright.real.config.ts.
+  testIgnore: "real/**",
   // One mock serves the tests, and each test resets it: run the tests one after the other.
   fullyParallel: false,
   workers: 1,

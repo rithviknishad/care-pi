@@ -16,6 +16,7 @@
     "typecheck": "tsc -p tsconfig.app.json --noEmit && tsc -p tsconfig.node.json --noEmit",
     "test": "vitest run",
     "test:e2e": "npm run build && playwright test",
+    "test:e2e:real": "playwright test -c playwright.real.config.ts",
     "api:types": "node scripts/api-types.mjs",
     "api:check": "node scripts/api-types.mjs --check",
     "mock": "node mock/run.mjs",
