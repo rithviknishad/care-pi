@@ -138,7 +138,7 @@ Headscale option; documentation site for operators (per solution) and developers
 | Operator loses recovery key and device | data loss | low but severe | confirmation ceremony; persistent banner; printable sheet |
 | Let's Encrypt rate limits as clinic count grows | enrolment failures | low early | PSL application; rate-limit increase request |
 
-## Status (2026-10-30)
+## Status (2026-10-30, after the Phase 2 exit test)
 
 Phase 0: SP1–SP6 are done (results in `08-spike-log.md`, folded back into `01`/`02`/`03`/`05`);
 SP7–SP11 are pending. All proposals in `00` §B are accepted (S37, S40); S41–S43 were added
@@ -146,5 +146,9 @@ during Phase 1. **Phase 1 code is complete** (agent, quadlet templates, images, 
 installer, FE providers) and passes its tests on macOS and in Docker. **The Phase 1 exit test
 passed on lumine** (wave 3, in-place clean of the spike stack, `08-spike-log.md` "Phase 1 exit
 test", `09-handoff.md` §8d). A test on a freshly flashed Pi and the follow-ups in §8d are still to do.
+**Phase 2 code is complete and its exit test passed on lumine** (wave 4c: a laptop and a phone each claimed a new
+install and finished the setup in the console, and the CLI finished it unattended; 8 fixes; `08-spike-log.md` "Phase 2 exit test",
+`09-handoff.md` §8f). Its follow-ups (agent memory cap, the boot apply of the NetworkManager hook, the phone
+units table, the progress texts) and a first-contact test on the same LAN (SP7) are still to do.
 The remaining open questions (`00` §C: O4, O6 plug set, O7 upstream PR timing, O9, O11, O12,
 O13, O16, O17) each become blocking only in the phase noted there.

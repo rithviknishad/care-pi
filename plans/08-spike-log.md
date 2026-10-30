@@ -565,3 +565,127 @@ to 443 with an RST. The follow-up is in SP8: publish 80/443 on the LAN IPv6 addr
 | Mac `dig -p 5353 @224.0.0.251 lumine.local` | AAAA `fd29:149d:8c97:47dc:7f4a:da3a:4b7d:764f`, A `192.168.165.91` |
 | Mac `curl https://lumine.local/ping/` (3 runs) | 0.119 s, 0.044 s, 0.029 s (lookup 0.007 s). An IPv6-only connect (`curl -6`, `nc -6`) gets `Connection refused` after ≈ 1.0–1.3 s; port 22 over IPv6 connects in 0.02 s |
 | Installer with the exit-test flags (agent build 09:22Z) | steps 1 to 13 `already configured` (avahi too); the conf hash did not change; `host check` has no `avahi IPv4 only` line |
+
+## Phase 2 exit test — lumine, 2026-10-30 — **PASS (laptop, phone, and CLI setup), with 8 fixes, the device e2e specs, and follow-ups**
+
+Wave 4c of Phase 2. The owner approved a purge of the Phase 1 data on lumine. Sequence:
+`installer/uninstall.sh --purge-data --yes`, then a `config.yaml` with `images.postgres` and
+`images.caddy` set to `localhost/care-pi/...` (the ghcr packages are private; `bootstrap` keeps an
+existing `config.yaml`, and the bootstrap apply already needs the Caddy image), then
+`install.sh --binary ~/care-pi_linux_arm64 --hostname lumine --preset small-clinic --yes` (setup mode).
+Playwright drove the console from the Mac: Chromium 1280 × 800 and WebKit iPhone 13
+(`console/e2e/real`, `playwright.real.config.ts`). The Mac is on 192.168.1.0/24 and lumine on
+192.168.165.0/24, so the browsers used an ssh tunnel and a local CONNECT proxy: the URL, SNI, `Host`, and
+`Origin` were the real `https://lumine.local:8443`, but mDNS and the TLS interstitial were not tested, and
+the agent saw each client as 192.168.165.91. The specs verify the served chain against the new root CA in
+Node; Chromium accepted the verified intermediate by SPKI, WebKit ignored the certificate errors.
+Four installs: run 1 on the laptop (found the blocker), a CLI-only setup, a final laptop run with each fix
+(agent `64caa26`), and a phone run (agent `21687c7`, the current state of lumine). Raw output: `local/wave4c/` (S39). Screenshots: the session files of wave 4c.
+
+| # | Criterion | Result |
+|---|---|---|
+| 1 | Purge, then install in setup mode | **PASS** — install 6 s; `care-pi.service`, `care-start`, `care-clock`, pod, and Caddy up, no Care units; the claim code in a box with `https://lumine.local:8443/` and `https://192.168.165.91:8443/`. Purge: 2 min 9 s and 7 podman secrets left (fix 1) |
+| 2 | Public endpoints in setup mode | **PASS** — `/` 503 setup page with both console URLs; `/console`, `/console/` → 308 `https://lumine.local:8443/`; `/_care-pi/status` `setup_state: unclaimed`, `console_port: 8443`, `claim_methods: [claim-code]`; `:8443/` SPA (`no-store`), deep link 200, missing asset 404; `:8443/api/v1/health` 200; claim with `Origin: https://lumine.local` → 403 `csrf` |
+| 3 | Laptop: claim → wizard → finish → ready → dashboard | **PASS** in the final run (Finish → hand-off 418 s). Run 1 **failed** at `ensure-stanza` after 9 min 4 s (fix 2); after the fix, the second finish of run 1 reached ready in 289 s |
+| 4a | Phone: claim → wizard → finish → ready → dashboard (a new install) | **PASS** — Finish → hand-off 404 s; the timer of the job counted (fix 9) |
+| 4b | Phone: login → dashboard → certificate → logs → TOTP (a ready device) | **PASS**, except that the units table needs 722–729 px in a 324 px card (it scrolls inside the card; the page does not; follow-up 3) |
+| 5 | CLI parity, unattended | **PASS** — each status command exits 0; `auth sessions revoke` → the phone gets 401 and the login page. A CLI-only setup from a new install finished in 401 s after a doc fix (fix 8) |
+| 6 | Reboot | **PASS** — `care-pi.service` active at 7.0 s and not on the critical chain (`multi-user.target` 4.5 s userspace); the desktop cookie still valid (dashboard without a login). Care answered only 179 s after the reboot command (follow-up 2) |
+| 7 | Negative checks | **PASS** — all 9 (below) |
+
+### Fixes (each is one signed commit)
+
+| # | Symptom on lumine | Cause | Fix | Commit |
+|---|---|---|---|---|
+| 1 | `uninstall.sh` waited 120 s and warned; `--purge-data` left `care-pi-*` podman secrets | the wait matched `care-pi-firewall.service`; the purge did not remove the secrets | skip the firewall unit in the wait; remove `care-pi-*` secrets on purge | `c95f2dc` |
+| 2 | The setup job waited 5 min at `ensure-stanza`, then failed: `podman exec --user postgres care-db pg_isready`: "unable to find user postgres" | the sandbox of `care-pi.service` has its own mount namespace; podman mounts the root file system of a later container only in the host namespace (containers/storage keeps its overlay mounts private); `podman exec` reads the container `passwd` there. The exec into care-api (image user `django`) for the superuser had the same problem | `host.Transient` runs `podman exec` with `nsenter --target 1 --mount` when the agent is not in the namespace of PID 1 | `0ab0558` |
+| 3 | `full-cycle` said "Expected: about 45 s"; it took 3 min 38 s | in the setup job the full cycle is the first start (migrations) | 220 s for `full-cycle` and `restart` in a setup job; the kind comes from the job id until the job arrives | `7f0fbaf` |
+| 4 | The hand-off card had no Care user name | `GET /setup` clears `job_id` at ready; the progress page went to `/setup/done` without the job, before the done event | keep the first job id | `5c040b1` |
+| 5 | The units card grew by 44 px when the data came | 10 units in `GET /status`, 9 skeleton rows (the mock had no `care-pod.service`) | 10 rows; the mock lists the units of the agent | `f319727` |
+| 6 | — | — | `console/e2e/real` and `playwright.real.config.ts` (the journeys of this test); the default e2e run ignores them; the setup journey also on a phone (`0d1ef45`) | `cf1f9d2` |
+| 7 | 8 logins with 3 parallel `GET /status` each: the OOM killer killed the agent (`oom-kill`, 31.7 MiB swap); the first setup job reached the 64M cap 89 times and 31 of 32 MiB swap | the Go heap grows to twice the live heap (argon2id 19 MiB); the cgroup also counts podman and skopeo | `serve` sets a Go soft limit of half of `memory.max` (32 MiB) unless `GOMEMLIMIT` is set. Same load, 3 runs: no OOM, swap ≤ 5.3 MiB; final setup job: the cap once, swap 0 | `64caa26` |
+| 8 | The CLI setup of `docs/console-server.md` stopped: `missing steps: tls` | the example set no `tls.*` key | `tls.local_ca.enabled=true` in the example | `2022c9f` |
+| 9 | The progress page showed "Runs 00:00" for 7 minutes | the job object arrives only with the done event when the wizard reopens `/setup/progress` without it | count from the first step until the job arrives (on lumine: an FE rebuild job showed 00:12 after 12 s; the phone setup job counted) | `21687c7` |
+
+### Timings
+
+| Event | Time |
+|---|---|
+| `uninstall.sh --purge-data` before / after fix 1 | 2 min 9 s / 1.8 s |
+| `install.sh` in setup mode (host already prepared) | 6 s |
+| Claim + wizard (automated, final run) | 7 s |
+| Finish → hand-off, new install (final laptop run / phone run) | **418 s** (6 min 58 s) / **404 s** |
+| — validate, host check | 1 s |
+| — lock resolution (no step shows; follow-up 4) | 26 s |
+| — `full-cycle` (first start, migrations) | 3 min 31 s (run 1: 3 min 38 s) |
+| — `ensure-stanza` after fix 2 | 0.3 s |
+| — `ensure-fe` to the superuser (FE build 2 min 46 s to 2 min 57 s, cold `npm ci`, node image cached) | 2 min 49 s |
+| Finish → ready, second finish of run 1 (database migrated) | 289 s |
+| CLI `setup finish`, new install | 401 s |
+| FE rebuild from the console (warm) | 1 min 31 s |
+| Reboot: SSH back / console 200 / Care `/ping/` 200 | 47 s / 125 s / 179 s |
+
+### Memory and latency
+
+| Item | Value |
+|---|---|
+| `care-pi.service` idle | 12 MiB (peak 14 MiB) after the install; 7.5 MiB (peak 10.7 MiB) after the reboot |
+| `care-pi.service` during the first finish, before fix 7 | `MemoryPeak` 64 MiB (the cap), 89 cap events, swap peak 31 MiB of 32 MiB, 0 OOM kills |
+| `care-pi.service` during the final finish, after fix 7 | sampled maximum 46 MiB, the cap once, swap 0 (phone run: the cap 5 times, swap peak 0.3 MiB, 0 OOM kills) |
+| Child processes in the agent cgroup (transient units) | `skopeo inspect` 34 MiB, `podman exec` 27 MiB, `podman ps` 15 MiB, `podman healthcheck run` 16 MiB, `podman image exists` 13 MiB |
+| FE build (`care-fe-build`) | 767 MiB (peak 771 MiB) + up to 768 MiB zram swap; host `MemAvailable` minimum 445 MiB |
+| Care `/ping/` during the finish (from the Pi) | median 14 ms (n = 14), maximum 1.5 s at the gunicorn start; during the FE build median 13 ms, maximum 22 ms (n = 11) |
+| Console `/api/v1/health` during the finish | median 8 ms, maximum 22 ms (n = 41); 1 sample without an answer while the full cycle restarted Caddy (the SSE stream reconnected) |
+
+### Checks
+
+| Check | Result |
+|---|---|
+| Hardware step | Raspberry Pi 5 Model B Rev 1.1, 2 GiB, 16 KiB pages, USB drive 119 GiB, RTC present, Ethernet 1000 Mb/s 192.168.165.91; 43 checks, 0 failed |
+| Identity step | "announces lumine.local" (avahi: `Host name is lumine.local.`); IP 192.168.165.91 (`ip -4`) |
+| Size easy path | "2 to 4 people" + "3 or 4" → `small-clinic` |
+| Env (advanced) | 2 read-only lists of defaults, no inputs in them; skipped |
+| Backups | "This is a dev build. You can skip this step." |
+| Progress | the step list only appended (checked each second); hints: `full-cycle` "about 3 min 40 s", `ensure-fe` "about 3 min" |
+| Hand-off | `https://lumine.local/login`, other addresses, QR code, certificate link, "Care user name: w4admin" (after fix 4) |
+| Dashboard | 8 cards; 10 units active; desktop card boxes equal before and after the data (after fix 5); phone boxes equal across 2 refreshes; page 390 of 390 px |
+| Certificate page (phone) | fingerprint = `openssl x509 -fingerprint -sha256`; profile `application/x-apple-aspen-config`, its DER = the root CA; QR code |
+| Logs follow (phone) | a new line 0.7–1.2 s after a request |
+| TOTP (phone) | enrol with a code computed in the test, logout, login with TOTP, disable |
+| Sessions | `care-pi auth sessions --json` listed the sessions; `revoke` of the phone session → `GET /session` 401 → login page |
+| Reboot | sessions kept; `journalctl -b -1 -u care-pi` clean stop; 1 failed transient health check unit (known) |
+| 9 KiB login body | 413 `payload-too-large`; 2 MiB `PUT /config` 413 from the 1 MiB limit |
+| `Sec-Fetch-Site` | `cross-site` and `same-site` 403 `csrf`; `same-origin` and `none` 200 |
+| Missing job | SSE and JSON 404 `job-not-found`; the progress page showed the problem and read 2 times in 12 s |
+| `If-Match` | wrong 412 `config-changed`, none 428, correct 200 (plan, no change) |
+| `POST /power/shutdown` 5 min after the login | 403 `reauth-required` (no shutdown) |
+| Lockout | 5 wrong passwords 401, then 429 `locked-out` with `Retry-After: 900`, also for the right password; `care-pi auth unlock` → login 200 |
+| `care-pi serve --insecure-dev` without `--root`, or on 0.0.0.0; a second `serve` | refused (exit 2); "another care-pi serve answers"; the live socket and `NRestarts=0` unchanged |
+| Firewall | `inet care-pi` accepts 22, 80, 443, 8443, 5353/udp; SSH sessions opened after the install and after the reboot |
+| Left by `uninstall.sh --purge-data` (intended, `installer/README.md`) | images, journald drop-in, apt holds, `52care-pi.conf`, `cmdline.txt`, avahi settings; `/run/care-pi/apply.lock` until the reboot |
+
+### Follow-ups (not fixed; the owner decides)
+
+1. **Agent memory.** The 64M cap is still reached when podman or skopeo run beside an argon2id hash.
+   Options: run `skopeo inspect` and the podman reads in transient units, share one `GET /status`
+   collection between parallel requests, or raise `MemoryMax` (`01` §8).
+2. **Boot apply without an address.** At 12 s the NetworkManager hook ran `care-pi apply` before
+   eth0 had its DHCP address ("addresses: (no LAN IPv4 address)"); at 103 s the next event applied
+   the address with a full cycle of `care.target`. Care answered at 179 s, not at about 100 s.
+   Phase 1 behaviour. Options: ignore `connectivity-change` without an interface, or skip an
+   `address-change` apply when no LAN IPv4 address exists.
+3. **Units table on a phone** needs 722–729 px in a 324 px card; Health, Memory, and Restarts are
+   hidden until the operator scrolls the table sideways.
+4. **Progress names.** The steps show the plan actions (`ensure-dirs`, `daemon-reload`,
+   `enable-target: care-start.service`, `pull-images: localhost/… ghcr.io/…@sha256:…`); the long
+   `full-cycle` name is cut; no step shows during the 26 s lock resolution after the host check.
+5. **Failed setup text.** The page shows the raw error ("apply failed at ensure-stanza: … podman exec …
+   exit code 255 …") and asks the operator to "fix the problem".
+6. **Hardware step** lists 43 checks, 25 of them directories (`dir /var/lib/care-pi/...`); the button
+   is at the end of a long page; the disk shows 119 GiB in the facts and 128 GB in the checks.
+7. A failed finish does not write the lock, so the next finish does a full cycle again (76 s).
+8. Port 8443 sends `X-Content-Type-Options` twice (Caddy and the agent). Care paths on port 443 give
+   an empty 502 in setup mode. `care-pi setup finish` prints each step line twice.
+   The bootstrap apply in setup mode prints "a new database runs the migrations (about 4 minutes)".
+9. The first contact over mDNS, the TLS interstitial, and the trust of the root CA in each browser
+   (SP7) need a test from a device on the same LAN.

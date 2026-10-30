@@ -370,3 +370,42 @@ Deploy on lumine (a Phase 1 host; do not reflash):
 5. To test setup mode on lumine, a new host is necessary: `sudo sh installer/uninstall.sh --purge-data --yes`, then step 2.
    bootstrap then starts setup mode. Complete the setup in the console; the finish runs the full apply (image pulls,
    FE build) and creates the Care superuser.
+
+### 8f. Phase 2 exit test result (wave 4c, 2026-10-30)
+
+**PASS** on lumine: a laptop (Chromium 1280 × 800) and a phone (WebKit, iPhone 13) each claimed a new install
+and completed the setup without a terminal (Finish → ready 418 s and 404 s), the phone also completed the
+journey of a ready device (login, dashboard, certificate, logs, TOTP), and the CLI completed the setup
+unattended (401 s). The owner
+approved a purge of the Phase 1 data first. Detail, timings, and memory: `08-spike-log.md`, "Phase 2 exit
+test". Raw output: `local/wave4c/` (S39). The journeys are now committed specs: `console/e2e/real`
+(`npm run test:e2e:real`, `console/e2e/real/README.md`). Limitation: the Mac was on another subnet,
+so the browsers used an ssh tunnel; mDNS, the TLS interstitial, and SP7 were not tested.
+
+| Criterion | Result |
+|---|---|
+| Purge, install in setup mode, public endpoints | PASS (install 6 s; claim code box with both console URLs) |
+| Laptop: claim → wizard → finish → hand-off → dashboard | PASS in the final run, Finish → ready 418 s. Run 1 failed at `ensure-stanza` (fix 2 below) |
+| Phone: claim → wizard → finish → hand-off → dashboard | PASS, Finish → ready 404 s (final install) |
+| Phone: login, dashboard, certificate, logs, TOTP, logout, TOTP login | PASS; the units table scrolls inside its card (follow-up) |
+| CLI parity; unattended CLI setup from a new install | PASS; `setup finish` 401 s after a doc fix |
+| Reboot | PASS; `care-pi.service` not on the critical chain; session kept |
+| Negative checks (413, `Sec-Fetch-Site`, 404 job, 412/428, `reauth-required`, lockout, `serve` guards) | PASS |
+
+Fixes (signed commits, not pushed): `c95f2dc` uninstall wait and podman secrets; `0ab0558` `podman exec` of the
+agent in the host mount namespace (the setup job failed without it: "unable to find user postgres"); `7f0fbaf`
+expected time of the first start; `5c040b1` the hand-off card kept the job result; `f319727` 10 skeleton rows for
+the units; `cf1f9d2` `console/e2e/real`; `64caa26` Go soft memory limit (the agent was OOM-killed under a login
+and status load); `2022c9f` the CLI setup example needs a `tls.*` key; `21687c7` the job time counted from 00:00; `0d1ef45` the setup
+journey on a phone (`phone.setup.spec.ts`).
+
+Measured: `care-pi.service` idle 7.5–12 MiB; during the first setup job before `64caa26` it reached its 64M cap
+89 times and 31 of 32 MiB swap, after it 46 MiB and no swap. FE build 771 MiB + up to 768 MiB zram, host
+`MemAvailable` minimum 445 MiB. Care `/ping/` median 13–14 ms during the job; console health median 8 ms.
+
+Follow-ups for the owner (detail in `08`): the 64M cap still meets podman and skopeo children; the NetworkManager
+hook applies at boot before the DHCP address, then a full cycle 90 s later (Care at 179 s after a reboot); the
+units table on a phone; raw step names and a 26 s silent lock resolution on the progress page; the raw error of a
+failed setup; 43 checks (25 directories) on the hardware step; small items (duplicate `X-Content-Type-Options`,
+empty 502 on port 443 in setup mode, duplicate CLI lines). Pre-existing, not changed: `npm run api:check` fails
+since `efc6f60` (the contract changed, `src/api/types.gen.ts` was not made again).
