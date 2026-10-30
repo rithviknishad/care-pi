@@ -1,0 +1,6 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist-mono/wght.css";
+@import "./styles/careui.css";
+@import "./styles/console.css";

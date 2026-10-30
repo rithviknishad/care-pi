@@ -1,0 +1,41 @@
+/*
+ * Console additions to the Care UI tokens (careui.css). Keep this file small.
+ * docs/console-ui.md explains each rule.
+ */
+
+/* Monospace first: Geist Mono is the body font (owner decision). The font files are in the build. */
+@theme inline {
+  --font-sans:
+    "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+}
+
+@layer base {
+  /* The scroll bar does not move the layout when a page becomes taller than the window. */
+  html {
+    scrollbar-gutter: stable;
+  }
+
+  body {
+    font-variant-numeric: tabular-nums;
+    min-width: 360px;
+  }
+}
+
+/* Print only the recovery codes (the Print button of the recovery codes panel). */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  .print-area,
+  .print-area * {
+    visibility: visible;
+  }
+
+  .print-area {
+    position: absolute;
+    inset: 0;
+    padding: 2rem;
+  }
+}

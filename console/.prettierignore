@@ -1,0 +1,10 @@
+dist
+node_modules
+playwright-report
+test-results
+package-lock.json
+src/api/types.gen.ts
+src/components/ui
+src/hooks/use-mobile.ts
+src/hooks/use-auto-space.ts
+src/styles/careui.css

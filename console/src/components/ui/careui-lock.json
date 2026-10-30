@@ -1,0 +1,406 @@
+{
+  "registry": "https://careui.ohc.network",
+  "items": {
+    "alert": {
+      "source": "https://careui.ohc.network/registry/care-ui/alert/alert.json",
+      "dependencies": [
+        "class-variance-authority"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/alert.tsx",
+          "sha256": "97357bc8e4b282a1cef6c1df310e6066edd7b06dd357e1fef18e58a6340682c2"
+        }
+      ]
+    },
+    "alert-dialog": {
+      "source": "https://careui.ohc.network/registry/care-ui/alert-dialog/alert-dialog.json",
+      "dependencies": [
+        "@base-ui/react"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/alert-dialog.tsx",
+          "sha256": "f0c6a307202620242410cd60f22107607795de97b796dc663020319b908a94de"
+        }
+      ]
+    },
+    "badge": {
+      "source": "https://careui.ohc.network/registry/care-ui/badge/badge.json",
+      "dependencies": [
+        "class-variance-authority",
+        "lucide-react",
+        "@base-ui/react"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/badge.tsx",
+          "sha256": "97d978747c838b6e2fdaeef77707f2e7bd8b1df4908e9ca8890ba5d93922efda"
+        }
+      ]
+    },
+    "button": {
+      "source": "https://careui.ohc.network/registry/care-ui/button/button.json",
+      "dependencies": [
+        "@base-ui/react",
+        "class-variance-authority"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/button.tsx",
+          "sha256": "c38dc13f19d0205c4c8f7b52ee3580a430832ba2d76940023037f332d492525e"
+        }
+      ]
+    },
+    "card": {
+      "source": "https://careui.ohc.network/registry/care-ui/card/card.json",
+      "dependencies": [],
+      "files": [
+        {
+          "path": "src/components/ui/card.tsx",
+          "sha256": "c47a513f8f18f38cf74ba79d07f8adc70ecc0b6f11f71e4feee7d570589d7693"
+        }
+      ]
+    },
+    "checkbox": {
+      "source": "https://careui.ohc.network/registry/care-ui/checkbox/checkbox.json",
+      "dependencies": [
+        "@base-ui/react",
+        "class-variance-authority",
+        "lucide-react"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/checkbox.tsx",
+          "sha256": "9e056ff28100d7b98fdbb2dc6d046adba25b3dfe42e4360b252ffb626f4834f7"
+        }
+      ]
+    },
+    "dialog": {
+      "source": "https://careui.ohc.network/registry/care-ui/dialog/dialog.json",
+      "dependencies": [
+        "@base-ui/react",
+        "lucide-react"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/dialog.tsx",
+          "sha256": "60072532d3240a6c3b6a6218e47c20a8a573b2e77be8a0e95b8cca388c7b9fd2"
+        }
+      ]
+    },
+    "dropdown-menu": {
+      "source": "https://careui.ohc.network/registry/care-ui/dropdown-menu/dropdown-menu.json",
+      "dependencies": [
+        "@base-ui/react",
+        "lucide-react"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/dropdown-menu.tsx",
+          "sha256": "f9fe8ba6cc62ca1d1e97fa1e3060ba9392022ed36a5fff70fcac7ff7d2c8107d"
+        }
+      ]
+    },
+    "empty": {
+      "source": "https://careui.ohc.network/registry/care-ui/empty/empty.json",
+      "dependencies": [
+        "lucide-react",
+        "class-variance-authority"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/empty.tsx",
+          "sha256": "71166f229317c8fef3a07b65972cdacd82fd5453b989ae86ece9c228cb998e4a"
+        }
+      ]
+    },
+    "field": {
+      "source": "https://careui.ohc.network/registry/care-ui/field/field.json",
+      "dependencies": [
+        "class-variance-authority",
+        "lucide-react"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/field.tsx",
+          "sha256": "bb183994fd4a1af996718f6e15af91192ccd017b3719ebc4e4d8de0a4efb4b2b"
+        }
+      ]
+    },
+    "input": {
+      "source": "https://careui.ohc.network/registry/care-ui/input/input.json",
+      "dependencies": [],
+      "files": [
+        {
+          "path": "src/components/ui/input.tsx",
+          "sha256": "b51a69bd05c838a1fceec65fcb8dd9e1fe5ab9d4da1ae530ac420dbeeac1776d"
+        }
+      ]
+    },
+    "input-group": {
+      "source": "https://careui.ohc.network/registry/care-ui/input-group/input-group.json",
+      "dependencies": [
+        "class-variance-authority"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/input-group.tsx",
+          "sha256": "07224cfa85d6d91b67e923bdabb6ff38e19c9fe55179d9bb1f642d9928b1b1e9"
+        }
+      ]
+    },
+    "input-otp": {
+      "source": "https://careui.ohc.network/registry/care-ui/input-otp/input-otp.json",
+      "dependencies": [
+        "input-otp",
+        "lucide-react"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/input-otp.tsx",
+          "sha256": "0a1d260709ba87b3c7c21a067e01ec110a90cfea7f84dff4c8d639cee672e5d8"
+        }
+      ]
+    },
+    "kbd": {
+      "source": "https://careui.ohc.network/registry/care-ui/kbd/kbd.json",
+      "dependencies": [
+        "class-variance-authority"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/kbd.tsx",
+          "sha256": "15a5b0703cc4fb1e5cdcb9649f3a63a72a95be3a0ac1211df8cf4f5f88930ac6"
+        }
+      ]
+    },
+    "label": {
+      "source": "https://careui.ohc.network/registry/care-ui/label/label.json",
+      "dependencies": [
+        "class-variance-authority"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/label.tsx",
+          "sha256": "b3564255745d2d1aebd5575e33c766730d8a38ecd53392fa0d759a3e212751a6"
+        }
+      ]
+    },
+    "native-select": {
+      "source": "https://careui.ohc.network/registry/care-ui/native-select/native-select.json",
+      "dependencies": [
+        "lucide-react"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/native-select.tsx",
+          "sha256": "b8347e10dea2825d2b969a0786afc3f4e7455ab748bd5a9b3d1753d428dc272f"
+        }
+      ]
+    },
+    "progress": {
+      "source": "https://careui.ohc.network/registry/care-ui/progress/progress.json",
+      "dependencies": [
+        "@base-ui/react"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/progress.tsx",
+          "sha256": "bc70631d4ab1eddd877ced753ef26f5d8f182a3d99f098683a86bf2a49d474e3"
+        }
+      ]
+    },
+    "radio-group": {
+      "source": "https://careui.ohc.network/registry/care-ui/radio-group/radio-group.json",
+      "dependencies": [
+        "@base-ui/react"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/radio-group.tsx",
+          "sha256": "ebd8135ee4614cee0ea804eb87576b35d203ca3960a86991f93cd69ade0971a3"
+        }
+      ]
+    },
+    "scroll-area": {
+      "source": "https://careui.ohc.network/registry/care-ui/scroll-area/scroll-area.json",
+      "dependencies": [
+        "@base-ui/react"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/scroll-area.tsx",
+          "sha256": "ae93a0d3e8b802b25f721ce97c0e2557159118cc57a4a415e5c77d49c5bf5ece"
+        }
+      ]
+    },
+    "separator": {
+      "source": "https://careui.ohc.network/registry/care-ui/separator/separator.json",
+      "dependencies": [
+        "@base-ui/react",
+        "class-variance-authority"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/separator.tsx",
+          "sha256": "e5168aff464c795a60e9b58fc64c282eda894011b28c27ca8e92fa54a2fe53e0"
+        }
+      ]
+    },
+    "sheet": {
+      "source": "https://careui.ohc.network/registry/care-ui/sheet/sheet.json",
+      "dependencies": [
+        "@base-ui/react",
+        "class-variance-authority",
+        "lucide-react"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/sheet.tsx",
+          "sha256": "ccb8fd51f0e187edc961b11f61357f4295501ce77ea405a4ea556204bb9d8680"
+        }
+      ]
+    },
+    "skeleton": {
+      "source": "https://careui.ohc.network/registry/care-ui/skeleton/skeleton.json",
+      "dependencies": [],
+      "files": [
+        {
+          "path": "src/components/ui/skeleton.tsx",
+          "sha256": "002a67c7e64684f446ef4dabe914bce0cb4016775c0b8d6e3184de0edbc54c57"
+        }
+      ]
+    },
+    "sonner": {
+      "source": "https://careui.ohc.network/registry/care-ui/sonner/sonner.json",
+      "dependencies": [
+        "sonner",
+        "next-themes"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/sonner.tsx",
+          "sha256": "4beb10eb088f9791703c5522812759f6817c5b3ead7dcbb0b46ffc8e46c9afb4"
+        }
+      ]
+    },
+    "spinner": {
+      "source": "https://careui.ohc.network/registry/care-ui/spinner/spinner.json",
+      "dependencies": [
+        "class-variance-authority",
+        "lucide-react"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/spinner.tsx",
+          "sha256": "31fc90caa6044ad665753baa53bba0f38116121260933067453da7bae211b15f"
+        }
+      ]
+    },
+    "switch": {
+      "source": "https://careui.ohc.network/registry/care-ui/switch/switch.json",
+      "dependencies": [
+        "@base-ui/react",
+        "lucide-react"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/switch.tsx",
+          "sha256": "64967eeb744e0af456e833898dab5c317e882cdf3f00c71b0192f1f2f9059e13"
+        }
+      ]
+    },
+    "table": {
+      "source": "https://careui.ohc.network/registry/care-ui/table/table.json",
+      "dependencies": [],
+      "files": [
+        {
+          "path": "src/components/ui/table.tsx",
+          "sha256": "1da8d60f1cfc21bade51386826cf6340ac90e9ca83398171a91e3b1f8311a8d7"
+        }
+      ]
+    },
+    "tabs": {
+      "source": "https://careui.ohc.network/registry/care-ui/tabs/tabs.json",
+      "dependencies": [
+        "@base-ui/react",
+        "class-variance-authority"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/tabs.tsx",
+          "sha256": "62c7798211be8dbf95c4f225e31fc333d6ad8415f5d45f0f032e92acb24916ce"
+        }
+      ]
+    },
+    "textarea": {
+      "source": "https://careui.ohc.network/registry/care-ui/textarea/textarea.json",
+      "dependencies": [],
+      "files": [
+        {
+          "path": "src/components/ui/textarea.tsx",
+          "sha256": "099f63ab8f4f60c8d0ee59d9c11717302c0e8bd2af8bd09b90d036e6607892ff"
+        }
+      ]
+    },
+    "toggle": {
+      "source": "https://careui.ohc.network/registry/care-ui/toggle/toggle.json",
+      "dependencies": [
+        "@base-ui/react",
+        "class-variance-authority"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/toggle.tsx",
+          "sha256": "f18fdef78c2d404fd6b5056a2a0014dd144cb19422973241aab3cf1d1891537a"
+        }
+      ]
+    },
+    "toggle-group": {
+      "source": "https://careui.ohc.network/registry/care-ui/toggle-group/toggle-group.json",
+      "dependencies": [
+        "@base-ui/react",
+        "class-variance-authority"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/toggle-group.tsx",
+          "sha256": "6834d61208f37dec11a19499651f1b07ee2ebeec8249102258c67b8eb33b47dd"
+        }
+      ]
+    },
+    "tooltip": {
+      "source": "https://careui.ohc.network/registry/care-ui/tooltip/tooltip.json",
+      "dependencies": [
+        "@base-ui/react"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/tooltip.tsx",
+          "sha256": "3960b2383fb02ee1c4cb25ede054021d2f17bad86e71e965467c6a959c53ca9d"
+        }
+      ]
+    },
+    "use-auto-space": {
+      "source": "https://careui.ohc.network/registry/care-ui/use-auto-space/use-auto-space.json",
+      "dependencies": [],
+      "files": [
+        {
+          "path": "src/hooks/use-auto-space.ts",
+          "sha256": "49fc29b27f3a8a7255d49ae2ea5ee2da1739008644dfc6eba0e2f55e551ecad0"
+        }
+      ]
+    },
+    "use-mobile": {
+      "source": "https://careui.ohc.network/registry/care-ui/use-mobile/use-mobile.json",
+      "dependencies": [],
+      "files": [
+        {
+          "path": "src/hooks/use-mobile.ts",
+          "sha256": "dd91f7e64de016f753e95fdf61b54cac1d959866e099851d08328f4cfe6fef6a"
+        }
+      ]
+    }
+  }
+}
