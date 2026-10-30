@@ -1,0 +1,3 @@
+version: 1
+identity: {display_name: Solo Practice, hostname: solo}
+size: {preset: solo}

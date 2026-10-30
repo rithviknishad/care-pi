@@ -1,0 +1,17 @@
+# {{.Header}}
+# Start care.target at boot, and do not wait for it. A target waits for each unit
+# that it wants. Thus multi-user.target does not wait for the clock gate or for the
+# health checks of the containers.
+# This unit does not wait for network-online.target. care.pod waits for it, because
+# the pod publishes on the LAN addresses. Thus the boot does not wait for the network.
+
+[Unit]
+Description=care-pi start (start care.target without a wait)
+Documentation=https://github.com/rithviknishad/care-pi
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl start --no-block care.target
+
+[Install]
+WantedBy=multi-user.target

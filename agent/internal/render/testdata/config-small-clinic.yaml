@@ -1,0 +1,25 @@
+version: 1
+identity:
+  display_name: Sunrise Clinic
+  hostname: care
+solution:
+  name: care-clinic
+  track: stable
+size:
+  preset: small-clinic
+tls:
+  local_ca: {enabled: true}
+clock:
+  policy: ntp
+backups:
+  wal_archive_timeout_min: 5
+env:
+  backend:
+    EMAIL_HOST: smtp.example.org
+    EMAIL_PORT: "587"
+  frontend:
+    REACT_APP_TITLE: Sunrise Clinic
+fe:
+  provider: none
+uploads:
+  max_body_mb: 200

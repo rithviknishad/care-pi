@@ -1,0 +1,14 @@
+{{template "status-head" .}}
+<title>CARE: setup is not complete</title>
+</head>
+<body>
+<main>
+<h1>CARE is not ready on this device</h1>
+<p class="name">{{html .DisplayName}}</p>
+<p>The CARE web application is not installed on this device yet.</p>
+<p>Complete the setup on the device. Then open this page again.</p>
+{{template "status-addresses" .}}
+<p><small>This page refreshes every 15 seconds.</small></p>
+</main>
+</body>
+</html>

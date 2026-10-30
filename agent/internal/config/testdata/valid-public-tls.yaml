@@ -1,0 +1,3 @@
+version: 1
+tls:
+  public: {enabled: true, clinic_id: sunrise}

@@ -1,0 +1,30 @@
+# {{.Header}}
+# The care_fe builder (fe.provider: local). Only the agent starts it ("care-pi apply", "care-pi fe build").
+# Before the start, the agent sets care-api to 1 gunicorn worker and stops care-worker (S8).
+# The unit is shaped, not capped (SP4): the build needs about 2 GiB and zram swap of 1x RAM or more.
+# Each start fetches the source only when the sha changed. node_modules and the npm cache stay in /build.
+
+[Unit]
+Description=care-pi FE build {{.FEBuildID}}
+PartOf=care.target
+
+[Container]
+ContainerName=care-fe-build
+Image={{.Images.node}}
+RunInit=true
+# The container needs the internet: codeload.github.com and the npm registry.
+Volume={{path "BuildCareFE"}}:/build
+Volume={{path "RenderedFE"}}:/build/env:ro
+Volume={{path "FEDir"}}:/out
+Environment=CARE_FE_REPO={{.FERepo}} CARE_FE_SHA={{.FESHA}} BUILD_ID={{.FEBuildID}}
+LogDriver=passthrough
+Exec=bash /build/env/fe-build.sh
+
+[Service]
+Type=oneshot
+MemoryHigh={{.FEMemoryHigh}}
+MemoryMax={{.FEMemoryMax}}
+MemorySwapMax={{.FEMemorySwap}}
+OOMScoreAdjust=900
+Restart=no
+TimeoutStartSec=1800

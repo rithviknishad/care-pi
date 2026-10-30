@@ -1,0 +1,30 @@
+# {{.Header}}
+# versitygw serves the S3 API over {{path "S3Data"}}. Object metadata is in xattrs.
+# VGW_REGION must equal BUCKET_REGION of Care.
+
+[Unit]
+Description=care-pi object storage (versitygw)
+PartOf=care.target
+Requires=care-clock.service
+After=care-clock.service
+
+[Container]
+ContainerName=care-s3
+Image={{.Images.s3}}
+Pod=care.pod
+RunInit=true
+Volume={{path "S3Data"}}:/data
+Environment=VGW_REGION={{.Buckets.Region}}
+Secret={{.Secrets.S3AccessKey}},type=env,target=ROOT_ACCESS_KEY
+Secret={{.Secrets.S3SecretKey}},type=env,target=ROOT_SECRET_KEY
+Exec=posix /data
+
+[Service]
+MemoryMax={{.MemS3.Max}}
+MemorySwapMax={{.MemS3.Swap}}
+Restart=always
+RestartSec=5
+TimeoutStartSec=300
+
+[Install]
+WantedBy=care.target

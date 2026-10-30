@@ -1,0 +1,410 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/rithviknishad/care-pi/agent/internal/config/schema/config.schema.json",
+  "title": "care-pi config.yaml",
+  "description": "Desired state of one care-pi host. docs/config.md describes each key.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version"],
+  "properties": {
+    "version": {
+      "description": "Schema version of this file.",
+      "const": 1
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "display_name": {
+          "description": "Name of the clinic. The status pages show it.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[^\\r\\n<>]*$"
+        },
+        "hostname": {
+          "description": "mDNS label. The host name is <hostname>.local.",
+          "$ref": "#/$defs/dnsLabel"
+        }
+      }
+    },
+    "solution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Name of a solution in solutions/<name>/solution.yaml.",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,62}$"
+        },
+        "track": {
+          "enum": ["stable", "pinned", "custom"]
+        },
+        "pin": {
+          "description": "Solution version for track pinned, for example 2026.11.0.",
+          "type": ["string", "null"],
+          "pattern": "^[0-9]{4}\\.[0-9]{1,2}\\.[0-9]+$"
+        },
+        "custom": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "care_ref": {
+              "description": "Image tag or digest of the care image (track custom).",
+              "type": ["string", "null"],
+              "$ref": "#/$defs/ref"
+            },
+            "care_fe_ref": {
+              "description": "Branch, tag, or full commit sha of care_fe (track custom).",
+              "type": ["string", "null"],
+              "$ref": "#/$defs/ref"
+            },
+            "plugs": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/plugCustom" }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "track": { "const": "pinned" } }, "required": ["track"] },
+          "then": { "required": ["pin"], "properties": { "pin": { "type": "string" } } }
+        }
+      ]
+    },
+    "size": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "preset": {
+          "enum": ["solo", "small-clinic", "busy-counter", "custom"]
+        },
+        "custom": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "gunicorn_workers": { "type": "integer", "minimum": 1, "maximum": 8 },
+            "celery_concurrency": { "type": "integer", "minimum": 1, "maximum": 4 },
+            "pg_shared_buffers_mb": { "type": "integer", "minimum": 32, "maximum": 2048 }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "preset": { "const": "custom" } }, "required": ["preset"] },
+          "then": {
+            "required": ["custom"],
+            "properties": {
+              "custom": { "required": ["gunicorn_workers", "celery_concurrency", "pg_shared_buffers_mb"] }
+            }
+          }
+        }
+      ]
+    },
+    "tls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "local_ca": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        },
+        "public": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "clinic_id": {
+              "type": ["string", "null"],
+              "pattern": "^[a-z0-9][a-z0-9-]{1,62}$"
+            }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] },
+              "then": { "required": ["clinic_id"], "properties": { "clinic_id": { "type": "string" } } }
+            }
+          ]
+        },
+        "tailscale": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "clock": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "policy": { "enum": ["ntp", "rtc"] }
+      }
+    },
+    "backups": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "wal_archive_timeout_min": {
+          "description": "Postgres archive_timeout in minutes. This is the RPO when the database is idle.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60
+        },
+        "schedule": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "db_full": { "$ref": "#/$defs/calendar" },
+            "db_incr": { "$ref": "#/$defs/calendar" },
+            "files": { "$ref": "#/$defs/calendar" },
+            "verify": { "$ref": "#/$defs/calendar" }
+          }
+        },
+        "retention": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "db_full": { "type": "integer", "minimum": 1, "maximum": 52 },
+            "archive_days": { "type": "integer", "minimum": 1, "maximum": 3650 },
+            "files_keep_daily": { "type": "integer", "minimum": 0, "maximum": 3650 },
+            "files_keep_weekly": { "type": "integer", "minimum": 0, "maximum": 520 }
+          }
+        },
+        "destinations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/destination" }
+        }
+      }
+    },
+    "updates": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "auto": { "type": "boolean" },
+        "window": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "days": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "enum": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] }
+            },
+            "start": { "$ref": "#/$defs/clockTime" },
+            "end": { "$ref": "#/$defs/clockTime" }
+          }
+        },
+        "os_security": { "type": "boolean" }
+      }
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "description": "Non-secret environment variables for care-api, care-worker, and care-beat.",
+          "type": ["object", "null"],
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "not": {
+              "enum": [
+                "ADDITIONAL_PLUGS",
+                "BUCKET_ENDPOINT",
+                "BUCKET_EXTERNAL_ENDPOINT",
+                "BUCKET_KEY",
+                "BUCKET_PROVIDER",
+                "BUCKET_SECRET",
+                "CELERY_BROKER_URL",
+                "CELERY_WORKER_CONCURRENCY",
+                "CSRF_TRUSTED_ORIGINS",
+                "DATABASE_URL",
+                "DJANGO_ALLOWED_HOSTS",
+                "DJANGO_SECRET_KEY",
+                "GUNICORN_WORKERS",
+                "JWKS_BASE64",
+                "POSTGRES_DB",
+                "POSTGRES_HOST",
+                "POSTGRES_PASSWORD",
+                "POSTGRES_PORT",
+                "POSTGRES_USER",
+                "REDIS_URL"
+              ]
+            }
+          },
+          "additionalProperties": { "$ref": "#/$defs/envValue" }
+        },
+        "frontend": {
+          "description": "Build-time environment variables for care_fe. A change needs a new FE build.",
+          "type": ["object", "null"],
+          "propertyNames": {
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+            "not": { "enum": ["REACT_CARE_API_URL"] }
+          },
+          "additionalProperties": { "$ref": "#/$defs/envValue" }
+        }
+      }
+    },
+    "fe": {
+      "description": "The source of the care_fe build. See docs/fe.md.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "enum": ["none", "artifact", "local"], "default": "local" },
+        "artifact_url": {
+          "description": "The bundle (tar.gz) of the artifact provider. Absent or null: the default bundle of the solution for the care_fe sha.",
+          "type": ["string", "null"],
+          "pattern": "^(https|file)://[^\\s]+$"
+        },
+        "artifact_sha256": {
+          "description": "The expected SHA-256 of the bundle, in hex.",
+          "type": ["string", "null"],
+          "pattern": "^[A-Fa-f0-9]{64}$"
+        }
+      }
+    },
+    "images": {
+      "description": "Overrides of the default images. Each value is a full image reference.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "care": { "$ref": "#/$defs/image" },
+        "postgres": { "$ref": "#/$defs/image" },
+        "caddy": { "$ref": "#/$defs/image" },
+        "redis": { "$ref": "#/$defs/image" },
+        "s3": { "$ref": "#/$defs/image" },
+        "node": { "$ref": "#/$defs/image" }
+      }
+    },
+    "uploads": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_body_mb": { "type": "integer", "minimum": 1, "maximum": 10240 }
+      }
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "wifi": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["ssid"],
+              "properties": {
+                "ssid": { "type": "string", "minLength": 1, "maxLength": 32 },
+                "failover": { "type": "boolean" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "telemetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "remote_write_url": {
+          "type": ["string", "null"],
+          "pattern": "^https?://[^\\s]+$"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "dnsLabel": {
+      "type": "string",
+      "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+    },
+    "ref": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/:@+-]{0,199}$"
+    },
+    "image": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._/:@-]*[A-Za-z0-9_.-]$",
+      "maxLength": 512
+    },
+    "envValue": {
+      "type": "string",
+      "pattern": "^[^\\r\\n]*$"
+    },
+    "calendar": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9 :*,./-]+$"
+    },
+    "clockTime": {
+      "type": "string",
+      "pattern": "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+    },
+    "plugCustom": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$" },
+        "enabled": { "type": "boolean" },
+        "backend": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "pattern": "^[a-z_][a-z0-9_]*$" },
+            "package": { "type": "string", "minLength": 1, "pattern": "^[^\\s]+$" },
+            "ref": { "type": "string", "$ref": "#/$defs/ref" },
+            "configs": { "type": "object" }
+          }
+        },
+        "frontend": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "repo": { "type": "string", "pattern": "^https://[^\\s]+$" },
+            "ref": { "type": "string", "$ref": "#/$defs/ref" },
+            "url": { "type": "string", "pattern": "^https://[^\\s]+$" }
+          }
+        }
+      }
+    },
+    "destination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,30}$" },
+        "type": { "enum": ["posix", "sftp", "s3"] },
+        "path": { "type": "string", "pattern": "^/[^\\s]*$" },
+        "host": { "type": "string", "minLength": 1, "pattern": "^[^\\s/]+$" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "user": { "type": "string", "minLength": 1, "pattern": "^[^\\s@]+$" },
+        "endpoint": { "type": "string", "pattern": "^https?://[^\\s]+$" },
+        "bucket": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" },
+        "region": { "type": "string", "pattern": "^[a-z0-9-]{1,32}$" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "posix" } } },
+          "then": { "required": ["path"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "sftp" } } },
+          "then": { "required": ["host", "user", "path"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "s3" } } },
+          "then": { "required": ["endpoint", "bucket"] }
+        }
+      ]
+    }
+  }
+}

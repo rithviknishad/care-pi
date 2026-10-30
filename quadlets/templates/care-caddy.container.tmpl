@@ -1,0 +1,29 @@
+# {{.Header}}
+# Caddy: TLS, routing, the FE build, plug bundles, and status pages.
+# It does not wait for the clock gate, so it can show the clock status page.
+
+[Unit]
+Description=care-pi Caddy (TLS and routing)
+PartOf=care.target
+
+[Container]
+ContainerName=care-caddy
+Image={{.Images.caddy}}
+Pod=care.pod
+RunInit=true
+Exec=caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
+Volume={{path "RenderedCaddy"}}:/etc/caddy:ro
+Volume={{path "CaddyData"}}:/data
+Volume={{path "FEDir"}}:/srv/fe:ro
+Volume={{path "PlugsDir"}}:/srv/plugs:ro
+Volume={{path "ModeDir"}}:/srv/mode:ro
+
+[Service]
+MemoryMax={{.MemCad.Max}}
+MemorySwapMax={{.MemCad.Swap}}
+Restart=always
+RestartSec=5
+TimeoutStartSec=300
+
+[Install]
+WantedBy=care.target

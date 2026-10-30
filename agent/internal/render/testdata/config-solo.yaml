@@ -1,0 +1,6 @@
+version: 1
+identity:
+  display_name: Sunrise Clinic
+  hostname: care
+size:
+  preset: solo

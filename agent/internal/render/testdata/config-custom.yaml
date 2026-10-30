@@ -1,0 +1,39 @@
+version: 1
+identity:
+  display_name: Riverside Pharmacy
+  hostname: pharmacy
+solution:
+  name: care-clinic
+  track: custom
+  custom:
+    care_fe_ref: v25.2.0
+    plugs:
+      - id: care_filly
+        enabled: true
+        backend:
+          ref: 0123456789abcdef0123456789abcdef01234567
+size:
+  preset: custom
+  custom:
+    gunicorn_workers: 4
+    celery_concurrency: 3
+    pg_shared_buffers_mb: 384
+backups:
+  wal_archive_timeout_min: 10
+  retention:
+    db_full: 3
+env:
+  backend:
+    BUCKET_REGION: eu-central-1
+    FILE_UPLOAD_BUCKET: clinic-files
+    RATE_LIMIT: "10/10m"
+  frontend:
+    REACT_ALLOWED_LOCALES: "en,ml"
+    REACT_MFE_REGISTERED_COMPONENTS: AppointmentDetail
+fe:
+  provider: local
+images:
+  postgres: localhost/care-pi/postgres:17-pgbackrest
+  redis: docker.io/library/redis@sha256:1111111111111111111111111111111111111111111111111111111111111111
+uploads:
+  max_body_mb: 500

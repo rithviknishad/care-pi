@@ -1,0 +1,36 @@
+# {{.Header}}
+# Celery beat. Upstream celery_beat.sh runs migrate, sync_permissions_roles, and sync_valueset
+# before it reports healthy, so care-api and care-worker start after it.
+
+[Unit]
+Description=care-pi Celery beat (runs the database migrations)
+PartOf=care.target
+Requires=care-clock.service care-db.service care-redis.service
+After=care-clock.service care-db.service care-redis.service
+
+[Container]
+ContainerName=care-beat
+Image={{.Images.care}}
+Pod=care.pod
+RunInit=true
+Exec=bash /app/celery_beat.sh
+EnvironmentFile={{path "RenderedCare"}}/backend.env
+{{template "care-secrets" .}}
+HealthCmd=/app/healthcheck.sh
+HealthInterval=10s
+HealthTimeout=10s
+HealthStartPeriod=900s
+HealthRetries=6
+Notify=healthy
+
+[Service]
+MemoryMax={{.MemBeat.Max}}
+MemorySwapMax={{.MemBeat.Swap}}
+Restart=always
+RestartSec=10
+# celery beat exits with 143 (128 + SIGTERM) when podman stops the container. This is a clean stop.
+SuccessExitStatus=143
+TimeoutStartSec=1200
+
+[Install]
+WantedBy=care.target

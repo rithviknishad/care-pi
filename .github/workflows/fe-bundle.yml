@@ -1,0 +1,222 @@
+name: fe-bundle
+
+# Build the default care_fe bundle of a solution and publish it as a release asset.
+# The artifact provider of the agent downloads the bundle (docs/fe.md):
+#   https://github.com/<repo>/releases/download/fe-<solution>-<sha12>-<build id>/care_fe-<solution>-<sha12>-<build id>.tar.gz
+# The build id is in the tag and in the file name. A bundle with another env gets another name,
+# so it never replaces a bundle that a Pi expects.
+# The build runs fe-build.sh, the script of the local provider, so CI and the Pi use one recipe.
+
+on:
+  workflow_dispatch:
+    inputs:
+      solution:
+        description: Name of the solution directory under solutions/
+        type: string
+        default: care-clinic
+      care_fe_ref:
+        description: Branch, tag, or sha of care_fe. An empty value uses care_fe.ref of the solution.
+        type: string
+        default: ""
+  push:
+    branches: [main]
+    paths:
+      - solutions/**
+      - .github/workflows/fe-bundle.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fe-bundle-${{ inputs.solution || 'care-clinic' }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SOLUTION: ${{ inputs.solution || 'care-clinic' }}
+      REF_INPUT: ${{ inputs.care_fe_ref }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install yq
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Read the solution and resolve the care_fe ref
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ ! "$SOLUTION" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+            echo "::error::Invalid solution name: $SOLUTION"
+            exit 1
+          fi
+          file="solutions/${SOLUTION}/solution.yaml"
+          if [ ! -f "$file" ]; then
+            echo "::error::File not found: $file"
+            exit 1
+          fi
+          repo_url=$(yq '.care_fe.repo' "$file")
+          ref="${REF_INPUT:-$(yq '.care_fe.ref' "$file")}"
+          repo="${repo_url#https://github.com/}"
+          repo="${repo%/}"
+          repo="${repo%.git}"
+          if [[ "$repo_url" != https://github.com/* || ! "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+            echo "::error::care_fe.repo must be a github.com repository: $repo_url"
+            exit 1
+          fi
+          sha=$(gh api "repos/${repo}/commits/${ref}" --jq .sha)
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Cannot resolve ${repo}@${ref} to a commit sha"
+            exit 1
+          fi
+          {
+            echo "repo=${repo}"
+            echo "ref=${ref}"
+            echo "sha=${sha}"
+            echo "sha12=${sha:0:12}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build the care-pi CLI
+        run: go build -trimpath -o bin/care-pi ./agent/cmd/care-pi
+
+      # The agent renders the script and the env, and computes the build id.
+      # So the bundle has the build id that a Pi with the default config of the solution computes.
+      - name: Render fe-build.sh and frontend.env, and compute the build id
+        id: fe
+        env:
+          SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          dir="${RUNNER_TEMP}/fe-env"
+          mkdir -p "$dir"
+          bin/care-pi fe script > "${dir}/fe-build.sh"
+          bin/care-pi fe env --solution "$SOLUTION" --solutions solutions > "${dir}/frontend.env"
+          id=$(bin/care-pi fe build-id --care-fe-sha "$SHA" --env-file "${dir}/frontend.env")
+          keys=$(grep -v '^#' "${dir}/frontend.env" | grep . | cut -d= -f1 | paste -sd, -)
+          echo "Build id: ${id}"
+          echo "Env keys: ${keys}"
+          {
+            echo "dir=${dir}"
+            echo "build_id=${id}"
+            echo "env_keys=${keys}"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ steps.source.outputs.repo }}
+          ref: ${{ steps.source.outputs.sha }}
+          path: care_fe
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          # The major version of the node image of the local provider (images.node: node:22-bookworm-slim).
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: care_fe/package-lock.json
+
+      - name: Build care_fe with fe-build.sh
+        env:
+          CARE_FE_REPO: ${{ steps.source.outputs.repo }}
+          CARE_FE_SHA: ${{ steps.source.outputs.sha }}
+          BUILD_ID: ${{ steps.fe.outputs.build_id }}
+          ENV_DIR: ${{ steps.fe.outputs.dir }}
+        run: |
+          # The checkout is at the sha, so the script does not fetch the tarball again.
+          echo "$CARE_FE_SHA" > care_fe/.care-pi-sha
+          SRC="${GITHUB_WORKSPACE}/care_fe" \
+          CACHE="${HOME}/.npm" \
+          OUT="${GITHUB_WORKSPACE}/out/${BUILD_ID}" \
+          ENV_FILE="${ENV_DIR}/frontend.env" \
+            bash "${ENV_DIR}/fe-build.sh"
+
+      - name: Check the bundle
+        env:
+          BUILD_ID: ${{ steps.fe.outputs.build_id }}
+        run: |
+          out="out/${BUILD_ID}"
+          test -f "${out}/index.html"
+          # Same origin (SP5): the bundle must not contain the upstream API host.
+          if grep -rlF careapi.ohc.network "$out"; then
+            echo "::error::The bundle contains careapi.ohc.network; REACT_CARE_API_URL must be empty"
+            exit 1
+          fi
+          jq -e --arg id "$BUILD_ID" '.build_id == $id' "${out}/care-pi-build.json"
+
+      - name: Package the bundle
+        id: package
+        env:
+          BUILD_ID: ${{ steps.fe.outputs.build_id }}
+          SHA12: ${{ steps.source.outputs.sha12 }}
+        run: |
+          name="care_fe-${SOLUTION}-${SHA12}-${BUILD_ID}.tar.gz"
+          mkdir -p dist
+          tar --sort=name --owner=0 --group=0 --numeric-owner -czf "dist/${name}" -C "out/${BUILD_ID}" .
+          (cd dist && sha256sum "$name" > "${name}.sha256")
+          {
+            echo "name=${name}"
+            echo "sha256=$(cut -d' ' -f1 "dist/${name}.sha256")"
+            echo "size=$(du -h "dist/${name}" | cut -f1)"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: dist/
+          if-no-files-found: error
+
+      - name: Write the release notes and the job summary
+        env:
+          REPO: ${{ steps.source.outputs.repo }}
+          REF: ${{ steps.source.outputs.ref }}
+          SHA: ${{ steps.source.outputs.sha }}
+          SHA12: ${{ steps.source.outputs.sha12 }}
+          BUILD_ID: ${{ steps.fe.outputs.build_id }}
+          ENV_KEYS: ${{ steps.fe.outputs.env_keys }}
+          NAME: ${{ steps.package.outputs.name }}
+          SHA256: ${{ steps.package.outputs.sha256 }}
+          SIZE: ${{ steps.package.outputs.size }}
+        run: |
+          {
+            echo "## care_fe bundle: ${SOLUTION}"
+            echo
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Solution | \`${SOLUTION}\` |"
+            echo "| care_fe | \`${REPO}\` at \`${SHA}\` (ref \`${REF}\`) |"
+            echo "| FE build id | \`${BUILD_ID}\` |"
+            echo "| Env keys (no values) | ${ENV_KEYS//,/, } |"
+            echo "| Bundle | \`${NAME}\` (${SIZE}) |"
+            echo "| SHA-256 | \`${SHA256}\` |"
+            echo "| Download URL | \`${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/fe-${SOLUTION}-${SHA12}-${BUILD_ID}/${NAME}\` |"
+            echo
+            echo "A Pi with \`fe.provider: artifact\` and the default env of the solution installs this bundle."
+            echo "Another env.frontend gives another FE build id. Then use \`fe.provider: local\`."
+          } > release-notes.md
+          cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish the release
+        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA12: ${{ steps.source.outputs.sha12 }}
+          BUILD_ID: ${{ steps.fe.outputs.build_id }}
+        run: |
+          tag="fe-${SOLUTION}-${SHA12}-${BUILD_ID}"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release edit "$tag" --notes-file release-notes.md
+          else
+            gh release create "$tag" --target "$GITHUB_SHA" --latest=false \
+              --title "care_fe bundle ${SOLUTION} ${SHA12}" --notes-file release-notes.md
+          fi
+          gh release upload "$tag" dist/* --clobber
+          echo "Published release ${tag}" >> "$GITHUB_STEP_SUMMARY"

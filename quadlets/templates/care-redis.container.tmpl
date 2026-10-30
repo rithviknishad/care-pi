@@ -1,0 +1,32 @@
+# {{.Header}}
+
+[Unit]
+Description=care-pi Redis (cache and Celery broker)
+PartOf=care.target
+Requires=care-clock.service
+After=care-clock.service
+
+[Container]
+ContainerName=care-redis
+Image={{.Images.redis}}
+Pod=care.pod
+RunInit=true
+Volume={{path "RedisData"}}:/data
+Exec=redis-server --save 60 1000
+HealthCmd=redis-cli ping
+HealthInterval=5s
+HealthTimeout=5s
+HealthStartPeriod=10s
+HealthRetries=10
+Notify=healthy
+
+[Service]
+MemoryMax={{.MemRed.Max}}
+MemorySwapMax={{.MemRed.Swap}}
+OOMScoreAdjust=-500
+Restart=always
+RestartSec=5
+TimeoutStartSec=300
+
+[Install]
+WantedBy=care.target

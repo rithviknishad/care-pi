@@ -1,0 +1,35 @@
+# {{.Header}}
+# Celery worker with concurrency {{.Sizing.CeleryConcurrency}}.
+
+[Unit]
+Description=care-pi Celery worker
+PartOf=care.target
+Requires=care-clock.service care-beat.service
+After=care-clock.service care-beat.service care-s3.service
+
+[Container]
+ContainerName=care-worker
+Image={{.Images.care}}
+Pod=care.pod
+RunInit=true
+Exec=bash /app/celery_worker.sh
+EnvironmentFile={{path "RenderedCare"}}/backend.env
+Environment=CELERY_WORKER_CONCURRENCY={{.Sizing.CeleryConcurrency}}
+{{template "care-secrets" .}}
+HealthCmd=/app/healthcheck.sh
+HealthInterval=60s
+HealthTimeout=30s
+HealthStartPeriod=300s
+HealthRetries=3
+
+[Service]
+MemoryMax={{.MemWork.Max}}
+MemorySwapMax={{.MemWork.Swap}}
+Restart=always
+RestartSec=10
+# celery exits with 143 (128 + SIGTERM) when podman stops the container. This is a clean stop.
+SuccessExitStatus=143
+TimeoutStartSec=600
+
+[Install]
+WantedBy=care.target

@@ -1,0 +1,14 @@
+# {{.Header}}
+# The clock gate. The CARE containers start only after this unit passes.
+# Caddy does not wait for it, so it can show the clock status page.
+
+[Unit]
+Description=care-pi clock gate (wait for a trusted time)
+After=systemd-timesyncd.service time-set.target
+Before=care.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart={{path "Binary"}} clock wait
+TimeoutStartSec=infinity

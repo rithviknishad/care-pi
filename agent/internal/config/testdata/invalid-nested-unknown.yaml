@@ -1,0 +1,3 @@
+version: 1
+tls:
+  local_ca: {enabled: true, mode: strict}

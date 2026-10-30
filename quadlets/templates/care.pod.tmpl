@@ -1,0 +1,22 @@
+# {{.Header}}
+# The pod "care" shares one network namespace. The containers talk over localhost.
+# Do not start or stop care-pod.service directly. Use care.target.
+
+[Unit]
+Description=care-pi pod (shared localhost of the CARE containers)
+PartOf=care.target
+# The pod publishes on the LAN addresses, so it starts after the network is up.
+# Quadlet adds these two lines by default too. care-start.service does not wait for the network.
+Wants=network-online.target
+After=network-online.target
+
+[Pod]
+PodName=care
+# HTTP and HTTPS on each LAN IPv4 address, never on 0.0.0.0.
+{{- range .IPs}}
+PublishPort={{.}}:80:80
+PublishPort={{.}}:443:443
+{{- end}}
+# Debug ports on the host loopback only: API and object storage.
+PublishPort=127.0.0.1:19000:9000
+PublishPort=127.0.0.1:17070:7070

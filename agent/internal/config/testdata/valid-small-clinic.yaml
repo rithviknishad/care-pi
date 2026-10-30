@@ -1,0 +1,38 @@
+version: 1
+identity:
+  display_name: Sunrise Clinic
+  hostname: care
+solution:
+  name: care-clinic
+  track: stable
+size:
+  preset: small-clinic
+tls:
+  local_ca: {enabled: true}
+  public: {enabled: false, clinic_id: null}
+  tailscale: {enabled: false}
+clock:
+  policy: ntp
+backups:
+  wal_archive_timeout_min: 5
+  schedule: {db_full: "Sun 01:00", db_incr: "daily 02:00", files: "daily 02:30", verify: "Sat 03:00"}
+  retention: {db_full: 2, archive_days: 14, files_keep_daily: 14, files_keep_weekly: 8}
+  destinations:
+    - {id: usb, type: posix, path: /mnt/care-backup}
+    - {id: nas, type: sftp, host: nas.lan, user: care, path: /volume1/care}
+    - {id: b2, type: s3, endpoint: https://s3.eu-central-003.backblazeb2.com, bucket: sunrise-care, region: eu-central-003}
+updates:
+  auto: true
+  window: {days: [Sun], start: "02:00", end: "05:00"}
+  os_security: true
+env:
+  backend: {EMAIL_HOST: smtp.example.org, EMAIL_PORT: "587"}
+  frontend: {REACT_APP_TITLE: "Sunrise Clinic", REACT_ALLOWED_LOCALES: "en,ml"}
+fe:
+  provider: none
+  artifact_url: null
+images: {}
+uploads: {max_body_mb: 200}
+network:
+  wifi: null
+telemetry: {enabled: false, remote_write_url: null}

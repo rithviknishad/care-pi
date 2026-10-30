@@ -1,0 +1,36 @@
+# {{.Header}}
+# gunicorn with {{.Sizing.GunicornWorkers}} sync workers.
+
+[Unit]
+Description=care-pi API (gunicorn)
+PartOf=care.target
+Requires=care-clock.service care-beat.service
+After=care-clock.service care-beat.service care-s3.service
+
+[Container]
+ContainerName=care-api
+Image={{.Images.care}}
+Pod=care.pod
+RunInit=true
+Exec=bash /app/start.sh
+EnvironmentFile={{path "RenderedCare"}}/backend.env
+Environment=GUNICORN_WORKERS={{.Sizing.GunicornWorkers}}
+{{template "care-secrets" .}}
+HealthCmd=/app/healthcheck.sh
+HealthInterval=10s
+HealthTimeout=10s
+HealthStartPeriod=300s
+HealthRetries=6
+Notify=healthy
+
+[Service]
+MemoryMax={{.MemAPI.Max}}
+MemorySwapMax={{.MemAPI.Swap}}
+Restart=always
+RestartSec=10
+# gunicorn exits with 143 (128 + SIGTERM) when podman stops the container. This is a clean stop.
+SuccessExitStatus=143
+TimeoutStartSec=900
+
+[Install]
+WantedBy=care.target

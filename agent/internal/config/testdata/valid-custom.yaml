@@ -1,0 +1,17 @@
+version: 1
+solution:
+  track: custom
+  custom:
+    care_ref: latest-1284
+    care_fe_ref: 9f2c1a7e9f2c1a7e9f2c1a7e9f2c1a7e9f2c1a7e
+    plugs:
+      - id: care_filly
+        enabled: true
+        backend: {ref: develop}
+size:
+  preset: custom
+  custom: {gunicorn_workers: 4, celery_concurrency: 2, pg_shared_buffers_mb: 192}
+images:
+  postgres: localhost/care-pi/postgres:17-pgbackrest
+network:
+  wifi: {ssid: clinic, failover: true}

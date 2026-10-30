@@ -1,0 +1,43 @@
+# {{.Header}}
+# PostgreSQL 17 with pgBackRest. WAL goes to the local encrypted repository only (S40).
+
+[Unit]
+Description=care-pi database (PostgreSQL 17 with pgBackRest)
+PartOf=care.target
+Requires=care-clock.service
+After=care-clock.service
+
+[Container]
+ContainerName=care-db
+Image={{.Images.postgres}}
+Pod=care.pod
+RunInit=true
+Volume={{path "PGData"}}:/var/lib/postgresql/data
+Volume={{path "BackupPG"}}:/var/lib/pgbackrest
+Volume={{path "RenderedDB"}}:/etc/pgbackrest:ro
+Environment=POSTGRES_DB={{.DB.Name}}
+Environment=POSTGRES_USER={{.DB.User}}
+Secret={{.Secrets.PostgresPassword}},type=env,target=POSTGRES_PASSWORD
+Secret={{.Secrets.PGBackRestCipher}},type=env,target=PGBACKREST_REPO1_CIPHER_PASS
+Exec=postgres -c shared_buffers={{.Sizing.PGSharedBuffersMB}}MB -c max_connections=40 -c work_mem=4MB -c archive_mode=on -c archive_timeout={{.WALTimeoutSec}}s -c "archive_command=pgbackrest --stanza={{.Stanza}} archive-push %%p"
+HealthCmd=pg_isready -U {{.DB.User}} -d {{.DB.Name}}
+HealthInterval=5s
+HealthTimeout=5s
+HealthStartPeriod=60s
+HealthRetries=20
+Notify=healthy
+# podman stops the container with this timeout, then sends SIGKILL. The default is 10 s.
+# PostgreSQL needs more time for a clean shutdown. TimeoutStopSec in [Service] is longer.
+StopTimeout=110
+
+[Service]
+MemoryMax={{.MemDB.Max}}
+MemorySwapMax={{.MemDB.Swap}}
+OOMScoreAdjust=-500
+Restart=always
+RestartSec=5
+TimeoutStartSec=900
+TimeoutStopSec=120
+
+[Install]
+WantedBy=care.target

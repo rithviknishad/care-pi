@@ -1,0 +1,49 @@
+# Test fixture. It has the shape of solutions/care-clinic/solution.yaml, with fewer plugs.
+apiVersion: care-pi/v1
+kind: Solution
+name: care-clinic
+title: CARE Clinic
+description: Test fixture for the render goldens.
+care:
+  image: ghcr.io/ohcnetwork/care
+  ref: latest
+care_fe:
+  repo: https://github.com/ohcnetwork/care_fe
+  ref: develop
+plugs:
+  - id: care_onboarding_fe
+    label: CARE Onboarding
+    enabled: true
+    frontend:
+      slug: care_onboarding_fe
+      repo: https://github.com/ohcnetwork/care_onboarding_fe
+      ref: main
+      url: https://ohcnetwork.github.io/care_onboarding_fe/assets/remoteEntry.js
+    env:
+      frontend:
+        REACT_MFE_REGISTERED_COMPONENTS: UserDashboard
+  - id: care_multihost_files_be
+    label: Files on every address
+    enabled: false
+    auto: when_multihost
+    backend:
+      name: care_multihost_files_be
+      package: git+https://github.com/ohcnetwork/care_multihost_files_be.git
+      ref: main
+  - id: care_filly
+    label: Filly
+    enabled: false
+    backend:
+      name: care_filly
+      package: git+https://github.com/ohcnetwork/care_filly.git
+      ref: develop
+      configs:
+        MEDISPEAK_BASE_URL: ""
+env:
+  backend:
+    RATE_LIMIT: "5/10m"
+  frontend:
+    REACT_ALLOWED_LOCALES: "en,hi,ml"
+defaults:
+  size_preset: small-clinic
+  clock_policy: ntp
