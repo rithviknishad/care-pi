@@ -49,6 +49,8 @@
 | S43 | Base image access | The ghcr packages `care-pi/postgres-pgbackrest`, `care-pi/caddy`, and `care-pi/care` are set to **public** when CI first publishes them. The repo can stay private. The Pi pulls without a token. |
 | S44 | Firewall loader (S42 amended after the Phase 1 exit test) | The installer writes the table to `/etc/care-pi/firewall.nft` and loads it with its own unit `care-pi-firewall.service` (oneshot; start and reload `nft -f`; stop `nft delete table inet care-pi`; before `network-pre.target`; `WantedBy=multi-user.target`). The unit touches **only** the table `inet care-pi`. The installer does **not** enable `nftables.service`: its stop runs `nft flush ruleset`, and an `nftables` upgrade (possible through unattended-upgrades) restarts it, which removes the netavark and Tailscale rules. Policy per S42. |
 | S45 | Persistent journal (Phase 1 exit test, finding 14) | The installer keeps the journal on disk: `/etc/systemd/journald.conf.d/50-care-pi.conf` with `Storage=persistent` and `SystemMaxUse=200M`, and `/var/log/journal` (root:systemd-journal 2755). Raspberry Pi OS keeps the journal in RAM by default (`Storage=volatile`), so `care-pi logs` lost the history at each reboot. |
+| S46 | Agent account recovery (O9) | Console password (argon2id) **plus 8 one-time recovery codes** shown once in the wizard. `sudo care-pi auth reset` over SSH is the last fallback. |
+| S47 | Django admin (O16) | **Not routed in v1.** Support uses `care-pi care …` (`manage.py` in `care-api`). Revisit when support needs it. |
 
 ## B. PROPOSED — please confirm or override
 
@@ -137,12 +139,12 @@ docs/         operator + developer docs
 | O6 | ~~v1 solution list~~ → S32 (Clinic only). **Remaining:** confirm the proposed Clinic plug set (`03` §1.1): `care_onboarding_fe` (default on), `care_multihost_files_be` (auto when >1 hostname), `care_fasterappointments_fe` (optional), `care_filly` (optional, needs Medispeak). | Drives the CI matrix for bundle builds. |
 | O7 | **Verified, it *is* host-bound today** — but only matters once multihost is on. `PluginEngine.tsx` validates `meta.url` with zod v4 `z.url()`, which rejects `/plugs/x/remoteEntry.js` and `//host/…` (tested: only absolute `https://host/…` passes). The value is stored per `PlugConfig` row in the DB, so a bundle URL of `https://care.local/...` is loaded cross-origin from `https://<name>.ts.net` and fails wherever `care.local` does not resolve (e.g. a doctor at home). **Plan per your answer:** single-hostname setups need nothing. When multihost is enabled, prefer the ~5-line upstream change (resolve `meta.url` against `window.location.origin` and accept root-relative paths); until merged, the agent sets `meta.url` to the primary hostname and Caddy adds CORS headers for the other hostnames as the stopgap (works whenever the primary name is resolvable). I will ask before opening the upstream PR. | Needed as soon as multihost is on. |
 | O8 | ~~Upstream track~~ → S33 (semver). | — |
-| O9 | Agent recovery: password **+ recovery codes**, or password only with "reset via SSH/console cable" as the fallback? | Ceremony in the wizard vs lock-out risk for non-technical operators. |
+| O9 | ~~Agent recovery~~ → S46 (password + recovery codes; SSH reset fallback). | — |
 | O10 | ~~Hot-pluggable USB backup disk~~ → resolved by S40: an absent stick is a destination whose restic timer fails and catches up by content when it returns; only the mount unit (`nofail`, automount) and "destination degraded" UX remain, both in Phase 3. | — |
 | O11 | Is **Pi 4 2 GB** in the v1 acceptance matrix, or "should not break, tested later"? | FE build time and memory margins are much tighter there. |
 | O12 | Telemetry destination: who hosts the VictoriaMetrics/Grafana side? | Determines whether the agent ships `remote_write` only or a hosted-service enrolment flow. |
 | O13 | Maintainers and release cadence. Do you want Renovate/Dependabot to open PRs when upstream care/care_fe/plugs move, so locks are cut from PRs? | Shapes CI design from day one. |
 | O14 | ~~License~~ → S34 (yours). | — |
 | O15 | ~~Network scope~~ → S35 confirmed (NetworkManager profiles post-onboarding). Bond/failover approach still needs a SPIKE. | — |
-| O16 | Should **Django admin** (`/admin/` on the backend) be reachable at all? `care_clinic` does not route it. If yes: only behind console auth? | Attack surface vs support convenience. |
+| O16 | ~~Django admin~~ → S47 (not routed in v1). | — |
 | O17 | Does the operator ever need **Care's API from the public-cert hostname while the LAN is down**? (i.e. is "internet up, LAN DNS down" a real scenario in target clinics?) | Decides whether to invest in on-Pi DNS/dnsmasq advice. |
