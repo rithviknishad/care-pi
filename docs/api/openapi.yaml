@@ -181,7 +181,7 @@ paths:
         With `probe=true`, the agent also measures the root disk for about 10 s.
         The agent keeps the result of the disk probe for 24 h.
       x-cli: care-pi host check --json [--probe]
-      x-problems: [not-authenticated]
+      x-problems: [not-authenticated, invalid-request]
       parameters:
         - name: probe
           in: query
@@ -1057,7 +1057,7 @@ paths:
         `view=file` gives only the keys of the file.
         The `ETag` header identifies the file content. Send it in `If-Match` with `PUT` or `PATCH`.
       x-cli: care-pi config show --json [--file]
-      x-problems: [not-authenticated, invalid-config]
+      x-problems: [not-authenticated, invalid-config, invalid-request]
       parameters:
         - name: view
           in: query
@@ -1256,7 +1256,7 @@ paths:
         A resolve of a changed ref uses the network (about 5 s for each ref on a Pi 5).
         The preview holds the apply lock for its run, so it gives `409` with `job-running` while a job changes the host.
       x-cli: care-pi apply --dry-run [--update]
-      x-problems: [not-authenticated, invalid-config, unsupported-config, job-running]
+      x-problems: [not-authenticated, invalid-config, unsupported-config, job-running, invalid-request]
       parameters:
         - name: update
           in: query
@@ -2655,7 +2655,12 @@ components:
       description: |
         A problem that each operation can return:
         `malformed-request` (400), `payload-too-large` (413), `unsupported-media-type` (415),
-        `rate-limited` (429), `internal` (500), `unavailable` (503).
+        `rate-limited` (429), `internal` (500), `unavailable` (503). An operation with a session can
+        also return `csrf` (403) when `Sec-Fetch-Site` is not `same-origin` or `none`.
+        Body limits: 8 KiB for claim, login, recover, reauth, and TOTP verify; 1 MiB for `PUT /config`,
+        `PATCH /config`, `PUT /setup/steps/env`, and `PUT /setup/steps/tls`; 64 KiB for each other
+        operation. Caddy rejects a body larger than 1 MiB. A body that does not arrive in 10 s gives
+        `400 malformed-request`.
       content:
         application/problem+json:
           schema:
@@ -5433,7 +5438,7 @@ components:
           pattern: '^[a-z][a-z-]*$'
           description: |
             A stable key of the step. For a plan action: a `PlanActionKind`. Other keys: `validate`, `host-check`,
-            `resolve-lock`, `render`, `plan`, `wait-healthy`, `create-care-superuser`, `collect`, `archive`, `prune`.
+            `resolve-lock`, `render`, `plan`, `wait-healthy`, `set-hostname`, `create-care-superuser`, `collect`, `archive`, `prune`.
             `null` for a journal of Phase 1 when the name does not start with a known key.
           examples: [restart]
         state:

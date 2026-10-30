@@ -25,7 +25,10 @@ without signing, and backup confidentiality off-site.
 - The console has its own origin, `https://<host>:8443` (S48), so an XSS in Care or a
   malicious FE plug cannot read console responses (no CORS headers) and cannot make
   unsafe requests (`Origin` check + `X-CSRF-Token`). Cookies are not port-scoped: the
-  cookie is `__Host-care_pi_session`; Care's backend on 443 receives it and ignores it.
+  cookie is `__Host-care_pi_session`, and the browser also sends it to 443. Caddy strips it
+  before Care: the `@api` and `@s3` proxies remove it from the `Cookie` header, so Care and
+  its plugs never get it. The agent rejects a request with the session cookie when
+  `Sec-Fetch-Site` is not `same-origin` or `none`, so a page on 443 cannot start a GET with a cost.
 
 ## 2. Agent (root) hardening
 

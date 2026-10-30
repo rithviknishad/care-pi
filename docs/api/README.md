@@ -110,6 +110,10 @@ then offers the root CA (`/_care-pi/tls/root-ca`, with the fingerprint) and the 
 When the device installs the root CA first, port 8443 shows no second interstitial. Spike SP7 checks this on each browser.
 The root CA with name constraints (07 §4.1) comes in Phase 7. Until then the root is the root that Caddy makes.
 
+When `care-pi bootstrap` makes the claim code, `claim_methods` lists `claim-code` first, and the
+console shows the claim code field first. The console also switches to the claim code field when the
+operator types `XXXX-XXXX-XXXX` in the Imager password field.
+
 ### 2.3 The first-contact flow
 
 ```mermaid
@@ -198,7 +202,8 @@ The cookie and the two ports:
 
 - The `__Host-` prefix makes the browser enforce `Secure`, `Path=/`, and no `Domain`.
 - A cookie is not specific to a port. The browser also sends the cookie to Care on port 443.
-  Care's backend receives it and ignores it: Care uses bearer JWTs. The public operations of the agent on port 443 also ignore it.
+  Caddy strips it before Care: the routes to Care and to the S3 buckets remove it from the `Cookie` header.
+  Care uses bearer JWTs. The public operations of the agent on port 443 ignore it.
 - A script on port 443 cannot read the cookie (`HttpOnly`) and cannot replace it: a script cannot overwrite an `HttpOnly` cookie (RFC 6265bis).
 - `SameSite=Strict` does not separate the ports: they are the same site. Section 3 tells what separates them.
 
@@ -238,9 +243,18 @@ The promise resolves only when the browser trusts the certificate of that host. 
 - CORS: none. A script on port 443 cannot read a response of port 8443, so it cannot read the token
   (`GET /session`). The browser sends the cookie with its requests to port 8443 (same site), but the `Origin`
   check and the token reject them.
-- The unsafe operations need `Content-Type: application/json` (`415` else). A cross-origin request with that
-  content type needs a CORS preflight, and the agent never allows one.
+- An unsafe operation with a body needs `Content-Type: application/json` (`415` else). An unsafe operation
+  without a body needs no `Content-Type`. A cross-origin request with that content type needs a CORS
+  preflight, and the agent never allows one.
 - `GET` never changes state, so an `EventSource` (which cannot send headers) needs no token.
+- Each request to an operation with a session, also a `GET` and an `EventSource`, must not have
+  `Sec-Fetch-Site` with a value other than `same-origin` or `none`. Else the agent returns `403 csrf`,
+  and the idle timeout does not move. A request without the header (for example `curl`) passes.
+- For an operation with a session, the agent checks the session and the CSRF token before it reads
+  the body. Body limits: 8 KiB for claim, login, recover, reauth, and TOTP verify; 1 MiB for
+  `PUT /config`, `PATCH /config`, `PUT /setup/steps/env`, and `PUT /setup/steps/tls`; 64 KiB for each
+  other operation. Caddy rejects a body larger than 1 MiB. A body that does not arrive in 10 s gives
+  `400 malformed-request`.
 
 ## 4. Rate limits and lockout
 
@@ -263,6 +277,9 @@ Rules:
 - `sudo care-pi auth unlock` removes each lock.
 - The journal of `care-pi.service` records each auth event (claim, login, failure, lock, recover, password change)
   with the address and the user agent. It never records a secret.
+
+The agent keeps the address locks, the claim lock, and the failed attempts in a file
+(`state/auth-locks.json`), so a restart of the agent does not remove them.
 
 ## 5. The setup state machine
 
@@ -440,6 +457,7 @@ and these extension members when they apply: `errors[]` (`pointer`, `message`, `
 The type URI is `https://care-pi.rithviknishad.dev/problems/<slug>`. A client must branch on `type`.
 Each operation lists its own types in `x-problems`. Each operation can also return the general types
 (`malformed-request`, `payload-too-large`, `unsupported-media-type`, `rate-limited`, `internal`, `unavailable`).
+An operation with a session can also return `csrf` (403); see §3.
 
 | Slug | Status | When |
 |---|---|---|
@@ -525,6 +543,8 @@ Redocly names the parts of the config schema by their key (for example `hostname
 
 The agent embeds the console build and serves it at `https://<host>:8443/`. The API base URL of the console is `/api/v1`
 (same origin). The console and the agent always have the same version of this document.
+
+The console stops the job event poll on a 4xx problem other than `429` and shows the problem.
 
 ## 10. Versions
 
