@@ -216,7 +216,8 @@ The CLI can do the full setup without a browser:
 
 ```sh
 printf '%s\n' 'the console passphrase' | sudo care-pi auth set-password --password-stdin
-sudo care-pi config set identity.display_name='Sunrise Clinic' identity.hostname=care size.preset=small-clinic
+sudo care-pi config set identity.display_name='Sunrise Clinic' identity.hostname=care size.preset=small-clinic \
+  tls.local_ca.enabled=true
 sudo care-pi setup skip env
 sudo care-pi setup skip backups   # only a dev build
 printf '%s\n' 'the care superuser passphrase' | sudo care-pi setup finish \
@@ -225,6 +226,9 @@ sudo care-pi setup status
 ```
 
 As root, `setup finish` counts `account` (after `auth set-password`), `recovery-codes`, and `hardware` as done.
+`config set` marks the step of each key that it sets as done: `identity`, `tls`, `size`, and `env` (`env` and `fe` keys).
+The `tls` step needs a `tls.*` key, also when the value does not change (lumine, wave 4c: without it, `setup finish`
+stopped with `missing steps: tls`).
 
 ## 6. Jobs and the event stream
 
