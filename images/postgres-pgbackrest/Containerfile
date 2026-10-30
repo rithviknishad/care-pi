@@ -1,0 +1,20 @@
+FROM docker.io/library/postgres:17
+
+# Optional. When set, apt installs this upstream version of pgBackRest (for example 2.60.0).
+# CI sets it so that the image tag names the installed version.
+ARG PGBACKREST_VERSION=
+
+LABEL org.opencontainers.image.title="care-pi postgres-pgbackrest" \
+      org.opencontainers.image.description="PostgreSQL 17 with pgBackRest, for the care-db container of care-pi" \
+      org.opencontainers.image.source="https://github.com/rithviknishad/care-pi" \
+      org.opencontainers.image.licenses="PostgreSQL AND MIT"
+
+# The official postgres image already configures the PGDG apt repository
+# for its Debian release (/etc/apt/sources.list.d/pgdg.list), so pgbackrest comes from PGDG.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends "pgbackrest${PGBACKREST_VERSION:+=${PGBACKREST_VERSION}-*}" \
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p /var/log/pgbackrest /var/lib/pgbackrest /var/spool/pgbackrest /etc/pgbackrest \
+ && chown -R postgres:postgres /var/log/pgbackrest /var/lib/pgbackrest /var/spool/pgbackrest /etc/pgbackrest
+
+# ENTRYPOINT and CMD stay as in the base image.

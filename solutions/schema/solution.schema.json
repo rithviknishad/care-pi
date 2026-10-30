@@ -1,0 +1,326 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/rithviknishad/care-pi/blob/main/solutions/schema/solution.schema.json",
+  "title": "care-pi solution",
+  "description": "A solution is a curated plug set with environment defaults. One file, solutions/<name>/solution.yaml, describes it. The agent and CI validate the file against this schema. Plug ids must be unique in one solution. JSON Schema cannot check that rule, so the validator in the agent and CI checks it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "name", "title", "description", "care", "care_fe"],
+  "properties": {
+    "apiVersion": {
+      "description": "The version of this format. The only value is care-pi/v1.",
+      "const": "care-pi/v1"
+    },
+    "kind": {
+      "description": "The kind of object. The only value is Solution.",
+      "const": "Solution"
+    },
+    "name": {
+      "description": "The identifier of the solution. It must equal the name of the directory under solutions/. CI uses it in image tags.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "maxLength": 40
+    },
+    "title": {
+      "description": "The name that the console shows to the operator.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 80
+    },
+    "description": {
+      "description": "One or two sentences that tell the operator what the solution is for.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 400
+    },
+    "care": {
+      "description": "The upstream CARE backend image. The agent resolves the ref to an image digest and writes the digest to the lock.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "ref"],
+      "properties": {
+        "image": {
+          "description": "The image name without a tag or a digest, for example ghcr.io/ohcnetwork/care.",
+          "type": "string",
+          "pattern": "^[a-z0-9]+([._-][a-z0-9]+)*(:[0-9]+)?(/[a-z0-9]+([._-][a-z0-9]+)*)+$"
+        },
+        "ref": {
+          "description": "An image tag to track (for example latest) or a digest to pin (for example sha256:<64 hex characters>). The agent re-resolves a tag at each update check. The agent never re-resolves a digest.",
+          "type": "string",
+          "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|sha256:[a-f0-9]{64})$"
+        }
+      }
+    },
+    "care_fe": {
+      "description": "The CARE frontend source. The agent or CI builds it. The agent resolves the ref to a git sha and writes the sha to the lock.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo", "ref"],
+      "properties": {
+        "repo": {
+          "description": "The https URL of the git repository.",
+          "$ref": "#/$defs/httpsUrl"
+        },
+        "ref": {
+          "description": "A branch or a tag to track (for example develop) or a git sha to pin.",
+          "$ref": "#/$defs/gitRef"
+        }
+      }
+    },
+    "plugs": {
+      "description": "The plugs of the solution, in the order that the console shows them. The list can be empty or absent.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/plug" }
+    },
+    "env": {
+      "description": "Default environment variables of the solution. The operator can override each key in config.yaml. Values from enabled plugs (plugs[].env) are merged with these values.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "description": "Non-secret variables for the backend containers (api, worker, beat).",
+          "$ref": "#/$defs/envMap"
+        },
+        "frontend": {
+          "description": "Variables for the frontend build (REACT_*). A change needs a frontend rebuild.",
+          "$ref": "#/$defs/envMap"
+        }
+      }
+    },
+    "defaults": {
+      "description": "Defaults for the settings of config.yaml. The wizard starts with these values.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "size_preset": {
+          "description": "The CPU preset. solo: 1 gunicorn worker and 1 Celery process. small-clinic: 2 and 1. busy-counter: 3 and 2.",
+          "enum": ["solo", "small-clinic", "busy-counter"]
+        },
+        "clock_policy": {
+          "description": "The boot gate for the clock. ntp waits for time synchronisation over the network. rtc trusts a real-time clock with a battery.",
+          "enum": ["ntp", "rtc"]
+        }
+      }
+    }
+  },
+  "$defs": {
+    "httpsUrl": {
+      "type": "string",
+      "format": "uri",
+      "pattern": "^https://[^\\s]+$"
+    },
+    "gitRef": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$"
+    },
+    "envMap": {
+      "description": "Environment variable names with string values. Quote numbers and booleans.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Z][A-Z0-9_]*$" },
+      "additionalProperties": { "type": "string" }
+    },
+    "plug": {
+      "description": "One plug. A plug has a backend part, a frontend part, or both.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "enabled"],
+      "anyOf": [
+        { "required": ["backend"] },
+        { "required": ["frontend"] }
+      ],
+      "properties": {
+        "id": {
+          "description": "The identifier of the plug. It is unique in the solution. The console and config.yaml use it.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "maxLength": 64
+        },
+        "label": {
+          "description": "The name that the console shows to the operator.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "description": {
+          "description": "One or two sentences that tell the operator what the plug does.",
+          "type": "string",
+          "maxLength": 600
+        },
+        "enabled": {
+          "description": "The base state of the plug. CI builds the solution image from the enabled plugs that have a backend part.",
+          "type": "boolean"
+        },
+        "auto": {
+          "description": "A rule that lets the agent enable the plug. when_multihost: the agent enables the plug when config.yaml has more than one hostname. An auto plug is not part of the prebuilt solution image. The agent builds a local image when it enables the plug.",
+          "enum": ["when_multihost"]
+        },
+        "requires_internet": {
+          "description": "True when the plug needs internet access at run time. The console warns the operator on an offline device.",
+          "type": "boolean",
+          "default": false
+        },
+        "backend": { "$ref": "#/$defs/backendPlug" },
+        "frontend": { "$ref": "#/$defs/frontendPlug" },
+        "env": {
+          "description": "Environment variables that the plug needs. The renderer merges them into the solution env when the plug is enabled. For REACT_MFE_REGISTERED_COMPONENTS, the renderer joins the values of all sources with commas.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "backend": { "$ref": "#/$defs/envMap" },
+            "frontend": { "$ref": "#/$defs/envMap" }
+          }
+        },
+        "settings": {
+          "description": "The fields that the console shows to the operator for this plug. The console builds a form from this list.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/setting" }
+        },
+        "setup_steps": {
+          "description": "Steps that the operator must do by hand after the agent applies the plug. Each step is one sentence.",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "backendPlug": {
+      "description": "The backend part of a plug. It is a Python package that CI installs into the CARE image. It becomes one entry of ADDITIONAL_PLUGS.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "package", "ref"],
+      "properties": {
+        "name": {
+          "description": "The Django app name of the plug. It becomes the field name of the ADDITIONAL_PLUGS entry.",
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+        },
+        "package": {
+          "description": "The pip requirement without a version. It becomes the field package_name of the ADDITIONAL_PLUGS entry.",
+          "type": "string",
+          "pattern": "^git\\+https://[^\\s@]+$"
+        },
+        "ref": {
+          "description": "A branch or a tag to track, or a git sha to pin. The ADDITIONAL_PLUGS entry gets the version @<ref>. The lock resolves a tracked ref to a git sha (Phase 4).",
+          "$ref": "#/$defs/gitRef"
+        },
+        "configs": {
+          "description": "The default configuration. Each plug defines its own keys. It becomes the field configs of the ADDITIONAL_PLUGS entry. Do not store secrets here. Add an entry to settings with the type secret.",
+          "type": "object"
+        }
+      }
+    },
+    "frontendPlug": {
+      "description": "The frontend part of a plug. It is a module federation bundle that CARE loads in the browser. Give a repo and a ref, a url, or both.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slug"],
+      "anyOf": [
+        { "required": ["repo"] },
+        { "required": ["url"] }
+      ],
+      "dependentRequired": {
+        "repo": ["ref"],
+        "ref": ["repo"]
+      },
+      "properties": {
+        "slug": {
+          "description": "The slug of the plug in the plug_config table of CARE. It is also the directory name of the bundle on the device.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]*$"
+        },
+        "repo": {
+          "description": "The https URL of the git repository of the plug. CI builds the bundle from this repository when url is absent.",
+          "$ref": "#/$defs/httpsUrl"
+        },
+        "ref": {
+          "description": "A branch or a tag to track, or a git sha to pin. Required when repo is set.",
+          "$ref": "#/$defs/gitRef"
+        },
+        "url": {
+          "description": "The https URL of a remoteEntry.js bundle that is already built. When this field is set, the agent loads that bundle and CI builds nothing for this plug.",
+          "$ref": "#/$defs/httpsUrl"
+        },
+        "meta": {
+          "description": "The meta object that the agent writes to the plug_config row of CARE. Each plug defines its own keys. Most plugs use a config object.",
+          "type": "object"
+        }
+      }
+    },
+    "setting": {
+      "description": "One field of the console form for a plug.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["part", "key", "label", "type"],
+      "properties": {
+        "part": {
+          "description": "The part of the plug that the field changes.",
+          "enum": ["backend", "frontend"]
+        },
+        "key": {
+          "description": "For part backend: a key of backend.configs. For part frontend: a dotted path in frontend.meta, for example config.redirect_after_login.",
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "description": "The label of the field.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "help": {
+          "description": "A short help text under the field.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The field type. secret: the agent stores the value in the secrets directory and not in config.yaml. list: one entry for each line. choices: the operator selects some of the options.",
+          "enum": ["boolean", "string", "number", "url", "secret", "list", "choices"]
+        },
+        "default": {
+          "description": "The default value. When this field is absent, the default is the current value in backend.configs or frontend.meta.",
+          "anyOf": [
+            { "type": "boolean" },
+            { "type": "string" },
+            { "type": "number" },
+            { "type": "array" }
+          ]
+        },
+        "required": {
+          "description": "True when the plug does not work without a value.",
+          "type": "boolean",
+          "default": false
+        },
+        "placeholder": {
+          "description": "An example value that the form shows in an empty field.",
+          "type": "string"
+        },
+        "options": {
+          "description": "The options of a field of type choices.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["value", "label"],
+            "properties": {
+              "value": {
+                "description": "The value that the agent stores.",
+                "type": "string",
+                "minLength": 1
+              },
+              "label": {
+                "description": "The text that the console shows.",
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      },
+      "if": {
+        "properties": { "type": { "const": "choices" } },
+        "required": ["type"]
+      },
+      "then": { "required": ["options"] },
+      "else": { "not": { "required": ["options"] } }
+    }
+  }
+}

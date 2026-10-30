@@ -1,0 +1,28 @@
+# Solution image: the upstream CARE image plus the backend plugs of one solution.
+# Upstream paths (verified in ohcnetwork/care docker/prod.Dockerfile):
+#   WORKDIR /app, virtual environment /app/.venv, runtime user django,
+#   plug installer /app/install_plugins.py (reads ADDITIONAL_PLUGS).
+# CI and the agent always pass BASE as a digest reference (ghcr.io/ohcnetwork/care@sha256:...).
+ARG BASE=ghcr.io/ohcnetwork/care:latest
+
+FROM ${BASE} AS builder
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential libpq-dev libffi-dev git \
+ && rm -rf /var/lib/apt/lists/*
+# JSON list of {"name", "package_name", "version", "configs"}. "[]" installs nothing.
+ARG ADDITIONAL_PLUGS="[]"
+ENV ADDITIONAL_PLUGS=${ADDITIONAL_PLUGS}
+RUN python install_plugins.py
+
+FROM ${BASE}
+ARG BASE
+ARG ADDITIONAL_PLUGS="[]"
+LABEL org.opencontainers.image.title="care-pi care" \
+      org.opencontainers.image.description="Upstream CARE image with the backend plugs of one care-pi solution" \
+      org.opencontainers.image.source="https://github.com/rithviknishad/care-pi" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.base.name="${BASE}"
+COPY --from=builder --chown=django:django /app/.venv /app/.venv
+# Care reads ADDITIONAL_PLUGS at run time too (settings add the plugs to INSTALLED_APPS).
+ENV ADDITIONAL_PLUGS=${ADDITIONAL_PLUGS}

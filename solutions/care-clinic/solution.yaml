@@ -1,0 +1,163 @@
+# CARE Clinic solution. The format is described in solutions/README.md.
+# The schema is solutions/schema/solution.schema.json.
+apiVersion: care-pi/v1
+kind: Solution
+name: care-clinic
+title: CARE Clinic
+description: Outpatient clinic. Appointments, encounters, prescriptions, and invoices.
+
+# Both refs are tracked. The agent resolves them to a digest and a sha at each update check.
+# Upstream semver tags stopped in February 2025, so Clinic tracks "latest" and "develop".
+care:
+  image: ghcr.io/ohcnetwork/care
+  ref: latest
+care_fe:
+  repo: https://github.com/ohcnetwork/care_fe
+  ref: develop
+
+# The plug repositories, bundle hosts, and settings keys come from the plugin catalog of care_clinic.
+plugs:
+  - id: care_onboarding_fe
+    label: CARE Onboarding
+    description: Sets up a new clinic. The plug creates the geography, facility, departments, staff, number formats, questionnaires, and report templates.
+    enabled: true
+    requires_internet: true
+    frontend:
+      slug: care_onboarding_fe
+      repo: https://github.com/ohcnetwork/care_onboarding_fe
+      ref: main
+      url: https://ohcnetwork.github.io/care_onboarding_fe/assets/remoteEntry.js
+      meta:
+        config:
+          redirect_after_login: true
+    # The plug overrides the UserDashboard component. The FE build must register it.
+    env:
+      frontend:
+        REACT_MFE_REGISTERED_COMPONENTS: UserDashboard
+    settings:
+      - part: frontend
+        key: config.redirect_after_login
+        label: Open the clinic setup after sign-in
+        help: After sign-in, an administrator goes to the setup. This continues until the clinic has a facility.
+        type: boolean
+        default: true
+
+  - id: care_multihost_files_be
+    label: Files on every address
+    description: Lets staff open and upload files when they reach CARE through more than one address.
+    enabled: false
+    auto: when_multihost
+    backend:
+      name: care_multihost_files_be
+      package: git+https://github.com/ohcnetwork/care_multihost_files_be.git
+      ref: main
+      configs:
+        ALLOWED_HOSTS:
+          - "*.local"
+          - "*.ts.net"
+    settings:
+      - part: backend
+        key: ALLOWED_HOSTS
+        label: Addresses that can open files
+        help: Enter one address for each line. A * at the start matches any name. For example, *.local matches care.local.
+        type: list
+
+  - id: care_fasterappointments_fe
+    label: Faster appointments
+    description: Speeds up the front desk. After an appointment is booked, the plug issues the token and the invoice. The plug remembers the last practitioner, location, and service. It marks an invoice as balanced after full payment.
+    enabled: false
+    requires_internet: true
+    frontend:
+      slug: care_fasterappointments_fe
+      repo: https://github.com/ohcnetwork/care_fasterappointments_fe
+      ref: main
+      url: https://care-faster-appointments.pages.dev/assets/remoteEntry.js
+      meta:
+        config:
+          auto_create_invoice: true
+          collect_payment_on_appointment_page: true
+          mark_balanced_on_full_payment: true
+          payment_methods:
+            - cash
+            - ddpo
+          print_invoice_on_appointment_page: true
+          redirect_to_invoice: false
+    # The plug overrides these components. The FE build must register them.
+    env:
+      frontend:
+        REACT_MFE_REGISTERED_COMPONENTS: AppointmentDetail,ScheduleResourceSelector
+    settings:
+      - part: frontend
+        key: config.auto_create_invoice
+        label: Create the invoice when an appointment is booked
+        type: boolean
+      - part: frontend
+        key: config.collect_payment_on_appointment_page
+        label: Collect payment on the appointment page
+        type: boolean
+      - part: frontend
+        key: config.print_invoice_on_appointment_page
+        label: Print the invoice from the appointment page
+        type: boolean
+      - part: frontend
+        key: config.redirect_to_invoice
+        label: Open the invoice instead of the payment sheet on the appointment page
+        type: boolean
+      - part: frontend
+        key: config.mark_balanced_on_full_payment
+        label: Mark an invoice as balanced after full payment
+        type: boolean
+      - part: frontend
+        key: config.payment_methods
+        label: Payment methods to offer
+        type: choices
+        options:
+          - {value: cash, label: Cash}
+          - {value: ccca, label: Credit card}
+          - {value: debc, label: Debit card}
+          - {value: chck, label: Cheque}
+          - {value: cchk, label: Cashier's cheque}
+          - {value: cdac, label: Credit or debit account}
+          - {value: ddpo, label: Direct deposit}
+
+  - id: care_filly
+    label: Filly
+    description: AI scribe. Medispeak dictation fills CARE forms. The clinic needs a Medispeak account.
+    enabled: false
+    requires_internet: true
+    backend:
+      name: care_filly
+      package: git+https://github.com/ohcnetwork/care_filly.git
+      ref: develop
+      configs:
+        MEDISPEAK_API_KEY: ""
+        MEDISPEAK_BASE_URL: ""
+    settings:
+      - part: backend
+        key: MEDISPEAK_API_KEY
+        label: Medispeak API key
+        help: The key of the Medispeak account of the clinic. The key starts with msk_live_.
+        type: secret
+        required: true
+        placeholder: msk_live_...
+      - part: backend
+        key: MEDISPEAK_BASE_URL
+        label: Medispeak address
+        help: The address of the Medispeak v2 API that the account uses.
+        type: url
+        required: true
+        placeholder: https://example.org/api/v2
+    setup_steps:
+      - After the agent applies the change, turn on the Filly screens in the plugin marketplace of CARE.
+
+# Defaults for the whole solution. The operator can override each key in config.yaml.
+env:
+  backend:
+    RATE_LIMIT: "5/10m"
+  frontend:
+    REACT_ALLOWED_LOCALES: "en,hi,ml"
+    REACT_ALLOWED_ENCOUNTER_CLASSES: "amb"
+
+defaults:
+  size_preset: small-clinic
+  clock_policy: ntp

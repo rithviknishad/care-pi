@@ -1,0 +1,163 @@
+name: solution-image
+
+on:
+  workflow_dispatch:
+    inputs:
+      solution:
+        description: Name of the solution directory under solutions/
+        type: string
+        default: care-clinic
+      version:
+        description: Calendar version of the solution, for example 2026.11.0. An empty value gives 0.0.0-dev.
+        type: string
+        default: ""
+  push:
+    branches: [main]
+    paths:
+      - solutions/**
+      - images/care/**
+      - .github/workflows/solution-image.yml
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: solution-image-${{ inputs.solution || 'care-clinic' }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SOLUTION: ${{ inputs.solution || 'care-clinic' }}
+      VERSION_INPUT: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install skopeo, yq, and check-jsonschema
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends skopeo
+          sudo curl -fsSL -o /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/download/v4.54.1/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          pipx install check-jsonschema
+
+      - name: Check the inputs and the solution file
+        id: solution
+        run: |
+          if [[ ! "$SOLUTION" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+            echo "::error::Invalid solution name: $SOLUTION"
+            exit 1
+          fi
+          file="solutions/${SOLUTION}/solution.yaml"
+          if [ ! -f "$file" ]; then
+            echo "::error::File not found: $file"
+            exit 1
+          fi
+          version="${VERSION_INPUT:-0.0.0-dev}"
+          if [[ ! "$version" =~ ^([0-9]{4}\.(0[1-9]|1[0-2])\.[0-9]+|0\.0\.0-dev)$ ]]; then
+            echo "::error::Invalid version: $version. Use YYYY.MM.N or leave it empty."
+            exit 1
+          fi
+          check-jsonschema --schemafile solutions/schema/solution.schema.json "$file"
+          {
+            echo "file=${file}"
+            echo "version=${version}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Resolve the upstream image and the plugs
+        id: resolve
+        env:
+          FILE: ${{ steps.solution.outputs.file }}
+        run: |
+          image=$(yq '.care.image' "$FILE")
+          ref=$(yq '.care.ref' "$FILE")
+          if [[ "$ref" == sha256:* ]]; then
+            reference="${image}@${ref}"
+          else
+            reference="${image}:${ref}"
+          fi
+          digest=$(skopeo inspect --override-os linux --override-arch arm64 --format '{{.Digest}}' "docker://${reference}")
+          revision=$(skopeo inspect --override-os linux --override-arch arm64 --format '{{index .Labels "org.opencontainers.image.revision"}}' "docker://${reference}")
+          if [[ ! "$digest" =~ ^sha256:[a-f0-9]{64}$ ]]; then
+            echo "::error::Cannot resolve ${reference} to a digest"
+            exit 1
+          fi
+          # Only the enabled plugs with a backend part go into the image.
+          plugs=$(yq -o=json -I=0 '[(.plugs // [])[] | select(.enabled == true and .backend) | {"name": .backend.name, "package_name": .backend.package, "version": "@" + .backend.ref, "configs": (.backend.configs // {})}]' "$FILE")
+          {
+            echo "image=${image}"
+            echo "reference=${reference}"
+            echo "digest=${digest}"
+            echo "revision=${revision}"
+            echo "plugs=${plugs}"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Make the tags and labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/rithviknishad/care-pi/care
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ env.SOLUTION }}-${{ steps.solution.outputs.version }}
+            type=raw,value=${{ env.SOLUTION }}-latest,enable=${{ github.ref == 'refs/heads/main' }}
+          labels: |
+            org.opencontainers.image.base.digest=${{ steps.resolve.outputs.digest }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: images/care
+          file: images/care/Containerfile
+          platforms: linux/arm64,linux/amd64
+          push: true
+          provenance: false
+          build-args: |
+            BASE=${{ steps.resolve.outputs.image }}@${{ steps.resolve.outputs.digest }}
+            ADDITIONAL_PLUGS=${{ steps.resolve.outputs.plugs }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=care
+          cache-to: type=gha,scope=care,mode=max
+
+      - name: Write the job summary
+        env:
+          REFERENCE: ${{ steps.resolve.outputs.reference }}
+          DIGEST: ${{ steps.resolve.outputs.digest }}
+          REVISION: ${{ steps.resolve.outputs.revision }}
+          PLUGS: ${{ steps.resolve.outputs.plugs }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+          PUSHED: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "## Solution image: ${SOLUTION}"
+            echo
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Upstream reference | \`${REFERENCE}\` |"
+            echo "| Resolved digest (base) | \`${DIGEST}\` |"
+            echo "| Upstream git revision | \`${REVISION:-unknown}\` |"
+            echo "| ADDITIONAL_PLUGS | \`${PLUGS}\` |"
+            echo "| Pushed digest | \`${PUSHED}\` |"
+            echo
+            echo "Tags:"
+            echo
+            while IFS= read -r tag; do
+              echo "- \`${tag}\`"
+            done <<< "$TAGS"
+          } >> "$GITHUB_STEP_SUMMARY"

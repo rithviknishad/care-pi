@@ -1,0 +1,19 @@
+FROM --platform=$BUILDPLATFORM docker.io/library/caddy:2-builder AS builder
+
+# Cross-compile on the build host. This avoids the Go compiler under QEMU.
+ARG TARGETOS
+ARG TARGETARCH
+
+RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} xcaddy build \
+    --with github.com/caddy-dns/acmedns \
+    --with github.com/tailscale/caddy-tailscale \
+    --output /usr/bin/caddy
+
+FROM docker.io/library/caddy:2
+
+LABEL org.opencontainers.image.title="care-pi caddy" \
+      org.opencontainers.image.description="Caddy 2 with the acmedns DNS provider and the Tailscale module, for the care-caddy container of care-pi" \
+      org.opencontainers.image.source="https://github.com/rithviknishad/care-pi" \
+      org.opencontainers.image.licenses="Apache-2.0"
+
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy

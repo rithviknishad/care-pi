@@ -1,0 +1,97 @@
+name: images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - images/postgres-pgbackrest/**
+      - images/caddy/**
+      - .github/workflows/images.yml
+  pull_request:
+    paths:
+      - images/postgres-pgbackrest/**
+      - images/caddy/**
+      - .github/workflows/images.yml
+  workflow_dispatch:
+  schedule:
+    # Each Monday. The run picks up base image and package updates.
+    - cron: "23 4 * * 1"
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: postgres-pgbackrest
+            major: "17"
+          - image: caddy
+            major: "2"
+    env:
+      # The tags for the major version and for latest move on main only.
+      IS_MAIN: ${{ github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Resolve the pgBackRest version
+        id: pgbackrest
+        if: matrix.image == 'postgres-pgbackrest'
+        env:
+          MAJOR: ${{ matrix.major }}
+        run: |
+          version=$(docker run --rm "docker.io/library/postgres:${MAJOR}" \
+            sh -c 'apt-get update -qq >/dev/null && apt-cache policy pgbackrest' \
+            | sed -n 's/^ *Candidate: \([0-9.]*\)-.*/\1/p')
+          if [ -z "$version" ]; then
+            echo "::error::Cannot find a candidate version of pgbackrest"
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Make the tags and labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/rithviknishad/care-pi/${{ matrix.image }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=${{ matrix.major }},enable=${{ env.IS_MAIN == 'true' }}
+            type=raw,value=${{ matrix.major }}-pgbackrest${{ steps.pgbackrest.outputs.version }},enable=${{ env.IS_MAIN == 'true' && matrix.image == 'postgres-pgbackrest' }}
+            type=raw,value=latest,enable=${{ env.IS_MAIN == 'true' }}
+            type=sha,format=short
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: images/${{ matrix.image }}
+          file: images/${{ matrix.image }}/Containerfile
+          platforms: linux/arm64,linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          provenance: false
+          build-args: ${{ matrix.image == 'postgres-pgbackrest' && format('PGBACKREST_VERSION={0}', steps.pgbackrest.outputs.version) || '' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
