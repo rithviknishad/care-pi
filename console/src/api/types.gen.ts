@@ -4142,7 +4142,7 @@ export interface components {
             name: string;
             /**
              * @description A stable key of the step. For a plan action: a `PlanActionKind`. Other keys: `validate`, `host-check`,
-             *     `resolve-lock`, `render`, `plan`, `wait-healthy`, `create-care-superuser`, `collect`, `archive`, `prune`.
+             *     `resolve-lock`, `render`, `plan`, `wait-healthy`, `set-hostname`, `create-care-superuser`, `collect`, `archive`, `prune`.
              *     `null` for a journal of Phase 1 when the name does not start with a known key.
              * @example restart
              */
@@ -6417,7 +6417,12 @@ export interface components {
         /**
          * @description A problem that each operation can return:
          *     `malformed-request` (400), `payload-too-large` (413), `unsupported-media-type` (415),
-         *     `rate-limited` (429), `internal` (500), `unavailable` (503).
+         *     `rate-limited` (429), `internal` (500), `unavailable` (503). An operation with a session can
+         *     also return `csrf` (403) when `Sec-Fetch-Site` is not `same-origin` or `none`.
+         *     Body limits: 8 KiB for claim, login, recover, reauth, and TOTP verify; 1 MiB for `PUT /config`,
+         *     `PATCH /config`, `PUT /setup/steps/env`, and `PUT /setup/steps/tls`; 64 KiB for each other
+         *     operation. Caddy rejects a body larger than 1 MiB. A body that does not arrive in 10 s gives
+         *     `400 malformed-request`.
          */
         UnexpectedProblem: {
             headers: {
