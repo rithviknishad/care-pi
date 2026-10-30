@@ -150,6 +150,6 @@ The tests run one after the other, because each test resets the mock.
 
 Each test also checks that each request of the page goes to the origin of the console.
 
-`e2e/real` holds the journeys against a real device: claim and setup on a laptop, the phone journey on a ready
-device, a resume after a reboot, a revoked session, and a missing job. `npm run test:e2e` ignores them.
+`e2e/real` holds the journeys against a real device: claim and setup on a laptop or a phone, the phone journey on a
+ready device, a resume after a reboot, a revoked session, and a missing job. `npm run test:e2e` ignores them.
 `npm run test:e2e:real` runs them with `playwright.real.config.ts`. `e2e/real/README.md` lists the variables.
