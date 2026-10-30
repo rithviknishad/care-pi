@@ -32,7 +32,13 @@ export default function ProgressPage() {
     [qc, navigate],
   );
 
-  const jobId = initial?.id ?? setup.data?.job_id ?? null;
+  // Keep the job id after the job ends. GET /setup clears job_id when the state becomes ready. Without the kept
+  // id, the page goes to /setup/done without the job, and the hand-off card has no job result (the Care user
+  // name, the console URL after a host name change). Lumine, wave 4c.
+  const fromSetup = setup.data?.job_id ?? null;
+  const [kept, setKept] = useState<string | null>(initial?.id ?? null);
+  if (kept === null && fromSetup !== null) setKept(fromSetup);
+  const jobId = kept ?? fromSetup;
   if (!jobId) {
     if (setup.isPending) return <Skeleton className="h-96" />;
     if (setup.data?.state === "ready") return <Navigate to="/setup/done" replace />;
