@@ -372,3 +372,196 @@ SP7 custom Caddy + name-constrained CA + per-device UX + browser facts F5–F7 �
 matrix · SP9 RTC battery verification · SP10 `rpi-image-gen` · SP11 NetworkManager failover.
 Also not yet measured: anything on a Pi 4, and a browser-driven file upload through Care's
 UI (SP5 used curl against the presigned URLs only). See `09-handoff.md` §4.
+
+## Phase 1 exit test — lumine, 2026-10-30 — **PASS (5 of 5), with 3 fixes and follow-ups**
+
+Wave 3 of Phase 1. The owner chose an **in-place clean** of the spike stack, not a fresh flash.
+The clean removed `care.target`, the spike quadlets, the pod, the spike named volumes, the spike
+image, `/etc/care-pi-spike`, and `/var/lib/care-pi-spike`. It kept `tailscaled`, the node
+exporters, `~/care-pi-spike`, and the upstream images. Then `installer/install.sh --binary
+~/care-pi --hostname lumine --preset small-clinic --skip-bootstrap --yes`, a `config.yaml` with
+`images.postgres` and `images.caddy` set to `localhost/care-pi/...` (built on the Mac for arm64,
+then `podman load`; the ghcr packages do not exist yet), and `care-pi bootstrap`. Agent
+`7289bb7-dirty`. Upstream: care `ghcr.io/ohcnetwork/care@sha256:77fe743e…` (develop `2bae933`,
+2026-10-18), care_fe `83b007b7` (develop), node `22-bookworm-slim`. All scripts and raw output
+are in `local/wave3/` (not in the repo, S39). The checks from the Mac use the new Caddy root in
+`--cacert`.
+
+| # | Exit criterion (`06` Phase 1) | Result |
+|---|---|---|
+| 1 | Install → `https://<name>.local` serves Care | **PASS** with these deviations: script from a file with `--binary` (repository private, no `curl \| sh`); host name `lumine` (`https://lumine.local`); in-place clean, not a fresh flash; local base images. `https://lumine.local/` 200 (care_fe, no HSTS), `https://192.168.165.91/` 200 (`default_sni`, IP certificate), `http://` → 308 |
+| 2 | Log in as a superuser that `care-pi care create-superuser` made | **PASS** — `--password-stdin`; `POST /api/v1/auth/login/` 200; `getcurrentuser` 200, `is_superuser: true` |
+| 3 | Upload a file | **PASS** — new govt organization and patient through the API, `POST /api/v1/files/` → presigned `PUT` 1 MiB through Caddy 200 in 0.10 s → `mark_upload_completed` 200 → `read_signed_url` `GET` 200, SHA-256 identical, range 206; object on disk with `user.etag`, `user.content-type` xattrs |
+| 4 | Reboot → everything returns without intervention | **PASS** — all units active 118 s after `systemctl reboot`; `multi-user.target` at 8.3 s; file still readable |
+| 5 | Edit the preset → `care-pi apply` does the minimal restart | **PASS** — `small-clinic` → `solo`: plan = 1 file, `daemon-reload`, `restart care-api.service`; `care-db`, `care-caddy`, `care-beat`, `care-worker` timestamps unchanged; `GUNICORN_WORKERS=1`; 22 s |
+
+Other checks:
+
+| Check | Result |
+|---|---|
+| Installer second run | 13 of 13 steps `already configured` |
+| Firewall | table `inet care-pi`, policy accept, 22 (sshd active), 80, 443, 5353/udp; a second SSH connection worked; tailscale and netavark tables intact |
+| `apt-mark showhold` | `aardvark-dns conmon crun netavark podman skopeo` |
+| avahi | `allow-interfaces=eth0,wlan0`; installer read `Host name is lumine.local.` from the journal |
+| Memory cgroup | no `REBOOT REQUIRED`: the controller was active (k3s left `cgroup_enable=memory`); `cmdline.txt` now ends `cgroup_enable=memory cgroup_memory=1`; the firmware still adds `cgroup_disable=memory` to `/proc/cmdline`, the later token wins |
+| zram | rpi-swap default is 1× RAM on 2 GB (2005 MiB), so the installer wrote no drop-in. The drop-in itself was wrong (finding 2) |
+| Units after bootstrap | all active; `care-start.service` enabled, exit 0; `care.target` static (not enabled) |
+| Secrets | `podman exec` sees all `type=env` secrets; no secret value in `rendered/`, the lock, the quadlets, or `state/` |
+| `LogDriver=passthrough` | `care-pi: npm:` occurs 1 time in the journal of `care-fe-build` |
+| Same origin | 0 files in `fe/current/assets` name `careapi.ohc.network` |
+| Caddy routes | `/assets/*` `immutable` + zstd; `/care-pi-build.json` 200; `/console/` and `/_care-pi/status` 503 JSON; `/staticfiles/` 200; `/facility-bucket/nonexistent` 404, `/patient-bucket/x` 403, facility list 403 |
+| pgBackRest | `check` OK; `archive_command = pgbackrest --stanza=main archive-push %p`; repo files start `Salted__` |
+| No-change apply | `no changes`, exit 0, 0.1 s |
+| `env.backend` change (`EMAIL_PORT`) | plan = `backend.env` only, `restart care-beat care-worker care-api`; 56 s; revert 56 s |
+| Full cycle (`busy-counter` and back, extra) | stop → wait inactive → `reset-failed` → start; 65 s and 60 s; `shared_buffers` 256MB, then 128MB; clean Postgres shutdowns |
+| NetworkManager hook | 1 event → 1 apply after 5 s, `no changes`; 3 events in 1 s → 1 apply; `podman0` and `pre-up` → 0 |
+| SIGINT to `fe build --force` during the build | drop-in removed, care-api back to 2 workers and healthy, care-worker active, exit 1 |
+| OOM kills | 0 |
+
+### Timings
+
+| Event | Time |
+|---|---|
+| In-place clean (stop `care.target` until inactive: 32 s) | 36 s |
+| `install.sh`, first run (apt: restic, unattended-upgrades) | 48 s |
+| `bootstrap` (after fix 1), total | 6 min 55 s |
+| — lock resolution and start of `care.target` | ≈ 24 s |
+| — `care.target` start to API healthy, empty DB (beat `migrate` 2 min 45 s) | 3 min 18 s |
+| — FE build cold: in the container (fetch 2 s, `npm ci` 107 s, vite 37 s) / with scale-down and restore | 146 s / 3 min 13 s |
+| FE build after a re-fetch, npm cache warm (`npm ci` 73 s) | 115 s / 2 min 41 s |
+| FE build warm (after fix 3): `npm install` 6–7 s, vite 33–34 s | 40 s / 1 min 27 s |
+| Reboot: SSH back / first `/ping/` 200 / all units active | 32 s / 112 s / 118 s |
+| Boot (`systemd-analyze`): kernel + userspace; `multi-user.target`; `care.target` | 2.8 s + 95.2 s; 8.3 s; 95.2 s |
+| — clock gate (timesyncd answered at 35 s) / db / beat / api | 26.4 s / 5.8 s / 31.1 s / 23.7 s |
+| Preset change `small-clinic` → `solo` / back: apply, HTTP 502 | 22.4 s, 15 s / 21.9 s, 14 s |
+| `env.backend` change: apply, HTTP 502 | 56 s, 51 s |
+| Full cycle: apply, HTTP 502 | 60–65 s, 55–59 s |
+| Local FE build, HTTP 502 from the 2 care-api restarts | ≈ 36 s for each build |
+
+API during the cold FE build: `/ping/` mean 15.9 ms (8–37 ms, n = 14), `GUNICORN_WORKERS=1` during
+the build and 2 after it. Host `MemAvailable` minimum 469 MiB; zram used at most 0.95 GiB.
+From the Mac: `/ping/` mean 36 ms (n = 20).
+
+### Memory (`MemoryPeak`; cap in brackets)
+
+| Unit | After bootstrap (empty DB, `migrate`, FE build) | After the reboot | `busy-counter` |
+|---|---|---|---|
+| care-api | 491 MiB [512M] | 377 MiB (anon 312) | 485 MiB [768M] |
+| care-worker | 291 MiB [384M] | 303 MiB | 337 MiB [512M] |
+| care-beat | **382 MiB [384M] + 85 MiB swap** | 372 MiB (anon 154, file 164) | 195 MiB [384M] |
+| care-db | 202 MiB [384M] | 96 MiB | 75 MiB [512M] |
+| care-redis | 39 MiB [96M] | 50 MiB | 40 MiB |
+| care-s3 | 31 MiB [256M] | 46 MiB | 35 MiB |
+| care-caddy | 42 MiB [96M] | 93 MiB (anon 15, file 58) | 54 MiB |
+| care-fe-build | 772 MiB + 930 MiB swap [1700M + 1500M] | — | — |
+
+### Findings
+
+1. **Fixed — the first apply stopped at `start-target`.** `systemctl reset-failed <units>` exits
+   with code 1 and `Unit care-pod.service not loaded.` for each unit: `daemon-reload` generates
+   the quadlet units, but nothing loads them before the start of `care.target`. `bootstrap` failed
+   after 27 s. The unit tests did not see it, because `host.Fake` returns success. Fix:
+   `agent/internal/host/clients.go` (`ResetFailed` ignores an exit error when each stderr line
+   ends in `not loaded.`), test `TestResetFailedIgnoresNotLoaded` in
+   `agent/internal/host/host_test.go`. The second `bootstrap` continued from the partial state
+   (`care.target is not active` → start) without manual work.
+2. **Fixed — the rpi-swap drop-in did not remove the 2048 MiB limit.** `rpi-systemd-config`
+   (rpi-swap 1.2.4) drops an empty `MaxSizeMiB=`, and `rpi-desired-zram-size` then uses its
+   default 2048. On a Pi with more than 2 GB, the installer asks for a reboot, and the next run
+   stops with "zram swap is not active, but its configuration exists". Fix:
+   `installer/install.sh` writes `MaxSizeMiB=65536`. A test file in `/run/rpi/swap.conf.d` on
+   lumine gave 4048 → 4048 MiB and 8064 → 8064 MiB (empty value: 2048). A real install on a
+   4 GB or 8 GB Pi is still to do.
+3. **Fixed — warm FE builds became cold builds.** The warm path (`npm install`) rewrites
+   `package-lock.json` (probably for the platform packages that the `postinstall` of care_fe
+   adds). The next build of the same source then saw a different hash and ran `npm ci` (101 s
+   instead of 7 s). The stored hash was then the hash of the changed file, so a new care_fe sha
+   with the same lock also ran `npm ci`. Fix: `quadlets/templates/fe-build.sh.tmpl` keeps the
+   lock of the source in `.care-pi-package-lock.json` and copies it back before npm; 3 goldens;
+   `docs/fe.md`. Verified: re-fetch (`npm ci`), then 2 builds with `npm install` (7 s, 6 s).
+4. **Follow-up (decision, `01` §8) — care-beat reaches its cap during `migrate`.** Peak 382 MiB of
+   384M plus 85 MiB of swap on an empty DB (SP3: 314 MiB, 43 MiB swap). Only
+   `MemorySwapMax=128M` prevents an OOM kill. Raise beat to 512M, or measure each new upstream
+   image.
+5. **Follow-up — care-api at `small-clinic` is near its cap.** Peak 491 MiB of 512M after a restart
+   (with page cache); after the reboot 377 MiB (anon 312 MiB). No swap, no OOM kill. care-caddy
+   reached 93 MiB of 96M after the reboot, but 58 MiB of it is page cache. Watch both with each
+   upstream image.
+6. **Follow-up — container units go to `failed` at each stop.** gunicorn and celery exit with
+   status 143 (SIGTERM through catatonit), so systemd records `Failed with result 'exit-code'`.
+   This occurs at each full cycle, each restart, and for care-worker during each local FE build.
+   Proposal: `SuccessExitStatus=143` in `[Service]` of care-api, care-worker, and care-beat.
+   Also, the transient health check units of podman (`<container id>-<n>.service`) fail during
+   the start period and stay in `systemctl --failed`.
+7. **Follow-up — archive-push fails until the stanza exists.** The first apply runs
+   `ensure-stanza` after the FE build. `pg_stat_archiver.failed_count` was 22 over 6 minutes
+   (Postgres keeps the WAL; no data loss). Proposal: run `ensure-buckets` and `ensure-stanza`
+   before `ensure-fe` in `agent/internal/plan/plan.go`.
+8. **Follow-up (decision, S42) — `nftables.service` can remove the container rules.** The
+   installer enables `nftables.service`. Its `ExecStop=` is `nft flush ruleset`, and the postinst
+   of the Debian package runs `try-restart nftables.service` on each upgrade. The installer also
+   enables unattended-upgrades. An nftables update then removes the netavark DNAT rules (no
+   Care on 80/443 until a full cycle) and the tailscale rules. Proposal: a care-pi oneshot unit
+   that loads only `/etc/nftables.d/care-pi.nft`; do not enable `nftables.service`.
+9. **Follow-up (contract) — `care-start.service` waits for `network-online.target`.** Thus
+   `multi-user.target` waits for `NetworkManager-wait-online` (4.3 s here; up to its timeout when
+   the cable is out). The stack itself does not delay the boot. Proposal: put
+   `Wants=`/`After=network-online.target` on `care.pod` (the LAN publish needs the address),
+   and remove them from `care-start.service`.
+10. **Docs fixed — a local FE build restarts care-api 2 times.** Each restart gives HTTP 502 for
+    15 to 25 s. `docs/fe.md` said that the API had no downtime.
+11. **Docs fixed — a `no changes` apply writes no job journal.** `docs/apply.md` said that each
+    run writes one.
+12. The clock gate is 26 s of the 95 s boot-to-ready time: timesyncd got its first answer 35 s
+    after boot. This is input for SP9 (`rtc` policy).
+13. The Mac resolves `lumine.local` to the IPv6 ULA first (avahi `use-ipv6=yes`). Caddy publishes
+    IPv4 only, so curl falls back to IPv4 (first request 79 ms, by IP 28 ms). A client without
+    fallback fails. Input for SP8: publish 443 on the LAN IPv6 addresses, or stop the AAAA records.
+14. The journal of Pi OS Lite is volatile (no `/var/log/journal`). `care-pi logs` loses the history
+    at each reboot. Decide for the image (Phase 5): a persistent journal with a size limit.
+15. Small items: an anonymous `GET /api/v1/users/getcurrentuser/` gives 403, not 401 (upstream);
+    host GID 999 is `systemd-journal` on Pi OS, so `rendered/db/pgbackrest.conf` (0640, no
+    secret) is readable by that group; `bootstrap` prints no line for the lock resolution
+    (about 20 s of silence).
+
+### Follow-ups applied (2026-10-30)
+
+The owner accepted the 8 follow-ups (findings 4, 6 to 9, 13 to 15). The code changes are uncommitted.
+lumine ran the new agent (`7289bb7-dirty`, build 08:44Z) and the new `install.sh`. The installer ran again with
+the exit-test flags. Then lumine rebooted once. Scripts and raw output: `local/wave3b/` (S39).
+Later the same day, the owner **reverted change C** (see "Revert of C" below). lumine now runs build 09:22Z
+(the same code without C).
+
+| # | Change | Before | After (lumine) |
+|---|---|---|---|
+| 1 | `SuccessExitStatus=143` in `[Service]` of care-api, care-worker, care-beat (finding 6) | each stop: `status=143/n/a`, `Failed with result 'exit-code'` | after `systemctl stop care.target`: api, worker, beat `ExecMainStatus=143`, `Result=success`; s3, redis, db, caddy, pod `ExecMainStatus=0` (no change needed there). Full cycle and reboot: `Deactivated successfully` for all 7 containers |
+| 2 | `ensure-buckets` and `ensure-stanza` before `ensure-fe`; explicit wait for care-db (`pg_isready`, limit 5 min) before `stanza-create` (finding 7) | stanza ≈ 6 min 31 s after the start of `care.target` on the first bootstrap (after the 3 min 13 s FE build); `failed_count` 22 | stanza right after the API is healthy: ≈ 3 min 18 s on a new database (estimate from the exit-test timings; no new database on lumine). `failed_count` stayed 22 through a full cycle, a stop and start, and the reboot |
+| 3 | `network-online.target` moved from `care-start.service` to `care.pod` (finding 9) | `multi-user.target` at 8.27 s (it waited for `NetworkManager-wait-online`, 4.3 s) | `multi-user.target` at **4.40 s**; `critical-chain care-start.service` ends at `basic.target`; `care-pod.service` started at 8.25 s userspace, right after `network-online.target` (DHCP lease at 8.1–8.2 s) |
+| 4 | One line for each lock resolution (finding 15) | ≈ 20 s with no output | `apply --dry-run --update`: 5 lines in ≈ 22 s, for example `resolve docker.io/library/redis:8-alpine … 21090af93f83`, `resolve care_fe develop … 83b007b72cd0` |
+| A | care-beat cap 512M / 128M for each preset (finding 4) | 382 MiB of 384M + 85 MiB swap during `migrate` | cap 512M; peak after the reboot 375 MiB (existing DB) |
+| B | `care-pi-firewall.service` loads `/etc/care-pi/firewall.nft`; `nftables.service` not used (S44, finding 8) | `nftables.service` enabled and active; include line in `/etc/nftables.conf`; tables `inet filter`, `inet care-pi`, 6 Tailscale tables (iptables-nft), `inet netavark` | installer run 2: include removed, `nftables.conf` = its backup (byte for byte; backup and `/etc/nftables.d` removed), `nftables.service` disabled and stopped without its flush (runtime drop-in `ExecStop=`); stateless ruleset diff = only the position of `inet care-pi`. After the reboot: `inet care-pi` (loaded at 1.2 s, before `network-pre.target`), the 6 Tailscale tables, `inet netavark`; no `inet filter`. A second SSH connection worked; `/ping/` 200 from the Mac. Run 3: steps 1 to 13 `already configured`, step 14 skipped (`--skip-bootstrap`) |
+| C | avahi IPv4 only: `use-ipv6=no`, `publish-aaaa-on-ipv4=no` (finding 13). **Reverted** | Mac: A `192.168.165.91` and AAAA `fd29:149d:…:764f`; `/ping/` 0.035 s | Mac got only the A record (`dig … AAAA` no answer). But avahi sends no negative AAAA answer (avahi issue 428), so `getaddrinfo` for both families waited for a timeout: `curl https://lumine.local/ping/` 2.7–5.0 s (`curl -4` 0.03 s). The owner reverted C; see below |
+| D | persistent journal: `/etc/systemd/journald.conf.d/50-care-pi.conf` (`Storage=persistent`, `SystemMaxUse=200M`) (S45, finding 14) | `Storage=volatile` from `/usr/lib/systemd/journald.conf.d/40-rpi-volatile-storage.conf`; 1 boot in `/run/log/journal` | `/var/log/journal/<machine-id>/system.journal`; after the reboot `journalctl --list-boots` has 2 boots and `journalctl -b -1 -u care-api` returns lines; 27 MiB |
+
+Apply of the new agent: plan = 5 files (3 containers, `care.pod`, `care-start.service`), `daemon-reload`,
+`enable-target`, `full-cycle` (reason `pod changed`), `ensure-buckets`, `ensure-stanza`; 65 s. The agent
+compares the whole `care.pod` file, so a change of its `[Unit]` section also gives a full cycle.
+Reboot: SSH back after 37 s, first `/ping/` 200 after 111 s, `care.target` active at 95.4 s userspace
+(exit test: 32 s, 112 s, 95.2 s). `care-pi status`: `state: ok`.
+
+Still open: the transient health check units of podman (`<id>-<n>.service`) still fail during the start
+period and stay in `systemctl --failed` (finding 6, second part); publish 80/443 on the LAN IPv6 addresses (SP8).
+
+#### Revert of C (2026-10-30, owner decision)
+
+Reason: without AAAA records, each macOS lookup of `lumine.local` waited 2.7–5.0 s, because avahi sends no
+negative AAAA answer (avahi issue 428). With the AAAA record, the fallback is fast: the Pi answers the IPv6 SYN
+to 443 with an RST. The follow-up is in SP8: publish 80/443 on the LAN IPv6 addresses too.
+
+| Step | Result |
+|---|---|
+| Code | the installer avahi step sets only `allow-interfaces` and `use-ipv4=yes` again; the `avahi IPv4 only` host check and its tests are removed; S45 keeps only the persistent journal |
+| lumine conf | `use-ipv6=no` → `use-ipv6=yes` (the original line) and the added `publish-aaaa-on-ipv4=no` removed; the file is byte for byte the pre-C file (sha256 `bb95e2db…`); avahi restarted and registers `fd29:…:764f` and `192.168.165.91` on eth0 |
+| Mac `dig -p 5353 @224.0.0.251 lumine.local` | AAAA `fd29:149d:8c97:47dc:7f4a:da3a:4b7d:764f`, A `192.168.165.91` |
+| Mac `curl https://lumine.local/ping/` (3 runs) | 0.119 s, 0.044 s, 0.029 s (lookup 0.007 s). An IPv6-only connect (`curl -6`, `nc -6`) gets `Connection refused` after ≈ 1.0–1.3 s; port 22 over IPv6 connects in 0.02 s |
+| Installer with the exit-test flags (agent build 09:22Z) | steps 1 to 13 `already configured` (avahi too); the conf hash did not change; `host check` has no `avahi IPv4 only` line |

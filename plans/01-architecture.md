@@ -251,7 +251,7 @@ clients. Caddy, the agent and pgBackRest are still estimates (SP6/SP7/Phase 1).
 | Postgres 17 (`shared_buffers=128MB`, `max_connections=40`) | 82–96 MB | 187 MB (during `migrate`) | 384M / 0 (512M / 0 at 256 MB buffers) |
 | Redis 8 | 16–20 MB | 36 MB | 96M / 0 |
 | versitygw | 24 MB | 34 MB | 128M / 0 |
-| celery beat (runs `migrate`/`sync_*` at start) | 111–148 MB | 314 MB (during `migrate`) | 384M / 128M |
+| celery beat (runs `migrate`/`sync_*` at start) | 111–148 MB | 314 MB (during `migrate`); **382 MiB + 85 MiB swap** on an empty DB (measured in the Phase 1 exit test) | 512M / 128M (was 384M / 128M; raised after the Phase 1 exit test; same for each preset) |
 | gunicorn, per sync worker | 128 MB cold → ~175 MB warm, + 34 MB master | — | ≈ 64M + 200M × workers |
 | celery worker, per prefork child | ~160–180 MB, + ~180 MB parent | — | 384M / 128M (c=1), 512M / 128M (c=2) |
 | Caddy | ~20 MB *(estimate)* | ~40 MB | 96M / 0 |

@@ -5,9 +5,9 @@ Raspberry Pi: a flashable Pi OS Lite image, a `curl | sh` installer, and a Go ag
 on-Pi web console that renders one declarative `config.yaml` into rootful podman/quadlet
 units, Caddy, pgBackRest/restic backups, and solution-based updates.
 
-Status: **planning complete, Phase 0 (hardware spikes) in progress** on the dev Pi `lumine`.
-Nothing is implemented yet beyond throwaway spike scripts (kept out of the repo, S39).
-Start with `09-handoff.md` if you are picking this up.
+Status: **Phase 0 (hardware spikes) SP1–SP6 done; Phase 1 (declarative core) code
+complete, not yet run on a Pi.** See `09-handoff.md` §8 for the Phase 1 state and the
+pending exit test on `lumine`. Start with `09-handoff.md` if you are picking this up.
 
 How to read the labels used across these documents:
 
@@ -22,7 +22,7 @@ How to read the labels used across these documents:
 Files, in suggested reading order:
 
 1. `09-handoff.md` — **start here**: consolidated state, settled decisions, measured numbers, design consequences, what is left, how to resume on lumine.
-2. `00-decisions.md` — the authoritative decision ledger (S1–S40, P1–P20, O1–O17).
+2. `00-decisions.md` — the authoritative decision ledger (S1–S45, P1–P20, O1–O17).
 3. `01-architecture.md` — what runs where, the declarative config model, routing, TLS/naming modes, memory budget and presets, agent/console.
 4. `02-backups-and-restore.md` — Postgres PITR without downtime, files, destinations (one local pgBackRest repo + restic per destination), recovery key, restore flows.
 5. `03-solutions-releases-updates.md` — the "solution" format, refs vs pins, CI artefacts, lockfile, update/rollback orchestration.

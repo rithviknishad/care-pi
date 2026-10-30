@@ -34,7 +34,7 @@ DNS/ACME side service on `care-pi.rithviknishad.dev` (separate project, Phase 6)
 
 ## 2. Decisions in one screen
 
-Authoritative ledger: `00-decisions.md` (S1–S40 settled, P1–P20 all accepted, O-list in §C).
+Authoritative ledger: `00-decisions.md` (S1–S45 settled, P1–P20 all accepted, O-list in §C).
 The ones an implementer must not drift from:
 
 | Area | Decision |
@@ -70,7 +70,7 @@ Full detail per spike in `08-spike-log.md`; folded into `01` §4/§5/§8, `02`, 
 | Idle stack (`small-clinic`) | ≈ 820 MB sum of units; host `MemAvailable` ≈ 0.97 GB. |
 | Peaks | api 286 MiB (solo) / hits 512M cap at 3 workers; beat 314 MiB during `migrate`; db 187 MiB (migrate), 233 MiB (during pgBackRest backup); redis 36; versitygw 79 (50 MB transfer); Caddy 27 (50 MB transfer). |
 | Throughput (20 clients, simple API) | solo ≈ 54 req/s; small-clinic ≈ 93; busy-counter ≈ 114. CPU-bound, not memory-bound. |
-| Recommended caps | api `64M + 200M × workers` (320/512/768); worker 384M c=1 / 512M c=2; beat 384M; db 384M (512M at 256 MB buffers); redis 96M; versitygw 128–256M; Caddy 96M; agent 64M. All with `MemorySwapMax` set. |
+| Recommended caps | api `64M + 200M × workers` (320/512/768); worker 384M c=1 / 512M c=2; beat 512M (384M until the Phase 1 exit test, `08`); db 384M (512M at 256 MB buffers); redis 96M; versitygw 128–256M; Caddy 96M; agent 64M. All with `MemorySwapMax` set. |
 | Start-up | Empty DB → API healthy 3 min 20 s. api+worker restart 45 s (upstream runs `collectstatic` + `compilemessages` every start). Full cold stack restart 44 s. |
 | FE build (care_fe, vite 8 / rolldown) | Working set ≈ 1.8–2 GiB; a 1 GiB `MemoryMax` is OOM-killed every time. Fits 2 GB only via Pi OS zram (1× RAM, zstd, ~4:1). Winning unit: `MemoryHigh=768M MemoryMax=1700M MemorySwapMax=1500M OOMScoreAdjust=900`, db/redis `OOMScoreAdjust=-500`, app at `solo` + worker stopped → API 15–30 ms throughout. Warm ≈ 1 min, cold (`npm ci`, 1456 pkgs) ≈ 3 min. `--sourcemap false` → 13 MB vs 45 MB. Source via `codeload.github.com/<org>/<repo>/tar.gz/<sha>` (no git needed). Persistent per-repo `node_modules` 1.2 GB + npm cache 0.4 GB. |
 | Caddy + versitygw | Presigned S3 URLs proxy unchanged (path-style; don't strip prefix or rewrite Host). `VGW_REGION` must equal Care's `BUCKET_REGION` (else `AuthorizationHeaderMalformed`). Care never creates buckets → agent creates `patient-bucket`/`facility-bucket` with `LocationConstraint`; facility bucket needs an anonymous `s3:GetObject` policy (upstream fetches cover images unsigned). versitygw stores object metadata in **xattrs** (`user.etag`, …). |
@@ -171,3 +171,126 @@ Practical pitfalls learned while driving it:
   api/worker failed); after `stop`, poll until units are `inactive` before `start`.
 - `pgbackrest backup` needs `--repo=N`; run Care management commands via
   `podman exec care-api python manage.py …`.
+
+## 8. Phase 1 state (2026-10-30): code complete, exit test passed on lumine (8d)
+
+Written after waves 0–2 of Phase 1 (`06` §Phase 1, `09` §6b items 1–8). Four sub-agents
+wrote the code in one day; one independent review found 9 issues; all 9 are fixed. Nothing is
+committed yet (owner review first). Wave 3 removed the spike stack from lumine and ran the exit
+test there (8d).
+
+### 8a. What exists
+
+| Area | Content | Verified by |
+|---|---|---|
+| `go.mod` (root), `agent/` | `care-pi` CLI: `bootstrap`, `apply`, `render`, `config validate`, `status`, `logs`, `care create-superuser`, `clock wait`, `host check`, `fe build\|status\|prune`, `version`. Packages: `config` (+ JSON Schema), `solution`, `secrets`, `lock`, `netinfo`, `render` (71 golden files), `plan`, `apply`, `applock`, `host` (exec + fake), `s3admin`, `status`, `hostcheck`, `fe` (`artifact`, `local`). | `go test -race` 17 packages; golangci-lint 0 issues; `make build-linux` arm64 + amd64 |
+| `quadlets/templates/` | `care.pod`, 7 `care-*.container`, `care-fe-build.container`, `care.target`, `care-start.service`, `care-clock.service`, `Caddyfile`, `backend.env`, `frontend.env`, `fe-build.sh`, `pgbackrest.conf`, 3 status pages | quadlet `-dryrun` on podman 5.4.2 and 5.8.9, 0 warnings; `caddy validate` + live route test in Docker |
+| `images/` | `postgres-pgbackrest` (postgres 17.11 + pgBackRest 2.60.0), `caddy` (2.11 + `acmedns` + `caddy-tailscale`), `care` (solution image; `ADDITIONAL_PLUGS` build arg) | `docker build` arm64 + amd64; module list; zero-plug and one-plug builds |
+| `solutions/` | `care-clinic/solution.yaml` (4 plugs per `03` §1.1; only `care_onboarding_fe` on), `schema/solution.schema.json`, `embed.go` | ajv + check-jsonschema; 15 negative cases |
+| `installer/` | `install.sh` (POSIX sh, 14 steps since the follow-ups of 8d, idempotent, `--dry-run`), `uninstall.sh` | shellcheck; dry run and double run on `debian:trixie`; fixtures for cmdline, nftables, avahi, download |
+| `.github/workflows/` | `ci` (vet, test, lint, cross-build), `images`, `solution-image`, `fe-bundle` | actionlint |
+| `docs/` | `config.md`, `apply.md`, `fe.md`, `install.md` | — |
+
+Real FE build in Docker (`node:22-bookworm-slim`, Mac): cold 55 s, warm 13 s, 12 MB output,
+0 references to the upstream API host.
+
+### 8b. Decisions the implementation took (owner informed; override in `00` if wrong)
+
+- Caddy admin API on a unix socket inside the container, not `admin off`: `apply` needs
+  `caddy reload`; a TCP admin port would be reachable from every container in the pod.
+- Secrets reach containers as podman secrets (`Secret=…,type=env`). Rendered files, the
+  lock, `--dry-run` output and status never contain a secret. `render` works unprivileged.
+- Status pages switch by flag files in `/var/lib/care-pi/state/mode/`; Caddy needs no reload.
+- `care-start.service` (oneshot, `systemctl start --no-block care.target`) is what
+  `multi-user.target` wants, so boot does not wait for NTP or for the stack to be healthy.
+- `fe.provider` defaults to `local` (S8). `bootstrap --fe-provider` and the installer's
+  `--fe-provider` override it. The agent and CI do **not** set `REACT_PUBLIC_URL` (care_fe
+  uses it only for `og:url`), so a CI bundle's build id matches a default Pi.
+- IP addresses do not count as hostnames for the `when_multihost` plug.
+- The agent reads git refs over HTTPS (no `git` on the host). `skopeo` resolves image digests.
+- One `flock` (`/run/care-pi/apply.lock`) serializes `apply`, `bootstrap`, `fe build`, `fe prune`.
+- `care-db` has `StopTimeout=110` (podman's default 10 s caused crash recovery).
+- Installer: requires podman ≥ 5.4 (trixie; Ubuntu 24.04 refused); adds `catatonit`
+  (for `RunInit=true`); apt-holds the podman stack (`--no-apt-hold` to skip); nftables
+  allow-list only (S42), loaded by `care-pi-firewall.service`, not `nftables.service` (S44);
+  a persistent journal (S45); zram drop-in `/etc/rpi/swap.conf.d/50-care-pi.conf` is **untested on
+  a Pi**.
+- `DJANGO_SETTINGS_MODULE=config.settings.production`, `USE_SMS=False`,
+  `DJANGO_SECURE_SSL_REDIRECT=False` (upstream health check is plain HTTP on localhost).
+- Not implemented in this version, by design: `solution.track: pinned`, local solution
+  image builds, `tls.public`, `tls.tailscale`, `clock.policy: rtc`, backup timers, restic.
+
+### 8c. Next step: wave 3, the exit test on lumine (`06` Phase 1 exit criteria)
+
+This wipes the spike stack. Before it: set the ghcr packages public after the first CI
+publish (S43), or point `images.*` in `config.yaml` at locally built images.
+
+1. Flash Pi OS Lite trixie arm64 to lumine's SSD. Boot with ethernet.
+2. `make build-linux`; `scp bin/care-pi_linux_arm64 lumine:`.
+3. `sudo sh install.sh --binary ./care-pi_linux_arm64 --hostname care --preset small-clinic --yes`
+   (the repo is private, so the download path 404s; use `--binary`). Expect a reboot request
+   for the memory cgroup, then the printed `bootstrap` command.
+4. After `bootstrap`: `care-pi status`; `https://care.local` (or the printed IP) serves the setup
+   page, then Care once the FE build ends (cold ≈ 3 min + node image pull). Watch
+   `systemd-cgtop -m` and `MemAvailable` ≥ 370 MiB during the build.
+5. `sudo care-pi care create-superuser --username admin --email a@b.c`; log in; upload a file.
+6. `sudo reboot`; everything returns without intervention; `care-start.service` must not delay boot.
+7. Edit `size.preset` → `solo`; `sudo care-pi apply --dry-run`, then `apply`: only api/worker
+   units restart.
+8. Record results in `08-spike-log.md` as "Phase 1 exit test"; update `local/LUMINE.md`.
+
+Things the review and the agents flagged to check on real hardware: `podman exec` sees the
+`type=env` secrets; `LogDriver=passthrough` on the FE builder gives single journal lines;
+the rpi-swap drop-in; the avahi journal line that reports the advertised name; Ctrl-C during
+`fe build --force` restores api/worker.
+
+### 8d. Exit test result (wave 3, 2026-10-30)
+
+**PASS, 5 of 5 exit criteria**, on lumine after an in-place clean of the spike stack (not a fresh
+flash). Detail, timings, and memory: `08-spike-log.md`, "Phase 1 exit test". Raw output:
+`local/wave3/` (S39).
+
+| Criterion | Result |
+|---|---|
+| Install → `https://lumine.local` serves Care | PASS (`--binary`, host name `lumine`, local base images) |
+| Superuser from `care-pi care create-superuser`, login | PASS |
+| File upload (presigned PUT and GET through Caddy) | PASS |
+| Reboot → all units active without intervention | PASS (118 s; `multi-user.target` at 8.3 s) |
+| Preset edit → minimal restart | PASS (only `care-api`, 22 s) |
+
+The review items of 8c: `type=env` secrets work in `podman exec`; `LogDriver=passthrough` gives 1
+journal line; avahi reports `Host name is lumine.local.`; SIGINT during `fe build --force`
+restores care-api and care-worker; the rpi-swap drop-in was wrong and is fixed (below).
+
+Fixed in wave 3 (uncommitted):
+
+1. `agent/internal/host/clients.go` + test: `reset-failed` on units that systemd has not loaded
+   stopped the first apply.
+2. `installer/install.sh`: `MaxSizeMiB=` (empty) does not remove the 2048 MiB zram limit; now 65536.
+3. `quadlets/templates/fe-build.sh.tmpl` + goldens + `docs/fe.md`: `npm install` rewrote
+   `package-lock.json`, so warm builds became cold builds.
+4. `docs/fe.md`, `docs/apply.md`: API restarts during a local FE build; no job journal for a
+   no-change apply.
+
+Follow-ups for the orchestrator (detail in `08`, findings 4 to 15). The owner accepted all of them.
+**Done 2026-10-30** and verified on lumine (`08`, "Follow-ups applied"); still uncommitted:
+
+- ~~Decision `01` §8: care-beat cap (382 MiB of 384M plus 85 MiB swap during `migrate`).~~ Done: 512M / 128M for each preset.
+- ~~`SuccessExitStatus=143` for care-api, care-worker, care-beat (units go to `failed` at each stop).~~ Done.
+- ~~Plan order: `ensure-stanza` before `ensure-fe` (22 failed archive-push runs on the first apply).~~ Done, with an explicit `pg_isready` wait.
+- ~~Decision S42: do not enable `nftables.service` (its stop flushes the container rules; an
+  nftables upgrade restarts it).~~ Done: S44, `care-pi-firewall.service`; the installer migrates an older install.
+- ~~Contract: move `network-online.target` from `care-start.service` to `care.pod`.~~ Done: `multi-user.target` at 4.4 s (was 8.3 s).
+- SP8: AAAA records for `.local` but no IPv6 publish. avahi IPv4 only (change C) was applied and then
+  **reverted** by the owner: without the AAAA record, each macOS lookup waited 2.7–5.0 s, because avahi sends no
+  negative AAAA answer (avahi issue 428). With the AAAA record, the Pi resets the IPv6 SYN and the fallback is fast
+  (0.03–0.12 s). **Follow-up (SP8):** publish 80/443 on the LAN IPv6 addresses too.
+- Still open: SP9, the clock gate is 26 s of the boot.
+- ~~Phase 5: persistent journal.~~ Done in the installer (S45): `Storage=persistent`, `SystemMaxUse=200M`.
+- ~~`bootstrap` prints nothing during the lock resolution.~~ Done: one `resolve … <id12>` line each.
+- Still open: podman's transient health check units fail during the start period and stay in `systemctl --failed`.
+
+The later fresh-flash test must also cover what this run did not: `curl | sh` and the release
+download; the ghcr images and their digests; the image pulls (≈ 1 GB); the `REBOOT REQUIRED`
+path for the memory cgroup; the default host name `care` and a name collision; a 4 GB or 8 GB Pi
+for the zram drop-in; an SD card instead of the USB SSD; a first boot without NTP sync.
