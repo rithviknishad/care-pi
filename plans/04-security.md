@@ -22,20 +22,21 @@ without signing, and backup confidentiality off-site.
   to DNS, which is harmless).
 - Tailscale: `tailscale cert` for `<name>.<tailnet>.ts.net`; ACLs are the clinic's
   tailnet policy; the console shows who is in the tailnet.
-- The console and Care share the origin, so the console's cookies are scoped to a
-  path (`/console`) with `SameSite=Strict`; Care uses bearer JWTs, not cookies, so
-  no CSRF interplay.
+- The console has its own origin, `https://<host>:8443` (S48), so an XSS in Care or a
+  malicious FE plug cannot read console responses (no CORS headers) and cannot make
+  unsafe requests (`Origin` check + `X-CSRF-Token`). Cookies are not port-scoped: the
+  cookie is `__Host-care_pi_session`; Care's backend on 443 receives it and ignores it.
 
 ## 2. Agent (root) hardening
 
 - Listens only on a unix socket; Caddy is the sole client. No TCP listener.
 - Authentication: argon2id password hash in `/etc/care-pi/secrets/agent.json`,
-  10 printable recovery codes (hashed), optional TOTP. Login rate-limited per IP
+  8 printable recovery codes (hashed, S46), optional TOTP. Login rate-limited per IP
   and globally; lockout with exponential backoff; all auth events in journald.
 - Authorization is enforced in the Go handlers, never only by hiding UI.
-- Sessions: random 256-bit IDs, HttpOnly/Secure/SameSite=Strict, 12 h idle, 7 d
-  absolute; re-authentication for destructive actions (restore, factory reset,
-  show recovery key, SSH enable, password change).
+- Sessions: random 256-bit IDs, HttpOnly/Secure/SameSite=Strict, **2 h idle, 24 h
+  absolute** (S49); re-authentication for destructive actions (restore, factory reset,
+  show recovery key, SSH enable, password change, shutdown). Recovery codes: 8 (S46).
 - Input that becomes shell arguments (paths, hostnames, S3 endpoints, plug refs) is
   validated against strict schemas; execution uses `exec.Command` with argument
   arrays, never a shell string.
