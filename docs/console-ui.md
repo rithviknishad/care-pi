@@ -106,7 +106,7 @@ Each page obeys these rules:
 
 1. **Reserve the space.** A value that comes later has its final size before it comes:
    a skeleton of the same height, a `min-h-*`, or a fixed width (`w-[19ch]` for a memory value, `tabular-nums` for numbers).
-2. **Final-size skeletons.** The skeleton of a card has the same rows as the card. The skeleton of the units table has 9 rows.
+2. **Final-size skeletons.** The skeleton of a card has the same rows as the card. The skeleton of the units table has 10 rows, the units of `GET /status` in the ready state.
 3. **Update in place.** A refresh changes the text of a cell, never the structure. The dashboard reads `GET /status` each 10 s
    and keeps each card.
 4. **Never reorder a list on refresh.** `useStableOrder` (`src/hooks/use-stable-order.ts`) keeps the first order:

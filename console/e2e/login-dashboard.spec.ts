@@ -11,7 +11,7 @@ test("log in and read the dashboard", async ({ page, resetMock, requests }) => {
   await expect(page).toHaveURL(/\/dashboard$/);
 
   await expect(page.getByTestId("status-state")).toHaveText("OK");
-  await expect(page.getByTestId("units").locator("tbody tr")).toHaveCount(9);
+  await expect(page.getByTestId("units").locator("tbody tr")).toHaveCount(10);
   await expect(page.getByTestId("fe-build-id")).toHaveText("8d2f0c1a9b7e");
   await expect(page.getByTestId("care-digest")).toHaveText("sha256:5e0c3b2a1f9d");
   await expect(page.getByTestId("fingerprint")).toContainText("3f1d6c0e5a2b9e4d");

@@ -39,22 +39,20 @@ function units(state) {
     restarts: 0,
     log_unit: short,
   });
-  const caddy = {
-    ...unit("care-caddy.service", "caddy", 27, 96),
-    active_state: "active",
-    sub_state: "running",
-    memory_current_bytes: jitter(27 * MIB, 4 * MIB),
-  };
+  // Setup mode runs the pod and Caddy, so they are active in each state.
+  const always = (u, mem) => ({ ...u, active_state: "active", sub_state: "running", memory_current_bytes: mem });
+  // The order and the units of GET /status of the agent (agent/internal/status: Units).
   return [
     unit("care.target", "target", null, null),
-    unit("care-api.service", "api", 300, caps["care-api"].max_mb, "healthy"),
-    unit("care-worker.service", "worker", 340, caps["care-worker"].max_mb),
-    unit("care-beat.service", "beat", 130, 512),
+    { ...unit("care-clock.service", "clock", null, null), active_state: "active", sub_state: "exited" },
+    always(unit("care-pod.service", "pod", 2, null), jitter(2 * MIB, MIB)),
+    always(unit("care-caddy.service", "caddy", 27, 96), jitter(27 * MIB, 4 * MIB)),
     unit("care-db.service", "db", 92, caps["care-db"].max_mb, "healthy"),
     unit("care-redis.service", "redis", 18, 96, "healthy"),
     unit("care-s3.service", "s3", 24, 256),
-    caddy,
-    { ...unit("care-clock.service", "clock", null, null), active_state: "active", sub_state: "exited" },
+    unit("care-beat.service", "beat", 130, 512, "healthy"),
+    unit("care-worker.service", "worker", 340, caps["care-worker"].max_mb, "healthy"),
+    unit("care-api.service", "api", 300, caps["care-api"].max_mb, "healthy"),
   ];
 }
 

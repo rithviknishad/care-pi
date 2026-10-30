@@ -121,7 +121,8 @@ function MemoryBar({ used, cap }: { used: number | null; cap: number | null }) {
   );
 }
 
-const UNIT_ROWS = 9;
+// GET /status lists 10 units: care.target, care-clock, and the 8 units of the stack (agent/internal/status).
+const UNIT_ROWS = 10;
 
 function UnitsTable({ status }: { status: Status | undefined }) {
   const units = useStableOrder(status?.units, unitKey);
