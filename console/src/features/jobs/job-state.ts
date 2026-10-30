@@ -92,3 +92,23 @@ export const EXPECTED_SECONDS: Partial<Record<string, number>> = {
   "full-cycle": 45,
   restart: 45,
 };
+
+// In the setup job, the full cycle of care.target is the first start of Care: a new database runs the
+// migrations. On lumine (Pi 5, 2 GB) the step took 219 s, not 45 s (plans/08-spike-log.md, Phase 2 exit test).
+const SETUP_EXPECTED_SECONDS: Partial<Record<string, number>> = {
+  "full-cycle": 220,
+  restart: 220,
+};
+
+// jobKindFromId reads the kind from a job id: "<UTC time>-<kind>" (docs/console-server.md, section 6).
+// The console uses it before the first job object arrives (for example after a page reload).
+export function jobKindFromId(id: string): string | undefined {
+  return /^\d{8}T\d{6}(?:\.\d+)?Z-([a-z-]+)$/.exec(id)?.[1];
+}
+
+// expectedSeconds gives the expected duration of a step of a job of this kind, or undefined.
+export function expectedSeconds(action: string | null | undefined, jobKind?: string): number | undefined {
+  if (!action) return undefined;
+  if (jobKind === "setup" && SETUP_EXPECTED_SECONDS[action] !== undefined) return SETUP_EXPECTED_SECONDS[action];
+  return EXPECTED_SECONDS[action];
+}

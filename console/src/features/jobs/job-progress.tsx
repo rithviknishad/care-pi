@@ -10,7 +10,7 @@ import { useElapsed } from "@/hooks/use-countdown";
 import { formatAbout, formatElapsed, formatTime } from "@/lib/format";
 import { fmt, strings } from "@/lib/strings";
 import { cn } from "@/lib/utils";
-import { EXPECTED_SECONDS, stepProgress, type JobView } from "./job-state";
+import { expectedSeconds, jobKindFromId, stepProgress, type JobView } from "./job-state";
 import { useJobStream } from "./use-job-stream";
 
 const STATE_BADGE: Record<string, "neutral" | "info" | "success" | "destructive" | "warning"> = {
@@ -40,11 +40,11 @@ function StepIcon({ state }: { state: JobStep["state"] }) {
   }
 }
 
-function StepRow({ step, view }: { step: JobStep; view: JobView }) {
+function StepRow({ step, view, kind }: { step: JobStep; view: JobView; kind: string | undefined }) {
   const running = step.state === "running";
   const elapsed = useElapsed(step.started_at, step.finished_at, running);
   const progress = stepProgress(view.progress[step.index]);
-  const expected = step.action ? EXPECTED_SECONDS[step.action] : undefined;
+  const expected = expectedSeconds(step.action, kind);
   const message = view.progress[step.index]?.message;
   const secondary =
     step.detail ??
@@ -164,7 +164,7 @@ function JobProgressView({ jobId, initial = null, title, intro, onDone, children
       ) : null}
       <ol className="rounded-lg border" aria-label={strings.progress.title}>
         {view.steps.map((s) => (
-          <StepRow key={s.index} step={s} view={view} />
+          <StepRow key={s.index} step={s} view={view} kind={job?.kind ?? jobKindFromId(jobId)} />
         ))}
         {view.steps.length === 0 && !problem ? (
           <li className="flex h-14 items-center gap-3 px-1">

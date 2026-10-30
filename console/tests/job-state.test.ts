@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { Job, JobStep } from "@/api/types";
-import { MAX_JOB_LOGS, applyJobEvent, emptyJobView, stepProgress, type JobEvent } from "@/features/jobs/job-state";
+import {
+  MAX_JOB_LOGS,
+  applyJobEvent,
+  emptyJobView,
+  expectedSeconds,
+  jobKindFromId,
+  stepProgress,
+  type JobEvent,
+} from "@/features/jobs/job-state";
 
 function step(index: number, state: JobStep["state"]): JobStep {
   return {
@@ -71,5 +79,23 @@ describe("job event reducer", () => {
     expect(v.done).toBe(true);
     expect(v.job?.state).toBe("succeeded");
     expect(v.steps).toHaveLength(2);
+  });
+});
+
+describe("expected durations", () => {
+  it("gives the first start of Care in a setup job the long duration", () => {
+    // Lumine, wave 4c: the full cycle of the setup job took 219 s, and the console said "about 45 s".
+    expect(expectedSeconds("full-cycle", "setup")).toBe(220);
+    expect(expectedSeconds("full-cycle", "apply")).toBe(45);
+    expect(expectedSeconds("full-cycle")).toBe(45);
+    expect(expectedSeconds("ensure-fe", "setup")).toBe(180);
+    expect(expectedSeconds("write-files", "setup")).toBeUndefined();
+    expect(expectedSeconds(null, "setup")).toBeUndefined();
+  });
+
+  it("reads the job kind from the job id", () => {
+    expect(jobKindFromId("20261030T163803.767Z-setup")).toBe("setup");
+    expect(jobKindFromId("20261030T101500.123Z-fe-build")).toBe("fe-build");
+    expect(jobKindFromId("nodash")).toBeUndefined();
   });
 });
