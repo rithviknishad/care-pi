@@ -70,6 +70,7 @@ Never use --insecure-dev on a clinic device.`,
 				return a
 			},
 		}))
+		applySoftMemoryLimit(log)
 		l, err := server.Listen(f.listen, p, f.insecureDev)
 		if err != nil {
 			return exitcode.With(exitcode.BadInput, err)

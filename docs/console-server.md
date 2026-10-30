@@ -44,7 +44,7 @@ The installer writes `/etc/systemd/system/care-pi.service`, enables it, and star
 | `Type` | `notify` | The agent sends `READY=1` when the socket listens, and `STOPPING=1` at the stop (sd_notify datagram, no cgo). |
 | `Restart`, `RestartSec` | `always`, `2` | |
 | `TimeoutStopSec` | `30` | The agent closes the event streams, waits 10 s for the requests, then up to 20 s for the jobs. |
-| `MemoryMax`, `MemorySwapMax` | `64M`, `32M` | `01` §8. The agent hashes one password at a time (argon2id, 19 MiB). |
+| `MemoryMax`, `MemorySwapMax` | `64M`, `32M` | `01` §8. The agent hashes one password at a time (argon2id, 19 MiB). At the start, `serve` gives the Go garbage collector a soft limit of half of `memory.max` of its cgroup (32 MiB); `GOMEMLIMIT` in the environment wins. The child processes (podman, skopeo, journalctl) count in the same cgroup. |
 | `ProtectSystem` | `strict` | `04` §2. |
 | `ReadWritePaths` | `/etc/care-pi /var/lib/care-pi /run /etc/containers/systemd /etc/systemd/system /var/lib/containers -/var/cache/containers -/etc/hosts` | `/run`: podman writes `/run/containers`, `/run/libpod`, and `/run/crun`. `/etc/hosts`: the setup finish writes the line of a new host name. |
 | `ProtectHome`, `PrivateTmp`, `ProtectKernelTunables` | `read-only`, `yes`, `yes` | `04` §2. |
