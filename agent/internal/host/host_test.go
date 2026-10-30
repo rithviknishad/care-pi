@@ -110,3 +110,36 @@ func TestResetFailedIgnoresNotLoaded(t *testing.T) {
 		t.Fatal("an exit error without stderr must fail")
 	}
 }
+
+func TestDevKeepsSecretsAndStops(t *testing.T) {
+	ctx := context.Background()
+	h := New(NewDev())
+	if err := h.Podman.SecretSet(ctx, "care-pi-jwks-base64", []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	names, err := h.Podman.SecretNames(ctx)
+	if err != nil || !names["care-pi-jwks-base64"] || len(names) != 1 {
+		t.Fatalf("secrets %v %v", names, err)
+	}
+	state := func() string {
+		p, err := h.Systemd.Show(ctx, []string{"care-api.service"}, "ActiveState")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p[0]["ActiveState"]
+	}
+	if state() != "active" {
+		t.Fatal("a unit is active at the start")
+	}
+	_ = h.Systemd.Stop(ctx, "care.target")
+	if state() != "inactive" {
+		t.Fatal("the stop of care.target stops each unit")
+	}
+	_ = h.Systemd.Start(ctx, "care.target")
+	if state() != "active" {
+		t.Fatal("the start of care.target starts each unit")
+	}
+	if n, _ := New(Dev{}).Podman.SecretNames(ctx); len(n) != 0 {
+		t.Fatalf("a Dev without state has no secrets: %v", n)
+	}
+}

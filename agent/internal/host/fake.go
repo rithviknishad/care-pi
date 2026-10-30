@@ -105,3 +105,27 @@ func (g *FakeGit) LsRemote(_ context.Context, repo string) (map[string]string, e
 	}
 	return r, nil
 }
+
+// Stream implements Streamer: it gives each line of the scripted output to fn. For a command with
+// --follow, it then waits until ctx ends.
+func (f *Fake) Stream(ctx context.Context, c Cmd, fn func(line []byte) error) error {
+	out, err := f.Run(ctx, c)
+	for _, l := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if l == "" {
+			continue
+		}
+		if e := fn([]byte(l)); e != nil {
+			return e
+		}
+	}
+	if err != nil {
+		return err
+	}
+	for _, a := range c.Args {
+		if a == "--follow" {
+			<-ctx.Done()
+			return ctx.Err()
+		}
+	}
+	return nil
+}

@@ -2,7 +2,6 @@ package apply
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -273,75 +272,4 @@ func writeFile(p paths.Paths, f render.File, chown bool) error {
 		}
 	}
 	return nil
-}
-
-// journal writes one JSON file per job to state/jobs. Phase 1 only logs the steps.
-type journal struct {
-	path string
-	doc  journalDoc
-	now  func() time.Time
-}
-
-type journalDoc struct {
-	Kind     string        `json:"kind"`
-	Reason   string        `json:"reason,omitempty"`
-	Started  time.Time     `json:"started"`
-	Finished *time.Time    `json:"finished,omitempty"`
-	Result   string        `json:"result"`
-	Error    string        `json:"error,omitempty"`
-	Steps    []journalStep `json:"steps"`
-}
-
-type journalStep struct {
-	Name     string     `json:"name"`
-	Started  time.Time  `json:"started"`
-	Finished *time.Time `json:"finished,omitempty"`
-	Error    string     `json:"error,omitempty"`
-}
-
-func newJournal(o Options, kind, reason string) *journal {
-	now := o.Now()
-	name := now.UTC().Format("20060102T150405.000Z") + "-" + kind + ".json"
-	j := &journal{
-		path: o.Paths.Abs(paths.JobsDir + "/" + name),
-		doc:  journalDoc{Kind: kind, Reason: reason, Started: now.UTC(), Result: "running"},
-		now:  o.Now,
-	}
-	j.save()
-	return j
-}
-
-func (j *journal) start(name string) {
-	j.doc.Steps = append(j.doc.Steps, journalStep{Name: name, Started: j.now().UTC()})
-	j.save()
-}
-
-func (j *journal) finish(err error) {
-	s := &j.doc.Steps[len(j.doc.Steps)-1]
-	t := j.now().UTC()
-	s.Finished = &t
-	if err != nil {
-		s.Error = err.Error()
-	}
-	j.save()
-}
-
-func (j *journal) close(err error) {
-	t := j.now().UTC()
-	j.doc.Finished = &t
-	j.doc.Result = "ok"
-	if err != nil {
-		j.doc.Result = "failed"
-		j.doc.Error = err.Error()
-	}
-	j.save()
-}
-
-func (j *journal) save() {
-	data, err := json.MarshalIndent(j.doc, "", "  ")
-	if err != nil {
-		return
-	}
-	_ = os.MkdirAll(filepath.Dir(j.path), 0o700)
-	_ = lock.WriteFileAtomic(j.path, data, 0o600)
 }

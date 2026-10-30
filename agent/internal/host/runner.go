@@ -6,6 +6,7 @@
 package host
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -88,4 +89,73 @@ func (e Exec) Run(ctx context.Context, c Cmd) ([]byte, error) {
 		return stdout.Bytes(), fmt.Errorf("cannot run %s: %w", c.Name, err)
 	}
 	return stdout.Bytes(), nil
+}
+
+// Streamer runs a command and gives each line of its output to fn while it runs.
+// "care-pi serve" uses it to follow the journal.
+type Streamer interface {
+	Stream(ctx context.Context, c Cmd, fn func(line []byte) error) error
+}
+
+// Stream implements Streamer. It stops the command when ctx ends or fn returns an error.
+func (e Exec) Stream(ctx context.Context, c Cmd, fn func(line []byte) error) error {
+	if e.Log != nil {
+		_, _ = fmt.Fprintln(e.Log, "+", c.String())
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, c.Name, c.Args...)
+	if len(c.Env) > 0 {
+		cmd.Env = append(os.Environ(), c.Env...)
+	}
+	cmd.Stdin = c.Stdin
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("cannot run %s: %w", c.Name, err)
+	}
+	sc := bufio.NewScanner(out)
+	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	var fnErr error
+	for sc.Scan() {
+		if fnErr = fn(sc.Bytes()); fnErr != nil {
+			cancel()
+			break
+		}
+	}
+	err = cmd.Wait()
+	if fnErr != nil {
+		return fnErr
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		var xe *exec.ExitError
+		if errors.As(err, &xe) {
+			return &ExitError{Cmd: c.String(), Code: xe.ExitCode(), Stderr: stderr.String()}
+		}
+		return err
+	}
+	return nil
+}
+
+// Transient runs "podman pull" in a transient service unit (systemd-run --wait --pipe), and each
+// other command like Exec. "care-pi serve" uses it: an image pull needs more memory than the
+// MemoryMax of care-pi.service, and a transient unit has its own cgroup and no sandbox of the agent.
+type Transient struct {
+	Exec
+}
+
+// Run implements Runner.
+func (t Transient) Run(ctx context.Context, c Cmd) ([]byte, error) {
+	if c.Name == "podman" && len(c.Args) > 0 && c.Args[0] == "pull" {
+		args := []string{"--quiet", "--wait", "--pipe", "--collect", "--description=care-pi image pull", "--", "podman"}
+		c = Cmd{Name: "systemd-run", Args: append(args, c.Args...), Stdin: c.Stdin, Env: c.Env, Attach: c.Attach}
+	}
+	return t.Exec.Run(ctx, c)
 }

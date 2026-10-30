@@ -70,7 +70,7 @@ func Collect(ctx context.Context, h *host.Host, p paths.Paths, hostnames []strin
 	} else {
 		r.Problems = append(r.Problems, "cannot read the network interfaces: "+err.Error())
 	}
-	r.Published = publishedIPs(p)
+	r.Published = PublishedIPs(p)
 
 	units := Units()
 	props, err := h.Systemd.Show(ctx, units, "Id", "ActiveState", "SubState", "MemoryCurrent", "MemoryPeak", "MemoryMax", "NRestarts")
@@ -142,8 +142,8 @@ func parseBytes(s string) uint64 {
 	return v
 }
 
-// publishedIPs reads the PublishPort=<ip>:443:443 lines of the rendered care.pod.
-func publishedIPs(p paths.Paths) []string {
+// PublishedIPs reads the PublishPort=<ip>:443:443 lines of the rendered care.pod.
+func PublishedIPs(p paths.Paths) []string {
 	data, err := os.ReadFile(p.Abs(paths.QuadletDir + "/care.pod"))
 	if err != nil {
 		return nil

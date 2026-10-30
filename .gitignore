@@ -9,6 +9,9 @@ node_modules/
 *.img
 *.img.xz
 
+# the root of the dev listener (docs/console-server.md, section 9)
+.dev-root/
+
 # go test output
 coverage.out
 *.test
@@ -18,3 +21,10 @@ coverage.out
 .idea/
 .vscode/
 *.swp
+
+# console (the SPA). console/dist keeps only .gitkeep: the Go embed needs the directory.
+!console/dist/
+console/dist/*
+!console/dist/.gitkeep
+console/test-results/
+console/playwright-report/

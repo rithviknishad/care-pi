@@ -2,10 +2,13 @@
 
 This page tells you how to run `installer/install.sh`.
 The script prepares a Raspberry Pi OS or Debian-family host.
-It installs the `care-pi` agent and runs `care-pi bootstrap`.
-After the script ends, `https://care.local` serves Care.
-By default, bootstrap builds care_fe on the host (`--fe-provider local`).
-The first build takes about 3 minutes on a Pi 5 and needs internet.
+It installs the `care-pi` agent and its service `care-pi.service`, and runs `care-pi bootstrap`.
+By default, bootstrap starts setup mode: Caddy serves a setup page at `https://care.local` and the console at
+`https://care.local:8443/`. The script prints a claim code. Open the console, enter the claim code, and complete
+the setup. The setup finish installs Care.
+With `--unattended`, bootstrap installs Care at once, without the console (the Phase 1 behaviour).
+Then bootstrap builds care_fe on the host (`--fe-provider local`). The first build takes about 3 minutes on a Pi 5
+and needs internet.
 
 Related pages: `installer/README.md` (developer notes), `plans/05-image-and-installer.md` (design).
 
@@ -85,7 +88,7 @@ If there is no terminal, it stops and asks you to add `--yes`.
 | `--hostname NAME` | `CARE_PI_HOSTNAME` | `care` | Host name. The mDNS name is `NAME.local`. |
 | `--preset NAME` | `CARE_PI_PRESET` | `small-clinic` | Preset for `care-pi bootstrap` (`solo`, `small-clinic`, or `busy-counter`). |
 | `--fe-provider NAME` | `CARE_PI_FE_PROVIDER` | `local` | `fe.provider` for `care-pi bootstrap` (`local`, `artifact`, or `none`). `local` builds care_fe on the host. `none` serves only the setup page. See `docs/fe.md`. |
-| `--unattended` | `CARE_PI_UNATTENDED` | off | Ask no questions. Imply `--yes`. |
+| `--unattended` | `CARE_PI_UNATTENDED` | off | Ask no questions. Imply `--yes`. Run `care-pi bootstrap --unattended`: install Care at once, without the console setup (the Phase 1 behaviour). Use it for CI tests and prepared hosts. |
 | `--yes` | `CARE_PI_YES` | off | Do not ask for confirmation. |
 | `--no-firewall` | `CARE_PI_NO_FIREWALL` | off | Do not install the care-pi firewall (`care-pi-firewall.service` and its nftables table). |
 | `--no-avahi` | `CARE_PI_NO_AVAHI` | off | Do not install or configure avahi. |
@@ -127,8 +130,9 @@ It stops if the host is not supported.
 | 10 | apt holds | The script runs `apt-mark hold` on `podman crun netavark aardvark-dns conmon skopeo`. A Care release updates these packages on purpose. The future command `care-pi update --os` lifts the holds. |
 | 11 | Directories | The script creates `/etc/care-pi` and `/var/lib/care-pi` with the owners and modes from the Phase 1 contract. |
 | 12 | Agent | The script installs `/usr/local/bin/care-pi`. See [Agent download](#agent-download). |
-| 13 | NetworkManager hook | If NetworkManager is present, the script installs `/etc/NetworkManager/dispatcher.d/90-care-pi`. After an address change, it waits 5 s and runs `care-pi apply --reason address-change`. The events of those 5 s give one apply. An event during an apply gives one more apply after it. Two applies of the hook never overlap. |
-| 14 | Host check and bootstrap | The script runs `care-pi host check`. Then it runs `care-pi bootstrap --hostname NAME --preset NAME --fe-provider NAME --yes`. With `--fe-provider local`, bootstrap also makes the first care_fe build. |
+| 13 | Agent service | The script writes `/etc/systemd/system/care-pi.service` (`care-pi serve`: the console API on `/run/care-pi/api.sock`), enables it, and starts it. It restarts the unit when the unit or the binary changed. After a reboot request, the unit starts at the next boot. `docs/console-server.md` describes the unit. |
+| 14 | NetworkManager hook | If NetworkManager is present, the script installs `/etc/NetworkManager/dispatcher.d/90-care-pi`. After an address change, it waits 5 s and runs `care-pi apply --reason address-change`. The events of those 5 s give one apply. An event during an apply gives one more apply after it. Two applies of the hook never overlap. |
+| 15 | Host check and bootstrap | The script runs `care-pi host check`. Then it runs `care-pi bootstrap --hostname NAME --preset NAME --fe-provider NAME --yes` (with `--unattended` when the script has it). On a new host, bootstrap starts setup mode and prints the claim code. With `--unattended` and `--fe-provider local`, bootstrap also makes the first care_fe build. A host with an earlier install (a `lock.yaml`) always gets the full apply. |
 
 The script writes a log to `/var/log/care-pi-install.log`.
 It prefixes its own lines with `[care-pi]`.
@@ -144,7 +148,8 @@ Its input chain accepts these packets:
 - established and related connections,
 - ICMP and ICMPv6,
 - 22/tcp, only when sshd is active,
-- 80/tcp and 443/tcp,
+- 80/tcp and 443/tcp (Care),
+- 8443/tcp (the console, S48),
 - 5353/udp.
 
 The chain policy is `accept`. The chain drops nothing in Phase 1.
@@ -164,7 +169,7 @@ The script does not change a firewall that you configured:
 
 - It does not change `/etc/nftables.conf`, except to remove the lines of an older install.sh (see below).
   If that file has rules of its own, the script prints a note:
-  if they drop packets, also allow 80/tcp, 443/tcp, and 5353/udp there.
+  if they drop packets, also allow 80/tcp, 443/tcp, 8443/tcp, and 5353/udp there.
 - If `ufw` or `firewalld` is active, the script skips the step.
 
 The script checks the rules with `nft -c -f` before it writes a file.
@@ -229,7 +234,38 @@ If the memory controller is already active, no reboot is needed.
 
 ## After the install
 
-When bootstrap ends, the script prints:
+### Setup mode (the default)
+
+When bootstrap ends, it prints the claim code in a box, with the console URL for the mDNS name and for each
+LAN IPv4 address:
+
+```text
++------------------------------------------------------+
+|  Claim code: 4F7K-Q2MX-9PDA                          |
+|                                                      |
+|  Open the console and enter the claim code:          |
+|    https://care.local:8443/                          |
+|    https://192.168.1.10:8443/                        |
+|                                                      |
+|  Print the code again: sudo care-pi auth claim-code  |
++------------------------------------------------------+
+```
+
+1. On a device in the same network, open `https://care.local/`. The browser shows a certificate warning one time.
+   The device uses its own local certificate authority. Accept the warning.
+2. The setup page offers the root certificate and its SHA-256 fingerprint. Install the certificate on the device.
+   Then the console on port 8443 shows no second warning.
+3. Open the console link of the setup page (`https://care.local:8443/`). Enter the claim code and a console password
+   (12 to 128 characters). Write down the 8 recovery codes.
+4. Complete the steps of the setup. The finish installs Care and creates the first Care superuser.
+
+Anyone who can read the claim code is root on the host, so the code adds no new risk.
+To print the code again, run `sudo care-pi auth claim-code`. To make a new code, add `--rotate`.
+To complete the setup on the host without a browser, see `docs/console-server.md`, "Setup on the host".
+
+### Unattended install
+
+With `--unattended`, the script prints:
 
 - `Care is ready` when an FE build exists. Else it tells you that Care shows the setup page.
   This occurs with `--fe-provider none`, or when `config.yaml` existed with `fe.provider: none`.
@@ -251,6 +287,8 @@ Create the first Care user:
 ```sh
 sudo care-pi care create-superuser --username NAME --email EMAIL
 ```
+
+The console is at `https://<host>:8443/`. To claim it, print the claim code: `sudo care-pi auth claim-code`.
 
 ## Run the script again
 
@@ -323,11 +361,12 @@ sudo sh installer/uninstall.sh --purge-data
 
 The script:
 
-1. stops `care.target` and `care-clock.service`, and disables `care-start.service`, `care.target`, and `care-clock.service` with `systemctl`,
-2. waits until every `care-*` unit is inactive,
-3. runs `systemctl disable --now care-pi-firewall.service`. The stop deletes the table `inet care-pi`,
-4. removes the quadlets (`/etc/containers/systemd/care*`), the unit files, the NetworkManager hook, `/etc/care-pi/firewall.nft`, the files of an older install.sh, and the agent binary,
-5. removes a leftover pod `care` with `podman pod rm -f`.
+1. runs `systemctl disable --now care-pi.service` (the console agent) and removes its socket,
+2. stops `care.target` and `care-clock.service`, and disables `care-start.service`, `care.target`, and `care-clock.service` with `systemctl`,
+3. waits until every `care-*` unit is inactive,
+4. runs `systemctl disable --now care-pi-firewall.service`. The stop deletes the table `inet care-pi`,
+5. removes the quadlets (`/etc/containers/systemd/care*`), the unit files (also `care-pi.service`), the NetworkManager hook, `/etc/care-pi/firewall.nft`, the files of an older install.sh, and the agent binary,
+6. removes a leftover pod `care` with `podman pod rm -f`.
 
 The script never stops the pod unit with `systemctl`.
 
@@ -385,7 +424,11 @@ Test the name from another device.
 **Port 443 is in use.**
 Run `sudo ss -ltnp 'sport = :443'`.
 `tailscale serve` binds `<tailnet-ip>:443`. Stop it with `tailscale serve reset`.
-Care publishes ports 80 and 443 on the LAN addresses only.
+Care publishes ports 80, 443, and 8443 on the LAN addresses only.
+
+**The console gives `503` with "care-pi.service does not answer".**
+Caddy runs, but the agent does not. Run `sudo systemctl status care-pi.service` and `sudo care-pi logs agent`.
+Start it with `sudo systemctl start care-pi.service`. If the unit file is not there, run the script again.
 
 **The download fails.**
 The repository is private today. Use `--binary` or `CARE_PI_DOWNLOAD_BASE`.

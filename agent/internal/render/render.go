@@ -46,6 +46,7 @@ type output struct {
 }
 
 func always(*Model) bool         { return true }
+func full(m *Model) bool         { return !m.Bootstrap }
 func feBuild(m *Model) bool      { return m.FEBuild }
 func quadlet(name string) string { return paths.QuadletDir + "/" + name }
 func systemd(name string) string { return paths.SystemdDir + "/" + name }
@@ -53,12 +54,12 @@ func systemd(name string) string { return paths.SystemdDir + "/" + name }
 var outputs = []output{
 	{"care.pod.tmpl", quadlet("care.pod"), 0o644, 0, always},
 	{"care-caddy.container.tmpl", quadlet("care-caddy.container"), 0o644, 0, always},
-	{"care-db.container.tmpl", quadlet("care-db.container"), 0o644, 0, always},
-	{"care-redis.container.tmpl", quadlet("care-redis.container"), 0o644, 0, always},
-	{"care-s3.container.tmpl", quadlet("care-s3.container"), 0o644, 0, always},
-	{"care-beat.container.tmpl", quadlet("care-beat.container"), 0o644, 0, always},
-	{"care-worker.container.tmpl", quadlet("care-worker.container"), 0o644, 0, always},
-	{"care-api.container.tmpl", quadlet("care-api.container"), 0o644, 0, always},
+	{"care-db.container.tmpl", quadlet("care-db.container"), 0o644, 0, full},
+	{"care-redis.container.tmpl", quadlet("care-redis.container"), 0o644, 0, full},
+	{"care-s3.container.tmpl", quadlet("care-s3.container"), 0o644, 0, full},
+	{"care-beat.container.tmpl", quadlet("care-beat.container"), 0o644, 0, full},
+	{"care-worker.container.tmpl", quadlet("care-worker.container"), 0o644, 0, full},
+	{"care-api.container.tmpl", quadlet("care-api.container"), 0o644, 0, full},
 	{"care-fe-build.container.tmpl", quadlet("care-fe-build.container"), 0o644, 0, feBuild},
 	{"care.target.tmpl", systemd("care.target"), 0o644, 0, always},
 	{"care-clock.service.tmpl", systemd("care-clock.service"), 0o644, 0, always},
@@ -67,8 +68,8 @@ var outputs = []output{
 	{"status-setup.html.tmpl", paths.RenderedCaddy + "/status/setup.html", 0o644, 0, always},
 	{"status-maintenance.html.tmpl", paths.RenderedCaddy + "/status/maintenance.html", 0o644, 0, always},
 	{"status-clock.html.tmpl", paths.RenderedCaddy + "/status/clock.html", 0o644, 0, always},
-	{"backend.env.tmpl", paths.RenderedCare + "/backend.env", 0o600, 0, always},
-	{"pgbackrest.conf.tmpl", paths.RenderedDB + "/pgbackrest.conf", 0o640, paths.PostgresGID, always},
+	{"backend.env.tmpl", paths.RenderedCare + "/backend.env", 0o600, 0, full},
+	{"pgbackrest.conf.tmpl", paths.RenderedDB + "/pgbackrest.conf", 0o640, paths.PostgresGID, full},
 	{"frontend.env.tmpl", paths.RenderedFE + "/frontend.env", 0o600, 0, feBuild},
 	{"fe-build.sh.tmpl", paths.RenderedFE + "/" + FEBuildScriptName, 0o700, 0, feBuild},
 }
@@ -86,6 +87,13 @@ var funcs = template.FuncMap{
 		out := make([]string, len(items))
 		for i, s := range items {
 			out[i] = pre + s
+		}
+		return out
+	},
+	"suffix": func(suf string, items []string) []string {
+		out := make([]string, len(items))
+		for i, s := range items {
+			out[i] = s + suf
 		}
 		return out
 	},

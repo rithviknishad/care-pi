@@ -43,6 +43,9 @@ const (
 // StanzaName is the pgBackRest stanza of care-db.
 const StanzaName = "main"
 
+// BootstrapUnits are the units of setup mode (apply --phase=bootstrap): the pod and Caddy.
+var BootstrapUnits = []string{"care-pod.service", "care-caddy.service"}
+
 // Units lists the units of the stack in start order. care.target wants all of them.
 var Units = []string{
 	"care-pod.service",
@@ -143,6 +146,13 @@ type Model struct {
 
 	ModeClockWait   string
 	ModeMaintenance string
+
+	// Bootstrap is setup mode: only care.pod, care-caddy, and the start units.
+	Bootstrap bool
+	// ConsolePort is the port of the console origin. AgentSocket is the socket of the agent.
+	ConsolePort int
+	AgentSocket string
+	AgentUnit   string
 }
 
 // SecretNames holds the podman secret names for the templates.
@@ -168,6 +178,8 @@ type Input struct {
 	Lock     *lock.Lock
 	// IPs are the LAN IPv4 addresses. The first one is the primary address.
 	IPs []string
+	// Bootstrap renders setup mode: only the pod, Caddy, and the start units.
+	Bootstrap bool
 }
 
 // Hostnames returns the DNS names that the config serves. Phase 1 has only the local CA name.
@@ -336,6 +348,13 @@ func NewModel(in Input) (*Model, error) {
 		FEMemorySwap:    config.FEBuildMemorySwap,
 		ModeClockWait:   paths.ModeClockWait,
 		ModeMaintenance: paths.ModeMaintenance,
+		Bootstrap:       in.Bootstrap,
+		ConsolePort:     paths.ConsolePort,
+		AgentSocket:     paths.AgentSocket,
+		AgentUnit:       paths.AgentUnit,
+	}
+	if in.Bootstrap {
+		m.Units = BootstrapUnits
 	}
 	if len(hosts) > 0 {
 		m.Canonical = hosts[0]
@@ -360,6 +379,9 @@ func NewModel(in Input) (*Model, error) {
 	m.MemCad = config.MemCaddy
 
 	for name := range pl.Wants.Images {
+		if in.Bootstrap && name != "caddy" {
+			continue
+		}
 		img, ok := in.Lock.Images[name]
 		if !ok || img.Ref != pl.Wants.Images[name] {
 			return nil, fmt.Errorf("render: the lock has no entry for image %s (%s)", name, pl.Wants.Images[name])
@@ -422,12 +444,12 @@ func NewModel(in Input) (*Model, error) {
 	m.WALTimeoutSec = cfg.Backups.WALArchiveTimeoutMin * 60
 	m.PGRetentionFull = cfg.Backups.Retention.DBFull
 
-	if g, ok := in.Lock.Git["care_fe"]; ok && g.SHA != "" {
+	if g, ok := in.Lock.Git["care_fe"]; ok && g.SHA != "" && !in.Bootstrap {
 		m.FEBuildID = fe.BuildID(g.SHA, pl.Frontend)
 		m.FESHA = g.SHA
 		m.FERepo = GitHubSlug(g.Repo)
 	}
-	m.FEBuild = cfg.FE.Provider == "local"
+	m.FEBuild = cfg.FE.Provider == "local" && !in.Bootstrap
 	if m.FEBuild && m.FESHA != "" && m.FERepo == "" {
 		return nil, fmt.Errorf("render: fe.provider local fetches care_fe from codeload.github.com, but the care_fe repository %s is not on github.com", in.Lock.Git["care_fe"].Repo)
 	}
@@ -510,4 +532,5 @@ var HostPaths = map[string]string{
 	"BuildCareFE":   paths.BuildCareFE,
 	"ModeDir":       paths.ModeDir,
 	"Binary":        paths.Binary,
+	"RunDir":        paths.RunDir,
 }

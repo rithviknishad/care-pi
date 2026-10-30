@@ -103,6 +103,8 @@ type Input struct {
 	FEWanted bool
 	// StackImages are the pull references of the stack, for PullImages.
 	StackImages []string
+	// Bootstrap is setup mode: no buckets, no stanza, and no FE build (no database and no S3 run).
+	Bootstrap bool
 }
 
 // Plan is the ordered list of actions and the file changes.
@@ -318,13 +320,13 @@ func Build(in Input) *Plan {
 	}
 	// The buckets and the stanza come right after the start: the start of care.target returns
 	// when the API is healthy. The FE build comes last, because it takes minutes.
-	if started || in.EnsureStale {
+	if (started || in.EnsureStale) && !in.Bootstrap {
 		add(Action{Kind: EnsureBucket})
 	}
-	if started || in.EnsureStale || dbConf {
+	if (started || in.EnsureStale || dbConf) && !in.Bootstrap {
 		add(Action{Kind: EnsureStanza})
 	}
-	if in.FEWanted {
+	if in.FEWanted && !in.Bootstrap {
 		add(Action{Kind: EnsureFE})
 	}
 	if in.LockChanged {

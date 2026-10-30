@@ -6,9 +6,42 @@
 <h1>CARE is not ready on this device</h1>
 <p class="name">{{html .DisplayName}}</p>
 <p>The CARE web application is not installed on this device yet.</p>
-<p>Complete the setup on the device. Then open this page again.</p>
-{{template "status-addresses" .}}
+<p>Complete the setup in the console of the device:</p>
+<p><a id="console" href="https://{{.Canonical}}:{{.ConsolePort}}/">https://{{.Canonical}}:{{.ConsolePort}}/</a></p>
+<p id="state"></p>
+<p>The device uses its own certificate authority, so the browser shows a certificate warning.
+Install the root certificate on each device that opens CARE. Then the warning does not show again.</p>
+<p><a id="rootca" href="/_care-pi/tls/root-ca">Download the root certificate</a></p>
+<p>Compare this SHA-256 fingerprint with the fingerprint that your device shows: <code id="fingerprint">-</code></p>
+<p>Console addresses of this device:</p>
+<ul>
+{{- range .Sites}}
+<li><code>https://{{.}}:{{$.ConsolePort}}/</code></li>
+{{- end}}
+</ul>
 <p><small>This page refreshes every 15 seconds.</small></p>
 </main>
+<script>
+(function () {
+  var port = {{.ConsolePort}};
+  var link = document.getElementById("console");
+  link.href = "https://" + location.hostname + ":" + port + "/";
+  link.textContent = link.href;
+  var ua = navigator.userAgent;
+  var os = /iPhone|iPad|iPod/.test(ua) ? "ios" : /Android/.test(ua) ? "android" : /CrOS/.test(ua) ? "chromeos"
+    : /Windows/.test(ua) ? "windows" : /Mac OS X/.test(ua) ? "macos" : "linux";
+  fetch("/_care-pi/tls/instructions/" + os).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+    if (!d) { return; }
+    document.getElementById("fingerprint").textContent = d.root.fingerprint_sha256_colon;
+    document.getElementById("rootca").href = d.root.download_path;
+  }).catch(function () {});
+  fetch("/_care-pi/status").then(function (r) { return r.ok ? r.json() : null; }).then(function (s) {
+    if (!s) { return; }
+    var t = { unclaimed: "Open the console and claim the device.", claimed: "Open the console and continue the setup.",
+      setup: "Open the console and continue the setup.", applying: "The device installs CARE now.", ready: "Setup is complete." };
+    document.getElementById("state").textContent = t[s.setup_state] || "";
+  }).catch(function () {});
+})();
+</script>
 </body>
 </html>

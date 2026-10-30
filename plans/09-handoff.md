@@ -294,3 +294,79 @@ The later fresh-flash test must also cover what this run did not: `curl | sh` an
 download; the ghcr images and their digests; the image pulls (≈ 1 GB); the `REBOOT REQUIRED`
 path for the memory cgroup; the default host name `care` and a name collision; a 4 GB or 8 GB Pi
 for the zram drop-in; an SD card instead of the USB SSD; a first boot without NTP sync.
+
+### 8e. Phase 2 wave 4a: the agent daemon and the console API server (2026-10-30)
+
+Wave 4a adds `care-pi serve` (`care-pi.service`): the console API of `docs/api/openapi.yaml` (v0.3.0) and the
+console SPA on the unix socket `/run/care-pi/api.sock`, behind Caddy on port 8443 (S48). One agent wrote most
+of the code and stopped before the end. A second agent made the gap list, completed the code, the tests, and the
+docs, and ran the checks. Nothing is committed (owner review first). The console SPA is a separate wave (4b).
+`docs/console-server.md` is the developer guide.
+
+| Area | Content |
+|---|---|
+| `agent/internal/server` | Routes of each operation, the middleware (session, CSRF token, `Origin` check, rate limits, 1 MiB body, content type), SSE (jobs and logs), the SPA, the unix socket, the loopback dev listener, sd_notify (`READY=1`, `STOPPING=1`, no cgo), graceful stop. `contracttest`: kin-openapi `openapi3filter` checks of each test exchange. |
+| `agent/internal/service` | The shared layer of the HTTP handlers and the CLI (CLI parity): status, setup, config (ETag, `If-Match`, merge patch, plan preview, `apply=true`), apply, jobs, logs, support bundle (redacted `.tar.gz`), network, TLS (root CA DER/PEM/mobileconfig, install steps for 6 OSs), FE, Care, power. |
+| `agent/internal/auth` | argon2id (19 MiB, t 2, p 1, one hash at a time), `secrets/agent.json`, claim code `secrets/claim_code`, the Imager password behind `auth.OSPassword` (needs SP10), 8 recovery codes, TOTP (RFC 6238), sessions (`state/sessions.json`, 2 h idle, 24 h absolute, 10 at most), rate limits and locks of README section 4. |
+| `agent/internal/setup`, `agent/internal/jobs`, `agent/internal/problem` | The setup state machine and record (`state/setup.json`, `apply_phase`); the job journals (Phase 1 format plus members) with `<id>.events.jsonl`, cancel files, retention; the RFC 9457 problem types. |
+| `agent/cmd/care-pi` | `serve`, `auth …`, `setup status\|skip\|finish`, `config show\|set\|presets`, `jobs …`, `support-bundle`, `tls show\|root-ca`, `care info`, `power …`, `apply --phase`, `bootstrap --unattended`, `logs agent --since --json`, `fe status --json`, `host check --probe`. |
+| Setup mode | `bootstrap` on a new host: `apply --phase=bootstrap` (only `care.pod` and `care-caddy`), a claim code, the box with the console URLs. A Phase 1 host (a `lock.yaml`) gets the full apply and is `ready` after the claim. The finish job: validate, host check, host name, full apply, wait for care-api, Care superuser. Golden tree `small-clinic-bootstrap`. |
+| Caddy and units | Port 8443 site (`tls internal`, security headers, no HSTS, `reverse_proxy unix//run/care-pi/api.sock`, `flush_interval -1`); port 443 `/_care-pi/*` to the socket, `/console*` → `308`; `503` problem when the agent does not answer. `care.pod` publishes 8443. `care-caddy` mounts `/run/care-pi`, `Wants=`/`After=care-pi.service`. |
+| Installer | Step 13 writes, enables, and starts `care-pi.service` (`Type=notify`, `ProtectSystem=strict` + `ReadWritePaths`, `MemoryMax=64M`, `MemorySwapMax=32M`, `Restart=always`). The firewall accepts 8443/tcp. Setup mode is the default; `--unattended` gives the Phase 1 full apply. `uninstall.sh` removes the unit. |
+| Docs | New `docs/console-server.md`; updates of `docs/apply.md`, `docs/install.md`, `docs/README.md`, `installer/README.md`, `agent/README.md`, `quadlets/README.md`. |
+
+Decisions of wave 4a (owner informed; override in `00` if wrong):
+
+- The installer owns `care-pi.service`, not `apply`: an apply must not rewrite and restart the unit of its own process.
+  `ProtectControlGroups=` and `SystemCallFilter=` wait for Phase 7 (`podman exec` needs them off). `After=network.target`,
+  not `network-online.target`, so the boot does not wait. `podman pull` runs in a transient unit (`systemd-run`),
+  because a pull needs more memory than the 64M cap.
+- The installer flag `--unattended` also selects the full apply (no console). There is no separate flag.
+- The job journals of the CLI and of the agent are the same files. A CLI `apply` stays in its own process, behind the apply lock.
+- An unsafe request without a body needs no `Content-Type` (README section 3 asks for it on each unsafe request).
+- The served hosts of the `Origin` check also include the site names of the rendered Caddyfile, so the console stays
+  available on the old name after the identity step and before the finish.
+- The finish job sets the OS host name when `identity.hostname` changed: `hostnamectl set-hostname`, the `127.0.1.1`
+  line of `/etc/hosts` (so `ReadWritePaths` has `-/etc/hosts`), and `systemctl try-restart avahi-daemon.service`.
+  Its step action is `set-hostname`.
+- `Makefile`: `VERSION` uses only tags `v[0-9]*`. The `fe-*` tags of the fe-bundle workflow gave versions such as
+  `fe-care-clinic-…-dirty`. A dev build is each version that is not `vX.Y.Z`.
+- `.gitignore` keeps `console/dist/.gitkeep`: without it a fresh clone cannot compile `console/embed.go`.
+- The dev listener (`serve --insecure-dev --listen tcp://127.0.0.1:8443 [--fake-host] [--allow-origin O]`) uses the
+  cookie `care_pi_session` without `Secure` and accepts the origin `http://<Host>`. It refuses a non-loopback address.
+
+Spec changes that the contract needs (not made; `docs/api/**` is unchanged):
+
+1. `x-problems` of `getConfig`, `getHostCheck`, and `getApplyPlan`: add `invalid-request` (a query parameter that
+   fails its schema; `contracttest.KnownGaps`).
+2. README section 3: "An unsafe request with a body needs `Content-Type: application/json`" (not each unsafe request).
+3. `JobStep.action`: add the key `set-hostname` to the list of the description.
+
+Verification on the Mac (2026-10-30): `go build`, `go vet`, `go test -race` (29 packages), golangci-lint v2.15.0
+0 issues, `shellcheck -S style installer/*.sh`, `make build-linux` (arm64 + amd64), `make api-lint`. The contract tests
+check each of the 73 operations (55 of Phase 2) at least once; `go test -v ./agent/internal/server` prints the statuses.
+quadlet `-dryrun` (podman 5.4) on `small-clinic` (8 units) and `small-clinic-bootstrap` (2 units): 0 warnings.
+`caddy validate` (2.11.7) on both Caddyfiles. Live Caddy container: `:443/console/` → `308`, `:8443/` and
+`:8443/api/v1/health` → the socket, `:443/_care-pi/status` → the socket, a client `X-Forwarded-For` is replaced,
+SSE passes at once, no HSTS, `503` problem when the agent stops; the real `care-pi_linux_arm64` behind Caddy:
+claim, `__Host-` cookie, CSRF, `Origin` of port 443 → `403`. `systemd-analyze verify` (systemd 257) on `care-pi.service`.
+The dev listener and the curl walkthrough of `docs/console-server.md` (claim → session → status → setup → SSE → apply job).
+
+Not verified yet (needs lumine or a Pi): the sandbox of `care-pi.service` with podman and `podman exec`;
+`systemd-run` for `podman pull`; the host name change with avahi; the Imager password claim (SP10); the trust of the
+root CA on port 8443 in each browser (SP7); a reboot with the agent; the memory of the agent during a setup job.
+
+Deploy on lumine (a Phase 1 host; do not reflash):
+
+1. `make build-linux`; `scp bin/care-pi_linux_arm64 installer/install.sh lumine:`.
+2. `sudo sh install.sh --binary ./care-pi_linux_arm64 --hostname lumine --yes`. The installer writes and starts
+   `care-pi.service` and allows 8443/tcp. bootstrap finds `lock.yaml`, so it runs the full apply and prints the claim
+   code. The pod publishes a new port, so the apply makes one full cycle of `care.target` (about 2 minutes without Care).
+3. Check: `systemctl status care-pi.service`, `sudo care-pi logs agent -n 20`, `curl -sk https://lumine.local/_care-pi/status`,
+   `curl -sk https://lumine.local:8443/api/v1/health`, `curl -skI https://lumine.local/console/` (`308`).
+4. Claim: read the code with `sudo care-pi auth claim-code`. Open `https://lumine.local:8443/`, or send
+   `POST /api/v1/session/claim` with curl (`docs/console-server.md`, section 9, with `A=https://lumine.local:8443`,
+   `curl -k`, and `CODE` set by hand). The state is `ready` at once.
+5. To test setup mode on lumine, a new host is necessary: `sudo sh installer/uninstall.sh --purge-data --yes`, then step 2.
+   bootstrap then starts setup mode. Complete the setup in the console; the finish runs the full apply (image pulls,
+   FE build) and creates the Care superuser.

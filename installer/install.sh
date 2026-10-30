@@ -1,6 +1,8 @@
 #!/bin/sh
 # care-pi installer. It prepares a Raspberry Pi OS or Debian-family host for Care,
-# installs the care-pi agent, and runs "care-pi bootstrap".
+# installs the care-pi agent and its service (care-pi.service), and runs "care-pi bootstrap".
+# By default bootstrap starts setup mode: Caddy and the console on port 8443. The
+# operator claims the device in the console with the printed claim code.
 #
 #   curl -fsSL <URL> | sudo sh -s -- [options]
 #   sudo sh install.sh [options]
@@ -36,6 +38,9 @@ NFT_LEGACY_FILE="/etc/nftables.d/care-pi.nft"
 FIREWALL_FILE="/etc/care-pi/firewall.nft"
 FIREWALL_UNIT="care-pi-firewall.service"
 FIREWALL_UNIT_FILE="/etc/systemd/system/$FIREWALL_UNIT"
+AGENT_UNIT="care-pi.service"
+AGENT_UNIT_FILE="/etc/systemd/system/$AGENT_UNIT"
+CONSOLE_PORT=8443
 NFT_NOFLUSH_DIR="/run/systemd/system/nftables.service.d"
 JOURNALD_DROPIN="/etc/systemd/journald.conf.d/50-care-pi.conf"
 DISPATCHER_FILE="/etc/NetworkManager/dispatcher.d/90-care-pi"
@@ -48,7 +53,7 @@ HOLD_PACKAGES="podman crun netavark aardvark-dns conmon skopeo"
 # The oldest podman that care-pi supports. "care-pi host check" checks the same
 # version. The .pod quadlets need podman 5.0. care-pi is tested with podman 5.4.2.
 MIN_PODMAN=5.4
-STEP_TOTAL=14
+STEP_TOTAL=15
 
 SELF=$0
 
@@ -93,6 +98,7 @@ SYSTEMD=0
 IS_PI=0
 HOSTNAME_CHANGED=0
 NFT_LEGACY_FOUND=0
+AGENT_CHANGED=0
 
 # ---------------------------------------------------------------- output
 
@@ -141,7 +147,9 @@ usage() {
   cat <<EOF
 Usage: install.sh [options]
 
-Prepare this host for Care. Install the care-pi agent. Run "care-pi bootstrap".
+Prepare this host for Care. Install the care-pi agent and care-pi.service.
+Run "care-pi bootstrap". By default bootstrap starts setup mode: open the
+console at https://<host>:8443/ and enter the printed claim code.
 Run the script as root. To run it from a pipe, use sudo and "sh -s --":
 
   curl -fsSL $INSTALL_URL | sudo sh -s -- [options]
@@ -154,7 +162,9 @@ Options:
                      none. Default: local. local builds care_fe on this host.
                      The first build takes about 3 minutes and needs internet.
                      none serves only the setup page.
-  --unattended       Ask no questions. Imply --yes.
+  --unattended       Ask no questions. Imply --yes. Bootstrap applies everything
+                     at once (no console setup), as in Phase 1. Use it for CI
+                     tests and prepared hosts.
   --yes              Do not ask for confirmation.
   --no-firewall      Do not install the care-pi firewall (nftables table and
                      care-pi-firewall.service).
@@ -777,7 +787,12 @@ confirm_plan() {
   else
     log "  - download the agent ($AGENT_VERSION) and verify its checksum"
   fi
-  log "  - run care-pi bootstrap (host name $HOSTNAME_ARG, preset $PRESET, FE provider $FE_PROVIDER)"
+  log "  - install and start care-pi.service (the console on port $CONSOLE_PORT)"
+  if [ "$UNATTENDED" = 1 ]; then
+    log "  - run care-pi bootstrap --unattended (host name $HOSTNAME_ARG, preset $PRESET, FE provider $FE_PROVIDER)"
+  else
+    log "  - run care-pi bootstrap in setup mode (host name $HOSTNAME_ARG); print the claim code"
+  fi
   if ! ask "Continue? [y/N]"; then
     die "Stopped by the user. The script changed nothing."
   fi
@@ -1286,7 +1301,7 @@ nft_rules() {
   fi
   cat <<EOF
 # Managed by care-pi install.sh. Do not edit. $FIREWALL_UNIT loads this file.
-# Phase 1: the chain accepts the Care ports and drops nothing. The policy is
+# The chain accepts the Care ports (80, 443) and the console (8443, S48). It drops nothing. The policy is
 # "accept". The default-drop policy comes in Phase 7 (hardening). Allow DHCP
 # (udp 68) before that change.
 # The file changes only the table inet care-pi. It does not touch the tables of
@@ -1303,7 +1318,7 @@ table inet care-pi {
     ct state established,related accept
     ip protocol icmp accept
     meta l4proto ipv6-icmp accept$nr_ssh
-    tcp dport { 80, 443 } accept
+    tcp dport { 80, 443, $CONSOLE_PORT } accept
     udp dport 5353 accept
   }
 }
@@ -1553,7 +1568,7 @@ step_firewall() {
   if [ "$SYSTEMD" = 1 ]; then
     for sf_unit in ufw.service firewalld.service; do
       if systemctl is-active --quiet "$sf_unit" 2>/dev/null; then
-        STEP_SKIP="$sf_unit manages the firewall. Allow 80/tcp, 443/tcp, and 5353/udp there"
+        STEP_SKIP="$sf_unit manages the firewall. Allow 80/tcp, 443/tcp, $CONSOLE_PORT/tcp, and 5353/udp there"
         return 0
       fi
     done
@@ -1611,7 +1626,7 @@ step_firewall() {
   fi
 
   if [ -f "$NFT_CONF" ] && ! nft_conf_is_default "$NFT_CONF" && ! nft_conf_has_legacy_include; then
-    log "Note: $NFT_CONF has rules of its own. If they drop packets, also allow 80/tcp, 443/tcp, and 5353/udp there."
+    log "Note: $NFT_CONF has rules of its own. If they drop packets, also allow 80/tcp, 443/tcp, $CONSOLE_PORT/tcp, and 5353/udp there."
   fi
   nft_legacy_cleanup
   nft_service_retire
@@ -1708,6 +1723,7 @@ install_binary() {
   fi
   run install -m 0755 "$1" "$BIN_PATH.new"
   run mv -f "$BIN_PATH.new" "$BIN_PATH"
+  AGENT_CHANGED=1
   log "Installed $BIN_PATH."
 }
 
@@ -1769,7 +1785,90 @@ step_agent() {
   log "Agent: ${sa_out:-(no version output)}"
 }
 
-# --- 13. NetworkManager dispatcher hook
+# --- 13. agent service
+
+# care_pi_unit prints care-pi.service. The installer owns the unit, not "care-pi apply":
+# an apply must never rewrite and restart the unit of the process that runs the apply.
+# The unit and the binary change together, at an install.
+care_pi_unit() {
+  cat <<EOF
+# Managed by care-pi install.sh. Do not edit.
+# The care-pi agent: the console API and the console SPA on the unix socket
+# /run/care-pi/api.sock ("care-pi serve"). Caddy sends port $CONSOLE_PORT and
+# /_care-pi/* of port 443 to the socket.
+# The agent does not wait for network-online.target: it listens on a unix socket and
+# reads the LAN addresses at each request. Thus multi-user.target does not wait for
+# the network. care-caddy.service starts after this unit (Wants= and After=).
+[Unit]
+Description=care-pi agent (console API on /run/care-pi/api.sock)
+Documentation=https://github.com/rithviknishad/care-pi
+After=network.target
+
+[Service]
+Type=notify
+# The sandbox needs these directories at the start of the service.
+ExecStartPre=+/bin/mkdir -p /etc/care-pi /var/lib/care-pi /run/care-pi /etc/containers/systemd /var/lib/containers
+ExecStart=$BIN_PATH serve
+Restart=always
+RestartSec=2
+TimeoutStopSec=30
+# Memory cap of 01 section 8. "podman pull" runs in a transient unit (systemd-run),
+# so the image pulls of an apply do not count here.
+MemoryMax=64M
+MemorySwapMax=32M
+OOMScoreAdjust=-100
+# Hardening (04 section 2). NoNewPrivileges is not possible: the agent runs podman
+# and systemctl. ProtectControlGroups and SystemCallFilter wait for Phase 7: podman
+# exec writes the cgroup of the container and needs more system calls.
+ProtectSystem=strict
+# /run: podman writes /run/containers, /run/libpod, and /run/crun.
+# /etc/hosts: the setup finish writes the 127.0.1.1 line of a new host name (hostnamectl writes /etc/hostname).
+ReadWritePaths=/etc/care-pi /var/lib/care-pi /run /etc/containers/systemd /etc/systemd/system /var/lib/containers -/var/cache/containers -/etc/hosts
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+step_agent_service() {
+  if [ "$SYSTEMD" != 1 ]; then
+    if [ "$DRY_RUN" = 1 ]; then
+      plan "write $AGENT_UNIT_FILE, then enable and start $AGENT_UNIT"
+      STEP_CHANGED=1
+    else
+      STEP_SKIP="systemd is not running. The console needs $AGENT_UNIT"
+    fi
+    return 0
+  fi
+  write_file "$AGENT_UNIT_FILE" 644 "$(care_pi_unit)"
+  as_written=$LAST_WRITE
+  if [ "$as_written" = 1 ]; then
+    run systemctl daemon-reload
+  fi
+  if ! systemctl is-enabled --quiet "$AGENT_UNIT" 2>/dev/null; then
+    STEP_CHANGED=1
+    run systemctl enable "$AGENT_UNIT"
+  fi
+  if [ "$REBOOT_NEEDED" = 1 ]; then
+    log "$AGENT_UNIT starts after the reboot."
+    return 0
+  fi
+  if systemctl is-active --quiet "$AGENT_UNIT"; then
+    if [ "$as_written" = 1 ] || [ "$AGENT_CHANGED" = 1 ]; then
+      STEP_CHANGED=1
+      run systemctl restart "$AGENT_UNIT" || warn "$AGENT_UNIT did not restart. Run: systemctl status $AGENT_UNIT"
+    fi
+  else
+    STEP_CHANGED=1
+    run systemctl start "$AGENT_UNIT" || warn "$AGENT_UNIT did not start. Run: systemctl status $AGENT_UNIT"
+  fi
+}
+
+# --- 14. NetworkManager dispatcher hook
 
 nm_hook() {
   cat <<'EOF'
@@ -1824,15 +1923,24 @@ step_nm_hook() {
   write_file "$DISPATCHER_FILE" 755 "$(nm_hook)"
 }
 
-# --- 14. host check and bootstrap
+# --- 15. host check and bootstrap
+
+# bootstrap_args prints the arguments of "care-pi bootstrap".
+bootstrap_args() {
+  ba="bootstrap --hostname $EFFECTIVE_HOSTNAME --preset $PRESET --fe-provider $FE_PROVIDER --yes"
+  if [ "$UNATTENDED" = 1 ]; then
+    ba="$ba --unattended"
+  fi
+  printf '%s' "$ba"
+}
 
 print_follow_up() {
   log "Next steps:"
   if [ "$REBOOT_NEEDED" = 1 ]; then
     log "  1. Reboot:  sudo reboot"
-    log "  2. Bootstrap Care:  sudo care-pi bootstrap --hostname $EFFECTIVE_HOSTNAME --preset $PRESET --fe-provider $FE_PROVIDER --yes"
+    log "  2. Bootstrap Care:  sudo care-pi $(bootstrap_args)"
   else
-    log "  Bootstrap Care:  sudo care-pi bootstrap --hostname $EFFECTIVE_HOSTNAME --preset $PRESET --fe-provider $FE_PROVIDER --yes"
+    log "  Bootstrap Care:  sudo care-pi $(bootstrap_args)"
   fi
 }
 
@@ -1849,7 +1957,34 @@ print_urls() {
   done
 }
 
+print_console() {
+  log "Setup mode: Care starts when you finish the setup in the console."
+  log "Open the console on a device in this network and enter the claim code above:"
+  pc_name=$ADVERTISED_NAME
+  if [ -z "$pc_name" ] && [ "$NO_AVAHI" != 1 ]; then
+    pc_name=$(advertised_name)
+  fi
+  if [ -n "$pc_name" ]; then
+    log "  https://$pc_name:$CONSOLE_PORT/"
+  fi
+  lan_ipv4s | while read -r pc_ip; do
+    log "  https://$pc_ip:$CONSOLE_PORT/"
+  done
+  log "The first visit shows a certificate warning. The device uses its own local certificate authority. Accept the warning one time. Then install the root certificate (the setup page offers it)."
+  log "Print the claim code again:  sudo care-pi auth claim-code"
+  log "Finish without the console:  docs/console-server.md, \"Setup on the host\""
+}
+
+# setup_state prints the state of the setup machine ("ready" after the setup).
+setup_state() {
+  "$BIN_PATH" setup status --json 2>/dev/null | sed -n 's/^  "state": "\(.*\)",$/\1/p'
+}
+
 print_done() {
+  if [ "$UNATTENDED" != 1 ] && [ "$(setup_state)" != ready ]; then
+    print_console
+    return 0
+  fi
   if [ -f /var/lib/care-pi/fe/current/index.html ]; then
     log "Care is ready. Open one of these addresses:"
   else
@@ -1861,6 +1996,7 @@ print_done() {
   log "The first visit shows a certificate warning. Care uses its own local certificate authority until you enable a public certificate. Accept the warning once, then install the certificate on each device."
   log "Create the first Care user:"
   log "  sudo care-pi care create-superuser --username NAME --email EMAIL"
+  log "The console is at https://<host>:$CONSOLE_PORT/. To claim it, print the claim code: sudo care-pi auth claim-code"
 }
 
 step_finish() {
@@ -1887,14 +2023,16 @@ step_finish() {
   fi
   STEP_CHANGED=1
   if [ "$DRY_RUN" = 1 ]; then
-    plan "run: $BIN_PATH bootstrap --hostname $EFFECTIVE_HOSTNAME --preset $PRESET --fe-provider $FE_PROVIDER --yes"
+    plan "run: $BIN_PATH $(bootstrap_args)"
     return 0
   fi
-  if [ "$FE_PROVIDER" = local ]; then
+  if [ "$UNATTENDED" = 1 ] && [ "$FE_PROVIDER" = local ]; then
     log "Bootstrap builds care_fe on this host (FE provider local). The first build takes about 3 minutes on a Pi 5 and needs internet."
   fi
-  if ! run "$BIN_PATH" bootstrap --hostname "$EFFECTIVE_HOSTNAME" --preset "$PRESET" --fe-provider "$FE_PROVIDER" --yes; then
-    die "care-pi bootstrap failed. Read the output above. After you fix the cause, run: sudo care-pi bootstrap --hostname $EFFECTIVE_HOSTNAME --preset $PRESET --fe-provider $FE_PROVIDER --yes"
+  # The arguments have no spaces, so the word splitting is intentional.
+  # shellcheck disable=SC2046
+  if ! run "$BIN_PATH" $(bootstrap_args); then
+    die "care-pi bootstrap failed. Read the output above. After you fix the cause, run: sudo care-pi $(bootstrap_args)"
   fi
   print_done
 }
@@ -1944,6 +2082,7 @@ main() {
   step "Hold the container packages" step_holds
   step "Create the directories" step_dirs
   step "Install the agent" step_agent
+  step "Install the agent service" step_agent_service
   step "Install the NetworkManager hook" step_nm_hook
   step "Check the host and bootstrap" step_finish
 

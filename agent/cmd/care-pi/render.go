@@ -18,6 +18,7 @@ var renderFlags struct {
 	out       string
 	ips       []string
 	solutions string
+	phase     string
 }
 
 var renderCmd = &cobra.Command{
@@ -31,6 +32,9 @@ exists. For an image without a locked digest, the unit uses the tag.
 By default render reads the LAN addresses of this machine. Use --ip to set them.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
+		if err := checkPhase(renderFlags.phase); err != nil {
+			return err
+		}
 		if renderFlags.out == "" {
 			return exitcode.With(exitcode.BadInput, fmt.Errorf("--out is required"))
 		}
@@ -45,6 +49,7 @@ By default render reads the LAN addresses of this machine. Use --ip to set them.
 			IPs:          ips,
 			Offline:      true,
 			Warn:         cmd.ErrOrStderr(),
+			Phase:        renderFlags.phase,
 		})
 		if err != nil {
 			return err
@@ -89,5 +94,6 @@ func init() {
 	f.StringVar(&renderFlags.out, "out", "", "output directory")
 	f.StringSliceVar(&renderFlags.ips, "ip", nil, "LAN IPv4 address to render (repeat the flag for more)")
 	f.StringVar(&renderFlags.solutions, "solutions", "", "directory with <name>/solution.yaml (default: the embedded solutions)")
+	f.StringVar(&renderFlags.phase, "phase", "", "bootstrap (setup mode: the pod and Caddy only) or full (default: the phase of the host)")
 	rootCmd.AddCommand(renderCmd)
 }

@@ -6,20 +6,21 @@ import (
 	"io"
 	"os"
 	"regexp"
-	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/rithviknishad/care-pi/agent/internal/apply"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/exitcode"
 	"github.com/rithviknishad/care-pi/agent/internal/fe"
+	"github.com/rithviknishad/care-pi/agent/internal/jobs"
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
-	"github.com/rithviknishad/care-pi/agent/internal/netinfo"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/render"
+	"github.com/rithviknishad/care-pi/agent/internal/service"
 	"github.com/rithviknishad/care-pi/agent/internal/solution"
 )
+
+var feStatusJSON bool
 
 var feFlags struct {
 	force     bool
@@ -55,70 +56,25 @@ Exit codes: 0 when the build is current, 1 when the build fails,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		w := cmd.OutOrStdout()
-		p := rootPaths()
-		h := newHost(cmd)
 		release, err := takeApplyLock(cmd)
 		if err != nil {
 			return err
 		}
 		defer release()
-		// Offline: the lock already has the care_fe sha. An image without a locked digest does not matter here.
-		pr, err := apply.Prepare(cmd.Context(), apply.PrepareOptions{
-			Paths: p, ConfigPath: configPath(cmd), SolutionsDir: feFlags.solutions,
-			IPs: netinfo.System{}, Offline: true,
-		})
+		svc := newService(cmd)
+		svc.SolutionsDir = feFlags.solutions
+		rec, err := jobs.Create(jobs.CreateOptions{Paths: svc.Paths, Kind: jobs.KindFEBuild, Source: jobs.SourceCLI, Cancellable: true})
 		if err != nil {
 			return err
 		}
-		if pr.Config.FE.Provider == "none" {
-			return exitcode.With(exitcode.BadInput, errors.New("fe.provider is none; set fe.provider to artifact or local, then run care-pi apply"))
-		}
-		disk, err := lock.Read(p.Abs(paths.LockFile))
+		end := rec.StepAction("ensure-fe: build of the lock", "ensure-fe")
+		res, err := svc.RunFEBuild(cmd.Context(), service.FEBuildOptions{Force: feFlags.force, Out: io.MultiWriter(w, rec.Writer()), Follow: w == io.Writer(os.Stdout)})
+		end(err)
 		if err != nil {
+			rec.Finish(err, nil)
 			return err
 		}
-		id := pr.Model.FEBuildID
-		switch {
-		case disk == nil || disk.FE.BuildID == "":
-			return errors.New("lock.yaml has no FE build id; run care-pi apply")
-		case id != disk.FE.BuildID || disk.FE.Provider != pr.Config.FE.Provider:
-			return fmt.Errorf("config.yaml changed after the last apply (config: FE build %s, provider %s; lock.yaml: FE build %s, provider %s); run care-pi apply, which also makes the FE build",
-				id, pr.Config.FE.Provider, disk.FE.BuildID, disk.FE.Provider)
-		}
-		if feFlags.force && fe.Exists(p, id) {
-			if fe.Current(p) == id {
-				_, _ = fmt.Fprintln(w, "warning: FE build "+id+" is current; the site shows the setup page until the new build is ready")
-			}
-			if err := os.RemoveAll(p.Abs(fe.Dir(id))); err != nil {
-				return fmt.Errorf("cannot remove FE build %s: %w", id, err)
-			}
-		}
-		prov, err := fe.New(pr.Config.FE.Provider, fe.Env{
-			Config:     pr.Config,
-			Paths:      p,
-			CareFERepo: disk.Git["care_fe"].Repo,
-			CareFESHA:  disk.Git["care_fe"].SHA,
-			BuildEnv:   pr.Desire.Frontend,
-			Host:       h,
-			Out:        w,
-			Follow:     w == io.Writer(os.Stdout),
-		})
-		if err != nil {
-			return exitcode.With(exitcode.BadInput, err)
-		}
-		_, _ = fmt.Fprintf(w, "FE build %s (provider %s)\n", id, prov.Name())
-		b, err := prov.Ensure(cmd.Context(), id)
-		if err != nil {
-			return err
-		}
-		if err := fe.SetCurrent(p, id); err != nil {
-			return err
-		}
-		disk.FE = fe.MergeRecord(disk.FE, b.Record)
-		if err := lock.Write(p, disk, time.Now()); err != nil {
-			return fmt.Errorf("cannot record the FE build in lock.yaml: %w", err)
-		}
-		_, _ = fmt.Fprintf(w, "fe/current -> %s\n", id)
+		rec.Finish(nil, res)
 		return nil
 	},
 }
@@ -134,6 +90,13 @@ Exit codes: 0 when fe/current is the build of lock.yaml (or fe.provider is none)
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		w := cmd.OutOrStdout()
+		if feStatusJSON {
+			st, err := newService(cmd).FE()
+			if err != nil {
+				return err
+			}
+			return printJSON(w, st)
+		}
 		p := rootPaths()
 		provider := "?"
 		if cfg, err := config.Load(configPath(cmd)); err == nil {
@@ -322,6 +285,7 @@ func init() {
 	feBuildCmd.Flags().StringVar(&feFlags.solutions, "solutions", "", "directory with <name>/solution.yaml (default: the embedded solutions)")
 	_ = feBuildCmd.Flags().MarkHidden("solutions")
 	fePruneCmd.Flags().IntVar(&feFlags.keep, "keep", 2, "number of newest builds to keep")
+	feStatusCmd.Flags().BoolVar(&feStatusJSON, "json", false, "print the FeStatus object of GET /api/v1/fe")
 	addLockFlag(feBuildCmd)
 	addLockFlag(fePruneCmd)
 	feBuildIDCmd.Flags().StringVar(&feFlags.sha, "care-fe-sha", "", "full git sha of care_fe")

@@ -74,3 +74,17 @@ func Acquire(ctx context.Context, p paths.Paths, timeout time.Duration, out io.W
 		}
 	}
 }
+
+// Held reports whether a process holds the apply lock now. It never waits.
+func Held(p paths.Paths) bool {
+	f, err := os.OpenFile(p.Abs(paths.ApplyLock), os.O_RDWR, 0o600)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		return errors.Is(err, syscall.EWOULDBLOCK)
+	}
+	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	return false
+}

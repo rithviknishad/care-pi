@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"regexp"
@@ -11,13 +12,17 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/rithviknishad/care-pi/agent/internal/apply"
+	"github.com/rithviknishad/care-pi/agent/internal/auth"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/exitcode"
 	"github.com/rithviknishad/care-pi/agent/internal/hostcheck"
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
 	"github.com/rithviknishad/care-pi/agent/internal/netinfo"
+	"github.com/rithviknishad/care-pi/agent/internal/paths"
+	"github.com/rithviknishad/care-pi/agent/internal/render"
 	"github.com/rithviknishad/care-pi/agent/internal/s3admin"
 	"github.com/rithviknishad/care-pi/agent/internal/secrets"
+	"github.com/rithviknishad/care-pi/agent/internal/setup"
 )
 
 var bootstrapFlags struct {
@@ -26,10 +31,11 @@ var bootstrapFlags struct {
 	displayName string
 	feProvider  string
 	yes         bool
+	unattended  bool
 }
 
 var bootstrapCmd = &cobra.Command{
-	Use:   "bootstrap [--hostname NAME] [--preset NAME] [--fe-provider NAME] [--yes]",
+	Use:   "bootstrap [--hostname NAME] [--preset NAME] [--fe-provider NAME] [--yes] [--unattended]",
 	Short: "First run: check the host, create the directories and secrets, write config.yaml, then apply",
 	Long: `bootstrap prepares a new host. Steps:
 
@@ -39,11 +45,17 @@ var bootstrapCmd = &cobra.Command{
 4. Write a default config.yaml when the file does not exist.
    --hostname, --preset, --display-name, and --fe-provider go into this file.
    When config.yaml exists, bootstrap keeps it and ignores these flags.
-5. Run apply. With fe.provider local, apply builds care_fe on this host.
-   The first build takes about 3 minutes and needs internet.
+5. Make a claim code when the console is not claimed, and start care-pi.service.
+6. Setup mode (the default on a new host): apply --phase=bootstrap. Only care.pod
+   and care-caddy start. Caddy serves the setup page on port 443 and the console on
+   port 8443. bootstrap prints the claim code and the console URLs. The operator
+   finishes the setup in the console, or with "care-pi setup finish".
+   --unattended: apply everything now (the Phase 1 behaviour). With fe.provider
+   local, apply builds care_fe on this host (about 3 minutes, needs internet).
+   A host with a lock.yaml (an earlier install) always gets the full apply.
 
 bootstrap holds the lock /run/care-pi/apply.lock for its full run.
-bootstrap asks no questions. --yes exists for the installer and changes nothing in Phase 1.`,
+bootstrap asks no questions. --yes exists for the installer.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		w := cmd.OutOrStdout()
@@ -105,7 +117,27 @@ bootstrap asks no questions. --yes exists for the installer and changes nothing 
 			_, _ = fmt.Fprintf(w, "==> keep %s\n", cfgPath)
 		}
 
-		_, _ = fmt.Fprintln(w, "==> apply")
+		phase, err := bootstrapPhase(w, p, f.unattended)
+		if err != nil {
+			return err
+		}
+		code, err := bootstrapClaimCode(newAuth())
+		if err != nil {
+			return err
+		}
+
+		if _, err := os.Stat(p.Abs(paths.AgentUnitFile)); err == nil {
+			_, _ = fmt.Fprintf(w, "==> start %s\n", paths.AgentUnit)
+			if err := h.Systemd.Enable(cmd.Context(), paths.AgentUnit); err != nil {
+				_, _ = fmt.Fprintf(w, "warning: cannot enable %s: %v\n", paths.AgentUnit, err)
+			} else if err := h.Systemd.Start(cmd.Context(), paths.AgentUnit); err != nil {
+				_, _ = fmt.Fprintf(w, "warning: cannot start %s: %v; the console is not available until it runs\n", paths.AgentUnit, err)
+			}
+		} else {
+			_, _ = fmt.Fprintf(w, "warning: %s does not exist; run the installer again to install the console agent\n", paths.AgentUnitFile)
+		}
+
+		_, _ = fmt.Fprintf(w, "==> apply (phase %s)\n", phase)
 		_, err = apply.Run(cmd.Context(), apply.Options{
 			Paths:      p,
 			ConfigPath: cfgPath,
@@ -116,9 +148,83 @@ bootstrap asks no questions. --yes exists for the installer and changes nothing 
 			S3:         s3admin.MinIO{},
 			Chown:      chown,
 			LockHeld:   true,
+			Phase:      phase,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		if code != "" {
+			var names []string
+			if cfg, err := config.Load(cfgPath); err == nil {
+				names = render.Hostnames(cfg)
+			}
+			ips, _ := netinfo.LANIPv4(netinfo.System{})
+			printClaimBox(w, code, names, ips)
+		}
+		return nil
 	},
+}
+
+// bootstrapPhase chooses the apply phase: setup mode on a new host, else the full apply.
+func bootstrapPhase(w io.Writer, p paths.Paths, unattended bool) (string, error) {
+	st := &setup.Store{Paths: p}
+	rec, exists, err := st.Load()
+	if err != nil {
+		return "", err
+	}
+	_, lockErr := os.Stat(p.Abs(paths.LockFile))
+	hasLock := lockErr == nil
+	switch {
+	case unattended:
+		_, _ = fmt.Fprintln(w, "==> unattended: apply everything now; the console setup is not necessary")
+		return setup.PhaseFull, nil
+	case exists && rec.ReadyAt == nil && rec.ApplyPhase == setup.PhaseBootstrap:
+		return setup.PhaseBootstrap, nil
+	case exists || hasLock:
+		_, _ = fmt.Fprintln(w, "==> this host has an earlier install: apply everything")
+		return setup.PhaseFull, nil
+	}
+	if _, err := st.Update(func(r *setup.Record) error { r.ApplyPhase = setup.PhaseBootstrap; return nil }); err != nil {
+		return "", err
+	}
+	_, _ = fmt.Fprintln(w, "==> setup mode: start Caddy and the console only; Care starts when the setup finishes")
+	return setup.PhaseBootstrap, nil
+}
+
+// bootstrapClaimCode returns the claim code of an unclaimed device ("" after the claim).
+// When it makes the code, it records the claim hint claim-code: bootstrap prints the code,
+// so the console shows the claim code field first.
+func bootstrapClaimCode(a *auth.Manager) (string, error) {
+	if a.Claimed() {
+		return "", nil
+	}
+	code, made, err := a.EnsureClaimCode()
+	if err != nil || !made {
+		return code, err
+	}
+	if err := a.SetClaimHint(auth.ClaimCode); err != nil {
+		return "", err
+	}
+	return code, nil
+}
+
+// printClaimBox prints the claim code and the console URLs in a box.
+func printClaimBox(w io.Writer, code string, names, ips []string) {
+	lines := []string{"Claim code: " + code, "", "Open the console and enter the claim code:"}
+	for _, n := range append(append([]string{}, names...), ips...) {
+		lines = append(lines, fmt.Sprintf("  https://%s:%d/", n, paths.ConsolePort))
+	}
+	lines = append(lines, "", "Print the code again: sudo care-pi auth claim-code")
+	width := 0
+	for _, l := range lines {
+		width = max(width, len(l))
+	}
+	border := "+" + strings.Repeat("-", width+4) + "+"
+	_, _ = fmt.Fprintln(w, border)
+	for _, l := range lines {
+		_, _ = fmt.Fprintf(w, "|  %-*s  |\n", width, l)
+	}
+	_, _ = fmt.Fprintln(w, border)
 }
 
 var hostnameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
@@ -147,7 +253,8 @@ func init() {
 	f.StringVar(&bootstrapFlags.preset, "preset", "", "solo, small-clinic, or busy-counter (default: small-clinic)")
 	f.StringVar(&bootstrapFlags.displayName, "display-name", "", "name of the clinic (default: CARE)")
 	f.StringVar(&bootstrapFlags.feProvider, "fe-provider", config.DefaultFEProvider, "fe.provider of the new config.yaml: none, artifact, or local")
-	f.BoolVar(&bootstrapFlags.yes, "yes", false, "do not ask questions (bootstrap asks none in Phase 1)")
+	f.BoolVar(&bootstrapFlags.yes, "yes", false, "do not ask questions (bootstrap asks none)")
+	f.BoolVar(&bootstrapFlags.unattended, "unattended", false, "apply everything now (Phase 1 behaviour); no console setup")
 	addLockFlag(bootstrapCmd)
 	rootCmd.AddCommand(bootstrapCmd)
 }

@@ -30,6 +30,23 @@ func SchemaJSON() []byte { return schemaJSON }
 type ValidationError struct {
 	Source   string
 	Problems []string
+	// Details are the same problems with a JSON Pointer and the JSON Schema keyword.
+	Details []Detail
+}
+
+// Detail is one problem: a JSON Pointer into the document, a message, and the failed keyword.
+type Detail struct {
+	Pointer string
+	Message string
+	Keyword string
+}
+
+func invalid(source string, details ...Detail) *ValidationError {
+	e := &ValidationError{Source: source, Details: details}
+	for _, d := range details {
+		e.Problems = append(e.Problems, d.Pointer+": "+d.Message)
+	}
+	return e
 }
 
 func (e *ValidationError) Error() string {
@@ -78,22 +95,28 @@ func Load(path string) (*Config, error) {
 func Parse(data []byte, source string) (*Config, error) {
 	var raw any
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil, &ValidationError{Source: source, Problems: []string{"YAML syntax: " + err.Error()}}
+		e := invalid(source, Detail{Message: "YAML syntax: " + err.Error(), Keyword: "syntax"})
+		e.Problems = []string{"YAML syntax: " + err.Error()}
+		return nil, e
 	}
 	if raw == nil {
-		return nil, &ValidationError{Source: source, Problems: []string{"the file is empty; set at least \"version: 1\""}}
+		e := invalid(source, Detail{Message: "the file is empty; set at least \"version: 1\"", Keyword: "required"})
+		e.Problems = []string{e.Details[0].Message}
+		return nil, e
 	}
-	if problems := validateSchema(raw); len(problems) > 0 {
-		return nil, &ValidationError{Source: source, Problems: problems}
+	if details := validateSchema(raw); len(details) > 0 {
+		return nil, invalid(source, details...)
 	}
 	cfg := Default()
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(cfg); err != nil {
-		return nil, &ValidationError{Source: source, Problems: []string{err.Error()}}
+		e := invalid(source, Detail{Message: err.Error(), Keyword: "type"})
+		e.Problems = []string{err.Error()}
+		return nil, e
 	}
-	if problems := cfg.check(); len(problems) > 0 {
-		return nil, &ValidationError{Source: source, Problems: problems}
+	if details := cfg.check(); len(details) > 0 {
+		return nil, invalid(source, details...)
 	}
 	return cfg, nil
 }
@@ -123,18 +146,18 @@ func (c *Config) Marshal() ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func validateSchema(raw any) []string {
+func validateSchema(raw any) []Detail {
 	sch, err := schema()
 	if err != nil {
-		return []string{err.Error()}
+		return []Detail{{Message: err.Error(), Keyword: "schema"}}
 	}
 	js, err := json.Marshal(normalize(raw))
 	if err != nil {
-		return []string{"cannot convert the YAML document to JSON: " + err.Error()}
+		return []Detail{{Message: "cannot convert the YAML document to JSON: " + err.Error(), Keyword: "type"}}
 	}
 	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(js))
 	if err != nil {
-		return []string{"cannot read the converted document: " + err.Error()}
+		return []Detail{{Message: "cannot read the converted document: " + err.Error(), Keyword: "type"}}
 	}
 	err = sch.Validate(inst)
 	if err == nil {
@@ -142,31 +165,38 @@ func validateSchema(raw any) []string {
 	}
 	var verr *jsonschema.ValidationError
 	if !errors.As(err, &verr) {
-		return []string{err.Error()}
+		return []Detail{{Message: err.Error(), Keyword: "schema"}}
 	}
 	printer := message.NewPrinter(language.English)
 	seen := map[string]bool{}
-	var out []string
+	var out []Detail
+	add := func(d Detail) {
+		k := d.Pointer + ": " + d.Message
+		if !seen[k] {
+			seen[k] = true
+			out = append(out, d)
+		}
+	}
 	var walk func(e *jsonschema.ValidationError)
 	walk = func(e *jsonschema.ValidationError) {
 		if pn, ok := e.ErrorKind.(*kind.PropertyNames); ok {
 			// jsonschema v6.0.3 aliases InstanceLocation for propertyNames errors,
 			// so derive the location from the schema location.
-			loc := instanceFromSchema(e.SchemaURL)
-			msg := fmt.Sprintf("%s: key %q is not allowed here (care-pi sets this variable, or the name is not valid)", loc, pn.Property)
-			if !seen[msg] {
-				seen[msg] = true
-				out = append(out, msg)
-			}
+			add(Detail{Pointer: instanceFromSchema(e.SchemaURL),
+				Message: fmt.Sprintf("key %q is not allowed here (care-pi sets this variable, or the name is not valid)", pn.Property),
+				Keyword: "propertyNames"})
 			return
 		}
 		if len(e.Causes) == 0 {
-			loc := "/" + strings.Join(e.InstanceLocation, "/")
-			msg := loc + ": " + e.ErrorKind.LocalizedString(printer)
-			if !seen[msg] {
-				seen[msg] = true
-				out = append(out, msg)
+			kw := ""
+			if kp := e.ErrorKind.KeywordPath(); len(kp) > 0 {
+				kw = kp[len(kp)-1]
 			}
+			ptr := ""
+			for _, tok := range e.InstanceLocation {
+				ptr += "/" + strings.ReplaceAll(strings.ReplaceAll(tok, "~", "~0"), "/", "~1")
+			}
+			add(Detail{Pointer: ptr, Message: e.ErrorKind.LocalizedString(printer), Keyword: kw})
 			return
 		}
 		for _, c := range e.Causes {
@@ -174,9 +204,12 @@ func validateSchema(raw any) []string {
 		}
 	}
 	walk(verr)
-	sort.Strings(out)
+	sort.Slice(out, func(i, j int) bool { return out[i].Pointer+out[i].Message < out[j].Pointer+out[j].Message })
 	return out
 }
+
+// Normalize converts a decoded YAML value to a value that encoding/json accepts.
+func Normalize(v any) any { return normalize(v) }
 
 // instanceFromSchema maps ".../x.json#/properties/env/properties/backend/propertyNames" to "/env/backend".
 func instanceFromSchema(u string) string {

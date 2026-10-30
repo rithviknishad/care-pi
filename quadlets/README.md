@@ -6,8 +6,8 @@ The templates use Go `text/template`. The data is `render.Model`.
 
 | Template | Output (host path) |
 |---|---|
-| `care.pod.tmpl` | `/etc/containers/systemd/care.pod`. It has `Wants=` and `After=network-online.target`, because it publishes on the LAN addresses. |
-| `care-caddy.container.tmpl` | `/etc/containers/systemd/care-caddy.container` |
+| `care.pod.tmpl` | `/etc/containers/systemd/care.pod`. It publishes 80, 443, and 8443 (the console, S48) on each LAN address. It has `Wants=` and `After=network-online.target`, because it publishes on the LAN addresses. |
+| `care-caddy.container.tmpl` | `/etc/containers/systemd/care-caddy.container`. It mounts the directory `/run/care-pi` (the agent socket `api.sock`; `ExecStartPre` creates the directory) and has `Wants=` and `After=care-pi.service`. Caddy starts without the agent: the agent routes then give `503`. |
 | `care-db.container.tmpl` | `/etc/containers/systemd/care-db.container` |
 | `care-redis.container.tmpl` | `/etc/containers/systemd/care-redis.container` |
 | `care-s3.container.tmpl` | `/etc/containers/systemd/care-s3.container` |
@@ -18,12 +18,17 @@ The templates use Go `text/template`. The data is `render.Model`.
 | `care.target.tmpl` | `/etc/systemd/system/care.target` (no `[Install]` section) |
 | `care-clock.service.tmpl` | `/etc/systemd/system/care-clock.service` |
 | `care-start.service.tmpl` | `/etc/systemd/system/care-start.service`. At boot, it runs `systemctl start --no-block care.target`. The agent enables this unit, not `care.target`, so the boot does not wait for the clock gate or the health checks. It does not wait for `network-online.target` either (the pod does). |
-| `Caddyfile.tmpl` | `/etc/care-pi/rendered/caddy/Caddyfile` |
-| `status-setup.html.tmpl`, `status-maintenance.html.tmpl`, `status-clock.html.tmpl` | `/etc/care-pi/rendered/caddy/status/*.html` |
+| `Caddyfile.tmpl` | `/etc/care-pi/rendered/caddy/Caddyfile`. Port 443: Care, `/_care-pi/*` to the agent socket, `/console*` → `308` to port 8443. Port 8443: each request to the agent socket (`docs/console-server.md`, section 3). |
+| `status-setup.html.tmpl`, `status-maintenance.html.tmpl`, `status-clock.html.tmpl` | `/etc/care-pi/rendered/caddy/status/*.html`. The setup page links to the console on port 8443 and offers the root CA. |
 | `backend.env.tmpl` | `/etc/care-pi/rendered/care/backend.env` |
 | `pgbackrest.conf.tmpl` | `/etc/care-pi/rendered/db/pgbackrest.conf` |
 | `frontend.env.tmpl`, `fe-build.sh.tmpl` | `/etc/care-pi/rendered/fe/` (only `fe.provider: local`) |
 | `care-secrets.tmpl`, `status-style.tmpl` | Shared blocks (`{{define}}`). No output. |
+
+Setup mode (`apply --phase bootstrap`, `docs/apply.md`) renders only `care.pod`, `care-caddy.container`,
+`care.target`, `care-clock.service`, `care-start.service`, the Caddyfile, and the status pages
+(`render.Model.Bootstrap`). The golden tree is `small-clinic-bootstrap`.
+`care-pi.service` is not a template: the installer writes it (`installer/install.sh`, `care_pi_unit`).
 
 Rules for the templates:
 

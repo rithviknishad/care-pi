@@ -4,7 +4,7 @@ This directory holds the host installer for Care.
 
 | File | Purpose |
 |---|---|
-| `install.sh` | Prepare a Raspberry Pi OS or Debian-family host. Install the `care-pi` agent. Run `care-pi bootstrap`. |
+| `install.sh` | Prepare a Raspberry Pi OS or Debian-family host. Install the `care-pi` agent and `care-pi.service`. Run `care-pi bootstrap` (setup mode by default). |
 | `uninstall.sh` | Remove Care from a host. This is a development tool. |
 
 Both files are POSIX `sh`. They use no bash features.
@@ -41,7 +41,7 @@ From a pipe, it cannot do this. It prints the correct command and stops.
 | `--hostname NAME` | `CARE_PI_HOSTNAME` | `care` | Host name. The mDNS name is `NAME.local`. |
 | `--preset NAME` | `CARE_PI_PRESET` | `small-clinic` | Preset for `care-pi bootstrap` (`solo`, `small-clinic`, or `busy-counter`). |
 | `--fe-provider NAME` | `CARE_PI_FE_PROVIDER` | `local` | FE provider for `care-pi bootstrap` (`local`, `artifact`, or `none`). `local` builds care_fe on the host. The first build takes about 3 minutes and needs internet. |
-| `--unattended` | `CARE_PI_UNATTENDED` | off | Ask no questions. Imply `--yes`. |
+| `--unattended` | `CARE_PI_UNATTENDED` | off | Ask no questions. Imply `--yes`. Pass `--unattended` to `care-pi bootstrap`: a full apply now, no console setup (the Phase 1 behaviour). |
 | `--yes` | `CARE_PI_YES` | off | Do not ask for confirmation. |
 | `--no-firewall` | `CARE_PI_NO_FIREWALL` | off | Do not install the care-pi firewall (`care-pi-firewall.service` and its nftables table). |
 | `--no-avahi` | `CARE_PI_NO_AVAHI` | off | Do not install or configure avahi. |
@@ -60,7 +60,7 @@ Exit codes: `0` success, `1` failure, `2` wrong flags.
 
 ## What the script does
 
-The script detects the host and then runs 14 steps.
+The script detects the host and then runs 15 steps.
 Each step is a function named `step_<name>`.
 Each step is idempotent. If nothing changes, it prints `already configured`.
 
@@ -71,13 +71,14 @@ Each step is idempotent. If nothing changes, it prints `already configured`.
 5. avahi: `allow-interfaces`, `use-ipv4`, restart, print the announced name and the IPs.
 6. Time: `systemd-timesyncd`, `timedatectl set-ntp true`.
 7. Journal: `/etc/systemd/journald.conf.d/50-care-pi.conf` (`Storage=persistent`, `SystemMaxUse=200M`), `/var/log/journal` (root:systemd-journal 2755), `systemd-tmpfiles`, restart `systemd-journald`, `journalctl --flush` (S45).
-8. Firewall: table `inet care-pi` in `/etc/care-pi/firewall.nft`, loaded by `care-pi-firewall.service` (S44). No default-drop policy in Phase 1 (S42). The step also removes the setup of an older install.sh (see below).
+8. Firewall: table `inet care-pi` in `/etc/care-pi/firewall.nft`, loaded by `care-pi-firewall.service` (S44). It accepts 80/tcp, 443/tcp, 8443/tcp (the console, S48), and 5353/udp. No default-drop policy before Phase 7 (S42). The step also removes the setup of an older install.sh (see below).
 9. unattended-upgrades: `/etc/apt/apt.conf.d/52care-pi.conf`, timers.
 10. `apt-mark hold` for `podman crun netavark aardvark-dns conmon skopeo`.
 11. Directories under `/etc/care-pi` and `/var/lib/care-pi`.
 12. Agent binary: copy `--binary`, or download and verify the checksum.
-13. NetworkManager dispatcher hook `90-care-pi`. The hook coalesces the events of 5 s into one apply. It holds its flock until the apply ends, so its applies never overlap. An event during an apply gives one more apply after it.
-14. `care-pi host check`, then `care-pi bootstrap --fe-provider NAME`, then print the URLs. The last message says `Care is ready` only when an FE build exists. Else it tells how to leave the setup page.
+13. Agent service: `/etc/systemd/system/care-pi.service` (`care-pi serve`, `Type=notify`, `Restart=always`, `MemoryMax=64M`, `MemorySwapMax=32M`, `ProtectSystem=strict` with `ReadWritePaths`; function `care_pi_unit`). Enable it and start it. Restart it when the unit or the binary changed. The installer owns this unit: `care-pi apply` never writes it. `docs/console-server.md`, section 2, explains each line.
+14. NetworkManager dispatcher hook `90-care-pi`. The hook coalesces the events of 5 s into one apply. It holds its flock until the apply ends, so its applies never overlap. An event during an apply gives one more apply after it.
+15. `care-pi host check`, then `care-pi bootstrap --hostname NAME --preset NAME --fe-provider NAME --yes [--unattended]`. In setup mode (the default), bootstrap prints the claim code in a box, and the script prints the console URLs (`https://<name>:8443/`, `https://<ip>:8443/`). With `--unattended`, the script prints the Care URLs. The last message says `Care is ready` only when an FE build exists. Else it tells how to leave the setup page.
 
 The script writes a log to `/var/log/care-pi-install.log`.
 A reboot may be necessary after step 2 or step 3. Then the script prints `REBOOT REQUIRED` and does not run bootstrap.

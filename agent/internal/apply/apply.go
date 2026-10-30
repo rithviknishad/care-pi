@@ -17,6 +17,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/exitcode"
 	"github.com/rithviknishad/care-pi/agent/internal/fe"
 	"github.com/rithviknishad/care-pi/agent/internal/host"
+	"github.com/rithviknishad/care-pi/agent/internal/jobs"
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
 	"github.com/rithviknishad/care-pi/agent/internal/netinfo"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
@@ -24,6 +25,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/render"
 	"github.com/rithviknishad/care-pi/agent/internal/s3admin"
 	"github.com/rithviknishad/care-pi/agent/internal/secrets"
+	"github.com/rithviknishad/care-pi/agent/internal/setup"
 )
 
 // Options controls one apply run.
@@ -52,12 +54,52 @@ type Options struct {
 	LockTimeout time.Duration
 	// LockHeld tells that the caller holds the apply lock, for example bootstrap.
 	LockHeld bool
+	// Phase is "" (the phase of the host), setup.PhaseBootstrap, or setup.PhaseFull.
+	Phase string
+	// Journal gets one step for each action. The agent passes the recorder of its job.
+	// When it is nil, apply writes its own job journal (source cli) when the plan has actions.
+	Journal Journal
+}
+
+// Journal records the steps of a run.
+type Journal interface {
+	// Step starts a step. The returned function ends it with the error of the step.
+	Step(name string) func(error)
 }
 
 // Result summarises a run.
 type Result struct {
-	Plan    *plan.Plan
-	Changed bool
+	Plan        *plan.Plan
+	Changed     bool
+	LockChanged bool
+	Phase       string
+	Solution    string
+	Track       string
+	Preset      string
+	Hostnames   []string
+	Addresses   []string
+	Warnings    []string
+	// FEBuildID is the FE build of the plan. FEProvider and FEExists describe it.
+	FEBuildID  string
+	FEProvider string
+	FEExists   bool
+	// FECurrent is the FE build that fe/current points at after the run, when the run changed it.
+	FECurrent string
+	// JobID is the journal of the run ("" without a journal).
+	JobID string
+}
+
+// JobResult returns the result of an apply job.
+func (r *Result) JobResult() jobs.ApplyResult {
+	out := jobs.ApplyResult{Kind: jobs.KindApply}
+	if r != nil {
+		out.Changed, out.LockChanged = r.Changed, r.LockChanged
+		if r.FECurrent != "" {
+			id := r.FECurrent
+			out.FEBuildID = &id
+		}
+	}
+	return out
 }
 
 // Run executes apply.
@@ -76,7 +118,7 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 	}
 	pr, err := Prepare(ctx, PrepareOptions{
 		Paths: o.Paths, ConfigPath: o.ConfigPath, SolutionsDir: o.SolutionsDir,
-		Host: o.Host, IPs: o.IPs, Update: o.Update, Strict: true, Warn: o.Out, Progress: o.Out,
+		Host: o.Host, IPs: o.IPs, Update: o.Update, Strict: true, Warn: o.Out, Progress: o.Out, Phase: o.Phase,
 	})
 	if err != nil {
 		return nil, err
@@ -115,7 +157,8 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 	ensure := ensureRecord(pr)
 	stale := !readEnsure(o.Paths).equal(ensure)
 	lockChanged := !lock.Equal(pr.PrevLock, pr.Lock)
-	feWanted := pr.Config.FE.Provider != "none" && pr.Model.FEBuildID != "" && fe.Current(o.Paths) != pr.Model.FEBuildID
+	feWanted := pr.Config.FE.Provider != "none" && pr.Model.FEBuildID != "" && fe.Current(o.Paths) != pr.Model.FEBuildID &&
+		pr.Phase != setup.PhaseBootstrap
 
 	units := map[string][]string{}
 	for _, s := range secrets.PodmanSecrets() {
@@ -138,13 +181,24 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 		LockChanged:    lockChanged,
 		FEWanted:       feWanted,
 		StackImages:    stackImages,
+		Bootstrap:      pr.Phase == setup.PhaseBootstrap,
 	})
-	res := &Result{Plan: p, Changed: !p.Empty()}
+	res := &Result{Plan: p, Changed: !p.Empty(), LockChanged: lockChanged, Phase: pr.Phase,
+		Solution: pr.Config.Solution.Name, Track: pr.Config.Solution.Track, Preset: pr.Model.Sizing.Preset,
+		Hostnames: pr.Model.Hostnames, Addresses: pr.IPs, FEBuildID: pr.Model.FEBuildID, FEProvider: provider.Name()}
+	if p.Has(plan.EnsureFE) {
+		res.FEExists = fe.Exists(o.Paths, pr.Model.FEBuildID)
+	}
 
 	printSummary(o.Out, pr)
+	if pr.Phase == setup.PhaseBootstrap {
+		_, _ = fmt.Fprintln(o.Out, "setup mode: apply renders only care.pod, care-caddy, and the start units; finish the setup in the console (https://<host>:8443/) or with \"care-pi setup finish\"")
+	}
 	if o.Paths.Root == "/" {
 		if h, err := os.Hostname(); err == nil && strings.SplitN(h, ".", 2)[0] != pr.Config.Identity.Hostname {
-			_, _ = fmt.Fprintf(o.Out, "warning: identity.hostname is %q but the OS host name is %q; avahi announces the OS host name (Phase 1 does not change it)\n", pr.Config.Identity.Hostname, h)
+			w := fmt.Sprintf("identity.hostname is %q but the OS host name is %q; avahi announces the OS host name (only the setup finish and the installer change it)", pr.Config.Identity.Hostname, h)
+			res.Warnings = append(res.Warnings, w)
+			_, _ = fmt.Fprintln(o.Out, "warning:", w)
 		}
 	}
 	if p.Empty() {
@@ -175,13 +229,34 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 	}
 
 	ex := &executor{o: o, pr: pr, plan: p, secretValues: secretValues, ensure: ensure, provider: provider}
-	j := newJournal(o, "apply", o.Reason)
+	journal := o.Journal
+	var rec *jobs.Recorder
+	if journal == nil {
+		rec, err = jobs.Create(jobs.CreateOptions{Paths: o.Paths, Kind: jobs.KindApply, Source: jobs.SourceCLI,
+			Reason: o.Reason, Now: o.Now})
+		if err != nil {
+			_, _ = fmt.Fprintln(o.Out, "warning: no job journal:", err)
+			journal = noJournal{}
+		} else {
+			journal = rec
+			res.JobID = rec.ID()
+		}
+	}
+	finish := func(err error) error {
+		if rec != nil {
+			rec.Finish(err, res.JobResult())
+		}
+		return err
+	}
 	var feErr error
 	for _, a := range p.Actions {
 		_, _ = fmt.Fprintln(o.Out, "==>", a.String())
-		j.start(a.String())
+		end := journal.Step(a.String())
 		err := ex.run(ctx, a)
-		j.finish(err)
+		end(err)
+		if err == nil && a.Kind == plan.EnsureFE && fe.Current(o.Paths) == pr.Model.FEBuildID {
+			res.FECurrent = pr.Model.FEBuildID
+		}
 		// A failed FE build does not stop the stack steps. The next apply tries the build again.
 		if err != nil && a.Kind == plan.EnsureFE {
 			_, _ = fmt.Fprintln(o.Out, "    error:", err)
@@ -189,17 +264,19 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 			continue
 		}
 		if err != nil {
-			j.close(err)
-			return res, fmt.Errorf("apply failed at %s: %w", a.Kind, err)
+			return res, finish(fmt.Errorf("apply failed at %s: %w", a.Kind, err))
 		}
 	}
-	j.close(feErr)
 	if feErr != nil {
-		return res, feErr
+		return res, finish(feErr)
 	}
 	_, _ = fmt.Fprintln(o.Out, "apply complete")
-	return res, nil
+	return res, finish(nil)
 }
+
+type noJournal struct{}
+
+func (noJournal) Step(string) func(error) { return func(error) {} }
 
 func (o *Options) defaults() {
 	if o.Out == nil {

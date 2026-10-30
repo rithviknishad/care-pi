@@ -40,19 +40,19 @@ var ReservedFrontendEnv = []string{"REACT_CARE_API_URL"}
 var ErrNotImplemented = errors.New("not implemented in this version")
 
 // check runs the rules that JSON Schema cannot express.
-func (c *Config) check() []string {
-	var out []string
+func (c *Config) check() []Detail {
+	var out []Detail
 	seen := map[string]bool{}
 	for i, p := range c.Solution.Custom.Plugs {
 		if seen[p.ID] {
-			out = append(out, fmt.Sprintf("/solution/custom/plugs/%d/id: plug %q occurs more than once", i, p.ID))
+			out = append(out, Detail{Pointer: fmt.Sprintf("/solution/custom/plugs/%d/id", i), Message: fmt.Sprintf("plug %q occurs more than once", p.ID), Keyword: "uniqueItems"})
 		}
 		seen[p.ID] = true
 	}
 	dests := map[string]bool{}
 	for i, d := range c.Backups.Destinations {
 		if dests[d.ID] {
-			out = append(out, fmt.Sprintf("/backups/destinations/%d/id: destination %q occurs more than once", i, d.ID))
+			out = append(out, Detail{Pointer: fmt.Sprintf("/backups/destinations/%d/id", i), Message: fmt.Sprintf("destination %q occurs more than once", d.ID), Keyword: "uniqueItems"})
 		}
 		dests[d.ID] = true
 	}

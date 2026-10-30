@@ -47,10 +47,21 @@ const (
 	LockHistory = "/var/lib/care-pi/state/locks"
 	ModeDir     = "/var/lib/care-pi/state/mode"
 	EnsureState = "/var/lib/care-pi/state/ensure.json"
+	SupportDir  = "/var/lib/care-pi/state/support"
+
+	// CaddyRootCA is the root certificate of the local CA of Caddy (Caddy data /data/caddy/pki/...).
+	CaddyRootCA = "/var/lib/care-pi/caddy/caddy/pki/authorities/local/root.crt"
 
 	// RunDir is on a tmpfs. ApplyLock serialises apply, bootstrap, fe build, and fe prune.
 	RunDir    = "/run/care-pi"
 	ApplyLock = "/run/care-pi/apply.lock"
+	// AgentSocket is the socket of "care-pi serve". Caddy is its only client.
+	AgentSocket = "/run/care-pi/api.sock"
+	// AgentUnit runs "care-pi serve". The installer writes it.
+	AgentUnit     = "care-pi.service"
+	AgentUnitFile = "/etc/systemd/system/care-pi.service"
+	// ConsolePort is the port of the console origin (S48).
+	ConsolePort = 8443
 
 	// Flag files in ModeDir. Caddy checks them on each request.
 	ModeClockWait   = "clock-wait"

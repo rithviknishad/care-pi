@@ -16,6 +16,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/netinfo"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/render"
+	"github.com/rithviknishad/care-pi/agent/internal/setup"
 	"github.com/rithviknishad/care-pi/agent/internal/solution"
 )
 
@@ -29,6 +30,8 @@ type Prepared struct {
 	IPs      []string
 	Model    *render.Model
 	Tree     render.Tree
+	// Phase is the apply phase of the tree: setup.PhaseBootstrap or setup.PhaseFull.
+	Phase string
 }
 
 // PrepareOptions controls Prepare.
@@ -47,6 +50,9 @@ type PrepareOptions struct {
 	Warn   io.Writer
 	// Progress gets one line for each image digest or git sha that Prepare resolves over the network.
 	Progress io.Writer
+	// Phase is setup.PhaseBootstrap (setup mode: the pod and Caddy only) or setup.PhaseFull.
+	// "" reads the phase of the host from the setup record.
+	Phase string
 }
 
 // Prepare loads the config, the solution, and the lock, resolves refs, and renders the tree.
@@ -62,6 +68,16 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 	des, err := render.Desire(cfg, sol)
 	if err != nil {
 		return nil, exitcode.With(exitcode.BadInput, err)
+	}
+	if o.Phase == "" {
+		o.Phase = setup.Phase(o.Paths)
+	}
+	bootstrap := o.Phase == setup.PhaseBootstrap
+	if bootstrap {
+		// Setup mode runs only Caddy, so it resolves only the Caddy image.
+		des.Wants.Images = map[string]string{"caddy": des.Wants.Images["caddy"]}
+		des.Wants.Git = map[string]lock.GitWant{}
+		des.Wants.Plugs = map[string]lock.GitWant{}
 	}
 	if o.Strict {
 		if err := checkImplemented(cfg, sol, des); err != nil {
@@ -92,7 +108,7 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot read the network interfaces: %w", err)
 	}
-	m, err := render.NewModel(render.Input{Config: cfg, Solution: sol, Lock: lk, IPs: ips})
+	m, err := render.NewModel(render.Input{Config: cfg, Solution: sol, Lock: lk, IPs: ips, Bootstrap: bootstrap})
 	if err != nil {
 		return nil, exitcode.With(exitcode.BadInput, err)
 	}
@@ -105,7 +121,7 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Prepared{Config: cfg, Solution: sol, Desire: des, PrevLock: prev, Lock: lk, IPs: ips, Model: m, Tree: tree}, nil
+	return &Prepared{Config: cfg, Solution: sol, Desire: des, PrevLock: prev, Lock: lk, IPs: ips, Model: m, Tree: tree, Phase: o.Phase}, nil
 }
 
 // checkImplemented rejects valid settings that this version cannot apply.

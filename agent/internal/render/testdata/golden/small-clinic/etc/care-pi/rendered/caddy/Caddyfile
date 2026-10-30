@@ -33,6 +33,10 @@ https://care.local, https://192.168.1.10, https://10.0.0.5 {
 	handle @api {
 		reverse_proxy localhost:9000 {
 			header_up X-Forwarded-Proto https
+			# The browser also sends the console cookie to this port (docs/api/README.md, section 2.5).
+			# Remove it, so Care and its plugs never get it. The second line removes a "; " at the start.
+			header_up Cookie "(^|;\s*)__Host-care_pi_session=[^;]*" ""
+			header_up Cookie "^;\s*" ""
 			header_down -Strict-Transport-Security
 		}
 	}
@@ -46,6 +50,9 @@ https://care.local, https://192.168.1.10, https://10.0.0.5 {
 		}
 		reverse_proxy localhost:7070 {
 			flush_interval -1
+			# Remove the console cookie, as for @api.
+			header_up Cookie "(^|;\s*)__Host-care_pi_session=[^;]*" ""
+			header_up Cookie "^;\s*" ""
 		}
 	}
 
@@ -57,12 +64,18 @@ https://care.local, https://192.168.1.10, https://10.0.0.5 {
 		file_server
 	}
 
-	# PLACEHOLDER (Phase 2): the agent socket serves the console and the status JSON.
-	@agent path /console /console/* /_care-pi/status
+	# The public operations of the agent (docs/api/README.md, section 1): status, health, and the root CA.
+	# The agent listens on a unix socket. It sends its own Cache-Control headers.
+	# Below /_care-pi/ the agent answers only the public operations. Each other path gives 404.
+	@agent path /_care-pi/*
 	handle @agent {
-		header Content-Type "application/json"
-		header Cache-Control "no-store"
-		respond `{"status":"unavailable","detail":"The care-pi console is not available in this version."}` 503
+		reverse_proxy unix//run/care-pi/api.sock
+	}
+
+	# The console has its own origin on port 8443 (S48).
+	@console path /console /console/*
+	handle @console {
+		redir https://{host}:8443/ 308
 	}
 
 	# Everything else: a status page, or the care_fe build.
@@ -126,5 +139,56 @@ https://care.local, https://192.168.1.10, https://10.0.0.5 {
 				status 503
 			}
 		}
+	}
+
+	# The agent does not answer (care-pi.service stopped): a problem document, not an empty 502.
+	# Other errors (for example of care-api) keep the default response.
+	handle_errors 502 503 504 {
+		@agent_down path /_care-pi/*
+		handle @agent_down {
+			header Content-Type application/problem+json
+			header Cache-Control no-store
+			header Retry-After 5
+			respond `{"type":"https://care-pi.rithviknishad.dev/problems/unavailable","title":"The agent is not ready","status":503,"detail":"care-pi.service does not answer. Run: sudo systemctl status care-pi.service","instance":"/_care-pi/","retry_after_s":5}` 503
+		}
+	}
+}
+
+# The console origin (S48): the console SPA at /, the API at /api/v1/, and the public operations
+# at /_care-pi/. Each request goes to the agent. The same certificates as port 443, no HSTS.
+https://care.local:8443, https://192.168.1.10:8443, https://10.0.0.5:8443 {
+	tls internal
+	header -Server
+	header {
+		X-Frame-Options SAMEORIGIN
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "geolocation=(self), microphone=(self)"
+	}
+	log {
+		output stdout
+		format console
+	}
+	# Compress only the static files of the SPA. The event streams must not wait in a buffer.
+	@assets path /assets/*
+	encode @assets zstd gzip
+	# The largest body of the API is 1 MiB. The agent has smaller limits for most operations.
+	request_body {
+		max_size 1MiB
+	}
+	reverse_proxy unix//run/care-pi/api.sock {
+		flush_interval -1
+	}
+	# A body larger than max_size: a problem document, as from the agent.
+	handle_errors 413 {
+		header Content-Type application/problem+json
+		header Cache-Control no-store
+		respond `{"type":"https://care-pi.rithviknishad.dev/problems/payload-too-large","title":"The request body is too large","status":413,"detail":"The body is larger than 1 MiB.","instance":"/"}` 413
+	}
+	handle_errors 502 503 504 {
+		header Content-Type application/problem+json
+		header Cache-Control no-store
+		header Retry-After 5
+		respond `{"type":"https://care-pi.rithviknishad.dev/problems/unavailable","title":"The agent is not ready","status":503,"detail":"care-pi.service does not answer. Run: sudo systemctl status care-pi.service","instance":"/","retry_after_s":5}` 503
 	}
 }

@@ -97,6 +97,9 @@ stop_care() {
     warn "systemd is not running. The script cannot stop the Care units."
     return 0
   fi
+  log "Stop care-pi.service (the console agent)."
+  systemctl disable --now care-pi.service 2>/dev/null || true
+  rm -f /run/care-pi/api.sock
   log "Stop care.target and care-clock.service."
   systemctl stop care.target care-clock.service 2>/dev/null || true
   # The agent stops the containers through care.target. Wait until each care-*

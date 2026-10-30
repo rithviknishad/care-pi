@@ -1,10 +1,14 @@
 # {{.Header}}
 # Caddy: TLS, routing, the FE build, plug bundles, and status pages.
 # It does not wait for the clock gate, so it can show the clock status page.
+# It sends the console and the public agent operations to the agent socket in {{path "RunDir"}}.
+# It starts after {{.AgentUnit}}, but does not need it: without the agent, the agent routes give 503.
 
 [Unit]
 Description=care-pi Caddy (TLS and routing)
 PartOf=care.target
+Wants={{.AgentUnit}}
+After={{.AgentUnit}}
 
 [Container]
 ContainerName=care-caddy
@@ -17,8 +21,12 @@ Volume={{path "CaddyData"}}:/data
 Volume={{path "FEDir"}}:/srv/fe:ro
 Volume={{path "PlugsDir"}}:/srv/plugs:ro
 Volume={{path "ModeDir"}}:/srv/mode:ro
+# A directory, not the socket file: the agent makes a new socket at each start.
+Volume={{path "RunDir"}}:{{path "RunDir"}}
 
 [Service]
+# The bind mount needs the directory, also when the agent does not run.
+ExecStartPre=/bin/mkdir -p {{path "RunDir"}}
 MemoryMax={{.MemCad.Max}}
 MemorySwapMax={{.MemCad.Swap}}
 Restart=always

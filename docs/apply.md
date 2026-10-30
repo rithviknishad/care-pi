@@ -2,10 +2,11 @@
 
 `care-pi apply` makes the host match `/etc/care-pi/config.yaml`.
 It is idempotent: a second run without a change prints `no changes` and exits with code 0.
-`care-pi bootstrap` runs `apply` at the end.
+`care-pi bootstrap` runs `apply` at the end. The agent (`care-pi serve`) runs the same apply in a job
+(`POST /api/v1/apply`, `PATCH /api/v1/config?apply=true`, and the setup finish; `docs/console-server.md`).
 
 ```
-care-pi apply [--dry-run] [--config PATH] [--reason TEXT] [--update] [--lock-timeout DUR]
+care-pi apply [--dry-run] [--config PATH] [--reason TEXT] [--update] [--phase bootstrap|full] [--lock-timeout DUR]
 ```
 
 | Exit code | Description |
@@ -35,7 +36,7 @@ After the timeout, the command stops with exit code 1.
    and starts `care-worker`. apply prints `removed a leftover FE build drop-in`.
    With `--dry-run`, apply only reports the drop-in.
 2. **Validate.** Load `config.yaml` and check it against the JSON Schema.
-   Then reject valid settings that Phase 1 cannot apply: `tls.public`, `tls.tailscale`,
+   Then reject valid settings that this version cannot apply: `tls.public`, `tls.tailscale`,
    `tls.local_ca.enabled: false`, `solution.track: pinned`, `clock.policy: rtc`,
    and a backend plug set that needs a local image build.
 3. **Load the solution.** The agent embeds `solutions/<name>/solution.yaml`.
@@ -68,15 +69,32 @@ After the timeout, the command stops with exit code 1.
    `/var/lib/care-pi/state/locks/<UTC timestamp>.yaml`.
 
 Each run with a plan writes a journal to `/var/lib/care-pi/state/jobs/<UTC timestamp>-apply.json`:
-the reason, each step with its start and end time, and the result.
-A run that prints `no changes` and a `--dry-run` write no journal.
-Phase 1 only records the steps. A resume after a crash comes in Phase 2.
+the reason, each step with its start and end time, and the result. The events of the run go to
+`<UTC timestamp>-apply.events.jsonl` next to it. The journal is a job of the console API
+(`GET /api/v1/jobs`, `care-pi jobs list`; source `cli`). A job of the agent writes the same files
+(source `console`). `docs/console-server.md`, section 6, describes the format.
+A run that prints `no changes` and a `--dry-run` write no journal from the CLI.
+When a process stops during a run, the next start of the agent marks the journal `failed` ("interrupted").
+Run apply again: it is idempotent.
+
+## Setup mode (`--phase bootstrap`)
+
+On a new host, `care-pi bootstrap` starts setup mode (`docs/api/README.md`, section 5.1). apply then has the
+phase `bootstrap`: it renders and starts only `care.pod`, `care-caddy.container`, `care.target`,
+`care-clock.service`, `care-start.service`, the Caddyfile, and the status pages. It resolves only the Caddy image.
+It does not make an FE build. Caddy serves the setup page on port 443 and the console on port 8443.
+The golden tree `agent/internal/render/testdata/golden/small-clinic-bootstrap` shows the output.
+
+The phase of the host is in the setup record `/var/lib/care-pi/state/setup.json` (`apply_phase`).
+apply without `--phase` uses it: `bootstrap` until the setup finish, then `full`. A host without the record
+(a Phase 1 install) has the phase `full`. `--phase` overrides the phase for one run.
+The setup finish (`POST /api/v1/setup/finish` or `care-pi setup finish`) runs the first full apply.
 
 ## Rendered files
 
 | Host path | Owner, mode | Content |
 |---|---|---|
-| `/etc/containers/systemd/care.pod` | root 0644 | The pod. It publishes 80 and 443 on each LAN IPv4 address, and `127.0.0.1:19000` (API) and `127.0.0.1:17070` (S3) for debug. |
+| `/etc/containers/systemd/care.pod` | root 0644 | The pod. It publishes 80, 443, and 8443 (the console, S48) on each LAN IPv4 address, and `127.0.0.1:19000` (API) and `127.0.0.1:17070` (S3) for debug. |
 | `/etc/containers/systemd/care-{caddy,db,redis,s3,beat,worker,api}.container` | root 0644 | The containers. |
 | `/etc/containers/systemd/care-fe-build.container` | root 0644 | Only with `fe.provider: local`. The FE builder (`docs/fe.md`). |
 | `/etc/systemd/system/care.target` | root 0644 | Wants every unit of the stack. Requires `care-clock.service`. No `[Install]` section. |
@@ -268,6 +286,10 @@ until its next renewal check, about 10 minutes later. The reload checks the cert
 The update flow of Phase 4 uses `maintenance`.
 The API, bucket, and plug routes do not depend on the mode.
 
+The setup page reads `GET /_care-pi/status` and `GET /_care-pi/tls/instructions/<os>`. It shows the state of the
+setup, a link to the console at `https://<host of the page>:8443/`, the root CA download, and its SHA-256
+fingerprint.
+
 ## Caddy
 
 - Global options: the admin API on a unix socket inside the Caddy container
@@ -282,10 +304,18 @@ The API, bucket, and plug routes do not depend on the mode.
   `/admin/*` is not routed (O16).
   `/<FILE_UPLOAD_BUCKET>/*` and `/<FACILITY_S3_BUCKET>/*` → `localhost:7070`, no prefix strip,
   Host kept, `request_body max_size` = `uploads.max_body_mb`, `flush_interval -1`.
+  Both proxies remove the console cookie `__Host-care_pi_session` from the `Cookie` header (two `header_up Cookie`
+  regex replacements). The other cookies stay.
   `/plugs/*` → files in `/var/lib/care-pi/plugs`, CORS `*`, immutable cache.
-  `/console/*` and `/_care-pi/status` → a placeholder that returns 503 JSON (Phase 2 connects the agent).
+  `/_care-pi/*` → the agent socket `unix//run/care-pi/api.sock` (the public operations: status, health,
+  root CA, install steps). `/console` and `/console/*` → `308` to `https://{host}:8443/` (S48).
   Everything else: the mode table above. The SPA gets the security headers of care_fe
   without HSTS, `/assets/*` immutable, and `encode zstd gzip`.
+- Port 8443 (the console origin, S48): the same sites, `tls internal`, the security headers without HSTS.
+  Each request goes to the agent socket with `flush_interval -1`. Only `/assets/*` is compressed.
+  `request_body max_size 1MiB`: a larger body gives `413` with the problem type `payload-too-large`.
+- When the agent socket does not answer, the agent routes give `503` with `application/problem+json`
+  (type `unavailable`, `Retry-After: 5`). `docs/console-server.md`, section 3, has the route table.
 
 ## Backend env
 
@@ -307,11 +337,13 @@ restarts only the affected unit. `docs/config.md` lists the defaults that `env.b
 | `care-pi render --config PATH --out DIR [--ip IP]...` | Render to `DIR` without root and without network. It uses the lock below `--root` when the lock exists, else the tags. It also writes `DIR/etc/care-pi/lock.yaml`. |
 | `care-pi config validate` | Validate only. |
 | `care-pi status [--json]` | Unit states, health, memory (current, peak, cap), lock, names, and addresses. Exit code 1 when a unit is not active or not healthy. |
-| `care-pi logs UNIT [-f] [-n N]` | `journalctl --unit care-<UNIT>.service`. |
+| `care-pi logs UNIT [-f] [-n N] [--since TIME] [--json]` | `journalctl --unit care-<UNIT>.service`. `agent` is `care-pi.service`. `--json` prints the `LogPage` object of the API. |
 | `care-pi care create-superuser --username U --email E [--password-stdin]` | `podman exec care-api python manage.py createsuperuser`. With `--password-stdin` the password goes in `DJANGO_SUPERUSER_PASSWORD`, not on the command line. |
 | `care-pi clock wait [--timeout DUR]` | Wait for `timedatectl show -p NTPSynchronized` = `yes`. Then reload Caddy (see "Status pages and modes"). |
 | `care-pi host check [--json]` | Report the host prerequisites. Exit code 3 when a required one is missing. |
-| `care-pi bootstrap [--hostname NAME] [--preset NAME] [--fe-provider NAME] [--yes] [--lock-timeout DUR]` | Host check, directories, secrets, default `config.yaml`, then apply. `--fe-provider` (`local`, `artifact`, or `none`, default `local`) goes into a new `config.yaml`. bootstrap holds the apply lock for its full run. |
+| `care-pi bootstrap [--hostname NAME] [--preset NAME] [--fe-provider NAME] [--yes] [--unattended] [--lock-timeout DUR]` | Host check, directories, secrets, default `config.yaml`, a claim code, the start of `care-pi.service`, then apply. On a new host, apply has the phase `bootstrap` (setup mode, see "Setup mode"), and bootstrap prints the claim code and the console URLs. `--unattended` and a host with a `lock.yaml` get the full apply. `--fe-provider` (`local`, `artifact`, or `none`, default `local`) goes into a new `config.yaml`. bootstrap holds the apply lock for its full run. |
+| `care-pi serve` | The console API and the console (`care-pi.service`). `docs/console-server.md`. |
+| `care-pi auth …`, `setup …`, `config show\|set\|presets`, `jobs …`, `support-bundle`, `tls …`, `care info`, `power …` | The CLI parity commands of Phase 2 (`docs/api/README.md`, section 11; `docs/console-server.md`). |
 
 ## FE build
 

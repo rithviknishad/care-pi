@@ -41,10 +41,11 @@ func fakeGit() *host.FakeGit {
 	}}
 }
 
-// fixture renders one golden case.
+// fixture renders one golden case. A name with the suffix -bootstrap renders setup mode.
 func fixture(t *testing.T, name string) (Tree, *lock.Lock) {
 	t.Helper()
-	cfg, err := config.Load(filepath.Join("testdata", "config-"+name+".yaml"))
+	cfgName, boot := strings.CutSuffix(name, "-bootstrap")
+	cfg, err := config.Load(filepath.Join("testdata", "config-"+cfgName+".yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,12 +57,17 @@ func fixture(t *testing.T, name string) (Tree, *lock.Lock) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if boot {
+		pl.Wants.Images = map[string]string{"caddy": pl.Wants.Images["caddy"]}
+		pl.Wants.Git = map[string]lock.GitWant{}
+		pl.Wants.Plugs = map[string]lock.GitWant{}
+	}
 	r := lock.Resolver{Skopeo: fakeSkopeo{}, Git: fakeGit(), OS: "linux", Arch: "arm64"}
 	lk, err := r.Resolve(context.Background(), pl.Wants, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := NewModel(Input{Config: cfg, Solution: sol, Lock: lk, IPs: TestIPs})
+	m, err := NewModel(Input{Config: cfg, Solution: sol, Lock: lk, IPs: TestIPs, Bootstrap: boot})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +82,7 @@ func fixture(t *testing.T, name string) (Tree, *lock.Lock) {
 }
 
 func TestGolden(t *testing.T) {
-	for _, name := range []string{"solo", "small-clinic", "busy-counter", "custom"} {
+	for _, name := range []string{"solo", "small-clinic", "busy-counter", "custom", "small-clinic-bootstrap"} {
 		t.Run(name, func(t *testing.T) {
 			tree, lk := fixture(t, name)
 			lockData, err := lk.Marshal()

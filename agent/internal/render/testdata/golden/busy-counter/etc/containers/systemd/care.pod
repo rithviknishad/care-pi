@@ -12,11 +12,13 @@ After=network-online.target
 
 [Pod]
 PodName=care
-# HTTP and HTTPS on each LAN IPv4 address, never on 0.0.0.0.
+# HTTP, HTTPS, and the console (S48) on each LAN IPv4 address, never on 0.0.0.0.
 PublishPort=192.168.1.10:80:80
 PublishPort=192.168.1.10:443:443
+PublishPort=192.168.1.10:8443:8443
 PublishPort=10.0.0.5:80:80
 PublishPort=10.0.0.5:443:443
+PublishPort=10.0.0.5:8443:8443
 # Debug ports on the host loopback only: API and object storage.
 PublishPort=127.0.0.1:19000:9000
 PublishPort=127.0.0.1:17070:7070
