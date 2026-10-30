@@ -10,7 +10,7 @@ import { useElapsed } from "@/hooks/use-countdown";
 import { formatAbout, formatElapsed, formatTime } from "@/lib/format";
 import { fmt, strings } from "@/lib/strings";
 import { cn } from "@/lib/utils";
-import { expectedSeconds, jobKindFromId, stepProgress, type JobView } from "./job-state";
+import { expectedSeconds, jobKindFromId, jobStartedAt, stepProgress, type JobView } from "./job-state";
 import { useJobStream } from "./use-job-stream";
 
 const STATE_BADGE: Record<string, "neutral" | "info" | "success" | "destructive" | "warning"> = {
@@ -96,7 +96,7 @@ function JobProgressView({ jobId, initial = null, title, intro, onDone, children
   const [showLogs, setShowLogs] = useState(false);
   const job = view.job;
   const jobState = view.done ? (job?.state ?? "succeeded") : (job?.state ?? "running");
-  const total = useElapsed(job?.started_at ?? job?.created_at, view.done ? job?.finished_at : null, !view.done);
+  const total = useElapsed(jobStartedAt(view), view.done ? job?.finished_at : null, !view.done);
   const doneRef = useRef(false);
   const logBox = useRef<HTMLDivElement>(null);
 

@@ -100,6 +100,13 @@ const SETUP_EXPECTED_SECONDS: Partial<Record<string, number>> = {
   restart: 220,
 };
 
+// jobStartedAt is the start of the job for the elapsed time. The job object arrives with the done event (or
+// from the page that started the job). Before it, the start of the first step is the start of the job: on lumine
+// the progress page of the setup job showed 00:00 for 7 minutes (wave 4c).
+export function jobStartedAt(view: Pick<JobView, "job" | "steps">): string | null {
+  return view.job?.started_at ?? view.job?.created_at ?? view.steps[0]?.started_at ?? null;
+}
+
 // jobKindFromId reads the kind from a job id: "<UTC time>-<kind>" (docs/console-server.md, section 6).
 // The console uses it before the first job object arrives (for example after a page reload).
 export function jobKindFromId(id: string): string | undefined {

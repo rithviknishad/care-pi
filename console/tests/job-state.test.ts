@@ -6,6 +6,7 @@ import {
   emptyJobView,
   expectedSeconds,
   jobKindFromId,
+  jobStartedAt,
   stepProgress,
   type JobEvent,
 } from "@/features/jobs/job-state";
@@ -97,5 +98,18 @@ describe("expected durations", () => {
     expect(jobKindFromId("20261030T163803.767Z-setup")).toBe("setup");
     expect(jobKindFromId("20261030T101500.123Z-fe-build")).toBe("fe-build");
     expect(jobKindFromId("nodash")).toBeUndefined();
+  });
+});
+
+describe("job start time", () => {
+  it("uses the first step until the job object arrives", () => {
+    const running = run([
+      { id: 1, event: "step", data: { ...step(0, "running"), started_at: "2026-10-30T17:24:31.406Z" } },
+    ]);
+    expect(running.job).toBeNull();
+    expect(jobStartedAt(running)).toBe("2026-10-30T17:24:31.406Z");
+    expect(jobStartedAt(emptyJobView())).toBeNull();
+    const job = { started_at: "2026-10-30T17:24:31.405Z", created_at: "2026-10-30T17:24:31.405Z" } as Job;
+    expect(jobStartedAt({ ...running, job })).toBe("2026-10-30T17:24:31.405Z");
   });
 });
