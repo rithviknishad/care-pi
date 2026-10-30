@@ -9,6 +9,10 @@ node_modules/
 *.img
 *.img.xz
 
+# go test output
+coverage.out
+*.test
+
 # editor / OS
 .DS_Store
 .idea/

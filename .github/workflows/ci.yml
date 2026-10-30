@@ -1,0 +1,54 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15
+      - name: Cross-build for Linux
+        run: make build-linux
+        env:
+          CGO_ENABLED: "0"
+      - name: Upload care-pi_linux_arm64
+        uses: actions/upload-artifact@v7
+        with:
+          name: care-pi_linux_arm64
+          path: bin/care-pi_linux_arm64
+          if-no-files-found: error
+      - name: Upload care-pi_linux_amd64
+        uses: actions/upload-artifact@v7
+        with:
+          name: care-pi_linux_amd64
+          path: bin/care-pi_linux_amd64
+          if-no-files-found: error
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run shellcheck on installer scripts
+        run: find installer -name '*.sh' -type f -print0 | xargs -0 -r shellcheck
