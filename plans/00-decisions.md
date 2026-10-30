@@ -51,6 +51,8 @@
 | S45 | Persistent journal (Phase 1 exit test, finding 14) | The installer keeps the journal on disk: `/etc/systemd/journald.conf.d/50-care-pi.conf` with `Storage=persistent` and `SystemMaxUse=200M`, and `/var/log/journal` (root:systemd-journal 2755). Raspberry Pi OS keeps the journal in RAM by default (`Storage=volatile`), so `care-pi logs` lost the history at each reboot. |
 | S46 | Agent account recovery (O9) | Console password (argon2id) **plus 8 one-time recovery codes** shown once in the wizard. `sudo care-pi auth reset` over SSH is the last fallback. |
 | S47 | Django admin (O16) | **Not routed in v1.** Support uses `care-pi care …` (`manage.py` in `care-api`). Revisit when support needs it. |
+| S48 | Console origin | The console SPA and its API are served on **port 8443** (`https://<host>:8443/`), not under `/console/` on 443. Reason: a same-origin console API lets an XSS in Care or a malicious FE plug act as the operator. Port 443 redirects `/console*` to 8443. Public endpoints (status, health, root CA) are on both ports. The pod publishes 8443 on each LAN IP; the firewall allows it. |
+| S49 | Console sessions | 2 h idle, 24 h absolute. Server-side store; cookie `__Host-care_pi_session`. |
 
 ## B. PROPOSED — please confirm or override
 

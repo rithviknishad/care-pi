@@ -1,0 +1,8 @@
+# Redocly CLI ruleset for docs/api/openapi.yaml.
+# Run: sh docs/api/validate.sh
+extends:
+  - recommended
+rules:
+  # S34: the owner adds the license. Turn these on when info.license exists.
+  info-license: off
+  info-license-strict: off

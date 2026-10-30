@@ -1,0 +1,16 @@
+# This file instructs Redocly's linter to ignore the rules contained for specific parts of your API.
+# See https://redocly.com/docs/cli/ for more information.
+#
+# config.schema.json uses if/then: a "then" schema requires keys that the parent
+# schema defines. This is valid JSON Schema 2020-12. The rule does not see the parent.
+../../agent/internal/config/schema/config.schema.json:
+  no-required-schema-properties-undefined:
+    - '#/properties/size/allOf/0/then/properties/custom/required/0'
+    - '#/properties/size/allOf/0/then/properties/custom/required/1'
+    - '#/properties/size/allOf/0/then/properties/custom/required/2'
+    - '#/$defs/destination/allOf/0/then/required/0'
+    - '#/$defs/destination/allOf/1/then/required/0'
+    - '#/$defs/destination/allOf/1/then/required/1'
+    - '#/$defs/destination/allOf/1/then/required/2'
+    - '#/$defs/destination/allOf/2/then/required/0'
+    - '#/$defs/destination/allOf/2/then/required/1'

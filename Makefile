@@ -14,7 +14,7 @@ LDFLAGS     := -s -w \
 
 .DEFAULT_GOAL := build
 
-.PHONY: build build-linux test vet lint fmt tidy clean
+.PHONY: build build-linux test vet lint api-lint fmt tidy clean
 
 build:
 	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/care-pi $(PKG)
@@ -37,6 +37,9 @@ lint:
 	else \
 		echo "golangci-lint is not installed: see https://golangci-lint.run/welcome/install/"; \
 	fi
+
+api-lint:
+	sh docs/api/validate.sh
 
 fmt:
 	gofmt -l -w .
