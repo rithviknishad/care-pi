@@ -64,6 +64,12 @@
               "items": { "$ref": "#/$defs/plugCustom" }
             }
           }
+        },
+        "plugs": {
+          "description": "Phase 4. The operator choices for the plugs of the solution, by plug id: on or off, and the values of the settings form. Each track accepts these choices. They do not make the track custom. Secret values are not in this file: the agent keeps them in /etc/care-pi/secrets/plug-<id>.json.",
+          "type": "object",
+          "propertyNames": { "pattern": "^[a-z0-9][a-z0-9_-]{0,62}$" },
+          "additionalProperties": { "$ref": "#/$defs/plugChoice" }
         }
       },
       "allOf": [
@@ -201,7 +207,20 @@
             "end": { "$ref": "#/$defs/clockTime" }
           }
         },
-        "os_security": { "type": "boolean" }
+        "os_security": { "type": "boolean" },
+        "os_reboot": {
+          "description": "Phase 4. Reboot inside the update window when /run/reboot-required exists and no job runs.",
+          "type": "boolean"
+        },
+        "os_full": {
+          "description": "Phase 4. Run care-pi update --os (apt full-upgrade with the tested versions of the held packages) inside the update window, after the Care update.",
+          "type": "boolean"
+        },
+        "index_url": {
+          "description": "Phase 4. The URL of index.json (https:// or file://). null: the default URL of this agent release.",
+          "type": ["string", "null"],
+          "pattern": "^(https://|file:///)[^\\s]+$"
+        }
       }
     },
     "env": {
@@ -372,6 +391,34 @@
             "repo": { "type": "string", "pattern": "^https://[^\\s]+$" },
             "ref": { "type": "string", "$ref": "#/$defs/ref" },
             "url": { "type": "string", "pattern": "^https://[^\\s]+$" }
+          }
+        }
+      }
+    },
+    "plugChoice": {
+      "description": "Phase 4. The operator choice for one plug of the solution.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "description": "true or false: the operator turns the plug on or off. null or absent: the default of the solution and its auto rule apply.",
+          "type": ["boolean", "null"]
+        },
+        "settings": {
+          "description": "The values of the settings form, by part and by setting key (solution.yaml plugs[].settings[].key). A value of type secret is never here.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "backend": {
+              "description": "The values of the settings with part backend. They go into configs of the ADDITIONAL_PLUGS entry.",
+              "type": "object",
+              "propertyNames": { "minLength": 1, "maxLength": 200 }
+            },
+            "frontend": {
+              "description": "The values of the settings with part frontend. The key is a dotted path in meta of the plug_config row.",
+              "type": "object",
+              "propertyNames": { "minLength": 1, "maxLength": 200 }
+            }
           }
         }
       }

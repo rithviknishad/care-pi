@@ -1,0 +1,5 @@
+version: 1
+solution:
+  plugs:
+    care_filly:
+      on: true

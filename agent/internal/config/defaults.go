@@ -54,6 +54,7 @@ func Default() *Config {
 				End:   "05:00",
 			},
 			OSSecurity: true,
+			OSReboot:   true,
 		},
 		FE:      FE{Provider: DefaultFEProvider},
 		Uploads: Uploads{MaxBodyMB: DefaultUploadMaxBodyMB},

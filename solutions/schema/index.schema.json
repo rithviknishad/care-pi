@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/rithviknishad/care-pi/blob/main/solutions/schema/index.schema.json",
+  "title": "care-pi index",
+  "description": "The index that devices poll: each solution, its released locks, and the tested versions of the held OS packages. CI writes it from solutions/*/solution.yaml and solutions/*/locks/*.lock.yaml, and publishes it as the asset index.json of the release index. Default URL: https://github.com/rithviknishad/care-pi/releases/download/index/index.json. docs/solutions.md, section 4, describes each field.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "generated_at", "dist_base", "solutions"],
+  "properties": {
+    "apiVersion": {
+      "description": "The version of this format. The only value is care-pi/v1.",
+      "const": "care-pi/v1"
+    },
+    "kind": {
+      "description": "The kind of object. The only value is Index.",
+      "const": "Index"
+    },
+    "generated_at": {
+      "description": "The time when CI wrote the index (UTC).",
+      "type": "string",
+      "format": "date-time"
+    },
+    "dist_base": {
+      "description": "The base URL of each relative artefact reference in this index and in each lock. It ends with a slash. A move from GitHub release assets to GitHub Pages changes only this value.",
+      "type": "string",
+      "format": "uri",
+      "pattern": "^(https|file)://[^\\s]*/$"
+    },
+    "agent": {
+      "description": "The newest agent release. Information only: Phase 4 does not update the agent by itself.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["latest", "release_url"],
+      "properties": {
+        "latest": {
+          "description": "The newest agent version.",
+          "$ref": "#/$defs/semver"
+        },
+        "release_url": {
+          "description": "The release page of that version.",
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
+    "solutions": {
+      "description": "The solutions, sorted by name.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/solution" }
+    },
+    "os": {
+      "description": "OS package data for care-pi update --os.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "held_packages": {
+          "description": "The tested version of each held package (installer HOLD_PACKAGES), by Debian code name. care-pi update --os installs exactly these versions and holds the packages again. A held package without an entry stays at its version.",
+          "type": "object",
+          "propertyNames": { "pattern": "^[a-z]+$" },
+          "additionalProperties": {
+            "type": "object",
+            "propertyNames": { "pattern": "^[a-z0-9][a-z0-9+.-]*$" },
+            "additionalProperties": { "type": "string", "pattern": "^[A-Za-z0-9.+:~-]+$" }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "lockVersion": {
+      "type": "string",
+      "pattern": "^[0-9]{4}\\.(0[1-9]|1[0-2])\\.[0-9]+$"
+    },
+    "solution": {
+      "description": "One solution.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "title", "description", "latest", "locks"],
+      "properties": {
+        "name": {
+          "description": "The solution name.",
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+        },
+        "title": {
+          "description": "The name for the operator.",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "description": "The short text of solution.yaml.",
+          "type": "string"
+        },
+        "latest": {
+          "description": "The newest lock that is not withdrawn. null when no such lock exists. A device on the stable track installs this lock when its agent is new enough.",
+          "oneOf": [{ "$ref": "#/$defs/lockVersion" }, { "type": "null" }]
+        },
+        "locks": {
+          "description": "Each released lock, newest first. The list keeps withdrawn locks.",
+          "type": "array",
+          "items": { "$ref": "#/$defs/lock" }
+        }
+      }
+    },
+    "lock": {
+      "description": "One released lock.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "url", "sha256", "released_at", "min_agent_version", "changelog_url", "summary", "withdrawn", "withdrawn_reason"],
+      "properties": {
+        "version": {
+          "description": "The calendar version.",
+          "$ref": "#/$defs/lockVersion"
+        },
+        "url": {
+          "description": "The lock file: lock-<name>-<version>/<name>-<version>.lock.yaml, relative to dist_base, or an absolute https URL.",
+          "type": "string",
+          "pattern": "^(https://[^\\s]+|[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*)$"
+        },
+        "sha256": {
+          "description": "The SHA-256 of the lock file. The agent refuses a file with another value (problem artefact-invalid).",
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "released_at": {
+          "description": "The time of the release.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "min_agent_version": {
+          "description": "The same value as min_agent_version of the lock.",
+          "$ref": "#/$defs/semver"
+        },
+        "changelog_url": {
+          "description": "The release notes for a person (the release page). null when none exists.",
+          "type": ["string", "null"],
+          "format": "uri"
+        },
+        "summary": {
+          "description": "One line for the console.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "withdrawn": {
+          "description": "True when the maintainers withdrew the lock. The stable track skips it. A device that runs it gets the next lock as an update.",
+          "type": "boolean"
+        },
+        "withdrawn_reason": {
+          "description": "Why the lock was withdrawn. null when withdrawn is false.",
+          "type": ["string", "null"]
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "apiVersion": "care-pi/v1",
+      "kind": "Index",
+      "generated_at": "2026-11-21T09:00:00Z",
+      "dist_base": "https://github.com/rithviknishad/care-pi/releases/download/",
+      "agent": {
+        "latest": "v0.4.1",
+        "release_url": "https://github.com/rithviknishad/care-pi/releases/tag/v0.4.1"
+      },
+      "solutions": [
+        {
+          "name": "care-clinic",
+          "title": "CARE Clinic",
+          "description": "Outpatient clinic. Appointments, encounters, prescriptions, and invoices.",
+          "latest": "2026.11.1",
+          "locks": [
+            {
+              "version": "2026.11.1",
+              "url": "lock-care-clinic-2026.11.1/care-clinic-2026.11.1.lock.yaml",
+              "sha256": "da007b85a27bdadce321def754cce1984b7af1a00927e026357ce1dd3b6efc5b",
+              "released_at": "2026-11-21T08:55:00Z",
+              "min_agent_version": "v0.4.0",
+              "changelog_url": "https://github.com/rithviknishad/care-pi/releases/tag/lock-care-clinic-2026.11.1",
+              "summary": "care develop of 2026-11-20. Faster appointments plug 2026-11-18.",
+              "withdrawn": false,
+              "withdrawn_reason": null
+            },
+            {
+              "version": "2026.11.0",
+              "url": "lock-care-clinic-2026.11.0/care-clinic-2026.11.0.lock.yaml",
+              "sha256": "4df1613845b512b3d89c77298d30d34222a5ae7e9c22ef726f59f43eb4b3bd74",
+              "released_at": "2026-11-14T10:20:00Z",
+              "min_agent_version": "v0.4.0",
+              "changelog_url": "https://github.com/rithviknishad/care-pi/releases/tag/lock-care-clinic-2026.11.0",
+              "summary": "First lock of CARE Clinic.",
+              "withdrawn": false,
+              "withdrawn_reason": null
+            }
+          ]
+        }
+      ],
+      "os": {
+        "held_packages": {
+          "trixie": {
+            "podman": "5.4.2+ds1-2",
+            "crun": "1.21-1",
+            "netavark": "1.14.1-1",
+            "aardvark-dns": "1.14.0-3",
+            "conmon": "2.1.12-4",
+            "skopeo": "1.18.0+ds1-1"
+          }
+        }
+      }
+    }
+  ]
+}

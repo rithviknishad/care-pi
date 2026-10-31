@@ -45,6 +45,11 @@ The frontend env is the merge of: `REACT_CARE_API_URL=""`, `env.frontend` of the
 For `REACT_MFE_REGISTERED_COMPONENTS`, the merge joins the values with commas.
 The local provider writes the merged env to `/etc/care-pi/rendered/fe/frontend.env`.
 
+Phase 4 changes two rules (`docs/solutions.md` sections 1.5 and 13.3):
+`REACT_MFE_REGISTERED_COMPONENTS` gets the components of each plug of the solution, on or off, so a plug switch does not
+change the build id. When the build id equals `fe.build_id` of the solution lock, the agent downloads the bundle of the
+lock with each provider except `none`.
+
 To calculate a build id, use the agent:
 
 ```sh

@@ -33,6 +33,21 @@ type Solution struct {
 	Track  string         `yaml:"track" json:"track"`
 	Pin    string         `yaml:"pin,omitempty" json:"pin,omitempty"`
 	Custom SolutionCustom `yaml:"custom" json:"custom"`
+	// Plugs holds the operator choices for the plugs of the solution, by plug id (Phase 4).
+	Plugs map[string]PlugChoice `yaml:"plugs,omitempty" json:"plugs,omitempty"`
+}
+
+// PlugChoice turns a plug of the solution on or off and holds the values of its settings form.
+// A nil Enabled follows the default of the solution and its auto rule (docs/solutions.md, section 1.3).
+type PlugChoice struct {
+	Enabled  *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Settings *PlugSettings `yaml:"settings,omitempty" json:"settings,omitempty"`
+}
+
+// PlugSettings holds setting values by part and key. Secret values are never here.
+type PlugSettings struct {
+	Backend  map[string]any `yaml:"backend,omitempty" json:"backend,omitempty"`
+	Frontend map[string]any `yaml:"frontend,omitempty" json:"frontend,omitempty"`
 }
 
 // SolutionCustom holds the operator refs for track "custom".
@@ -148,6 +163,12 @@ type Updates struct {
 	Auto       bool         `yaml:"auto" json:"auto"`
 	Window     UpdateWindow `yaml:"window" json:"window"`
 	OSSecurity bool         `yaml:"os_security" json:"os_security"`
+	// OSReboot reboots inside the window when /run/reboot-required exists.
+	OSReboot bool `yaml:"os_reboot" json:"os_reboot"`
+	// OSFull runs "care-pi update --os" inside the window, after the Care update.
+	OSFull bool `yaml:"os_full" json:"os_full"`
+	// IndexURL overrides the URL of index.json. Empty is the default of the agent release.
+	IndexURL string `yaml:"index_url,omitempty" json:"index_url,omitempty"`
 }
 
 // UpdateWindow is the time window for automatic updates.
