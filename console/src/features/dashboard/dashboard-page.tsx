@@ -21,7 +21,9 @@ import {
   shortDigest,
   shortSha,
 } from "@/lib/format";
-import { fmt, strings } from "@/lib/strings";
+import { maintenanceText } from "@/app/layout/maintenance";
+import { summaryText, trackBadge } from "@/features/updates/update-text";
+import { fmt, jobKindText, strings } from "@/lib/strings";
 import { cn } from "@/lib/utils";
 
 const d = strings.dashboard;
@@ -65,7 +67,11 @@ function StateCard({ status }: { status: Status | undefined }) {
         .filter(([k, on]) => on && k !== "degraded")
         .map(([k]) => d.flags[k] ?? k)
     : [];
-  const items = status ? [...flags, ...status.problems] : [];
+  // The maintenance banner of the dashboard: the step of the update that runs (Status.maintenance).
+  const maintenance = status?.maintenance?.active ? [maintenanceText(status.maintenance)] : [];
+  const items = status
+    ? [...maintenance, ...flags.filter((f) => !maintenance.length || f !== d.flags.maintenance), ...status.problems]
+    : [];
   return (
     <Card size="sm">
       <CardContent className="grid gap-4 sm:grid-cols-[14rem_minmax(0,1fr)]">
@@ -95,7 +101,11 @@ function StateCard({ status }: { status: Status | undefined }) {
               </li>
             ) : (
               items.map((p) => (
-                <li key={p} className="flex items-start gap-2">
+                <li
+                  key={p}
+                  className="flex items-start gap-2"
+                  data-testid={p === maintenance[0] ? "status-maintenance" : undefined}
+                >
                   <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden="true" />
                   {p}
                 </li>
@@ -105,6 +115,74 @@ function StateCard({ status }: { status: Status | undefined }) {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+// The update summary (Status.updates, Phase 4): the version, the track, the new version, the state, the last check,
+// and the last result. Each row has its place before the data arrives. null before Phase 4.
+function UpdatesSection({ status }: { status: Status | undefined }) {
+  const loading = !status;
+  const sum = status?.updates ?? null;
+  const tz = status?.clock.timezone;
+  const track = trackBadge(sum?.track);
+  const line = sum ? summaryText(sum) : null;
+  const last = sum?.last_result ?? null;
+  const lastText = last
+    ? fmt(d.updatesResult, {
+        kind: strings.updates.historyKinds[last.kind] ?? last.kind,
+        outcome: strings.updates.outcomes[last.outcome] ?? last.outcome,
+        time: formatDateTime(last.finished_at, tz),
+      })
+    : "—";
+  return (
+    <Section title={d.updates} testId="updates-summary">
+      <DataList>
+        <DataRow label={d.updatesVersion} loading={loading} value={sum?.current_version ?? "—"} />
+        <DataRow
+          label={d.updatesTrack}
+          loading={loading}
+          value={
+            sum ? (
+              <Badge size="sm" variant={track.variant}>
+                {track.text}
+              </Badge>
+            ) : (
+              "—"
+            )
+          }
+        />
+        <DataRow
+          label={d.updatesUpdate}
+          loading={loading}
+          testId="updates-line"
+          value={
+            !sum ? (
+              d.updatesNotAvailable
+            ) : line?.link ? (
+              <Link
+                to="/updates"
+                className={cn(
+                  "underline-offset-4 hover:underline",
+                  line.variant === "warning" && "text-amber-700 dark:text-amber-300",
+                )}
+              >
+                {line.text}
+              </Link>
+            ) : (
+              line?.text
+            )
+          }
+          title={line?.text}
+        />
+        <DataRow
+          label={d.updatesState}
+          loading={loading}
+          value={sum ? (strings.updates.states[sum.state] ?? sum.state) : "—"}
+        />
+        <DataRow label={d.updatesLastCheck} loading={loading} value={formatDateTime(sum?.last_check_at, tz)} />
+        <DataRow label={d.updatesLastResult} loading={loading} value={lastText} title={lastText} />
+      </DataList>
+    </Section>
   );
 }
 
@@ -404,6 +482,7 @@ export default function DashboardPage() {
             <DataRow label={d.agent} loading={loading} value={s?.agent.version} />
           </DataList>
         </Section>
+        <UpdatesSection status={s} />
         <Section title={d.certificate}>
           <DataList>
             <DataRow
@@ -424,14 +503,14 @@ export default function DashboardPage() {
             <DataRow
               label={d.runningJob}
               loading={loading}
-              value={s?.jobs.running ? `${s.jobs.running.kind}: ${s.jobs.running.step ?? ""}` : d.noJob}
+              value={s?.jobs.running ? `${jobKindText(s.jobs.running.kind)}: ${s.jobs.running.step ?? ""}` : d.noJob}
             />
             <DataRow
               label={d.lastJob}
               loading={loading}
               value={
                 s?.jobs.last
-                  ? `${s.jobs.last.kind} ${s.jobs.last.state} ${formatTime(s.jobs.last.finished_at)}`
+                  ? `${jobKindText(s.jobs.last.kind)}: ${strings.progress.states[s.jobs.last.state] ?? s.jobs.last.state} ${formatTime(s.jobs.last.finished_at)}`
                   : d.noJob
               }
             />

@@ -36,6 +36,10 @@ const STEP_ERRORS = {
   "ensure-stanza":
     "podman exec --user postgres care-db pg_isready --quiet: exit status 255: Error: unable to find user postgres: no matching entries in passwd file",
   "wait-healthy": "care-api.service did not become healthy in 10m0s.",
+  checkpoint: "pgbackrest --stanza=care --type=incr backup: exit status 82: unable to find primary cluster",
+  migrate: "care-beat.service did not become healthy. emr.0187 raised IntegrityError.",
+  verify: "GET https://care.local/ping/ gave HTTP 502.",
+  rollback: "care-api.service did not become healthy in 5m0s after the rollback.",
 };
 
 export function jobId(kind) {
@@ -68,14 +72,17 @@ export function runningHostJob(state) {
   return null;
 }
 
-// spec: { kind, steps: [[action, name, {progress?: unit}]], cancellable, holdsLock, result(state), onDone(state, ok) }
+// spec: { kind, steps: [[action, name, {progress?: unit, slow?: factor}]], cancellable, holdsLock, reason, source,
+//   result(state, job), onDone(state, ok, job), onStep(state, step, "start" | "done" | "failed", job),
+//   failAt: the action of a step that fails, recovery(action): the steps that run after that failure (a rollback),
+//   failure(state, job, action): the problem of the failed job }
 export function startJob(state, spec) {
   const id = jobId(spec.kind);
   const job = {
     id,
     kind: spec.kind,
     state: "running",
-    source: "console",
+    source: spec.source ?? "console",
     reason: spec.reason ?? null,
     created_at: now(),
     started_at: now(),
@@ -97,12 +104,16 @@ export function startJob(state, spec) {
   };
 
   let index = 0;
+  const steps = [...spec.steps];
+  // The action of the first failed step when the job runs recovery steps after it (an update that rolls back).
+  let failedAt = null;
   const finish = (ok, problem) => {
     job.state = entry.cancelled ? "cancelled" : ok ? "succeeded" : "failed";
     job.finished_at = now();
     job.error = problem ?? null;
-    job.result = ok && spec.result ? spec.result(state, job) : null;
+    // onDone first: a result can read the state after the job (the check of updates reads the new index).
     spec.onDone?.(state, ok, job);
+    job.result = ok && spec.result ? spec.result(state, job) : null;
     emit("done", structuredClone(job));
   };
 
@@ -111,13 +122,15 @@ export function startJob(state, spec) {
       finish(false, null);
       return;
     }
-    if (index >= spec.steps.length) {
-      finish(true);
+    if (index >= steps.length) {
+      if (failedAt) finish(false, spec.failure?.(state, job, failedAt) ?? null);
+      else finish(true);
       return;
     }
-    const [action, name, opts = {}] = spec.steps[index];
+    const [action, name, opts = {}] = steps[index];
     const step = { index, name, action, state: "running", started_at: now(), finished_at: null, detail: null };
     job.steps[index] = step;
+    spec.onStep?.(state, step, "start", job);
     emit("step", { ...step });
     const lines = LOG_LINES[action] ?? [`${name}: start`];
     let tick = 0;
@@ -140,14 +153,26 @@ export function startJob(state, spec) {
         tick++;
         if (tick >= ticks) {
           clearInterval(timer);
-          const failed = state.failStep && state.failStep === action;
+          const failed = (state.failStep && state.failStep === action) || (!failedAt && spec.failAt === action);
           const error = STEP_ERRORS[action] ?? `${action}: exit status 1`;
           step.state = failed ? "failed" : "succeeded";
           step.finished_at = now();
           step.detail = failed ? error : null;
+          spec.onStep?.(state, step, failed ? "failed" : "done", job);
           emit("step", { ...step });
           if (failed) {
-            state.failStep = null;
+            if (state.failStep === action) state.failStep = null;
+            if (spec.recovery) {
+              failedAt = action;
+              steps.splice(index + 1, steps.length, ...spec.recovery(action));
+              index++;
+              setTimeout(runStep, 10);
+              return;
+            }
+            if (spec.failure) {
+              finish(false, spec.failure(state, job, action));
+              return;
+            }
             finish(false, {
               type: "https://care-pi.rithviknishad.dev/problems/internal",
               title: "Internal error",
@@ -161,7 +186,7 @@ export function startJob(state, spec) {
           setTimeout(runStep, 10);
         }
       },
-      Math.max(20, Math.floor(state.stepMs / ticks)),
+      Math.max(20, Math.floor((state.stepMs * (opts.slow ?? 1)) / ticks)),
     );
   };
   setTimeout(runStep, 20);

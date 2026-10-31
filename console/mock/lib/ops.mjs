@@ -342,7 +342,8 @@ function bundleBytes(id) {
   return gzipSync(Buffer.from(`care-pi support bundle ${id} (mock)\ngenerated ${now()}\n`));
 }
 
-// Operations with x-phase greater than 2 answer 501 after the auth checks.
+// Operations of a later phase answer 501 after the auth checks. Phase 4 is in lib/updates.mjs
+// (reset option phase4: false gives 501 there too).
 export const phaseRoutes = [
   ["GET", "/api/v1/backups", 3],
   ["POST", "/api/v1/backups/run", 3],
@@ -350,12 +351,6 @@ export const phaseRoutes = [
   ["GET", "/api/v1/backups/recovery-key", 3],
   ["GET", "/api/v1/restore/points", 3],
   ["POST", "/api/v1/restore", 3],
-  ["GET", "/api/v1/updates", 4],
-  ["POST", "/api/v1/updates/check", 4],
-  ["POST", "/api/v1/updates/apply", 4],
-  ["POST", "/api/v1/updates/rollback", 4],
-  ["GET", "/api/v1/plugs", 4],
-  ["PUT", "/api/v1/plugs/:id", 4],
   ["PUT", "/api/v1/network/wifi", 6],
   ["PUT", "/api/v1/tls/public", 6],
   ["PUT", "/api/v1/tls/tailscale", 6],

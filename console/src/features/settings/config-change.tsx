@@ -78,10 +78,13 @@ export function ConfigChange({
   edit,
   valid,
   children,
+  onApplied,
 }: {
   edit: (file: Config) => Config;
   valid: boolean;
   children: ReactNode;
+  // Called when the apply job ends (for example to read GET /updates again).
+  onApplied?: () => void;
 }) {
   const qc = useQueryClient();
   const file = useConfig("file");
@@ -155,6 +158,7 @@ export function ConfigChange({
             void qc.invalidateQueries({ queryKey: qk.status });
             void qc.invalidateQueries({ queryKey: qk.network });
             void qc.invalidateQueries({ queryKey: qk.fe });
+            onApplied?.();
           }}
         >
           <Button

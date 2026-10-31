@@ -46,5 +46,5 @@ test("log in on a laptop and read the dashboard", async ({ page }, info) => {
   for (const r of units) expect(r).not.toMatch(/inactive|failed/);
   await shot(page, info, "19-dashboard");
   await saveState(page, "desktop");
-  expect(loaded.length).toBe(8);
+  expect(loaded.length).toBe(9);
 });

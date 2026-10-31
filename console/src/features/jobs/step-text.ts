@@ -61,6 +61,8 @@ export function stepArgument(step: Pick<JobStep, "action" | "name">): string {
     case "restart":
     case "enable-target":
     case "wait-healthy":
+    case "stop":
+    case "start":
       return arg.split(/\s+/).filter(Boolean).map(shortUnit).join(", ");
     case "full-cycle":
     case "start-target": {

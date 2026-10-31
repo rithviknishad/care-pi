@@ -3,8 +3,11 @@ import { defineConfig, devices } from "@playwright/test";
 // The e2e tests run against the production build (vite preview) and the stateful mock.
 // The journeys against a real device are in e2e/real (npm run test:e2e:real, playwright.real.config.ts).
 // Run `npm run build` first (npm run test:e2e does it).
-const MOCK_PORT = 4711;
-const PREVIEW_PORT = 4773;
+// E2E_MOCK_PORT and E2E_PREVIEW_PORT change the ports, so 2 worktrees can run their tests at the same time.
+const MOCK_PORT = Number(process.env.E2E_MOCK_PORT ?? 4711);
+const PREVIEW_PORT = Number(process.env.E2E_PREVIEW_PORT ?? 4773);
+// The workers read the URL of the mock in e2e/fixtures.ts.
+process.env.E2E_MOCK_URL = `http://127.0.0.1:${MOCK_PORT}`;
 
 export default defineConfig({
   testDir: "e2e",

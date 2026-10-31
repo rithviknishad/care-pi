@@ -43,8 +43,10 @@ export function createAppRouter(queryClient: QueryClient) {
             { path: "security", lazy: page(() => import("@/features/security/security-page")) },
             { path: "support", lazy: page(() => import("@/features/support/support-page")) },
             { path: "backups", lazy: page(() => import("@/features/unavailable/backups-page")) },
-            { path: "updates", lazy: page(() => import("@/features/unavailable/updates-page")) },
-            { path: "plugs", lazy: page(() => import("@/features/unavailable/plugs-page")) },
+            { path: "updates", lazy: page(() => import("@/features/updates/updates-page")) },
+            { path: "plugs", lazy: page(() => import("@/features/plugs/plugs-page")) },
+            // The Restore page of Phase 3 replaces this page; the PITR offer of an update links to /restore?time=….
+            { path: "restore", lazy: page(() => import("@/features/restore/restore-page")) },
           ],
         },
         { path: "*", element: <NotFoundPage /> },

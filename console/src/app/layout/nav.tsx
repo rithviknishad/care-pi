@@ -41,8 +41,8 @@ function navItems(state: SetupStateName): NavItem[] {
     { to: "/security", label: strings.nav.security, icon: LockIcon },
     { to: "/support", label: strings.nav.support, icon: LifeBuoyIcon },
     { to: "/backups", label: strings.nav.backups, icon: DatabaseBackupIcon, later: true },
-    { to: "/updates", label: strings.nav.updates, icon: RefreshCwIcon, later: true },
-    { to: "/plugs", label: strings.nav.plugs, icon: PuzzleIcon, later: true },
+    { to: "/updates", label: strings.nav.updates, icon: RefreshCwIcon },
+    { to: "/plugs", label: strings.nav.plugs, icon: PuzzleIcon },
   ];
 }
 

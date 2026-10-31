@@ -3,7 +3,7 @@ import { LogOutIcon, MenuIcon, UserRoundIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
 import { api, call } from "@/api/client";
-import { storeSession, useNetwork } from "@/api/queries";
+import { storeSession, useMaintenance, useNetwork } from "@/api/queries";
 import type { Session } from "@/api/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,8 @@ import {
 import { Sheet, SheetBody, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { strings } from "@/lib/strings";
+import { cn } from "@/lib/utils";
+import { MaintenanceBanner } from "./maintenance-banner";
 import { NavList } from "./nav";
 import { ThemeToggle } from "./theme-toggle";
 
@@ -32,12 +34,15 @@ function Brand() {
 }
 
 // The name that avahi announces now (it can differ from the configured name on a collision).
-function DeviceName({ session }: { session: Session | null }) {
+function DeviceName({ session, phoneHidden }: { session: Session | null; phoneHidden: boolean }) {
   const network = useNetwork(Boolean(session));
   const name = session ? (network.data?.mdns.advertised ?? network.data?.mdns.configured) : window.location.hostname;
   return (
     <span
-      className="min-w-0 flex-1 truncate text-sm text-soft-foreground sm:max-w-[22ch]"
+      className={cn(
+        "min-w-0 flex-1 truncate text-sm text-soft-foreground sm:w-[22ch] sm:flex-none",
+        phoneHidden && "hidden sm:inline",
+      )}
       title={strings.app.deviceName}
       data-testid="device-name"
     >
@@ -84,6 +89,8 @@ function AccountMenu() {
 }
 
 export function TopBar({ session, menu }: { session: Session | null; menu?: ReactNode }) {
+  const maintenance = useMaintenance(Boolean(session));
+  const active = Boolean(session && maintenance.data?.maintenance?.active);
   return (
     <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur print:hidden">
       <a
@@ -95,15 +102,25 @@ export function TopBar({ session, menu }: { session: Session | null; menu?: Reac
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 px-3 sm:gap-3 sm:px-4">
         {menu}
         <Brand />
-        <DeviceName session={session} />
+        <DeviceName session={session} phoneHidden={active} />
+        {/* Below 640 px the maintenance banner takes the place of the device name. */}
+        {active ? (
+          <div className="flex min-w-0 flex-1 sm:hidden">
+            <MaintenanceBanner enabled compact />
+          </div>
+        ) : null}
         {/* From 640 px: the width of the longest state with a session ("Setup runs"), so a state change moves nothing.
-            On a phone the name gets the space. The buttons stay at the right edge. */}
-        <div className="shrink-0 text-xs sm:w-[calc(10ch+1rem)]">
+            On a phone the name gets the space (the maintenance banner, while it shows). The buttons stay at the right edge. */}
+        <div className={cn("shrink-0 text-xs sm:w-[calc(10ch+1rem)]", active && "hidden sm:block")}>
           {session ? (
             <Badge variant={session.setup_state === "ready" ? "success" : "info"} size="sm" data-testid="setup-state">
               {strings.setupState[session.setup_state] ?? session.setup_state}
             </Badge>
           ) : null}
+        </div>
+        {/* From 640 px the maintenance banner has this slot. It is always there, so the banner moves nothing. */}
+        <div className="hidden min-w-0 flex-1 basis-0 justify-center sm:flex">
+          {session ? <MaintenanceBanner enabled /> : null}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1">
           <ThemeToggle />

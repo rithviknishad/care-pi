@@ -2,29 +2,82 @@ import types from "@/api/types.gen.ts?raw";
 import { describe, expect, it } from "vitest";
 import { logUnitOf, shortImage, stepArgument, stepTitle } from "@/features/jobs/step-text";
 import { groupChecks } from "@/features/setup/hardware-logic";
-import { strings } from "@/lib/strings";
+import { jobKindText, strings } from "@/lib/strings";
 import type { HostCheckItem } from "@/api/types";
 
 // The action keys of the contract (src/api/types.gen.ts, made from docs/api/openapi.yaml; npm run api:check):
-// the enum PlanActionKind and the "Other keys" of JobStep.action.
+// the enum PlanActionKind, the "Other keys" and the "Phase 4 keys" of JobStep.action.
 function contractKeys(): string[] {
   const plan = /PlanActionKind: ([^;]+);/.exec(types)?.[1] ?? "";
   const other = /Other keys: ([\s\S]*?)\.\s*\n/.exec(types)?.[1] ?? "";
-  const keys = [...plan.matchAll(/"([a-z-]+)"/g), ...other.matchAll(/`([a-z-]+)`/g)].map((m) => m[1] ?? "");
-  return keys.filter(Boolean);
+  const phase4 = /Phase 4 keys \([^)]*\): ([\s\S]*?)\.\s*\n/.exec(types)?.[1] ?? "";
+  const keys = [
+    ...plan.matchAll(/"([a-z-]+)"/g),
+    ...other.matchAll(/`([a-z-]+)`/g),
+    ...phase4.matchAll(/`([a-z-]+)`/g),
+  ].map((m) => m[1] ?? "");
+  return [...new Set(keys.filter(Boolean))];
+}
+
+// The job kinds of the contract (the enum JobKind).
+function contractKinds(): string[] {
+  const kinds = /JobKind: ([^;]+);/.exec(types)?.[1] ?? "";
+  return [...kinds.matchAll(/"([a-z-]+)"/g)].map((m) => m[1] ?? "").filter(Boolean);
 }
 
 describe("step names", () => {
   it("has an operator sentence for each action key of the contract", () => {
     const keys = contractKeys();
-    expect(keys.length).toBeGreaterThanOrEqual(26);
+    expect(keys.length).toBeGreaterThanOrEqual(49);
     expect(keys).toContain("resolve-lock");
+    // Phase 4 (docs/solutions.md sections 8 and 11) and the plan actions cutover and plug-config.
+    for (const k of [
+      "stage-pull",
+      "cutover-maintenance-on",
+      "checkpoint",
+      "migrate",
+      "maintenance-off",
+      "reboot",
+      "cutover",
+    ])
+      expect(keys).toContain(k);
     for (const k of keys) {
       const t = stepTitle({ action: k, name: `${k}: x`, state: "succeeded" });
       expect(t.raw, k).toBe(false);
       expect(t.text, k).not.toMatch(/^[a-z-]+:/);
     }
     expect(Object.keys(strings.steps.actions).sort()).toEqual([...keys].sort());
+  });
+
+  it("has an operator text for each job kind of the contract", () => {
+    const kinds = contractKinds();
+    expect(kinds).toEqual(
+      expect.arrayContaining([
+        "update-check",
+        "update-stage",
+        "update-apply",
+        "update-rollback",
+        "os-update",
+        "plug-change",
+      ]),
+    );
+    for (const k of kinds) {
+      expect(jobKindText(k), k).not.toBe(k);
+    }
+    expect(Object.keys(strings.jobs.kinds).sort()).toEqual([...kinds].sort());
+    expect(jobKindText("something-new")).toBe("something-new");
+  });
+
+  it("gives the migration a running text with its duration", () => {
+    expect(stepTitle({ action: "migrate", name: "migrate: start care-beat.service", state: "running" }).text).toBe(
+      "Update the database (this can take some minutes)",
+    );
+    expect(stepTitle({ action: "migrate", name: "migrate: start care-beat.service", state: "succeeded" }).text).toBe(
+      "Update the database",
+    );
+    expect(
+      stepTitle({ action: "cutover-maintenance-on", name: "cutover-maintenance-on", state: "succeeded" }).text,
+    ).toBe("Show the maintenance page");
   });
 
   it("shows the raw name for an unknown key", () => {
@@ -66,6 +119,9 @@ describe("step names", () => {
     expect(arg("pull-images", "pull-images: 7 image(s)")).toBe("7 images");
     expect(arg("write-files", "write-files: 15 file(s)")).toBe("15 files");
     expect(arg("restart", "restart: care-beat.service care-api.service")).toBe("care-beat, care-api");
+    expect(arg("stop", "stop: care-beat.service care-worker.service care-api.service")).toBe(
+      "care-beat, care-worker, care-api",
+    );
     expect(arg("full-cycle", "full-cycle: care.target (care-db unit changed; pod changed)")).toBe(
       "care-db unit changed; pod changed",
     );

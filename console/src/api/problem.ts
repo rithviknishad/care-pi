@@ -38,6 +38,22 @@ export type ProblemSlug =
   | "not-implemented-in-this-version"
   | "care-not-running"
   | "unavailable"
+  // Phase 4 (docs/api/README.md section 14.8).
+  | "update-window-closed"
+  | "no-update-available"
+  | "lock-not-found"
+  | "agent-too-old"
+  | "plug-unknown"
+  | "plug-settings-invalid"
+  | "build-required-offline"
+  | "index-unavailable"
+  | "artefact-invalid"
+  | "rollback-unavailable"
+  | "checkpoint-failed"
+  | "migration-failed"
+  | "verify-failed"
+  | "rollback-failed"
+  | "os-update-failed"
   | "network"
   | "unknown";
 
