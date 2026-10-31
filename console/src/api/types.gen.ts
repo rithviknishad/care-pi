@@ -1520,11 +1520,15 @@ export interface paths {
         /**
          * Turn a plug on or off, or change its settings
          * @description Phase 4. Writes `solution.plugs.<plug_id>` of `config.yaml` (and the secret file of the plug), then returns the plan:
-         *     the path of the change (`plug-config`, `restart`, `cutover`, `build-and-cutover`; `docs/solutions.md` section 12.1).
+         *     the path of the change (`none`, `plug-config`, `restart`, `cutover`, `build-and-cutover`; `docs/solutions.md` section 12.1).
          *     Members that the body does not have stay unchanged.
+         *
+         *     A setting (backend, frontend, or secret) of a plug that is off has the path `none`: it has no effect now. The agent
+         *     stores the value, and the value counts when the plug turns on.
          *
          *     - `dry_run=true`: the agent validates and makes the plan. It writes nothing. Status `200`.
          *     - `apply=true`: after the write, the agent starts a job of kind `plug-change`. Status `202`, with the job in `job`.
+         *       With the path `none`, it starts no job: status `200`, `job: null`.
          *     - Else: the agent writes. Status `200`. `GET /plugs` shows `pending: true` until an apply.
          *
          *     `If-Match` is optional here. When it is present, a different ETag of `config.yaml` gives `412 config-changed`.
@@ -6660,7 +6664,8 @@ export interface components {
             withdrawn_reason: string | null;
         };
         /**
-         * @description How the agent applies a change (`docs/solutions.md` section 12.1). `none`: nothing to do. `plug-config`: bundles and
+         * @description How the agent applies a change (`docs/solutions.md` section 12.1). `none`: nothing to do now, for example a setting of a
+         *     plug that is off (the value counts when the plug turns on). `plug-config`: bundles and
          *     `plug_config` rows only, no restart. `restart`: api, worker, and beat restart, no maintenance page. `cutover`: the
          *     update steps with the maintenance page and the checkpoint. `build-and-cutover`: a local build in staging, then the cutover.
          * @example cutover
@@ -6983,6 +6988,34 @@ export interface components {
          *       },
          *       "downtime_s": 351.2
          *     }
+         * @example {
+         *       "job_id": "20261123T091500.000Z-update-rollback",
+         *       "kind": "rollback",
+         *       "source": "console",
+         *       "reason": "slow",
+         *       "started_at": "2026-11-23T09:15:00Z",
+         *       "finished_at": "2026-11-23T09:17:41Z",
+         *       "outcome": "succeeded",
+         *       "from_version": "2026.11.1",
+         *       "to_version": "2026.11.0",
+         *       "from_lock": "20261123T091741Z",
+         *       "to_lock": "20261122T020741Z",
+         *       "plug_id": null,
+         *       "checkpoint": null,
+         *       "pitr_offer": {
+         *         "available": true,
+         *         "reason": null,
+         *         "checkpoint_at": "2026-11-22T02:05:12Z",
+         *         "target_time": "2026-11-22T02:05:40Z",
+         *         "restore_point": "care-pi-20261122T020300.000Z-update-apply",
+         *         "restore": {
+         *           "kind": "pitr",
+         *           "target_time": "2026-11-22T02:05:40Z"
+         *         }
+         *       },
+         *       "problem": null,
+         *       "downtime_s": 140
+         *     }
          */
         UpdateHistoryEntry: {
             job_id: components["schemas"]["JobId"];
@@ -7026,7 +7059,17 @@ export interface components {
             plug_id: components["schemas"]["PlugId"] | null;
             /** @description The checkpoint of the job. `null` when the job took none. */
             checkpoint: components["schemas"]["Checkpoint"] | null;
-            /** @description The PITR to the checkpoint, when the migrations started and the job did not succeed. `null` else. */
+            /**
+             * @description The PITR offer. The console shows the restore card from it, also after a reload. It is set:
+             *
+             *     - when the migrations of the job started and the job did not succeed (`outcome` `rolled-back` or
+             *       `rollback-failed`): the checkpoint of this job. The job is `failed`, with the same offer in `error.pitr_offer`;
+             *     - for a `rollback` job that succeeded: the checkpoint of the update that installed the lock that the rollback
+             *       removed (`outcome: succeeded`), or of the interrupted update that a recovery undid (`source: timer`,
+             *       `outcome: rolled-back`, `problem: null`). It equals `UpdateRollbackResult.pitr_offer` of the job.
+             *
+             *     `null` else, and when the agent knows no checkpoint (for example the lock came from an apply without one).
+             */
             pitr_offer: components["schemas"]["PitrOffer"] | null;
             /** @description The error of the job. `null` after a success. */
             problem: components["schemas"]["Problem"] | null;
@@ -7589,7 +7632,7 @@ export interface components {
             to_lock: components["schemas"]["LockId"];
             /** @description The checkpoint of the rollback itself (best effort). `null` when it failed. */
             checkpoint: components["schemas"]["Checkpoint"] | null;
-            /** @description The PITR to the checkpoint of the update that installed `from_version`. Only it undoes the migrations of that update. */
+            /** @description The PITR to the checkpoint of the update that installed `from_version`. Only it undoes the migrations of that update. The history entry of the job (`GET /updates/history`, `kind: rollback`) has the same offer. `null` when the agent knows no checkpoint. */
             pitr_offer: components["schemas"]["PitrOffer"] | null;
             /** @description The time with the maintenance page. */
             downtime_s: number;
@@ -8136,7 +8179,7 @@ export interface components {
             etag: components["schemas"]["EntityTag"];
             plug: components["schemas"]["Plug"];
             plan: components["schemas"]["PlugChangePlan"];
-            /** @description The `plug-change` job (`apply=true`). Else `null`. */
+            /** @description The `plug-change` job (`apply=true` and a path other than `none`). Else `null`. */
             job: components["schemas"]["Job"] | null;
         };
         /**
@@ -11637,7 +11680,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description The plug and the plan. With `dry_run=false`, the file is written. */
+            /** @description The plug and the plan. With `dry_run=false`, the file is written. Also `apply=true` with the path `none` (no job). */
             200: {
                 headers: {
                     ETag: components["headers"]["ETag"];
