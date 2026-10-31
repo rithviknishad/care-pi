@@ -68,7 +68,7 @@ Other transport rules:
 The agent has one operator account. It is separate from Care (S22). It has:
 
 - a console password: argon2id, m = 19 MiB, t = 2, p = 1 (OWASP minimum). The agent hashes one password at a time,
-  because its memory cap is 64M (`01` §8);
+  because its memory cap of 128M also holds its child processes (`01` §8);
 - 8 one-time recovery codes (S46), stored as hashes;
 - an optional TOTP secret (RFC 6238: SHA-1, 6 digits, 30 s; the step before and after are valid; no replay).
 

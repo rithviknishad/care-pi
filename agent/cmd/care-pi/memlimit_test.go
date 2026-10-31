@@ -20,9 +20,9 @@ func TestCgroupMemoryMax(t *testing.T) {
 	}
 	proc := filepath.Join(dir, "cgroup")
 	write(proc, "0::/system.slice/care-pi.service\n")
-	write(filepath.Join(unit, "memory.max"), "67108864\n")
-	if n, ok := cgroupMemoryMax(proc, filepath.Join(dir, "sys")); !ok || n != 64<<20 {
-		t.Fatalf("got %d %v, want 64 MiB", n, ok)
+	write(filepath.Join(unit, "memory.max"), "134217728\n")
+	if n, ok := cgroupMemoryMax(proc, filepath.Join(dir, "sys")); !ok || n != 128<<20 {
+		t.Fatalf("got %d %v, want 128 MiB", n, ok)
 	}
 	write(filepath.Join(unit, "memory.max"), "max\n")
 	if _, ok := cgroupMemoryMax(proc, filepath.Join(dir, "sys")); ok {

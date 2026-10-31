@@ -36,7 +36,8 @@ const (
 	MaxPasswordLen = 128
 )
 
-// hashMu makes the agent hash one password at a time: its memory cap is 64M.
+// hashMu makes the agent hash one password at a time: each hash needs 19 MiB, and the memory cap
+// of the agent (128M) also holds its child processes.
 var hashMu sync.Mutex
 
 // HashPassword returns the PHC string of the argon2id hash of the NFC form of password.

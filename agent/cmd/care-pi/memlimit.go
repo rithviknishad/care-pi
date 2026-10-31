@@ -10,12 +10,12 @@ import (
 )
 
 // applySoftMemoryLimit gives the Go garbage collector a soft limit of half the memory cap of the
-// cgroup of the agent (MemoryMax=64M of care-pi.service, plans/01 section 8). The other half is for
-// the child processes (podman, skopeo, journalctl) and the page cache, which the cgroup also counts.
-// Without the limit, the heap grows to twice the live heap before a collection. On lumine the agent
-// reached 73 MiB RSS (argon2id hashes of 19 MiB), the cgroup reached its cap 89 times, and the swap
-// reached 31 of the 32 MiB of MemorySwapMax during the first setup job (wave 4c).
-// GOMEMLIMIT in the environment wins.
+// cgroup of the agent (MemoryMax=128M of care-pi.service, plans/01 section 8: a soft limit of 64 MiB).
+// The other half is for the child processes (podman, skopeo, journalctl) and the page cache, which
+// the cgroup also counts. Without the limit, the heap grows to twice the live heap before a
+// collection. On lumine, with the earlier cap of 64M, the agent reached 73 MiB RSS (argon2id hashes
+// of 19 MiB), the cgroup reached its cap 89 times, and the swap reached 31 of the 32 MiB of
+// MemorySwapMax during the first setup job (wave 4c). GOMEMLIMIT in the environment wins.
 func applySoftMemoryLimit(log *slog.Logger) {
 	if os.Getenv("GOMEMLIMIT") != "" {
 		return

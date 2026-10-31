@@ -1813,8 +1813,10 @@ Restart=always
 RestartSec=2
 TimeoutStopSec=30
 # Memory cap of 01 section 8. "podman pull" runs in a transient unit (systemd-run),
-# so the image pulls of an apply do not count here.
-MemoryMax=64M
+# so the image pulls of an apply do not count here. The other children (skopeo,
+# podman exec, podman ps) count here: 64M was too small beside the argon2id
+# hashes of logins (wave 4c). "care-pi serve" gives the Go GC half of MemoryMax.
+MemoryMax=128M
 MemorySwapMax=32M
 OOMScoreAdjust=-100
 # Hardening (04 section 2). NoNewPrivileges is not possible: the agent runs podman

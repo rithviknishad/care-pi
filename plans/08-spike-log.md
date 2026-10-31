@@ -689,3 +689,45 @@ Four installs: run 1 on the laptop (found the blocker), a CLI-only setup, a fina
    The bootstrap apply in setup mode prints "a new database runs the migrations (about 4 minutes)".
 9. The first contact over mDNS, the TLS interstitial, and the trust of the root CA in each browser
    (SP7) need a test from a device on the same LAN.
+10. (Wave 4d.) **Parallel `GET /status`.** Each request starts its own podman children. 24 parallel
+    requests OOM-kill the agent with the cap of 64M and of 128M ("Follow-ups applied", A).
+    Options: one shared status collection for parallel requests, or a limit on parallel podman children.
+
+### Follow-ups applied (wave 4d, 2026-10-31)
+
+The owner accepted follow-ups 1 to 6 (A: the memory cap of the agent, B: the boot apply without an address,
+C: the console items). Each item is one signed commit. Scripts and raw output: `local/wave4d/` (S39).
+
+#### A. Agent memory cap 128M (follow-up 1)
+
+Change: `care-pi.service` has `MemoryMax=128M`, `MemorySwapMax=32M` (was `64M`, `32M`). The installer writes the
+unit (`care_pi_unit` of `installer/install.sh`); no other code writes it. `serve` reads `memory.max` of its cgroup
+at the start and sets the Go soft limit to half of it: the journal shows
+`go memory limit cgroup_memory_max=134217728 soft_limit=67108864` (64 MiB). Deploy: the installer with the flags of
+the exit test (`--hostname lumine --preset small-clinic --yes`) in 2 s, "no changes" for the stack; then
+`systemctl show care-pi.service -p MemoryMax,MemorySwapMax` = `134217728`, `33554432`. The pod did not restart.
+
+Load of wave 4c plus skopeo (`local/wave4d/13-mem-load-seq.sh`, 3 runs for each cap, a restart of the agent before
+each run): 8 logins one after the other (8 argon2id hashes), each followed by 3 parallel `GET /status`, and at the
+same time `GET /api/v1/apply/plan?update=true` (the agent form of `care-pi apply --dry-run --update`: `skopeo inspect`
+of the 4 tracked images and `git ls-remote` run as children of the agent, in its cgroup; 23–25 s). The 64M runs
+used `systemctl set-property --runtime care-pi.service MemoryMax=64M` (soft limit 32 MiB), then the runtime
+drop-in was removed.
+
+| Cap | `MemoryPeak` (3 runs) | `memory.events max` | `MemorySwapPeak` | OOM kills | Agent `VmHWM` | Requests |
+|---|---|---|---|---|---|---|
+| 64M (before) | 64.0, 64.0, 64.0 MiB (the cap each run) | 29, 16, 23 | 14.2, 12.3, 12.4 MiB | **0** | 38.8–56.8 MiB | 102 × 200 |
+| **128M (after)** | 128.0, 97.4, 109.7 MiB | 16, 0, 0 | **0**, 0, 0 | **0** | 71.6–76.9 MiB | 102 × 200, `/status` ≤ 0.62 s |
+
+Children seen in the cgroup (sampled each 0.2 s): `skopeo` 29–30 MiB, `podman` 39–41 MiB, `systemctl` 7 MiB.
+`journalctl -u care-pi.service | grep -i oom`: no line after the deploy of 128M, except the 3 runs of the
+stress load below.
+
+A stress load found a limit that the cap does not fix (`local/wave4d/10-mem-load.sh`): the same requests, but the
+8 logins at the same time, thus 24 parallel `GET /status` and the plan. The agent was OOM-killed in each run, with
+64M (3 of 3 runs, 5 processes killed: `podman` 4, `care-pi` 1) and with 128M (3 of 3 runs, `care-pi` killed,
+anon RSS 29–48 MiB; sampled cgroup maximum 119–127 MiB). Each `GET /status` starts its own `podman` children
+(about 10 MiB anonymous memory each, plus the shared 29 MiB of the binary), so the memory grows with the number of
+parallel requests. New follow-up 10 (not fixed): share one status collection between parallel requests, or limit
+the number of parallel podman children. A console tab reads `GET /status` each 10 s, so the normal use is far
+from this load.

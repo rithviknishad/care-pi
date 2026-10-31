@@ -245,7 +245,7 @@ Clock feasibility (your Q7): yes.
 2 GB total; the kernel + Pi OS Lite baseline is ~120 MB with avahi/journald. Figures below
 are **measured in SP3** (`08-spike-log.md`): the real Care stack as quadlets in one pod on
 lumine (Pi 5, 2 GB, 16 KB kernel), idle and under a mixed read/write load of ~20 concurrent
-clients. Caddy, the agent and pgBackRest are still estimates (SP6/SP7/Phase 1).
+clients. Caddy and pgBackRest are still estimates (SP6/SP7/Phase 1). The agent is measured (Phase 2 exit test, waves 4c and 4d).
 
 | Component | Idle in pod (measured) | Peak seen (measured) | `MemoryMax` / `MemorySwapMax` |
 |---|---|---|---|
@@ -256,7 +256,7 @@ clients. Caddy, the agent and pgBackRest are still estimates (SP6/SP7/Phase 1).
 | gunicorn, per sync worker | 128 MB cold → ~175 MB warm, + 34 MB master | — | ≈ 64M + 200M × workers |
 | celery worker, per prefork child | ~160–180 MB, + ~180 MB parent | — | 384M / 128M (c=1), 512M / 128M (c=2) |
 | Caddy | ~20 MB *(estimate)* | ~40 MB | 96M / 0 |
-| agent | ~20 MB *(estimate)* | ~40 MB | 64M / 0 |
+| agent (`care-pi serve`, with its child processes) | 7.5–12 MiB (measured, Phase 2 exit test) | cgroup 97–128 MiB, agent RSS ≤ 77 MiB, swap 0 under 8 logins + `GET /status` + skopeo; children `skopeo` 30 MiB, `podman` 41 MiB, `podman exec` 27 MiB (measured, waves 4c/4d, `08`) | **128M / 32M** (measured; 64M / 32M until wave 4d). Go GC soft limit = half of `MemoryMax` |
 | pgBackRest during backup | 0 | 80–150 MB *(estimate, process-max=1)* | inside db cap |
 
 Controls: zram swap (Pi OS default, 2 GB zstd) so short bursts page out instead of

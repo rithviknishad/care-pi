@@ -70,7 +70,7 @@ Full detail per spike in `08-spike-log.md`; folded into `01` §4/§5/§8, `02`, 
 | Idle stack (`small-clinic`) | ≈ 820 MB sum of units; host `MemAvailable` ≈ 0.97 GB. |
 | Peaks | api 286 MiB (solo) / hits 512M cap at 3 workers; beat 314 MiB during `migrate`; db 187 MiB (migrate), 233 MiB (during pgBackRest backup); redis 36; versitygw 79 (50 MB transfer); Caddy 27 (50 MB transfer). |
 | Throughput (20 clients, simple API) | solo ≈ 54 req/s; small-clinic ≈ 93; busy-counter ≈ 114. CPU-bound, not memory-bound. |
-| Recommended caps | api `64M + 200M × workers` (320/512/768); worker 384M c=1 / 512M c=2; beat 512M (384M until the Phase 1 exit test, `08`); db 384M (512M at 256 MB buffers); redis 96M; versitygw 128–256M; Caddy 96M; agent 64M. All with `MemorySwapMax` set. |
+| Recommended caps | api `64M + 200M × workers` (320/512/768); worker 384M c=1 / 512M c=2; beat 512M (384M until the Phase 1 exit test, `08`); db 384M (512M at 256 MB buffers); redis 96M; versitygw 128–256M; Caddy 96M; agent 128M / 32M (64M until wave 4d, `08` "Phase 2 exit test"). All with `MemorySwapMax` set. |
 | Start-up | Empty DB → API healthy 3 min 20 s. api+worker restart 45 s (upstream runs `collectstatic` + `compilemessages` every start). Full cold stack restart 44 s. |
 | FE build (care_fe, vite 8 / rolldown) | Working set ≈ 1.8–2 GiB; a 1 GiB `MemoryMax` is OOM-killed every time. Fits 2 GB only via Pi OS zram (1× RAM, zstd, ~4:1). Winning unit: `MemoryHigh=768M MemoryMax=1700M MemorySwapMax=1500M OOMScoreAdjust=900`, db/redis `OOMScoreAdjust=-500`, app at `solo` + worker stopped → API 15–30 ms throughout. Warm ≈ 1 min, cold (`npm ci`, 1456 pkgs) ≈ 3 min. `--sourcemap false` → 13 MB vs 45 MB. Source via `codeload.github.com/<org>/<repo>/tar.gz/<sha>` (no git needed). Persistent per-repo `node_modules` 1.2 GB + npm cache 0.4 GB. |
 | Caddy + versitygw | Presigned S3 URLs proxy unchanged (path-style; don't strip prefix or rewrite Host). `VGW_REGION` must equal Care's `BUCKET_REGION` (else `AuthorizationHeaderMalformed`). Care never creates buckets → agent creates `patient-bucket`/`facility-bucket` with `LocationConstraint`; facility bucket needs an anonymous `s3:GetObject` policy (upstream fetches cover images unsigned). versitygw stores object metadata in **xattrs** (`user.etag`, …). |
@@ -403,7 +403,14 @@ Measured: `care-pi.service` idle 7.5–12 MiB; during the first setup job before
 89 times and 31 of 32 MiB swap, after it 46 MiB and no swap. FE build 771 MiB + up to 768 MiB zram, host
 `MemAvailable` minimum 445 MiB. Care `/ping/` median 13–14 ms during the job; console health median 8 ms.
 
-Follow-ups for the owner (detail in `08`): the 64M cap still meets podman and skopeo children; the NetworkManager
+Follow-ups applied in wave 4d (2026-10-31; detail in `08`, "Follow-ups applied"):
+
+- **A. Agent memory cap 128M** (follow-up 1). `care-pi.service` has `MemoryMax=128M`, `MemorySwapMax=32M`; the Go
+  soft limit is 64 MiB. The load of wave 4c plus skopeo: 64M reached its cap in each run (16–29 events, swap
+  12–14 MiB); 128M reached it in 1 of 3 runs, swap 0, no OOM kill. 24 parallel `GET /status` OOM-kill the agent
+  with both caps (new follow-up 10).
+
+Follow-ups for the owner (detail in `08`): ~~the 64M cap still meets podman and skopeo children~~ (done, A); the NetworkManager
 hook applies at boot before the DHCP address, then a full cycle 90 s later (Care at 179 s after a reboot); the
 units table on a phone; raw step names and a 26 s silent lock resolution on the progress page; the raw error of a
 failed setup; 43 checks (25 directories) on the hardware step; small items (duplicate `X-Content-Type-Options`,
