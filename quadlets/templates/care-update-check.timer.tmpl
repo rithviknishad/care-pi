@@ -1,0 +1,14 @@
+# {{.Header}}
+# The daily update check (docs/solutions.md, section 10.2): at a random time in the afternoon,
+# when a clinic usually has internet.
+
+[Unit]
+Description=care-pi update check
+
+[Timer]
+OnCalendar={{.Timers.CheckCalendar}}
+RandomizedDelaySec={{.Timers.CheckRandomDelay}}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

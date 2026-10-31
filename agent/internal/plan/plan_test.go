@@ -167,6 +167,37 @@ func TestPlanTable(t *testing.T) {
 			reasonIn: "image changed: care",
 		},
 		{
+			name: "Phase 4: care image change on a running stack is a cutover, not a full cycle",
+			in: Input{
+				Desired: tree(with(base(), api, "api v2", worker, "worker v2", beat, "beat v2")),
+				Current: current(base()), TargetActive: true, ImagesChanged: []string{"care"}, LockChanged: true,
+				StackImages: []string{"ghcr.io/rithviknishad/care-pi/care@sha256:new"}, Cutover: true, PlugConfig: true,
+			},
+			want:     []Kind{EnsureDirs, WriteFiles, DaemonReload, PullImages, Cutover, EnsureBucket, EnsureStanza, PlugConfig, WriteLock},
+			reasonIn: "image changed: care",
+		},
+		{
+			name: "Phase 4: backend plugs change (env only) is a cutover",
+			in: Input{
+				Desired: tree(with(base(), backend, "env v2")), Current: current(base()), TargetActive: true,
+				LockChanged: true, Cutover: true,
+			},
+			want:     []Kind{EnsureDirs, WriteFiles, Cutover, EnsureBucket, EnsureStanza, WriteLock},
+			reasonIn: "backend plugs changed",
+		},
+		{
+			name: "Phase 4: an FE plug change writes only the plug_config rows",
+			in:   Input{Desired: tree(base()), Current: current(base()), TargetActive: true, PlugConfig: true, LockChanged: true},
+			want: []Kind{PlugConfig, WriteLock},
+		},
+		{
+			name: "Phase 4: cutover is ignored when the target is not active",
+			in: Input{
+				Desired: tree(with(base(), api, "api v2")), Current: current(base()), TargetActive: false, Cutover: true,
+			},
+			want: []Kind{EnsureDirs, WriteFiles, DaemonReload, StartTarget, EnsureBucket, EnsureStanza},
+		},
+		{
 			name: "builder image change only: no cycle",
 			in: Input{
 				Desired: tree(with(base(), febuild, "fe v2")), Current: current(with(base(), febuild, "fe v1")),
@@ -261,7 +292,10 @@ func TestPlanTable(t *testing.T) {
 				}
 			}
 			if c.reasonIn != "" {
-				a, _ := p.Get(FullCycle)
+				a, ok := p.Get(FullCycle)
+				if !ok {
+					a, _ = p.Get(Cutover)
+				}
 				if !strings.Contains(a.Reason, c.reasonIn) {
 					t.Fatalf("full cycle reason %q does not contain %q", a.Reason, c.reasonIn)
 				}

@@ -86,6 +86,7 @@ func (e *env) writeConfig(c string) {
 // reset gives a new Fake. active tells the state of care.target.
 func (e *env) reset() {
 	e.fake = host.NewFake()
+	e.fake.Hook = host.PlugConfigHook
 	for _, ref := range images {
 		e.fake.On("skopeo inspect --override-os linux --override-arch "+runtime.GOARCH+" --format {{.Digest}} docker://"+ref,
 			host.Response{Out: digest(ref) + "\n"})
@@ -102,6 +103,7 @@ func (e *env) secretsPresent() {
 	for _, s := range secrets.PodmanSecrets() {
 		names = append(names, s.Name)
 	}
+	names = append(names, render.AdditionalPlugsSecret)
 	e.fake.On("podman secret ls --format {{.Name}}", host.Response{Out: strings.Join(names, "\n") + "\n"})
 }
 
@@ -171,6 +173,8 @@ var unitList = strings.Join(render.Units, " ")
 const (
 	pgIsReady    = "podman exec --user postgres care-db pg_isready --quiet"
 	stanzaCreate = "podman exec --user postgres care-db pgbackrest --stanza=main stanza-create"
+	// plugConfigShell writes the plug_config rows (Phase 4): care_onboarding_fe is on in the solution.
+	plugConfigShell = "podman exec -i care-api python manage.py shell"
 )
 
 func TestFirstApply(t *testing.T) {
@@ -184,11 +188,15 @@ func TestFirstApply(t *testing.T) {
 		want = append(want, "podman secret create --replace "+s.Name+" -")
 	}
 	want = append(want,
+		"podman secret create --replace "+render.AdditionalPlugsSecret+" -",
 		"systemctl daemon-reload",
 		"systemctl enable care-start.service",
+		"systemctl enable care-update-check.timer care-update-apply.timer",
+		"systemctl start care-update-check.timer care-update-apply.timer",
 		"systemctl reset-failed "+unitList,
 		"systemctl start care.target",
 		stanzaCreate,
+		plugConfigShell,
 	)
 	if got := e.mutating(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("commands:\n got  %q\n want %q", got, want)
@@ -417,9 +425,9 @@ func TestDryRunWritesNothing(t *testing.T) {
 
 func TestNotImplementedIsBadInput(t *testing.T) {
 	for name, extra := range map[string]string{
-		"public tls":   "tls:\n  public: {enabled: true, clinic_id: sunrise}\n",
-		"rtc clock":    "clock: {policy: rtc}\n",
-		"custom plugs": "solution:\n  track: custom\n  custom:\n    plugs:\n      - {id: care_filly, enabled: true}\n",
+		"public tls": "tls:\n  public: {enabled: true, clinic_id: sunrise}\n",
+		"rtc clock":  "clock: {policy: rtc}\n",
+		"no pin":     "solution:\n  track: pinned\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newEnv(t, smallClinic+extra)
@@ -588,8 +596,8 @@ func TestFEFailureDoesNotStopTheStackSteps(t *testing.T) {
 	if lk == nil || lk.FE.BuildID == "" || fe.Current(e.p) != "" {
 		t.Fatalf("want a lock with the build id and no current build: %+v", lk)
 	}
-	// The stack steps ran before the FE build; the lock write after it also ran (see above).
-	if got := e.mutating(); got[len(got)-1] != stanzaCreate {
+	// The stack steps ran before the FE build; the plug_config rows and the lock write after it also ran.
+	if got := e.mutating(); got[len(got)-2] != stanzaCreate || got[len(got)-1] != plugConfigShell {
 		t.Fatalf("the stanza step did not run: %q", got)
 	}
 	if out := e.out.String(); strings.Index(out, "==> ensure-stanza") > strings.Index(out, "==> ensure-fe") || !strings.Contains(out, "==> write-lock") {
@@ -882,6 +890,7 @@ func TestJobResolveLockStepFails(t *testing.T) {
 	e := newEnv(t, smallClinic)
 	e.targetState("inactive")
 	e.fake = host.NewFake()
+	e.fake.Hook = host.PlugConfigHook
 	e.fake.On("skopeo inspect --override-os linux --override-arch "+runtime.GOARCH+" --format {{.Digest}} docker://"+images[0],
 		host.Response{Code: 1, Out: "manifest unknown"})
 	e.rec = newRecorder(t, e.p)

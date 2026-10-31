@@ -33,6 +33,16 @@ const (
 	KindSupportBundle = "support-bundle"
 )
 
+// Kinds that Phase 4 makes (docs/api/README.md, section 14.2).
+const (
+	KindUpdateCheck    = "update-check"
+	KindUpdateStage    = "update-stage"
+	KindUpdateApply    = "update-apply"
+	KindUpdateRollback = "update-rollback"
+	KindOSUpdate       = "os-update"
+	KindPlugChange     = "plug-change"
+)
+
 // Sources.
 const (
 	SourceConsole = "console"
@@ -70,7 +80,8 @@ const (
 
 // LockKinds hold the apply lock.
 var LockKinds = map[string]bool{KindApply: true, KindSetup: true, KindFEBuild: true, KindFEPrune: true,
-	"restore": true, "update": true, "rollback": true, "tls": true}
+	"restore": true, "update": true, "rollback": true, "tls": true,
+	KindUpdateStage: true, KindUpdateApply: true, KindUpdateRollback: true, KindOSUpdate: true, KindPlugChange: true}
 
 // IDPattern is the pattern of a job id.
 var IDPattern = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}\.[0-9]{3}Z-[a-z][a-z-]*$`)
@@ -82,6 +93,12 @@ var actionKeys = map[string]bool{
 	"reload-caddy": true, "ensure-buckets": true, "ensure-stanza": true, "ensure-fe": true, "write-lock": true,
 	"validate": true, "host-check": true, "resolve-lock": true, "render": true, "plan": true, "wait-healthy": true,
 	"create-care-superuser": true, "collect": true, "archive": true, "prune": true, "set-hostname": true,
+	// Phase 4 (docs/solutions.md, sections 8 and 11).
+	"cutover": true, "plug-config": true, "fetch-index": true, "fetch-lock": true, "resolve-refs": true,
+	"stage-pull": true, "stage-bundles": true, "stage-build": true, "cutover-maintenance-on": true, "stop": true,
+	"checkpoint": true, "activate": true, "migrate": true, "start": true, "verify": true, "maintenance-off": true,
+	"rollback": true, "prune-images": true, "os-refresh": true, "os-unhold": true, "os-upgrade": true, "os-hold": true,
+	"reboot": true,
 }
 
 // ActionOf returns the action key of a step name ("restart: care-api.service" gives "restart"), or "".

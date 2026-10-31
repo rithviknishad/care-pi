@@ -1,0 +1,16 @@
+# {{.Header}}
+# The opening of the update window (updates.window, the time zone of the host).
+# Persistent=true: a device that boots inside a window runs the missed slot.
+
+[Unit]
+Description=care-pi update window
+
+[Timer]
+{{- range .Timers.ApplyCalendars}}
+OnCalendar={{.}}
+{{- end}}
+RandomizedDelaySec={{.Timers.ApplyRandomDelay}}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

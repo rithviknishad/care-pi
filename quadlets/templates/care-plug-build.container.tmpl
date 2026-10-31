@@ -1,0 +1,29 @@
+# {{.Header}}
+# The FE plug builder (experimental; track custom, docs/solutions.md section 13.2).
+# Only the agent starts it. The agent writes the plug, the sha, and the paths to
+# {{path "BuildPlugs"}}/current.env before each start, and scales Care down as for an FE build.
+
+[Unit]
+Description=care-pi FE plug build
+PartOf=care.target
+
+[Container]
+ContainerName=care-plug-build
+Image={{.Images.node}}
+RunInit=true
+# The container needs the internet: codeload.github.com and the npm registry.
+Volume={{path "BuildPlugs"}}:/build
+Volume={{path "RenderedPlugs"}}:/build/env:ro
+Volume={{path "PlugsDir"}}:/out
+EnvironmentFile={{path "BuildPlugs"}}/current.env
+LogDriver=passthrough
+Exec=bash /build/env/plug-build.sh
+
+[Service]
+Type=oneshot
+MemoryHigh={{.FEMemoryHigh}}
+MemoryMax={{.FEMemoryMax}}
+MemorySwapMax={{.FEMemorySwap}}
+OOMScoreAdjust=900
+Restart=no
+TimeoutStartSec=1800

@@ -24,6 +24,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/netinfo"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/plan"
+	"github.com/rithviknishad/care-pi/agent/internal/plugcfg"
 	"github.com/rithviknishad/care-pi/agent/internal/render"
 	"github.com/rithviknishad/care-pi/agent/internal/s3admin"
 	"github.com/rithviknishad/care-pi/agent/internal/secrets"
@@ -65,6 +66,13 @@ type Options struct {
 	// The CLI (apply, bootstrap) waits: at the boot, the NetworkManager hook can run apply
 	// before the DHCP lease. Without an address after the wait, apply renders without it and warns.
 	AddressWait time.Duration
+	// Checkpoint takes the checkpoint of the plan action cutover (Phase 4, docs/solutions.md section 8.4).
+	// nil takes none. The service sets it to the checkpoint of the update package.
+	Checkpoint func(ctx context.Context) error
+	// JobID is the id of the job of the run, for the maintenance state. "" uses the journal of the run.
+	JobID string
+	// JobKind is the kind of that job (default apply).
+	JobKind string
 }
 
 // Journal records the steps of a run.
@@ -156,6 +164,7 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 	if err != nil {
 		return nil, exitcode.With(exitcode.Failed, err)
 	}
+	secretValues[render.AdditionalPlugsSecret] = pr.Model.AdditionalPlugsJSON
 	secretsChanged, err := changedSecrets(ctx, o, secretValues)
 	if err != nil {
 		return nil, err
@@ -170,10 +179,7 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 	feWanted := pr.Config.FE.Provider != "none" && pr.Model.FEBuildID != "" && fe.Current(o.Paths) != pr.Model.FEBuildID &&
 		pr.Phase != setup.PhaseBootstrap
 
-	units := map[string][]string{}
-	for _, s := range secrets.PodmanSecrets() {
-		units[s.Name] = s.Units
-	}
+	units := secretUnits()
 	var stackImages []string
 	for _, n := range sortedImageNames(pr.Model.Images) {
 		if n != "node" {
@@ -192,6 +198,8 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 		FEWanted:       feWanted,
 		StackImages:    stackImages,
 		Bootstrap:      pr.Phase == setup.PhaseBootstrap,
+		Cutover:        careChanged(pr.PrevLock, pr.Lock),
+		PlugConfig:     pr.Phase != setup.PhaseBootstrap && plugcfg.NeedsSync(o.Paths, plugcfg.Desired(pr.Config, pr.Desire.Plugs, pr.Lock)),
 	})
 	res := &Result{Plan: p, Changed: !p.Empty(), LockChanged: lockChanged, Phase: pr.Phase,
 		Solution: pr.Config.Solution.Name, Track: pr.Config.Solution.Track, Preset: pr.Model.Sizing.Preset,
@@ -243,6 +251,7 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 
 	ex := &executor{o: o, pr: pr, plan: p, secretValues: secretValues, ensure: ensure, provider: provider}
 	journal := o.Journal
+	defer func() { ex.journal = nil }()
 	var rec *jobs.Recorder
 	if journal == nil {
 		rec, err = jobs.Create(jobs.CreateOptions{Paths: o.Paths, Kind: jobs.KindApply, Source: jobs.SourceCLI,
@@ -255,6 +264,7 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 			res.JobID = rec.ID()
 		}
 	}
+	ex.journal = journal
 	finish := func(err error) error {
 		if rec != nil {
 			rec.Finish(err, res.JobResult())
@@ -506,12 +516,47 @@ func changedSecrets(ctx context.Context, o Options, values map[string]string) ([
 	}
 	st := readSecretState(o.Paths)
 	var out []string
-	for _, s := range secrets.PodmanSecrets() {
-		if !names[s.Name] || st[s.Name] != secrets.Hash(values[s.Name]) {
-			out = append(out, s.Name)
+	for _, n := range secretNames() {
+		if _, ok := values[n]; !ok {
+			continue
+		}
+		if !names[n] || st[n] != secrets.Hash(values[n]) {
+			out = append(out, n)
 		}
 	}
 	return out, nil
+}
+
+// secretNames returns the podman secrets of apply: the secrets of the secret files, then
+// care-additional-plugs (Phase 4).
+func secretNames() []string {
+	var out []string
+	for _, s := range secrets.PodmanSecrets() {
+		out = append(out, s.Name)
+	}
+	return append(out, render.AdditionalPlugsSecret)
+}
+
+// secretUnits maps each podman secret to the units that read it.
+func secretUnits() map[string][]string {
+	units := map[string][]string{}
+	for _, s := range secrets.PodmanSecrets() {
+		units[s.Name] = s.Units
+	}
+	units[render.AdditionalPlugsSecret] = []string{"care-beat", "care-worker", "care-api"}
+	return units
+}
+
+// careChanged reports whether the care image or the set of backend plugs that are on changes
+// between two locks: then migrations can run, and a running stack gets the cutover (section 7.5).
+func careChanged(a, b *lock.Lock) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if a.Images["care"].Pull() != b.Images["care"].Pull() {
+		return true
+	}
+	return strings.Join(a.BackendPlugsOn(), ",") != strings.Join(b.BackendPlugsOn(), ",")
 }
 
 func targetActive(ctx context.Context, h *host.Host) (bool, error) {

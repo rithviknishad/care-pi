@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"sync"
@@ -53,6 +54,12 @@ func (d Dev) record(c Cmd) (stopped bool, secrets []string) {
 func (d Dev) Run(_ context.Context, c Cmd) ([]byte, error) {
 	stopped, secretNames := d.record(c)
 	a := c.Args
+	if c.Stdin != nil {
+		in, _ := io.ReadAll(c.Stdin)
+		if r, ok := PlugConfigHook(c, in); ok {
+			return []byte(r.Out), nil
+		}
+	}
 	switch c.Name {
 	case "systemctl":
 		if len(a) > 0 && a[0] == "show" {

@@ -3,6 +3,13 @@
 #   WORKDIR /app, virtual environment /app/.venv, runtime user django,
 #   plug installer /app/install_plugins.py (reads ADDITIONAL_PLUGS).
 # CI and the agent always pass BASE as a digest reference (ghcr.io/ohcnetwork/care@sha256:...).
+#
+# Two plug lists (docs/solutions.md, section 1.5):
+#   - install-plugs.json in the build context, or the build argument INSTALL_PLUGS when it is set:
+#     the plugs that install_plugins.py installs. CI installs each backend plug of the solution (the superset).
+#   - ADDITIONAL_PLUGS: the plugs that are on by default (the ENV of the image). The device always sets
+#     ADDITIONAL_PLUGS at run time (the podman secret care-additional-plugs).
+# The agent renders this file for a local build (rendered/build/care/, docs/solutions.md section 13.1).
 ARG BASE=ghcr.io/ohcnetwork/care:latest
 
 FROM ${BASE} AS builder
@@ -11,9 +18,10 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends build-essential libpq-dev libffi-dev git \
  && rm -rf /var/lib/apt/lists/*
 # JSON list of {"name", "package_name", "version", "configs"}. "[]" installs nothing.
-ARG ADDITIONAL_PLUGS="[]"
-ENV ADDITIONAL_PLUGS=${ADDITIONAL_PLUGS}
-RUN python install_plugins.py
+COPY install-plugs.json /tmp/install-plugs.json
+ARG INSTALL_PLUGS=""
+RUN plugs="${INSTALL_PLUGS:-$(cat /tmp/install-plugs.json)}" \
+ && ADDITIONAL_PLUGS="${plugs}" python install_plugins.py
 
 FROM ${BASE}
 ARG BASE

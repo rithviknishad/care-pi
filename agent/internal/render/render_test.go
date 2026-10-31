@@ -41,9 +41,16 @@ func fakeGit() *host.FakeGit {
 	}}
 }
 
-// fixture renders one golden case. A name with the suffix -bootstrap renders setup mode.
+// testBuild is the local image build of the golden case custom-build (Phase 4, docs/solutions.md section 13.1).
+var testBuild = &CareBuild{ID: "5c0ffee15c0ffee1", Base: "ghcr.io/ohcnetwork/care@sha256:" + strings.Repeat("ab", 32),
+	PlugsJSON:           `[{"name":"care_filly","package_name":"git+https://github.com/ohcnetwork/care_filly.git","version":"@0123456789abcdef0123456789abcdef01234567","configs":{}}]`,
+	ContainerfileSHA256: strings.Repeat("cd", 32), BaseImage: "ghcr.io/ohcnetwork/care", BaseRef: "latest", BaseDigest: "sha256:" + strings.Repeat("ab", 32)}
+
+// fixture renders one golden case. A name with the suffix -bootstrap renders setup mode, the suffix
+// -build a local image build of care.
 func fixture(t *testing.T, name string) (Tree, *lock.Lock) {
 	t.Helper()
+	name, build := strings.CutSuffix(name, "-build")
 	cfgName, boot := strings.CutSuffix(name, "-bootstrap")
 	cfg, err := config.Load(filepath.Join("testdata", "config-"+cfgName+".yaml"))
 	if err != nil {
@@ -53,7 +60,11 @@ func fixture(t *testing.T, name string) (Tree, *lock.Lock) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pl, err := Desire(cfg, sol)
+	var cb *CareBuild
+	if build {
+		cb = testBuild
+	}
+	pl, err := DesireLock(cfg, sol, nil, cb)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,10 +78,12 @@ func fixture(t *testing.T, name string) (Tree, *lock.Lock) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := NewModel(Input{Config: cfg, Solution: sol, Lock: lk, IPs: TestIPs, Bootstrap: boot})
+	m, err := NewModel(Input{Config: cfg, Solution: sol, Lock: lk, IPs: TestIPs, Bootstrap: boot, CareBuild: cb})
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The case custom-build also renders the FE plug builder (experimental, section 13.2).
+	m.PlugBuild = build
 	lk.GeneratedAt = "2026-10-30T00:00:00Z"
 	lk.AgentVersion = "test"
 	lk.FE = lock.FE{Provider: m.FEProvider, BuildID: m.FEBuildID}
@@ -82,7 +95,7 @@ func fixture(t *testing.T, name string) (Tree, *lock.Lock) {
 }
 
 func TestGolden(t *testing.T) {
-	for _, name := range []string{"solo", "small-clinic", "busy-counter", "custom", "small-clinic-bootstrap"} {
+	for _, name := range []string{"solo", "small-clinic", "busy-counter", "custom", "small-clinic-bootstrap", "custom-build"} {
 		t.Run(name, func(t *testing.T) {
 			tree, lk := fixture(t, name)
 			lockData, err := lk.Marshal()
@@ -144,6 +157,10 @@ func TestEveryFileHasHeader(t *testing.T) {
 	tree, _ := fixture(t, "custom")
 	for p, f := range tree {
 		s := string(f.Content)
+		// JSON has no comments (rendered/care/additional-plugs.json).
+		if strings.HasSuffix(p, ".json") {
+			continue
+		}
 		if strings.HasPrefix(s, "#!") {
 			s = s[strings.Index(s, "\n")+1:]
 		}

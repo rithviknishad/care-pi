@@ -36,6 +36,11 @@ const (
 	EnsureStanza Kind = "ensure-stanza"
 	EnsureFE     Kind = "ensure-fe"
 	WriteLock    Kind = "write-lock"
+	// Cutover (Phase 4) replaces a restart or a full cycle when the care image or the set of backend
+	// plugs that are on changes: maintenance page, stop, checkpoint, start (docs/solutions.md section 8).
+	Cutover Kind = "cutover"
+	// PlugConfig (Phase 4) writes the plug_config rows of Care (docs/solutions.md section 12.2).
+	PlugConfig Kind = "plug-config"
 )
 
 // Action is one step of a plan.
@@ -105,6 +110,11 @@ type Input struct {
 	StackImages []string
 	// Bootstrap is setup mode: no buckets, no stanza, and no FE build (no database and no S3 run).
 	Bootstrap bool
+	// Cutover is true when the care image or the set of backend plugs that are on changes (Phase 4).
+	// Then a running stack gets the action cutover in place of a restart or a full cycle.
+	Cutover bool
+	// PlugConfig is true when the plug_config rows of Care must change (Phase 4).
+	PlugConfig bool
 }
 
 // Plan is the ordered list of actions and the file changes.
@@ -196,6 +206,7 @@ func Build(in Input) *Plan {
 		backendEnv      bool
 		caddyConf       bool
 		dbConf          bool
+		timersChanged   bool
 		restart         = map[string]bool{}
 		cycle           []string
 	)
@@ -213,7 +224,7 @@ func Build(in Input) *Plan {
 			switch {
 			case u == "care-pod":
 				podChanged = true
-			case u == "care-fe-build":
+			case u == "care-fe-build", u == "care-plug-build", strings.HasPrefix(u, "care-build-"):
 				// Transient unit: daemon-reload is enough.
 			case cycleUnits[u]:
 				cycle = append(cycle, u+" unit changed")
@@ -224,6 +235,9 @@ func Build(in Input) *Plan {
 			unitFiles = true
 			if b := path.Base(c.Path); b == "care.target" || b == render.StartUnit {
 				targetChanged = true
+			}
+			if strings.HasPrefix(path.Base(c.Path), "care-update-") && c.Kind != Delete {
+				timersChanged = true
 			}
 		case c.Path == paths.RenderedCare+"/backend.env":
 			backendEnv = true
@@ -281,8 +295,12 @@ func Build(in Input) *Plan {
 	if unitFiles {
 		add(Action{Kind: DaemonReload})
 	}
-	if pl.First || targetChanged {
-		add(Action{Kind: EnableTarget, Units: []string{render.StartUnit}})
+	if pl.First || targetChanged || timersChanged {
+		units := []string{render.StartUnit}
+		if timersChanged {
+			units = append(units, render.TimerUnits...)
+		}
+		add(Action{Kind: EnableTarget, Units: units})
 	}
 
 	started := false
@@ -296,6 +314,16 @@ func Build(in Input) *Plan {
 			add(Action{Kind: PullImages, Names: in.StackImages, Reason: "image changed"})
 		}
 		add(Action{Kind: StartTarget, Units: []string{"care.target"}, Reason: "care.target is not active"})
+		started = true
+	case in.Cutover && (len(cycle) > 0 || len(restart) > 0):
+		if len(stackImages) > 0 {
+			add(Action{Kind: PullImages, Names: in.StackImages, Reason: "image changed"})
+		}
+		reasons := cycle
+		if len(reasons) == 0 {
+			reasons = []string{"backend plugs changed"}
+		}
+		add(Action{Kind: Cutover, Units: []string{"care.target"}, Reason: strings.Join(dedupe(reasons), "; ")})
 		started = true
 	case len(cycle) > 0:
 		if len(stackImages) > 0 {
@@ -328,6 +356,9 @@ func Build(in Input) *Plan {
 	}
 	if in.FEWanted && !in.Bootstrap {
 		add(Action{Kind: EnsureFE})
+	}
+	if in.PlugConfig && !in.Bootstrap {
+		add(Action{Kind: PlugConfig})
 	}
 	if in.LockChanged {
 		add(Action{Kind: WriteLock})

@@ -1,4 +1,4 @@
-{{template "status-head" .}}
+{{template "status-head-live" .}}
 <title>CARE: maintenance</title>
 </head>
 <body>
@@ -6,8 +6,40 @@
 <h1>CARE is in maintenance</h1>
 <p class="name">{{html .DisplayName}}</p>
 <p>The device updates or restarts CARE. Your data is safe.</p>
-<p>Wait a few minutes. This page opens CARE again when the maintenance is complete.</p>
-<p><small>This page refreshes every 15 seconds.</small></p>
+<p id="step" aria-live="polite">Wait a few minutes. This page opens CARE again when the maintenance is complete.</p>
+<p><small id="since"></small></p>
+<p><small>This page checks the device every 5 seconds.</small></p>
 </main>
+<script>
+(function () {
+  var steps = {
+{{- range $k, $v := .MaintenanceSteps}}
+    {{printf "%q" $k}}: {{printf "%q" $v}},
+{{- end}}
+  };
+  function show(m) {
+    var step = document.getElementById("step"), since = document.getElementById("since");
+    if (m && m.active) {
+      step.textContent = (m.step && steps[m.step]) || "Wait a few minutes. This page opens CARE again when the maintenance is complete.";
+      if (m.started_at) {
+        var t = new Date(m.started_at);
+        since.textContent = "Maintenance since " + t.toLocaleTimeString() + (m.step ? " (step: " + m.step + ")" : "") + ".";
+      }
+    }
+  }
+  function poll() {
+    fetch("/_care-pi/status", {cache: "no-store", headers: {"Accept": "application/json"}})
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) {
+        if (!s) { return; }
+        if (s.site === "care") { window.location.reload(); return; }
+        show(s.maintenance);
+      })
+      .catch(function () {})
+      .then(function () { setTimeout(poll, 5000); });
+  }
+  poll();
+})();
+</script>
 </body>
 </html>
