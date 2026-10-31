@@ -8,6 +8,32 @@ name: fe-bundle
 # The build runs fe-build.sh, the script of the local provider, so CI and the Pi use one recipe.
 
 on:
+  # solution-lock.yml calls this workflow for the default bundle of a lock (docs/solutions.md, section 5.1).
+  workflow_call:
+    inputs:
+      solution:
+        type: string
+        default: care-clinic
+      care_fe_ref:
+        description: The care_fe sha of the lock.
+        type: string
+        default: ""
+    outputs:
+      build_id:
+        description: The FE build id.
+        value: ${{ jobs.build.outputs.build_id }}
+      url:
+        description: The bundle, relative to the dist base (<tag>/<asset>).
+        value: ${{ jobs.build.outputs.url }}
+      sha256:
+        description: The SHA-256 of the bundle.
+        value: ${{ jobs.build.outputs.sha256 }}
+      size_bytes:
+        description: The size of the bundle in bytes.
+        value: ${{ jobs.build.outputs.size_bytes }}
+      env_keys:
+        description: The names of the env variables, comma separated.
+        value: ${{ jobs.build.outputs.env_keys }}
   workflow_dispatch:
     inputs:
       solution:
@@ -35,6 +61,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      build_id: ${{ steps.fe.outputs.build_id }}
+      url: ${{ steps.package.outputs.url }}
+      sha256: ${{ steps.package.outputs.sha256 }}
+      size_bytes: ${{ steps.package.outputs.size_bytes }}
+      env_keys: ${{ steps.fe.outputs.env_keys }}
     env:
       SOLUTION: ${{ inputs.solution || 'care-clinic' }}
       REF_INPUT: ${{ inputs.care_fe_ref }}
@@ -166,6 +198,8 @@ jobs:
             echo "name=${name}"
             echo "sha256=$(cut -d' ' -f1 "dist/${name}.sha256")"
             echo "size=$(du -h "dist/${name}" | cut -f1)"
+            echo "size_bytes=$(stat -c %s "dist/${name}")"
+            echo "url=fe-${SOLUTION}-${SHA12}-${BUILD_ID}/${name}"
           } >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v7

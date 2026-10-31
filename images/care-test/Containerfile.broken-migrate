@@ -1,0 +1,20 @@
+# TEST ONLY. Never use this image in a solution lock of index.json.
+#
+# The Phase 4 exit test (plans/08-spike-log.md, "Phase 4 exit test — plan") forces a migration failure with it.
+# The image is the solution image with one change: /app/celery_beat.sh exits 1 right after
+# "python manage.py migrate --noinput" when CARE_PI_TEST_FAIL_MIGRATE=1 is in the environment of care-beat.
+# Without the variable the image runs as the base image. The migrations of the base image run first, so the
+# update reaches the "migrate" step and the agent must roll back with a PITR offer.
+#
+# Build (arm64 for lumine) and push to a test tag:
+#   docker buildx build --platform linux/arm64 -f images/care-test/Containerfile.broken-migrate \
+#     --build-arg BASE=ghcr.io/rithviknishad/care-pi/care@sha256:<solution image digest> \
+#     -t ghcr.io/rithviknishad/care-pi/care:care-clinic-test-broken-migrate --push images/care-test
+ARG BASE
+FROM ${BASE}
+USER root
+RUN sed -i '/^python manage.py migrate --noinput$/a if [ "${CARE_PI_TEST_FAIL_MIGRATE:-}" = 1 ]; then echo "care-pi test: forced migration failure (CARE_PI_TEST_FAIL_MIGRATE=1)" >\&2; exit 1; fi' /app/celery_beat.sh \
+ && grep -q CARE_PI_TEST_FAIL_MIGRATE /app/celery_beat.sh \
+ && bash -n /app/celery_beat.sh
+LABEL org.opencontainers.image.description="TEST ONLY: care-pi Phase 4 forced migration failure"
+USER django

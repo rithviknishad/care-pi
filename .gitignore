@@ -4,6 +4,8 @@ local/
 
 # build outputs
 dist/
+dist-local/
+e2e-local/
 bin/
 node_modules/
 *.img

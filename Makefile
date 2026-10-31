@@ -16,7 +16,7 @@ LDFLAGS     := -s -w \
 
 .DEFAULT_GOAL := build
 
-.PHONY: build build-linux console-build test vet lint api-lint fmt tidy clean
+.PHONY: build build-linux console-build test vet lint api-lint fmt tidy clean lock-local e2e-local
 
 # console-build builds the console SPA into console/dist, which the agent embeds.
 # It does nothing when console/package.json or npm is missing: the agent then
@@ -52,6 +52,17 @@ lint:
 
 api-lint:
 	sh docs/api/validate.sh
+
+# lock-local makes a solution lock and a local index.json on a dev machine with
+# solutions/scripts/make-lock.sh (docs/solutions.md, section 5). VERSION is the lock version here.
+# Example: make lock-local SOLUTION=care-clinic VERSION=2026.11.0 ARGS="--fe-bundle care_fe.tar.gz"
+SOLUTION ?= care-clinic
+lock-local:
+	solutions/scripts/make-lock.sh --solution $(SOLUTION) --version $(VERSION) $(ARGS)
+
+# e2e-local makes two offline locks with make-lock.sh and runs the update machine against them on the fake host.
+e2e-local:
+	solutions/scripts/e2e-local.sh
 
 fmt:
 	gofmt -l -w .
