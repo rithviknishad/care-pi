@@ -153,10 +153,10 @@ export async function checkServedChain(): Promise<{ authorized: boolean; error: 
 }
 
 export async function pageWidth(page: Page): Promise<{ scroll: number; client: number }> {
-  return page.evaluate(() => ({
-    scroll: document.documentElement.scrollWidth,
-    client: document.documentElement.clientWidth,
-  }));
+  return page.evaluate(() => {
+    const el = document.scrollingElement ?? document.documentElement;
+    return { scroll: el.scrollWidth, client: el.clientWidth };
+  });
 }
 
 // cardBoxes gives [x, y, width, height] of each card of the main area, in page coordinates.

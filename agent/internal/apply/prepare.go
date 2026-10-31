@@ -50,6 +50,8 @@ type PrepareOptions struct {
 	Warn   io.Writer
 	// Progress gets one line for each image digest or git sha that Prepare resolves over the network.
 	Progress io.Writer
+	// Resolved, when it is set, gets the result of the lock resolution, before the render.
+	Resolved func(error)
 	// Phase is setup.PhaseBootstrap (setup mode: the pod and Caddy only) or setup.PhaseFull.
 	// "" reads the phase of the host from the setup record.
 	Phase string
@@ -96,6 +98,9 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 		r.Warn = func(m string) { _, _ = fmt.Fprintln(o.Warn, "care-pi: warning:", m) }
 	}
 	lk, err := r.Resolve(ctx, des.Wants, prev, o.Update)
+	if o.Resolved != nil {
+		o.Resolved(err)
+	}
 	if err != nil {
 		return nil, err
 	}

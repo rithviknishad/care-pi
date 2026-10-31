@@ -193,7 +193,8 @@ export default function SetupWizard() {
       />
       <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
         <Stepper setup={s} mode={mode} page={page} />
-        <Card className="min-w-0">
+        {/* The hardware step keeps its buttons in view (sticky), so its card must not clip. */}
+        <Card className={cn("min-w-0", page === "hardware" && "overflow-visible")}>
           <CardHeader>
             <CardTitle>
               <h2 className="text-lg" data-testid="step-title">

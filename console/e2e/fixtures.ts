@@ -1,4 +1,4 @@
-import { expect, test as base, type Page } from "@playwright/test";
+import { expect, test as base, type Page, type TestInfo } from "@playwright/test";
 
 export const MOCK_URL = "http://127.0.0.1:4711";
 export const READY_PASSWORD = "correct horse battery staple";
@@ -7,7 +7,7 @@ export const CLAIM_CODE = "4F7K-Q2MX-9PDA";
 interface Fixtures {
   // Each request of the page. Each test checks that no request leaves the origin.
   requests: string[];
-  resetMock: (scenario: "unclaimed" | "setup" | "ready", options?: Record<string, unknown>) => Promise<void>;
+  resetMock: (scenario: "unclaimed" | "setup" | "review" | "ready", options?: Record<string, unknown>) => Promise<void>;
 }
 
 // Playwright gives each fixture a function that runs the test. These fixtures call it "runTest".
@@ -51,4 +51,26 @@ export async function login(page: Page, password = READY_PASSWORD) {
 
 export function isMobile(page: Page): boolean {
   return (page.viewportSize()?.width ?? 1280) < 640;
+}
+
+// shot saves a screenshot to SHOTS_DIR as <project>-<name>.png when SHOTS_DIR is set. fullPage false keeps
+// the window only: a page with a fixed or sticky bar shows the bar where the operator sees it.
+export async function shot(page: Page, info: TestInfo, name: string, fullPage = true) {
+  const dir = process.env.SHOTS_DIR;
+  if (!dir) return;
+  await page.evaluate(() => document.fonts.ready);
+  await page.screenshot({ path: `${dir}/${info.project.name}-${name}.png`, fullPage, animations: "disabled" });
+}
+
+// noSideScroll checks that the page and each given element do not scroll sideways.
+export async function noSideScroll(page: Page, testIds: string[] = []) {
+  const doc = await page.evaluate(() => {
+    const el = document.scrollingElement ?? document.documentElement;
+    return { scroll: el.scrollWidth, client: el.clientWidth };
+  });
+  expect(doc.scroll, `page ${doc.scroll} > ${doc.client} px`).toBeLessThanOrEqual(doc.client);
+  for (const id of testIds) {
+    const box = await page.getByTestId(id).evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
+    expect(box.scroll, `${id} ${box.scroll} > ${box.client} px`).toBeLessThanOrEqual(box.client);
+  }
 }

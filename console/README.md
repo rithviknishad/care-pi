@@ -69,14 +69,16 @@ npm run dev
 ```
 
 Open `http://localhost:5173`. The mock starts in the scenario `unclaimed`.
-To select a scenario, set `MOCK_SCENARIO` (`unclaimed`, `setup`, or `ready`), or reset the mock:
+To select a scenario, set `MOCK_SCENARIO` (`unclaimed`, `setup`, `review`, or `ready`), or reset the mock.
+`review` has each setup step done and the Care password in memory: the operator can start the setup on `/setup/review`.
 
 ```sh
 curl -X POST http://127.0.0.1:4011/__mock/reset -d '{"scenario":"ready","step_ms":200}'
 ```
 
-The console password of the scenarios `setup` and `ready` is `correct horse battery staple`.
-Other reset options: `fail_step` (the index of a setup step that fails), `ram_gib`, `disk`, `dev_build`.
+The console password of the scenarios `setup`, `review`, and `ready` is `correct horse battery staple`.
+Other reset options: `fail_step` (the action key of a setup step that fails one time, for example `ensure-stanza`),
+`ram_gib`, `disk`, `dev_build`. The setup job of the mock has the steps of the agent on lumine (wave 4d).
 
 ## 4. Work with the Go dev server
 

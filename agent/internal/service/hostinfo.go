@@ -16,6 +16,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/hostcheck"
 	"github.com/rithviknishad/care-pi/agent/internal/netinfo"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
+	"github.com/rithviknishad/care-pi/agent/internal/units"
 )
 
 // DiskProbe is a write and read of the root disk (schema DiskProbe).
@@ -234,10 +235,10 @@ func (s *Service) HostCheckView(ctx context.Context, probe bool) *HostCheck {
 		}
 		checks = append(checks, c)
 	}
-	mib := hw.RAMBytes >> 20
-	add("ram", hw.RAMBytes == 0 || hw.RAMBytes >= 1800<<20, fmt.Sprintf("RAM %d MiB", mib), "use a host with 2 GB RAM or more")
+	add("ram", hw.RAMBytes == 0 || hw.RAMBytes >= 1800<<20, "RAM "+units.Bytes(hw.RAMBytes), "use a host with 2 GB RAM or more")
 	diskOK := hw.RootDisk.Kind != "sd" && (hw.RootDisk.SizeBytes == 0 || hw.RootDisk.SizeBytes >= 64e9)
-	diskDetail := fmt.Sprintf("%s (%s, %d GB)", hw.RootDisk.Device, hw.RootDisk.Kind, hw.RootDisk.SizeBytes/1e9)
+	// The same format as the hardware facts of the console (wave 4c showed "119 GiB" there and "128 GB" here).
+	diskDetail := fmt.Sprintf("%s (%s, %s)", hw.RootDisk.Device, hw.RootDisk.Kind, units.Bytes(hw.RootDisk.SizeBytes))
 	if hw.RootDisk.Kind == "sd" {
 		diskDetail = "the root disk is an SD card"
 	}

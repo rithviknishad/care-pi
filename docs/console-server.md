@@ -200,6 +200,10 @@ The Care superuser password is only in the memory of the agent.
    the `127.0.1.1` line of `/etc/hosts`, then `systemctl try-restart avahi-daemon.service`.
    The browser must open the new URL. The job result has it. The IP URL works too.
 3. A full apply (`apply_phase` becomes `full`): images, units, buckets, stanza, FE build.
+   When the lock needs the network (a new install, or `update`), the first step of the apply is
+   `resolve-lock: image digests and git refs`: one `log` event for each image digest or git sha, for example
+   `resolve ghcr.io/ohcnetwork/care:latest … 77fe743e51a6` (about 25 s on lumine). An apply job of the console
+   (`POST /apply`, `PUT /config?apply=true`) shows the same step. Without a network resolution there is no such step.
 4. `wait-healthy: care-api.service` (10 minutes at most).
 5. `create-care-superuser: NAME`. When the user exists, the job keeps it.
 

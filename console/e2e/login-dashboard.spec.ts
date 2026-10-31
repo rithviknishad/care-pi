@@ -1,4 +1,4 @@
-import { expect, login, test } from "./fixtures";
+import { expect, isMobile, login, noSideScroll, shot, test } from "./fixtures";
 
 // Journey 2: a deep link without a session -> login -> back to the deep link -> dashboard.
 test("log in and read the dashboard", async ({ page, resetMock, requests }) => {
@@ -61,7 +61,7 @@ test("the dashboard cards keep their size and position when the data arrives", a
     await route.continue();
   });
   await page.reload();
-  await expect(page.getByTestId("units")).toBeVisible();
+  await expect(page.getByTestId("units-card")).toBeVisible();
   await expect(page.getByTestId("status-state")).toHaveCount(0);
   await page.evaluate(() => document.fonts.ready);
 
@@ -84,6 +84,38 @@ test("the dashboard cards keep their size and position when the data arrives", a
     `dashboard cards (${page.viewportSize()?.width} px): ${before.length} boxes, equal: ${JSON.stringify(before) === JSON.stringify(after)}`,
   );
   expect(after).toEqual(before);
+});
+
+// Below 640 px: the label is above the value (no cut text), the units are cards, and nothing scrolls sideways
+// (wave 4c on a phone: "Configured na…", and a units table of 722-729 px in a 324 px card).
+test("the dashboard fits the width of a phone", async ({ page, resetMock }, info) => {
+  await resetMock("ready");
+  await page.goto("/login?next=%2Fdashboard");
+  await login(page);
+  await expect(page.getByTestId("status-state")).toHaveText("OK");
+  await expect(page.getByTestId("fe-build-id")).toHaveText("8d2f0c1a9b7e");
+  await page.evaluate(() => document.fonts.ready);
+  await noSideScroll(page, ["units-card"]);
+  if (isMobile(page)) {
+    await expect(page.getByTestId("units")).toBeHidden();
+    const cards = page.getByTestId("units-cards").locator("[data-unit-card]");
+    await expect(cards).toHaveCount(10);
+    const api = cards.filter({ hasText: "care-api.service" });
+    await expect(api.getByRole("link", { name: "care-api.service" })).toHaveAttribute("href", "/logs?unit=api");
+    await expect(api).toContainText("healthy");
+    await expect(api).toContainText(/MiB of \d+ MiB/);
+    await expect(api.getByLabel(/^Restarts: \d+$/)).toBeVisible();
+    // Each label and value shows its full text.
+    const cut = await page
+      .locator("main dl > dt, main dl > dd > span")
+      .evaluateAll((els) => els.filter((el) => el.scrollWidth > el.clientWidth + 1).map((el) => el.textContent));
+    expect(cut, "cut labels or values").toEqual([]);
+    await expect(page.getByText("Configured name", { exact: true })).toBeVisible();
+  } else {
+    await expect(page.getByTestId("units")).toBeVisible();
+    await expect(page.getByTestId("units-cards")).toBeHidden();
+  }
+  await shot(page, info, "dashboard");
 });
 
 test("theme choice persists and the session ends with logout", async ({ page, resetMock }) => {

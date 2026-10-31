@@ -385,6 +385,10 @@ so `GET /jobs` lists the jobs of both.
 | `steps[].error` | `steps[].state: failed`, `steps[].detail` |
 | (none) | `source: cli`, `cancellable: false`, `result: null`, `last_event_id: 0` |
 
+An apply of the agent (the setup job, `POST /apply`, `PUT /config?apply=true`) that resolves a lock entry over the
+network starts with the step `resolve-lock`. Its `log` events are the `resolve … <first 12 hex>` lines of
+`care-pi apply`. The console shows it as "Resolve the versions of the images".
+
 Only one job that changes the host runs at a time: kinds `apply`, `setup`, `fe-build`, `fe-prune`, and later
 `restore`, `update`, `rollback`, `tls`. They hold the apply lock `/run/care-pi/apply.lock`, as the CLI does.
 The agent waits 5 s at most for the lock (state `queued`). Then it returns `409 job-running` with `job_id`:

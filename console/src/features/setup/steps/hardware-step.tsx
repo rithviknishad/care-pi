@@ -1,20 +1,21 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangleIcon, CheckCircle2Icon, XCircleIcon } from "lucide-react";
+import { AlertTriangleIcon, CheckCircle2Icon, ChevronRightIcon, FolderCheckIcon, XCircleIcon } from "lucide-react";
 import { api, call } from "@/api/client";
 import { qk, useHostCheck } from "@/api/queries";
-import type { HostCheck } from "@/api/types";
+import type { HostCheck, HostCheckItem } from "@/api/types";
 import { DataList, DataRow } from "@/components/app/page";
 import { ProblemAlert } from "@/components/app/problem-alert";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { formatBytes, formatMbps } from "@/lib/format";
 import { fmt, strings } from "@/lib/strings";
 import { cn } from "@/lib/utils";
 import { StepActions, StepIntro, type StepProps } from "../step-frame";
-import { hardwareWarnings } from "../hardware-logic";
+import { groupChecks, hardwareWarnings } from "../hardware-logic";
 
 function Facts({ check }: { check: HostCheck | undefined }) {
   const h = strings.hardware;
@@ -25,7 +26,7 @@ function Facts({ check }: { check: HostCheck | undefined }) {
       <DataRow label={h.model} loading={loading} value={hw?.model ?? strings.common.none} />
       <DataRow label={h.cpu} loading={loading} value={hw ? `${hw.cpu_count} × ${hw.arch}` : ""} />
       <DataRow label={h.ram} loading={loading} value={formatBytes(hw?.ram_bytes)} />
-      <DataRow label={h.pageSize} loading={loading} value={hw ? `${hw.page_size_bytes / 1024} KiB` : ""} />
+      <DataRow label={h.pageSize} loading={loading} value={hw ? formatBytes(hw.page_size_bytes) : ""} />
       <DataRow
         label={h.disk}
         loading={loading}
@@ -63,6 +64,109 @@ function Facts({ check }: { check: HostCheck | undefined }) {
       />
       <DataRow label={h.clock} loading={loading} value={hw?.clock_synchronized ? h.synchronized : h.notSynchronized} />
     </DataList>
+  );
+}
+
+function CheckRow({ check }: { check: HostCheckItem }) {
+  const h = strings.hardware;
+  return (
+    <li className="grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-start gap-x-3 px-3 py-2" data-check={check.name}>
+      {check.ok ? (
+        <CheckCircle2Icon className="mt-0.5 size-5 text-green-600 dark:text-green-400" aria-label={h.passed} />
+      ) : (
+        <XCircleIcon
+          className={cn("mt-0.5 size-5", check.level === "required" ? "text-destructive" : "text-amber-600")}
+          aria-label={h.failed}
+        />
+      )}
+      <div className="min-w-0">
+        <p className="text-sm font-semibold">{check.name}</p>
+        <p className="text-xs break-words text-soft-foreground">{check.detail}</p>
+        {!check.ok && check.fix ? <p className="text-xs">{fmt(h.fix, { fix: check.fix })}</p> : null}
+      </div>
+      <Badge variant={check.level === "required" ? "neutral" : "info"} size="sm">
+        {check.level === "required" ? h.required : h.advised}
+      </Badge>
+    </li>
+  );
+}
+
+// The checks: the failures first, then one collapsed row with the passed checks. The directory checks are
+// one row in it.
+function Checks({ check }: { check: HostCheck | undefined }) {
+  const h = strings.hardware;
+  if (!check) {
+    return (
+      <ul className="rounded-lg border" data-testid="host-checks">
+        <li className="px-3 py-2">
+          <Skeleton className="h-6" />
+        </li>
+      </ul>
+    );
+  }
+  const g = groupChecks(check.checks);
+  const summary =
+    g.ok === g.total ? fmt(h.allPassed, { total: g.total }) : fmt(h.somePassed, { passed: g.ok, total: g.total });
+  return (
+    <div className="flex flex-col gap-2" data-testid="host-checks">
+      {g.problems.length > 0 ? (
+        <ul className="divide-y rounded-lg border" data-testid="host-check-problems">
+          {g.problems.map((c) => (
+            <CheckRow key={c.name} check={c} />
+          ))}
+        </ul>
+      ) : null}
+      <Collapsible className="rounded-lg border">
+        <CollapsibleTrigger
+          className="group flex min-h-10 w-full items-center gap-3 px-3 py-2 text-left text-sm"
+          data-testid="host-check-summary"
+        >
+          <CheckCircle2Icon className="size-5 shrink-0 text-green-600 dark:text-green-400" aria-hidden="true" />
+          <span className="min-w-0 flex-1">{summary}</span>
+          <span className="flex items-center gap-1 text-xs text-soft-foreground">
+            <span className="group-data-[panel-open]:hidden">{strings.common.show}</span>
+            <span className="hidden group-data-[panel-open]:inline">{strings.common.hide}</span>
+            <ChevronRightIcon
+              className="size-4 transition-transform group-data-[panel-open]:rotate-90"
+              aria-hidden="true"
+            />
+          </span>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <ul className="divide-y border-t" data-testid="host-check-passed">
+            {g.passed.map((c) => (
+              <CheckRow key={c.name} check={c} />
+            ))}
+            {g.dirs.total > 0 ? (
+              <li
+                className="grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-start gap-x-3 px-3 py-2"
+                data-check="directories"
+              >
+                <FolderCheckIcon
+                  className={cn(
+                    "mt-0.5 size-5",
+                    g.dirs.ok === g.dirs.total ? "text-green-600 dark:text-green-400" : "text-amber-600",
+                  )}
+                  aria-hidden="true"
+                />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">
+                    {h.directories}:{" "}
+                    {g.dirs.ok === g.dirs.total
+                      ? fmt(h.directoriesOk, { ok: g.dirs.ok })
+                      : fmt(h.directoriesSome, { ok: g.dirs.ok, total: g.dirs.total })}
+                  </p>
+                  <p className="text-xs text-soft-foreground">{h.directoriesDetail}</p>
+                </div>
+                <Badge variant="info" size="sm">
+                  {h.advised}
+                </Badge>
+              </li>
+            ) : null}
+          </ul>
+        </CollapsibleContent>
+      </Collapsible>
+    </div>
   );
 }
 
@@ -123,37 +227,7 @@ export function HardwareStep({ onDone, onBack }: StepProps) {
       ) : null}
       <section className="flex flex-col gap-2">
         <h3 className="font-semibold">{h.checks}</h3>
-        <ul className="divide-y rounded-lg border" data-testid="host-checks">
-          {data
-            ? data.checks.map((c) => (
-                <li key={c.name} className="grid grid-cols-[1.25rem_minmax(0,1fr)_auto] items-start gap-x-3 px-3 py-2">
-                  {c.ok ? (
-                    <CheckCircle2Icon
-                      className="mt-0.5 size-5 text-green-600 dark:text-green-400"
-                      aria-label={h.passed}
-                    />
-                  ) : (
-                    <XCircleIcon
-                      className={cn("mt-0.5 size-5", c.level === "required" ? "text-destructive" : "text-amber-600")}
-                      aria-label={h.failed}
-                    />
-                  )}
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold">{c.name}</p>
-                    <p className="text-xs break-words text-soft-foreground">{c.detail}</p>
-                    {!c.ok && c.fix ? <p className="text-xs">{fmt(h.fix, { fix: c.fix })}</p> : null}
-                  </div>
-                  <Badge variant={c.level === "required" ? "neutral" : "info"} size="sm">
-                    {c.level === "required" ? h.required : h.advised}
-                  </Badge>
-                </li>
-              ))
-            : [0, 1, 2, 3, 4, 5].map((i) => (
-                <li key={i} className="px-3 py-2">
-                  <Skeleton className="h-10" />
-                </li>
-              ))}
-        </ul>
+        <Checks check={data} />
       </section>
       {data && !data.ok ? (
         <Alert variant="destructive">
@@ -162,7 +236,7 @@ export function HardwareStep({ onDone, onBack }: StepProps) {
         </Alert>
       ) : null}
       {ack.error ? <ProblemAlert error={ack.error} /> : null}
-      <StepActions onBack={onBack} busy={ack.isPending} disabled={!data} submitLabel={h.acknowledge} />
+      <StepActions onBack={onBack} busy={ack.isPending} disabled={!data} submitLabel={h.acknowledge} sticky />
     </form>
   );
 }

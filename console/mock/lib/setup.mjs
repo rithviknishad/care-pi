@@ -309,7 +309,7 @@ export const setupRoutes = [
         kind: "setup",
         steps: SETUP_STEPS.map(([a, n, o]) => [
           a,
-          a === "create-superuser" ? `create-superuser: ${state.careAdmin.username}` : n,
+          a === "create-care-superuser" ? `create-care-superuser: ${state.careAdmin.username}` : n,
           o,
         ]),
         result: (st) => {

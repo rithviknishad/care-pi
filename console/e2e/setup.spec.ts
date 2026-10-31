@@ -31,7 +31,7 @@ test("claim the device and finish the setup on the easy path", async ({ page, re
 
   // Step: hardware.
   await expect(page.getByTestId("step-title")).toHaveText("Hardware check");
-  await expect(page.getByTestId("host-checks").locator("li")).toHaveCount(11);
+  await expect(page.getByTestId("host-check-summary")).toContainText("All 43 checks passed");
   await page.getByRole("button", { name: "I read the warnings" }).click();
 
   // Step: identity. The easy path shows the announced name, not the host name field.
@@ -76,6 +76,7 @@ test("claim the device and finish the setup on the easy path", async ({ page, re
   // Progress over SSE: the steps append, then the hand-off page opens.
   await expect(page).toHaveURL(/\/setup\/progress$/);
   await expect(page.getByTestId("job-step").first()).toBeVisible();
+  await expect(page.getByTestId("job-step-title").first()).toHaveText("Check the settings");
   await expect(page).toHaveURL(/\/setup\/done$/, { timeout: 30_000 });
   await expect(page.getByTestId("care-url")).toHaveText("https://care.local/login");
   await expect(page.getByRole("img", { name: /QR code/ })).toBeVisible();

@@ -23,15 +23,11 @@ export function PageHeader({
 }
 
 // Label and value rows with a fixed height. A value that arrives later replaces a skeleton
-// of the same height, so the rows do not move.
+// of the same height, so the rows do not move. Below 640 px (sm) the label is above the value and
+// the value is not cut ("Configured na…" on a phone, wave 4c); from 640 px they are side by side.
 export function DataList({ children, className }: { children: ReactNode; className?: string }) {
   return (
-    <dl
-      className={cn(
-        "grid grid-cols-[minmax(0,7.5rem)_minmax(0,1fr)] gap-x-3 text-sm sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)] sm:gap-x-4",
-        className,
-      )}
-    >
+    <dl className={cn("grid grid-cols-1 text-sm sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)] sm:gap-x-4", className)}>
       {children}
     </dl>
   );
@@ -52,9 +48,15 @@ export function DataRow({
 }) {
   return (
     <>
-      <dt className="truncate leading-8 text-soft-foreground">{label}</dt>
-      <dd className="flex h-8 min-w-0 items-center" title={title} data-testid={testId}>
-        {loading ? <Skeleton className="h-4 w-28" /> : <span className="truncate">{value}</span>}
+      <dt className="pt-1.5 text-xs leading-5 text-soft-foreground sm:truncate sm:pt-0 sm:text-sm sm:leading-8">
+        {label}
+      </dt>
+      <dd
+        className="flex min-h-7 min-w-0 items-center pb-1.5 sm:h-8 sm:min-h-0 sm:pb-0"
+        title={title}
+        data-testid={testId}
+      >
+        {loading ? <Skeleton className="h-4 w-28" /> : <span className="min-w-0 break-words sm:truncate">{value}</span>}
       </dd>
     </>
   );

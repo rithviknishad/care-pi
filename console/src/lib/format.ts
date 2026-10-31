@@ -3,7 +3,10 @@
 const KIB = 1024;
 const UNITS = ["B", "KiB", "MiB", "GiB", "TiB"];
 
-export function formatBytes(bytes: number | null | undefined, digits = 1): string {
+// formatBytes is the one byte format of the console: binary units (KiB, MiB, GiB), 1 decimal, no ".0".
+// 128 GB (a USB drive) -> "119.2 GiB". The agent uses the same rule in its texts (agent/internal/units),
+// so the hardware facts and the host checks show the same size (wave 4c showed "119 GiB" and "128 GB").
+export function formatBytes(bytes: number | null | undefined): string {
   if (bytes === null || bytes === undefined || !Number.isFinite(bytes)) return "—";
   if (bytes < KIB) return `${Math.round(bytes)} B`;
   let value = bytes;
@@ -12,8 +15,12 @@ export function formatBytes(bytes: number | null | undefined, digits = 1): strin
     value /= KIB;
     unit++;
   }
-  const fixed = value >= 100 ? value.toFixed(0) : value.toFixed(digits);
-  return `${fixed.replace(/\.0+$/, "")} ${UNITS[unit]}`;
+  let rounded = Math.round(value * 10) / 10;
+  if (rounded >= KIB && unit < UNITS.length - 1) {
+    rounded = Math.round((value / KIB) * 10) / 10;
+    unit++;
+  }
+  return `${rounded.toFixed(1).replace(/\.0$/, "")} ${UNITS[unit]}`;
 }
 
 export function formatMiB(mib: number): string {

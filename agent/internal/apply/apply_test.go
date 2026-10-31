@@ -6,8 +6,10 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -21,6 +23,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/exitcode"
 	"github.com/rithviknishad/care-pi/agent/internal/fe"
 	"github.com/rithviknishad/care-pi/agent/internal/host"
+	"github.com/rithviknishad/care-pi/agent/internal/jobs"
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
 	"github.com/rithviknishad/care-pi/agent/internal/netinfo"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
@@ -54,6 +57,8 @@ type env struct {
 	// ips replaces the two static LAN addresses; addressWait is Options.AddressWait.
 	ips         netinfo.Source
 	addressWait time.Duration
+	// rec, when it is set, is the journal of the run (a job of the agent); the output goes to it.
+	rec *jobs.Recorder
 }
 
 func newEnv(t *testing.T, config string) *env {
@@ -112,13 +117,19 @@ func (e *env) run(dry bool) (*Result, error) {
 	if e.ips != nil {
 		ips = e.ips
 	}
+	var journal Journal
+	var out io.Writer = &e.out
+	if e.rec != nil {
+		journal, out = e.rec, io.MultiWriter(&e.out, e.rec.Writer())
+	}
 	return Run(context.Background(), Options{
 		Paths:          e.p,
 		ConfigPath:     e.cfg,
 		SolutionsDir:   solutionsDir,
 		DryRun:         dry,
 		Reason:         "test",
-		Out:            &e.out,
+		Out:            out,
+		Journal:        journal,
 		Host:           h,
 		IPs:            ips,
 		S3:             e.s3,
@@ -775,5 +786,112 @@ func TestApplyWithAddressDoesNotWait(t *testing.T) {
 	}
 	if strings.Contains(e.out.String(), "wait for a network address") {
 		t.Fatalf("apply waited with an address:\n%s", e.out.String())
+	}
+}
+
+// jobEvents reads the steps and the log lines of a job.
+func jobEvents(t *testing.T, p paths.Paths, id string) ([]jobs.Step, []jobs.LogLine) {
+	t.Helper()
+	evs, err := jobs.Events(p, id, 0, 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var steps []jobs.Step
+	var logs []jobs.LogLine
+	for _, ev := range evs {
+		switch ev.Event {
+		case "step":
+			var s jobs.Step
+			if err := json.Unmarshal(ev.Data, &s); err != nil {
+				t.Fatal(err)
+			}
+			steps = append(steps, s)
+		case "log":
+			var l jobs.LogLine
+			if err := json.Unmarshal(ev.Data, &l); err != nil {
+				t.Fatal(err)
+			}
+			logs = append(logs, l)
+		}
+	}
+	return steps, logs
+}
+
+func newRecorder(t *testing.T, p paths.Paths) *jobs.Recorder {
+	t.Helper()
+	rec, err := jobs.Create(jobs.CreateOptions{Paths: p, Kind: jobs.KindApply, Source: jobs.SourceConsole})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rec
+}
+
+// A job of the agent shows the lock resolution as the step resolve-lock, with one log line for each
+// resolution. On lumine the setup job showed no step for 26 s after the host check (wave 4c).
+func TestJobHasResolveLockStep(t *testing.T) {
+	e := newEnv(t, smallClinic)
+	e.targetState("inactive")
+	e.rec = newRecorder(t, e.p)
+	if _, err := e.run(false); err != nil {
+		t.Fatalf("%v\n%s", err, e.out.String())
+	}
+	e.rec.Finish(nil, nil)
+	steps, logs := jobEvents(t, e.p, e.rec.ID())
+	if len(steps) < 2 || steps[0].Name != "resolve-lock: image digests and git refs" || steps[0].Action == nil ||
+		*steps[0].Action != "resolve-lock" || steps[0].State != jobs.StepRunning {
+		t.Fatalf("first step event: %+v", steps)
+	}
+	if steps[1].Index != 0 || steps[1].State != jobs.StepSucceeded {
+		t.Fatalf("the resolve-lock step did not end: %+v", steps[1])
+	}
+	var resolveLines int
+	for _, l := range logs {
+		if strings.HasPrefix(l.Line, "resolve ") {
+			resolveLines++
+			if l.StepIndex == nil || *l.StepIndex != 0 {
+				t.Fatalf("log line %q is not a line of the resolve-lock step", l.Line)
+			}
+		}
+	}
+	// Each line that the CLI prints is a log line of the step; the setup page saw none of them before.
+	if want := strings.Count("\n"+e.out.String(), "\nresolve "); resolveLines == 0 || resolveLines != want {
+		t.Fatalf("%d resolve log lines, want %d:\n%s", resolveLines, want, e.out.String())
+	}
+	// The plan steps come after it.
+	if steps[2].Index != 1 || steps[2].Action == nil || *steps[2].Action == "resolve-lock" {
+		t.Fatalf("the next step: %+v", steps[2])
+	}
+
+	// A second run resolves nothing: no resolve-lock step.
+	e.rec = newRecorder(t, e.p)
+	e.targetState("active")
+	e.secretsPresent()
+	if _, err := e.run(false); err != nil {
+		t.Fatal(err)
+	}
+	e.rec.Finish(nil, nil)
+	steps, _ = jobEvents(t, e.p, e.rec.ID())
+	for _, s := range steps {
+		if s.Action != nil && *s.Action == "resolve-lock" {
+			t.Fatalf("a run without a network resolution has the step resolve-lock: %+v", steps)
+		}
+	}
+}
+
+func TestJobResolveLockStepFails(t *testing.T) {
+	e := newEnv(t, smallClinic)
+	e.targetState("inactive")
+	e.fake = host.NewFake()
+	e.fake.On("skopeo inspect --override-os linux --override-arch "+runtime.GOARCH+" --format {{.Digest}} docker://"+images[0],
+		host.Response{Code: 1, Out: "manifest unknown"})
+	e.rec = newRecorder(t, e.p)
+	if _, err := e.run(false); err == nil {
+		t.Fatal("apply passed without the digests")
+	}
+	steps, _ := jobEvents(t, e.p, e.rec.ID())
+	last := steps[len(steps)-1]
+	if last.Index != 0 || last.Action == nil || *last.Action != "resolve-lock" || last.State != jobs.StepFailed ||
+		last.Detail == nil || !strings.Contains(*last.Detail, "cannot resolve image") {
+		t.Fatalf("steps: %+v", steps)
 	}
 }

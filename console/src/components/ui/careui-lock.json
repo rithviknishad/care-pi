@@ -76,6 +76,18 @@
         }
       ]
     },
+    "collapsible": {
+      "source": "https://careui.ohc.network/registry/care-ui/collapsible/collapsible.json",
+      "dependencies": [
+        "@base-ui/react"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/collapsible.tsx",
+          "sha256": "ef0176993eba9ca8e98e3cc2eedb33e715688f583411706dd1124bab42f1b130"
+        }
+      ]
+    },
     "dialog": {
       "source": "https://careui.ohc.network/registry/care-ui/dialog/dialog.json",
       "dependencies": [

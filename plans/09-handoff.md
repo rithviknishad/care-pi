@@ -415,10 +415,18 @@ Follow-ups applied in wave 4d (2026-10-31; detail in `08`, "Follow-ups applied")
   (IPv6 can activate eth0 first). Two reboots of lumine: one apply at 22 s with the address, no file change,
   0 full cycles (before: 1); the pod started once at 11.8–11.9 s; Care `/ping/` 200 after 113–114 s (before:
   179 s); `multi-user.target` 4.4–4.5 s.
+- **C. Console UX** (follow-ups 3 to 6). Operator text for each job step (26 keys, `docs/console-ui.md` section 9);
+  the agent shows the lock resolution as the step `resolve-lock` (23 s on lumine) with an indeterminate bar; a failed
+  setup shows the step, the problem, Retry, Copy details, and the log of the unit; the hardware step shows the
+  failures first and one row for the 43 passed checks (24 directories); one byte format (`119.2 GiB`); on a phone the
+  labels are above the values and the units are cards (lumine: no side scroll, no cut text).
+
+Still open after wave 4d (detail in `08`): follow-ups 7 to 11 (a failed finish does not write the lock; small items;
+mDNS and SP7 from the same LAN; parallel `GET /status`; Caddy near its cap).
 
 Follow-ups for the owner (detail in `08`): ~~the 64M cap still meets podman and skopeo children~~ (done, A); ~~the NetworkManager
-hook applies at boot before the DHCP address, then a full cycle 90 s later (Care at 179 s after a reboot)~~ (done, B); the
+hook applies at boot before the DHCP address, then a full cycle 90 s later (Care at 179 s after a reboot)~~ (done, B); ~~the
 units table on a phone; raw step names and a 26 s silent lock resolution on the progress page; the raw error of a
-failed setup; 43 checks (25 directories) on the hardware step; small items (duplicate `X-Content-Type-Options`,
-empty 502 on port 443 in setup mode, duplicate CLI lines). Pre-existing, not changed: `npm run api:check` fails
-since `efc6f60` (the contract changed, `src/api/types.gen.ts` was not made again).
+failed setup; 43 checks (25 directories) on the hardware step~~ (done, C); small items (duplicate `X-Content-Type-Options`,
+empty 502 on port 443 in setup mode, duplicate CLI lines). ~~Pre-existing, not changed: `npm run api:check` fails
+since `efc6f60` (the contract changed, `src/api/types.gen.ts` was not made again).~~ Passes since `e499906`.

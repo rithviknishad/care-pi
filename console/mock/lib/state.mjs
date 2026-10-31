@@ -82,7 +82,7 @@ function freshSteps() {
   );
 }
 
-// scenario: unclaimed | setup | ready
+// scenario: unclaimed | setup | review | ready
 export function freshState(options = {}) {
   const scenario = options.scenario ?? "unclaimed";
   const state = {
@@ -140,6 +140,21 @@ export function freshState(options = {}) {
     for (const id of ["recovery-codes", "hardware"]) {
       state.setup.steps[id] = { status: "done", updated_at: "2026-10-30T10:02:00Z", errors: [], warnings: [] };
     }
+  }
+  // review: each step is done (env and backups skipped), and the agent has the Care password in memory.
+  // The operator can start the setup on /setup/review.
+  if (scenario === "review") {
+    state.setup.state = "setup";
+    for (const id of STEP_IDS) {
+      state.setup.steps[id] = {
+        status: id === "env" || id === "backups" ? "skipped" : "done",
+        updated_at: "2026-10-30T10:10:00Z",
+        errors: [],
+        warnings: [],
+      };
+    }
+    state.file.identity = { display_name: "Sunrise Clinic", hostname: "care" };
+    state.careAdmin = { username: "admin", email: "admin@sunrise.example", password: "another long care password" };
   }
   if (scenario === "ready") {
     state.setup.state = "ready";
@@ -228,6 +243,47 @@ export function network(state) {
   };
 }
 
+// The directories of the host check of the agent (agent/internal/hostcheck).
+const DIRS = [
+  "/etc/care-pi",
+  "/etc/care-pi/secrets",
+  "/etc/care-pi/rendered",
+  "/etc/care-pi/rendered/caddy",
+  "/etc/care-pi/rendered/care",
+  "/etc/care-pi/rendered/db",
+  "/etc/care-pi/rendered/fe",
+  "/etc/containers/systemd",
+  "/etc/systemd/system",
+  "/var/lib/care-pi",
+  "/var/lib/care-pi/pg",
+  "/var/lib/care-pi/s3",
+  "/var/lib/care-pi/redis",
+  "/var/lib/care-pi/caddy",
+  "/var/lib/care-pi/backup",
+  "/var/lib/care-pi/backup/pg",
+  "/var/lib/care-pi/fe",
+  "/var/lib/care-pi/plugs",
+  "/var/lib/care-pi/build",
+  "/var/lib/care-pi/build/care_fe",
+  "/var/lib/care-pi/state",
+  "/var/lib/care-pi/state/jobs",
+  "/var/lib/care-pi/state/locks",
+  "/var/lib/care-pi/state/mode",
+];
+
+// The byte format of the agent and the console: binary units, 1 decimal, no ".0" (agent/internal/units).
+function formatBytes(n) {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  if (n < 1024) return `${n} B`;
+  let v = n;
+  let u = 0;
+  while (v >= 1024 && u < units.length - 1) {
+    v /= 1024;
+    u++;
+  }
+  return `${(Math.round(v * 10) / 10).toFixed(1).replace(/\.0$/, "")} ${units[u]}`;
+}
+
 export function hostCheck(state, probe) {
   const ram = state.ramBytes;
   const sd = state.diskKind === "sd";
@@ -236,8 +292,19 @@ export function hostCheck(state, probe) {
       ? { write_mb_s: sd ? 14.2 : 312.4, read_mb_s: sd ? 41.0 : 401.9, measured_at: now() }
       : null;
   if (diskProbe) state.diskProbe = diskProbe;
+  const disk = sd
+    ? { device: "/dev/mmcblk0", kind: "sd", size_bytes: 63_864_569_856 }
+    : { device: "/dev/sda", kind: "usb", size_bytes: 256_060_514_304 };
+  // The checks of the agent on lumine (43, 24 of them directories; wave 4d), in the same order.
   const checks = [
     { name: "podman", level: "required", ok: true, detail: "podman 5.4.2" },
+    { name: "quadlet", level: "required", ok: true, detail: "/usr/libexec/podman/quadlet" },
+    { name: "skopeo", level: "required", ok: true, detail: "/usr/bin/skopeo" },
+    { name: "systemctl", level: "required", ok: true, detail: "/usr/bin/systemctl" },
+    { name: "timedatectl", level: "required", ok: true, detail: "/usr/bin/timedatectl" },
+    { name: "restic", level: "advised", ok: true, detail: "/usr/bin/restic" },
+    { name: "nft", level: "advised", ok: true, detail: "/usr/sbin/nft" },
+    { name: "avahi-daemon", level: "advised", ok: true, detail: "/usr/sbin/avahi-daemon" },
     { name: "cgroup memory controller", level: "required", ok: true, detail: "memory controller active" },
     {
       name: "zram swap",
@@ -245,31 +312,36 @@ export function hostCheck(state, probe) {
       ok: true,
       detail: `zram swap ${Math.round(ram / 2 ** 20)} MiB, RAM ${Math.round(ram / 2 ** 20)} MiB`,
     },
+    { name: "avahi allow-interfaces", level: "advised", ok: true, detail: "allow-interfaces=eth0,wlan0" },
+    ...DIRS.map((d) => ({ name: `dir ${d}`, level: "advised", ok: true, detail: "present" })),
     {
       name: "ram",
       level: "advised",
-      ok: ram >= 3 * GIB,
-      detail: `RAM ${(ram / GIB).toFixed(1)} GiB`,
-      ...(ram < 3 * GIB ? { fix: "busy-counter needs 4 GiB RAM or more" } : {}),
+      ok: ram >= 1800 * 2 ** 20,
+      detail: `RAM ${formatBytes(ram)}`,
+      ...(ram < 1800 * 2 ** 20 ? { fix: "use a host with 2 GB RAM or more" } : {}),
     },
     {
       name: "root disk",
       level: "advised",
       ok: !sd,
-      detail: sd ? "the root disk is an SD card" : "the root disk is a USB drive",
-      ...(sd ? { fix: "use a USB SSD or an NVMe drive" } : {}),
+      detail: sd ? "the root disk is an SD card" : `${disk.device} (${disk.kind}, ${formatBytes(disk.size_bytes)})`,
+      ...(sd ? { fix: "use a USB SSD or an NVMe drive of 64 GB or more" } : {}),
     },
     {
       name: "disk speed",
       level: "advised",
       ok: diskProbe ? diskProbe.write_mb_s >= 20 : true,
-      detail: diskProbe ? `write ${diskProbe.write_mb_s} MB/s, read ${diskProbe.read_mb_s} MB/s` : "not measured",
+      detail: diskProbe
+        ? `write ${diskProbe.write_mb_s} MB/s, read ${diskProbe.read_mb_s} MB/s`
+        : "not measured (use the probe)",
+      ...(diskProbe && diskProbe.write_mb_s < 20 ? { fix: "use a faster disk" } : {}),
     },
-    { name: "page size", level: "advised", ok: true, detail: "16384 bytes" },
+    { name: "page size", level: "advised", ok: true, detail: "page size 16384" },
     { name: "rtc", level: "advised", ok: true, detail: "/dev/rtc0 exists" },
-    { name: "ethernet", level: "advised", ok: true, detail: `eth0 1000 Mb/s ${ADDRESS}` },
-    { name: "internet", level: "advised", ok: true, detail: "https://ghcr.io answered in 180 ms" },
-    { name: "clock", level: "advised", ok: true, detail: "synchronized" },
+    { name: "ethernet", level: "advised", ok: true, detail: `eth0 ${ADDRESS}` },
+    { name: "internet", level: "advised", ok: true, detail: "the internet is reachable" },
+    { name: "clock", level: "advised", ok: true, detail: "the clock is synchronized" },
   ];
   return {
     ok: checks.every((c) => c.level !== "required" || c.ok),
@@ -280,9 +352,7 @@ export function hostCheck(state, probe) {
       ram_bytes: ram,
       page_size_bytes: 16384,
       cpu_count: 4,
-      root_disk: sd
-        ? { device: "/dev/mmcblk0", kind: "sd", size_bytes: 63_864_569_856 }
-        : { device: "/dev/sda", kind: "usb", size_bytes: 256_060_514_304 },
+      root_disk: disk,
       rtc_present: true,
       ethernet: { interface: "eth0", link: true, speed_mbps: 1000, address: ADDRESS },
       internet_reachable: true,

@@ -10,7 +10,8 @@ import { useElapsed } from "@/hooks/use-countdown";
 import { formatAbout, formatElapsed, formatTime } from "@/lib/format";
 import { fmt, strings } from "@/lib/strings";
 import { cn } from "@/lib/utils";
-import { expectedSeconds, jobKindFromId, jobStartedAt, stepProgress, type JobView } from "./job-state";
+import { expectedSeconds, jobKindFromId, jobStartedAt, lastStepLog, stepProgress, type JobView } from "./job-state";
+import { stepArgument, stepTitle } from "./step-text";
 import { useJobStream } from "./use-job-stream";
 
 const STATE_BADGE: Record<string, "neutral" | "info" | "success" | "destructive" | "warning"> = {
@@ -40,25 +41,51 @@ function StepIcon({ state }: { state: JobStep["state"] }) {
   }
 }
 
+// The second line of a step: its detail (a result or an error); while it runs, the message of its progress, the
+// expected time, or its last output line; else the short argument of its name.
+function stepSecondary(step: JobStep, view: JobView, kind: string | undefined): string {
+  if (step.detail) return step.detail;
+  if (step.state === "running") {
+    const message = view.progress[step.index]?.message;
+    if (message) return message;
+    const expected = expectedSeconds(step.action, kind);
+    if (expected) return fmt(strings.progress.expected, { time: formatAbout(expected) });
+    return lastStepLog(view, step.index) ?? stepArgument(step);
+  }
+  return stepArgument(step);
+}
+
 function StepRow({ step, view, kind }: { step: JobStep; view: JobView; kind: string | undefined }) {
   const running = step.state === "running";
   const elapsed = useElapsed(step.started_at, step.finished_at, running);
   const progress = stepProgress(view.progress[step.index]);
-  const expected = expectedSeconds(step.action, kind);
-  const message = view.progress[step.index]?.message;
-  const secondary =
-    step.detail ??
-    message ??
-    (running && expected ? fmt(strings.progress.expected, { time: formatAbout(expected) }) : "");
+  const title = stepTitle(step);
+  const secondary = stepSecondary(step, view, kind);
   return (
     <li
-      className="relative grid h-14 grid-cols-[1.25rem_1fr_auto] items-center gap-x-3 border-b px-1 last:border-b-0"
+      className="relative grid h-[4.75rem] grid-cols-[1.25rem_1fr_auto] items-center gap-x-3 border-b px-1 last:border-b-0 sm:h-14"
       data-state={step.state}
+      data-action={step.action ?? undefined}
       data-testid="job-step"
+      title={step.name}
     >
       <StepIcon state={step.state} />
       <div className="min-w-0">
-        <p className={cn("truncate text-sm", running && "font-semibold")}>{step.name}</p>
+        {/* Below 640 px a title can use 2 lines; each row has the same fixed height. */}
+        {title.raw ? (
+          <p className={cn("line-clamp-2 text-sm break-all sm:truncate", running && "font-semibold")}>
+            <code className="font-mono" data-testid="job-step-raw">
+              {title.text}
+            </code>
+          </p>
+        ) : (
+          <p
+            className={cn("line-clamp-2 text-sm sm:truncate", running && "font-semibold")}
+            data-testid="job-step-title"
+          >
+            {title.text}
+          </p>
+        )}
         <p className={cn("truncate text-xs", step.state === "failed" ? "text-destructive" : "text-soft-foreground")}>
           {secondary || "\u00a0"}
         </p>
@@ -66,10 +93,11 @@ function StepRow({ step, view, kind }: { step: JobStep; view: JobView; kind: str
       <span className="w-[7ch] text-right text-xs text-soft-foreground tabular-nums">
         {step.started_at ? formatElapsed(elapsed) : ""}
       </span>
-      {running && progress !== null ? (
+      {running ? (
         <Progress
           value={progress}
-          aria-label={step.name}
+          aria-label={title.text}
+          data-testid={progress === null ? "job-step-indeterminate" : undefined}
           className="absolute inset-x-0 bottom-0 gap-0 [&_[data-slot=progress-track]]:h-0.5 [&_[data-slot=progress-track]]:rounded-none"
         />
       ) : null}
@@ -167,7 +195,7 @@ function JobProgressView({ jobId, initial = null, title, intro, onDone, children
           <StepRow key={s.index} step={s} view={view} kind={job?.kind ?? jobKindFromId(jobId)} />
         ))}
         {view.steps.length === 0 && !problem ? (
-          <li className="flex h-14 items-center gap-3 px-1">
+          <li className="flex h-[4.75rem] items-center gap-3 px-1 sm:h-14">
             <Spinner className="size-5" />
           </li>
         ) : null}

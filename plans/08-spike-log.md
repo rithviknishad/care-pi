@@ -692,6 +692,7 @@ Four installs: run 1 on the laptop (found the blocker), a CLI-only setup, a fina
 10. (Wave 4d.) **Parallel `GET /status`.** Each request starts its own podman children. 24 parallel
     requests OOM-kill the agent with the cap of 64M and of 128M ("Follow-ups applied", A).
     Options: one shared status collection for parallel requests, or a limit on parallel podman children.
+11. (Wave 4d.) **Caddy near its cap.** `care-caddy.service` used 95.5 MiB of 96M on lumine ("Follow-ups applied", C).
 
 ### Follow-ups applied (wave 4d, 2026-10-31)
 
@@ -771,3 +772,24 @@ with no address, `--address-wait 5s` warned after 5 s and rendered without a LAN
 (`netinfo` and `apply`: the address after 2 reads, at once, never) and a shell test of `debounce_s` in
 `debian:trixie` (`local/wave4d/20-nm-debounce-test.sh`: 6.97 s → 15, 179.99 s → 15, 180 s → 5, no file or
 not a number → 5).
+
+#### C. Console UX (follow-ups 3 to 6)
+
+lumine runs agent `6f9e7f9-dirty` (the C build). The installer ran with the flags of the exit test ("no changes").
+
+| # | Wave 4c | Change | Evidence |
+|---|---|---|---|
+| 1 | Steps showed `ensure-dirs`, `daemon-reload`, `pull-images: localhost/… ghcr.io/…@sha256:…` | `strings.steps.actions` maps each of the 26 `JobStep.action` keys of the contract to a sentence ("Download the container images"); the second line has a short argument (`caddy:2, care@sha256:77fe743e51a6`); an unknown key shows the raw name in `code`. Table: `docs/console-ui.md` section 9 | Vitest: each key of the contract has a sentence; mock e2e (3 widths): the first 9 titles, no raw name |
+| 2 | 26 s without a step after the host check | `apply.Run` starts the step `resolve-lock` at the first `resolve …` line when it has a journal (an agent job); the lines are its `log` events. The console shows "Resolve the versions of the images (about 30 s)", the last line, and an indeterminate bar (each running step without a progress value has one) | lumine, an apply job with `update=true` (the plan preview first: no change): step 0 `resolve-lock` 23.3 s, 5 `log` events with `step_index` 0 (`resolve ghcr.io/ohcnetwork/care:latest … 77fe743e51a6`, …, `resolve care_fe develop … 44f07eaa8573`), then "no changes" (`local/wave4d/63-resolve-lock-job.txt`). Go tests: the step, its log lines, no step without a resolution, a failed resolution fails the step |
+| 3 | A failed setup showed the raw error and "fix the problem" | The failed step in plain words, the problem `detail`, "Retry" (`POST /setup/finish` again), "Copy details", a link to the Logs page of `care-<unit>` of the error (else the agent), the raw error in a collapsed "Technical details" block | Mock e2e with `fail_step: ensure-stanza`: "This step failed: Prepare the database backups.", link `/logs?unit=db`, retry → hand-off |
+| 4 | 43 checks (the log above said 25 directories; lumine has **24**), the button at the end | The failed checks first, then one collapsed row "All 43 checks passed" with the passed checks and one row "Directories: 24 OK"; the buttons in a fixed bar on a phone, sticky in the card from 640 px | Mock e2e: the button in the window without a scroll (3 widths); a failed root disk check comes first ("42 of 43 checks passed") |
+| 5 | Disk "119 GiB" (facts) and "128 GB" (check) | One rule for bytes: binary units, 1 decimal (`formatBytes`; Go `agent/internal/units`) | lumine `care-pi host check`: `root disk /dev/sda (usb, 119.2 GiB)`, `ram RAM 2 GiB`; Vitest and Go tests with the same cases |
+| 6 | Phone: "Configured na…", "Raspberry Pi 5 Model B…" | Below 640 px the label is above the value; no cut; fixed row height, the skeleton too | lumine phone (WebKit, iPhone 13): 0 cut labels or values; the card boxes equal across 2 refreshes |
+| 7 | Phone: the units table needed 722–729 px in a 324 px card | Below 640 px a list of 10 compact cards (unit, badge, memory bar with text, restarts) | lumine phone: page 390/390 px, units card 358/358 px, 10 unit cards; mock e2e at 390 and 360 px: `document.scrollingElement.scrollWidth <= clientWidth` for the page and the units card |
+
+Tests: Vitest 63 (12 files); Playwright with the mock 50 passed, 1 skipped (WebKit has no layout-shift entries);
+`e2e/real` on lumine: `phone.ready.spec.ts` and `desktop.login.spec.ts` passed. Screenshots: the session files of
+wave 4d (`wave4d-shots/`).
+
+New observation (follow-up 11, not fixed): the phone dashboard of lumine showed `care-caddy.service` at 95.5 MiB of
+its 96M cap (89.8 MiB a minute before). Measure the peak of Caddy before Phase 3, and raise the cap if necessary.

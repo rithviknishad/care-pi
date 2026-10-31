@@ -58,7 +58,7 @@ export async function setupJourney(page: Page, info: TestInfo, stateName: string
 
   // Step: hardware. The facts of the device.
   await expect(page.getByTestId("step-title")).toHaveText("Hardware check");
-  await expect(page.getByTestId("host-checks").locator("li").first()).not.toHaveText("");
+  await expect(page.getByTestId("host-check-summary")).toContainText(/checks passed/);
   const facts = page.locator("dl").first();
   await expect(facts).toContainText("Memory (RAM)");
   const fact = async (label: string) => {
@@ -82,8 +82,13 @@ export async function setupJourney(page: Page, info: TestInfo, stateName: string
   if (env.rtc) expect(hw.rtc).toBe(env.rtc);
   expect(hw.ethernet).toMatch(/^Connected/);
   for (const ip of env.ips) expect(hw.ethernet).toContain(ip);
-  const checks = page.getByTestId("host-checks").locator("li");
-  note(info, `host checks: ${await checks.count()}, failed: ${await checks.locator('[aria-label="Failed"]').count()}`);
+  // The failures first, then one collapsed row of the passed checks (wave 4d).
+  const failedChecks = page.getByTestId("host-check-problems").locator("li");
+  note(
+    info,
+    `host checks: ${await page.getByTestId("host-check-summary").textContent()}, failed: ${await failedChecks.count()}`,
+  );
+  await expect(page.getByRole("button", { name: "I read the warnings" })).toBeInViewport();
   await shot(page, info, "05-hardware");
   await page.getByRole("button", { name: "I read the warnings" }).click();
 

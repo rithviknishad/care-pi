@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rithviknishad/care-pi/agent/internal/applock"
@@ -122,10 +123,13 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 	if err := healScaleDown(ctx, o); err != nil {
 		return nil, err
 	}
+	resolve := &resolveStep{w: o.Out, journal: o.Journal}
 	pr, err := Prepare(ctx, PrepareOptions{
 		Paths: o.Paths, ConfigPath: o.ConfigPath, SolutionsDir: o.SolutionsDir,
-		Host: o.Host, IPs: o.IPs, Update: o.Update, Strict: true, Warn: o.Out, Progress: o.Out, Phase: o.Phase,
+		Host: o.Host, IPs: o.IPs, Update: o.Update, Strict: true, Warn: o.Out, Progress: resolve, Phase: o.Phase,
+		Resolved: resolve.end,
 	})
+	resolve.end(err)
 	if err != nil {
 		return nil, err
 	}
@@ -313,6 +317,40 @@ func waitAddress(ctx context.Context, o Options) string {
 // seconds prints a duration as "60 s" or "2.5 s".
 func seconds(d time.Duration) string {
 	return strconv.FormatFloat(d.Round(100*time.Millisecond).Seconds(), 'f', -1, 64) + " s"
+}
+
+// resolveStep is the Progress writer of the lock resolution. With a journal (a job of the agent), the
+// first line starts the step "resolve-lock", so the progress page shows the resolution (about 26 s in
+// the setup job on lumine, wave 4c) and its "resolve …" lines are the log lines of the step. Without a
+// network resolution there is no line, and thus no step.
+type resolveStep struct {
+	w       io.Writer
+	journal Journal
+	mu      sync.Mutex
+	done    func(error)
+	ended   bool
+}
+
+func (r *resolveStep) Write(b []byte) (int, error) {
+	r.mu.Lock()
+	if r.journal != nil && r.done == nil && !r.ended {
+		r.done = r.journal.Step("resolve-lock: image digests and git refs")
+	}
+	r.mu.Unlock()
+	return r.w.Write(b)
+}
+
+// end ends the step one time. Prepare calls it after the resolution; Run calls it again after Prepare.
+func (r *resolveStep) end(err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.ended {
+		return
+	}
+	r.ended = true
+	if r.done != nil {
+		r.done(err)
+	}
 }
 
 type noJournal struct{}

@@ -19,27 +19,32 @@ test("log in on a phone and use the console", async ({ page }, info) => {
   await loginWithPassword(page);
   await expect(page).toHaveURL(/\/dashboard$/);
 
-  // Dashboard: the cards and the units table fit the width, and they do not move across 2 refreshes.
+  // Dashboard: the cards fit the width, the units are a list of cards (wave 4d), nothing scrolls sideways,
+  // no label or value is cut, and the cards do not move across 2 refreshes.
   await expect(page.getByTestId("status-state")).toBeVisible();
-  await expect.poll(() => page.getByTestId("units").locator("tbody tr").count()).toBeGreaterThan(5);
+  const unitCards = page.getByTestId("units-cards").locator("[data-unit-card]");
+  await expect.poll(() => unitCards.count()).toBeGreaterThan(5);
+  await expect(page.getByTestId("units")).toBeHidden();
   await page.evaluate(() => document.fonts.ready);
   const cards = await cardBoxes(page);
   const width = await pageWidth(page);
-  const table = await page
-    .getByTestId("units")
-    .evaluate((el) => ({ scroll: el.scrollWidth, client: el.parentElement?.clientWidth ?? 0 }));
+  const unitsCard = await page
+    .getByTestId("units-card")
+    .evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
+  const cut = await page
+    .locator("main dl > dt, main dl > dd > span")
+    .evaluateAll((els) => els.filter((el) => el.scrollWidth > el.clientWidth + 1).map((el) => el.textContent));
   note(
     info,
-    `phone dashboard: ${cards.length} cards, page ${width.scroll}/${width.client} px, units ${table.scroll}/${table.client} px`,
+    `phone dashboard: ${cards.length} cards, page ${width.scroll}/${width.client} px, units card ${unitsCard.scroll}/${unitsCard.client} px, ` +
+      `${await unitCards.count()} unit cards, cut texts: ${cut.length}`,
   );
+  note(info, `units: ${(await unitCards.allTextContents()).join(" | ")}`);
   await shot(page, info, "02-dashboard");
   expect(cards.length).toBe(8);
   expect(width.scroll).toBeLessThanOrEqual(width.client);
-  // The units table scrolls inside its card on a phone (careui Table: overflow-x-auto). Record it; the page itself
-  // must not scroll sideways.
-  if (table.scroll > table.client) {
-    info.annotations.push({ type: "units-table-scroll", description: `${table.scroll} px in ${table.client} px` });
-  }
+  expect(unitsCard.scroll).toBeLessThanOrEqual(unitsCard.client);
+  expect(cut, "cut labels or values").toEqual([]);
   for (let i = 1; i <= 2; i++) {
     const before = (await page.getByTestId("status-updated").textContent()) ?? "";
     await expect(page.getByTestId("status-updated")).not.toHaveText(before, { timeout: 20_000 });

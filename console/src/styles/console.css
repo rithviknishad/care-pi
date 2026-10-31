@@ -39,3 +39,31 @@
     padding: 2rem;
   }
 }
+
+/*
+ * Indeterminate progress (a Base UI Progress with value null): a bar that moves from left to right.
+ * The step of a job that runs without a known end shows it, so the page shows movement (wave 4d).
+ */
+@layer components {
+  [data-slot="progress-indicator"][data-indeterminate] {
+    width: 35%;
+    animation: progress-indeterminate 1.6s ease-in-out infinite;
+  }
+
+  @keyframes progress-indeterminate {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(300%);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    [data-slot="progress-indicator"][data-indeterminate] {
+      width: 100%;
+      animation: none;
+      opacity: 0.4;
+    }
+  }
+}

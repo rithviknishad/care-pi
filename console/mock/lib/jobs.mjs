@@ -4,6 +4,14 @@
 import { now } from "./state.mjs";
 
 const LOG_LINES = {
+  // One line for each network resolution, as "care-pi apply" prints them (agent/internal/lock).
+  "resolve-lock": [
+    "resolve docker.io/library/node:22-bookworm-slim … 4b150b48b411",
+    "resolve docker.io/library/redis:8-alpine … 21090af93f83",
+    "resolve docker.io/versity/versitygw:latest … 89cad13cc981",
+    "resolve ghcr.io/ohcnetwork/care:latest … 77fe743e51a6",
+    "resolve care_fe develop … 44f07eaa8573",
+  ],
   "pull-images": [
     "Trying to pull ghcr.io/ohcnetwork/care@sha256:5e0c3b2a…",
     "Copying blob 1f2e3d4c done",
@@ -20,7 +28,14 @@ const LOG_LINES = {
     "care-beat.service: Running migrations: 312 of 312 applied",
   ],
   "wait-healthy": ["waiting for care-api.service to become healthy", "care-api.service is healthy"],
-  "create-superuser": ["Superuser created successfully."],
+  "create-care-superuser": ["Superuser created successfully."],
+};
+
+// The error of a failed step, as the agent writes it (lumine, wave 4c: the stanza step of the first setup).
+const STEP_ERRORS = {
+  "ensure-stanza":
+    "podman exec --user postgres care-db pg_isready --quiet: exit status 255: Error: unable to find user postgres: no matching entries in passwd file",
+  "wait-healthy": "care-api.service did not become healthy in 10m0s.",
 };
 
 export function jobId(kind) {
@@ -126,9 +141,10 @@ export function startJob(state, spec) {
         if (tick >= ticks) {
           clearInterval(timer);
           const failed = state.failStep && state.failStep === action;
+          const error = STEP_ERRORS[action] ?? `${action}: exit status 1`;
           step.state = failed ? "failed" : "succeeded";
           step.finished_at = now();
-          step.detail = failed ? `${action} failed: exit status 1` : null;
+          step.detail = failed ? error : null;
           emit("step", { ...step });
           if (failed) {
             state.failStep = null;
@@ -136,7 +152,7 @@ export function startJob(state, spec) {
               type: "https://care-pi.rithviknishad.dev/problems/internal",
               title: "Internal error",
               status: 500,
-              detail: `The step ${name} failed. The journal of care-pi.service has the detail.`,
+              detail: `apply failed at ${action}: ${error}`,
               instance: `/api/v1/jobs/${id}`,
             });
             return;
@@ -152,23 +168,30 @@ export function startJob(state, spec) {
   return job;
 }
 
+// The steps of the setup job of the agent (lumine, wave 4c, with the resolve-lock step of wave 4d).
 export const SETUP_STEPS = [
   ["validate", "validate: config.yaml"],
-  ["host-check", "host-check: 11 check(s)"],
-  ["ensure-dirs", "ensure-dirs: 6 dir(s)"],
-  ["set-secrets", "set-secrets: 5 secret(s)"],
-  ["write-files", "write-files: 23 file(s)"],
+  ["host-check", "host-check: required checks"],
+  ["resolve-lock", "resolve-lock: image digests and git refs"],
+  ["ensure-dirs", "ensure-dirs"],
+  ["write-files", "write-files: 15 file(s)"],
   ["daemon-reload", "daemon-reload"],
-  ["pull-images", "pull-images: 7 image(s)", { progress: "items" }],
-  ["enable-target", "enable-target: care.target"],
-  ["start-target", "start-target: care.target"],
-  ["ensure-buckets", "ensure-buckets: patient-bucket, facility-bucket"],
-  ["ensure-stanza", "ensure-stanza: main"],
-  ["ensure-fe", "ensure-fe: build 8d2f0c1a9b7e", { progress: "percent", stream: "stdout" }],
-  ["reload-caddy", "reload-caddy"],
-  ["wait-healthy", "wait-healthy: care-api.service"],
-  ["create-superuser", "create-superuser: admin"],
+  ["enable-target", "enable-target: care-start.service"],
+  [
+    "pull-images",
+    "pull-images: localhost/care-pi/caddy:2 ghcr.io/ohcnetwork/care@sha256:77fe743e51a6eb322e89e18183c6012fa6ab8efdd447e8ff59dfb387e6da6ec3 docker.io/library/redis@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537",
+    { progress: "items" },
+  ],
+  [
+    "full-cycle",
+    "full-cycle: care.target (care-db unit changed; care-redis unit changed; care-s3 unit changed; pod changed)",
+  ],
+  ["ensure-buckets", "ensure-buckets"],
+  ["ensure-stanza", "ensure-stanza"],
+  ["ensure-fe", "ensure-fe", { progress: "percent", stream: "stdout" }],
   ["write-lock", "write-lock"],
+  ["wait-healthy", "wait-healthy: care-api.service"],
+  ["create-care-superuser", "create-care-superuser: admin"],
 ];
 
 export const APPLY_STEPS = [

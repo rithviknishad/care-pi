@@ -20,6 +20,16 @@ describe("format helpers", () => {
     expect(formatBytes(1536)).toBe("1.5 KiB");
     expect(formatBytes(null)).toBe("—");
   });
+  it("uses 1 decimal for each size, as the agent does (one formatter, wave 4d)", () => {
+    // The USB drive of lumine: 128 GB. The hardware facts showed "119 GiB", the check "128 GB".
+    expect(formatBytes(128_035_676_160)).toBe("119.2 GiB");
+    expect(formatBytes(2006 * 1024 ** 2)).toBe("2 GiB");
+    expect(formatBytes(926.3 * 1024 ** 2)).toBe("926.3 MiB");
+    expect(formatBytes(103.44 * 1024 ** 3)).toBe("103.4 GiB");
+    expect(formatBytes(16384)).toBe("16 KiB");
+    expect(formatBytes(1023.97 * 1024)).toBe("1 MiB");
+    expect(formatBytes(1000)).toBe("1000 B");
+  });
   it("formats durations as the measured help texts", () => {
     expect(formatDuration(200)).toBe("3 min 20 s");
     expect(formatDuration(45)).toBe("45 s");

@@ -58,6 +58,16 @@ Each decision below serves this goal.
     with `phase`. The page shows "Not available in this version" and the phase.
 14. **Code split.** Each page is a lazy chunk (`src/app/router.tsx`). The libraries are in their own chunks
     (`react`, `router`, `query`, `base-ui`, `vendor`), so a change of the console does not change their hashes.
+15. **Operator text for job steps.** A job step shows a sentence for its `action` key, never the internal name
+    (section 9). The raw name is the tooltip of the row and is in the output.
+16. **One byte format.** `formatBytes` (`src/lib/format.ts`) formats each size: binary units (`KiB`, `MiB`, `GiB`),
+    1 decimal, no `.0` (128 GB → `119.2 GiB`). The agent uses the same rule in its texts (`agent/internal/units`),
+    so the hardware facts and the host checks show the same size (wave 4c showed `119 GiB` and `128 GB`).
+17. **A failed setup tells what to do.** The progress page shows the failed step in plain words, the `detail` of the
+    problem, "Retry" (`POST /setup/finish` again, then the new job), "Copy details", and a link to the Logs page of
+    the unit in the error (`care-<unit>`, else the agent). The raw error is in a collapsed "Technical details" block.
+18. **The hardware step shows the problems first.** The failed checks come first. The passed checks are one
+    collapsed row ("All 43 checks passed"), and in it the directory checks are one row ("Directories: 24 OK").
 
 ## 3. careui
 
@@ -74,9 +84,9 @@ careui (`https://careui.ohc.network`) is the component registry of Care. It uses
 - careui components import `clsx` and `tailwind-merge`. `vite.config.ts` points both names to the package `cn`,
   which does the same work with a smaller build.
 
-The items in the lock (33): alert, alert-dialog, badge, button, card, checkbox, dialog, dropdown-menu, empty, field,
-input, input-group, input-otp, kbd, label, native-select, progress, radio-group, scroll-area, separator, sheet,
-skeleton, sonner, spinner, switch, table, tabs, textarea, toggle, toggle-group, tooltip, use-auto-space, use-mobile.
+The items in the lock (34): alert, alert-dialog, badge, button, card, checkbox, collapsible, dialog, dropdown-menu,
+empty, field, input, input-group, input-otp, kbd, label, native-select, progress, radio-group, scroll-area, separator,
+sheet, skeleton, sonner, spinner, switch, table, tabs, textarea, toggle, toggle-group, tooltip, use-auto-space, use-mobile.
 
 ### 3.1 Add a component
 
@@ -117,6 +127,21 @@ Each page obeys these rules:
 6. **No layout from the scroll bar.** `html { scrollbar-gutter: stable }` keeps the width when a page becomes taller than the window.
 7. **Errors in reserved space.** An error alert goes above the content or in place of a skeleton. It does not push a control
    that the operator is about to touch.
+8. **Movement without a known end.** A job step that runs without a progress value shows an indeterminate bar at the
+   bottom of its row (`value={null}`; `src/styles/console.css` moves it, and stops it for `prefers-reduced-motion`).
+   The bar is absolute, so it does not change the row height.
+
+### 5.1 Phones (below 640 px, `sm`)
+
+The console works from 360 px. Below 640 px:
+
+| Item | Rule |
+|---|---|
+| Key/value rows (`DataList`, `DataRow`) | The label is above the value. The value is not cut: it wraps. Each row has a fixed minimum height (label 26 px, value 28 px); the skeleton has the same height. From 640 px the label and the value are side by side, and a long value is cut with its full text in `title`. |
+| Units of the dashboard | A list of compact cards (`data-testid="units-cards"`): the unit (a link to its log), one badge (the health, else the state), a memory bar with its text, and the restarts. Each card has a fixed height (4.25 rem); the skeleton has the 10 cards of `GET /status`. From 640 px the table shows. |
+| Job steps | A title can use 2 lines (`line-clamp-2`); each row has the same fixed height (4.75 rem, 3.5 rem from 640 px). |
+| Long wizard steps | The hardware step keeps its buttons in a fixed bar at the bottom of the window, with a spacer after the content. From 640 px the bar is sticky at the bottom of the card (the card does not clip: `overflow-visible`). |
+| Side scroll | Nothing scrolls sideways: not the page, not a card. The e2e tests check `document.scrollingElement.scrollWidth <= clientWidth` and the same for the units card, at 390 px and 360 px. |
 
 The e2e test `e2e/login-dashboard.spec.ts` checks rules 1 to 3 in 2 ways:
 
@@ -182,7 +207,48 @@ Other rules for the server:
 |---|---|---|
 | Unit | Vitest, Testing Library, jsdom | The API client (CSRF, 401, problems), recovery codes, the wizard logic, the job events, the env editor, the stable order, the formats. |
 | e2e | Playwright against the stateful mock and `vite preview` | Desktop (Chromium, 1280 px), iPhone 13 (WebKit, 390 px), and 360 px (Chromium). Claim to ready, login and dashboard, logs, certificate, settings, lockout, theme. Each test checks that each request stays on the origin. |
+| e2e (wave 4d) | Playwright against the mock | `e2e/progress-hardware.spec.ts`: the step text and the indeterminate bar of the lock resolution, a failed setup (mock `fail_step`) and its retry, the grouped host checks and the button in the window. `e2e/login-dashboard.spec.ts`: no side scroll, unit cards, and no cut label or value below 640 px. |
 | e2e on a device | Playwright against a real device (`e2e/real`, `playwright.real.config.ts`) | Desktop (Chromium, 1280 × 800) and iPhone 13 (WebKit). Claim to ready on a new install, the phone journey (dashboard, certificate, logs, TOTP), a resume after a reboot. The Phase 2 exit test on lumine used them. |
 
 The mock implements the contract for the console (`console/README.md` section 3). When the contract changes,
 change the mock, run `npm run api:types`, and run the tests.
+
+## 9. Job steps
+
+`src/lib/strings.ts` (`strings.steps.actions`) maps each `JobStep.action` key of the contract (`PlanActionKind` and the
+other keys of `JobStep.action`) to an operator sentence. `src/features/jobs/step-text.ts` adds a short form of the
+argument of the step name. A key that is not in the map shows the raw step name in a `code` element.
+`tests/step-text.test.ts` fails when the contract has a key without a sentence.
+
+| Key | Sentence | Second line (when the step does not run) |
+|---|---|---|
+| `validate` | Check the settings | `config.yaml` |
+| `host-check` | Check the device | `required checks` |
+| `resolve-lock` | Resolve the versions of the images (while it runs: "… (about 30 s)") | while it runs: the last `resolve …` line |
+| `render` | Make the configuration files | the argument |
+| `plan` | Find the changes | the argument |
+| `ensure-dirs` | Make the directories | — |
+| `set-secrets` | Store the secret keys | the argument |
+| `write-files` | Write the configuration files | `15 files` |
+| `delete-files` | Delete the old configuration files | `2 files` |
+| `daemon-reload` | Load the new service files | — |
+| `enable-target` | Start Care at each boot | `care-start` |
+| `pull-images` | Download the container images | `caddy:2, care@sha256:77fe743e51a6` (`repo:tag` or `repo@sha256:<12 hex>`) |
+| `full-cycle` | Stop and start all the services of Care | the reason, for example `pod changed` |
+| `start-target` | Start all the services of Care | the reason |
+| `restart` | Start the changed services again | `care-beat, care-worker, care-api` |
+| `reload-caddy` | Load the new web server settings | — |
+| `ensure-buckets` | Make the file storage | — |
+| `ensure-stanza` | Prepare the database backups | — |
+| `ensure-fe` | Build the Care web app | the argument |
+| `write-lock` | Record the installed versions | — |
+| `wait-healthy` | Wait until Care answers | `care-api` |
+| `set-hostname` | Set the host name | `care → lumine` |
+| `create-care-superuser` | Make the Care administrator | the user name |
+| `collect` | Collect the support data | the argument |
+| `archive` | Make the support bundle file | the argument |
+| `prune` | Delete the old builds of the web app | the argument |
+
+The second line of a step is, in this order: its `detail` (a result or an error); while it runs, the message of its
+progress, the expected time ("Expected: about 3 min 40 s", `job-state.ts`), or its last output line; else the short
+argument above.

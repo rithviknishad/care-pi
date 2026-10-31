@@ -79,6 +79,15 @@ export function stepProgress(p: JobProgress | undefined): number | null {
   return Math.max(0, Math.min(100, (p.current / p.total) * 100));
 }
 
+// lastStepLog gives the last output line of a step, or undefined.
+export function lastStepLog(view: Pick<JobView, "logs">, index: number): string | undefined {
+  for (let i = view.logs.length - 1; i >= 0; i--) {
+    const l = view.logs[i];
+    if (l?.step_index === index) return l.line.trim() || undefined;
+  }
+  return undefined;
+}
+
 export function isFinished(job: Pick<Job, "state"> | null | undefined): boolean {
   return job?.state === "succeeded" || job?.state === "failed" || job?.state === "cancelled";
 }
