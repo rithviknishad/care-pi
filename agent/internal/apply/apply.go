@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,6 +60,10 @@ type Options struct {
 	// Journal gets one step for each action. The agent passes the recorder of its job.
 	// When it is nil, apply writes its own job journal (source cli) when the plan has actions.
 	Journal Journal
+	// AddressWait bounds the wait for a LAN IPv4 address before the render. 0 does not wait.
+	// The CLI (apply, bootstrap) waits: at the boot, the NetworkManager hook can run apply
+	// before the DHCP lease. Without an address after the wait, apply renders without it and warns.
+	AddressWait time.Duration
 }
 
 // Journal records the steps of a run.
@@ -105,6 +110,7 @@ func (r *Result) JobResult() jobs.ApplyResult {
 // Run executes apply.
 func Run(ctx context.Context, o Options) (*Result, error) {
 	o.defaults()
+	addressWarning := waitAddress(ctx, o)
 	if !o.LockHeld {
 		release, err := applock.Acquire(ctx, o.Paths, o.LockTimeout, o.Out)
 		if err != nil {
@@ -186,6 +192,9 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 	res := &Result{Plan: p, Changed: !p.Empty(), LockChanged: lockChanged, Phase: pr.Phase,
 		Solution: pr.Config.Solution.Name, Track: pr.Config.Solution.Track, Preset: pr.Model.Sizing.Preset,
 		Hostnames: pr.Model.Hostnames, Addresses: pr.IPs, FEBuildID: pr.Model.FEBuildID, FEProvider: provider.Name()}
+	if addressWarning != "" && len(pr.IPs) == 0 {
+		res.Warnings = append(res.Warnings, addressWarning)
+	}
 	if p.Has(plan.EnsureFE) {
 		res.FEExists = fe.Exists(o.Paths, pr.Model.FEBuildID)
 	}
@@ -272,6 +281,38 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 	}
 	_, _ = fmt.Fprintln(o.Out, "apply complete")
 	return res, finish(nil)
+}
+
+// waitAddress waits up to o.AddressWait for a LAN IPv4 address. It prints one line before the
+// wait. It returns a warning when no address came; the render then has no LAN address, as before.
+func waitAddress(ctx context.Context, o Options) string {
+	if o.AddressWait <= 0 || o.IPs == nil {
+		return ""
+	}
+	start := time.Now()
+	waited := false
+	ips, err := netinfo.WaitLANIPv4(ctx, o.IPs, o.AddressWait, o.PollInterval, func() {
+		waited = true
+		_, _ = fmt.Fprintf(o.Out, "wait for a network address (at most %s)\n", seconds(o.AddressWait))
+	})
+	if err != nil {
+		// Prepare reads the interfaces again and reports the error.
+		return ""
+	}
+	if len(ips) > 0 {
+		if waited {
+			_, _ = fmt.Fprintf(o.Out, "network address %s after %s\n", ips[0], seconds(time.Since(start)))
+		}
+		return ""
+	}
+	w := fmt.Sprintf("no LAN IPv4 address after %s; apply renders without a LAN address. The next address change runs apply again", seconds(o.AddressWait))
+	_, _ = fmt.Fprintln(o.Out, "warning:", w)
+	return w
+}
+
+// seconds prints a duration as "60 s" or "2.5 s".
+func seconds(d time.Duration) string {
+	return strconv.FormatFloat(d.Round(100*time.Millisecond).Seconds(), 'f', -1, 64) + " s"
 }
 
 type noJournal struct{}

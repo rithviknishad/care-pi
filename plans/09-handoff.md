@@ -409,9 +409,15 @@ Follow-ups applied in wave 4d (2026-10-31; detail in `08`, "Follow-ups applied")
   soft limit is 64 MiB. The load of wave 4c plus skopeo: 64M reached its cap in each run (16–29 events, swap
   12–14 MiB); 128M reached it in 1 of 3 runs, swap 0, no OOM kill. 24 parallel `GET /status` OOM-kill the agent
   with both caps (new follow-up 10).
+- **B. No full cycle after a boot** (follow-up 2). `apply` and `bootstrap` wait up to 60 s for a LAN IPv4 address
+  before the render (`--address-wait`); the NetworkManager hook waits 15 s for more events in the first 3 minutes
+  after the boot, else 5 s. Finding: `network-online.target` does not guarantee an IPv4 address on Pi OS trixie
+  (IPv6 can activate eth0 first). Two reboots of lumine: one apply at 22 s with the address, no file change,
+  0 full cycles (before: 1); the pod started once at 11.8–11.9 s; Care `/ping/` 200 after 113–114 s (before:
+  179 s); `multi-user.target` 4.4–4.5 s.
 
-Follow-ups for the owner (detail in `08`): ~~the 64M cap still meets podman and skopeo children~~ (done, A); the NetworkManager
-hook applies at boot before the DHCP address, then a full cycle 90 s later (Care at 179 s after a reboot); the
+Follow-ups for the owner (detail in `08`): ~~the 64M cap still meets podman and skopeo children~~ (done, A); ~~the NetworkManager
+hook applies at boot before the DHCP address, then a full cycle 90 s later (Care at 179 s after a reboot)~~ (done, B); the
 units table on a phone; raw step names and a 26 s silent lock resolution on the progress page; the raw error of a
 failed setup; 43 checks (25 directories) on the hardware step; small items (duplicate `X-Content-Type-Options`,
 empty 502 on port 443 in setup mode, duplicate CLI lines). Pre-existing, not changed: `npm run api:check` fails

@@ -77,7 +77,7 @@ Each step is idempotent. If nothing changes, it prints `already configured`.
 11. Directories under `/etc/care-pi` and `/var/lib/care-pi`.
 12. Agent binary: copy `--binary`, or download and verify the checksum.
 13. Agent service: `/etc/systemd/system/care-pi.service` (`care-pi serve`, `Type=notify`, `Restart=always`, `MemoryMax=128M`, `MemorySwapMax=32M`, `ProtectSystem=strict` with `ReadWritePaths`; function `care_pi_unit`). Enable it and start it. Restart it when the unit or the binary changed. The installer owns this unit: `care-pi apply` never writes it. `docs/console-server.md`, section 2, explains each line.
-14. NetworkManager dispatcher hook `90-care-pi`. The hook coalesces the events of 5 s into one apply. It holds its flock until the apply ends, so its applies never overlap. An event during an apply gives one more apply after it.
+14. NetworkManager dispatcher hook `90-care-pi`. The hook coalesces the events of 5 s into one apply (15 s in the first 3 minutes after the boot: function `debounce_s`, from `/proc/uptime`). The apply waits up to 60 s for a LAN IPv4 address (`--address-wait`). It holds its flock until the apply ends, so its applies never overlap. An event during an apply gives one more apply after it.
 15. `care-pi host check`, then `care-pi bootstrap --hostname NAME --preset NAME --fe-provider NAME --yes [--unattended]`. In setup mode (the default), bootstrap prints the claim code in a box, and the script prints the console URLs (`https://<name>:8443/`, `https://<ip>:8443/`). With `--unattended`, the script prints the Care URLs. The last message says `Care is ready` only when an FE build exists. Else it tells how to leave the setup page.
 
 The script writes a log to `/var/log/care-pi-install.log`.

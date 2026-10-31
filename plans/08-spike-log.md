@@ -731,3 +731,43 @@ anon RSS 29–48 MiB; sampled cgroup maximum 119–127 MiB). Each `GET /status` 
 parallel requests. New follow-up 10 (not fixed): share one status collection between parallel requests, or limit
 the number of parallel podman children. A console tab reads `GET /status` each 10 s, so the normal use is far
 from this load.
+
+#### B. No full cycle after a boot (follow-up 2)
+
+Changes: (1) `care-pi apply` and `care-pi bootstrap` wait for a LAN IPv4 address before the render, at most
+`--address-wait` (default 60 s; `netinfo.WaitLANIPv4`, `apply.Options.AddressWait`). They print
+`wait for a network address (at most 60 s)` one time; without an address they render as before and warn.
+The jobs of the console agent do not wait. (2) The NetworkManager hook waits 15 s for more events in the first
+3 minutes after the boot (`/proc/uptime`), else 5 s (function `debounce_s` in the hook). (3) Ordering: no change.
+`care.pod` already has `Wants=` and `After=network-online.target`; `care-start.service` has neither, on purpose.
+
+Finding (3): `NetworkManager-wait-online.service` is enabled on Pi OS trixie (`nm-online -s -q`,
+`NM_ONLINE_TIMEOUT=60`). It ends at NetworkManager "startup complete". "Wired connection 1" has
+`ipv4.may-fail=yes` and `ipv6.method=auto`, so eth0 can be "activated" by IPv6 before the DHCPv4 lease. In the
+boot of wave 4c, `network-online.target` came at 13.9 s and the address at 14.5 s, after the start of the pod
+(14.5 s). In the two boots of wave 4d the lease came first (11.0 s), then `network-online.target` (11.0 s). Thus
+`network-online.target` does not guarantee an IPv4 address; the wait of (1) is the real fix, and the longer
+debounce of (2) makes the first apply come after the lease in the normal case.
+
+Times are in seconds of the kernel clock (`journalctl -o short-monotonic`); "reboot" is from `systemctl reboot`
+on the Mac. Deploy: the installer with the flags of the exit test ("no changes"; the new hook written).
+
+| Event | Before (wave 4c boot) | After, boot 1 | After, boot 2 |
+|---|---|---|---|
+| First hook event | 6.97 | 6.90 | 6.87 |
+| DHCPv4 lease of eth0 | 14.4–14.5 | 10.9–11.0 | 10.8–11.0 |
+| `network-online.target` | 13.9 | 11.1 | 11.0 |
+| `care-pod.service` started (`ActiveEnterTimestamp`) | 14.5, then **again at 106.6** | **11.9** (only start) | **11.8** (only start) |
+| Applies of the hook | 12.4: `addresses: (no LAN IPv4 address)`, 4 files, `start-target`; 103.6: 4 files, **`full-cycle: care.target (pod changed)`** | one, at 22.0: `addresses: 192.168.165.91`, no file change, `ensure-dirs`, `start-target` (the clock gate holds `care.target`), ensure steps | one, at 22.0: the same plan |
+| Full cycles after the boot | **1** | **0** | **0** |
+| `care-api.service` active | 162.8 | 98.0 | 98.1 |
+| Care `/ping/` 200 after the reboot | 179 s | **113 s** | **114 s** |
+| `multi-user.target` (userspace) | 4.48 | 4.53 | 4.42 |
+
+`wait for a network address` did not print in these boots: the 15 s debounce ended after the lease. The wait
+itself was checked on lumine in a new network namespace (`local/wave4d/45-netns-wait.sh`, dry runs):
+an address that came after 3 s ended the wait (`network address 10.9.9.9 after 3 s`, the diff publishes on it);
+with no address, `--address-wait 5s` warned after 5 s and rendered without a LAN address. Tests: Go
+(`netinfo` and `apply`: the address after 2 reads, at once, never) and a shell test of `debounce_s` in
+`debian:trixie` (`local/wave4d/20-nm-debounce-test.sh`: 6.97 s → 15, 179.99 s → 15, 180 s → 5, no file or
+not a number → 5).

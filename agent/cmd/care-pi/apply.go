@@ -31,6 +31,10 @@ with the files on disk, write the changes, reload systemd, and restart only
 the units that the changes affect. Then apply makes sure that the buckets and
 the pgBackRest stanza exist.
 
+Before the render, apply waits for a LAN IPv4 address, at most --address-wait
+(60 s). At the boot, the NetworkManager hook can run apply before the DHCP
+lease. Without an address after the wait, apply renders without it and warns.
+
 Only one apply, bootstrap, fe build, or fe prune runs at a time. A second
 command waits for the lock /run/care-pi/apply.lock, at most --lock-timeout.
 With the lock, no FE build runs. Thus apply removes the scale-down drop-in
@@ -76,6 +80,7 @@ func runApply(cmd *cobra.Command, reason string) error {
 		Chown:        os.Geteuid() == 0,
 		LockTimeout:  lockTimeout,
 		Phase:        applyFlags.phase,
+		AddressWait:  addressWait,
 	})
 	return err
 }
@@ -89,5 +94,6 @@ func init() {
 	f.StringVar(&applyFlags.solutions, "solutions", "", "directory with <name>/solution.yaml (default: the embedded solutions)")
 	_ = f.MarkHidden("solutions")
 	addLockFlag(applyCmd)
+	addAddressWaitFlag(applyCmd)
 	rootCmd.AddCommand(applyCmd)
 }

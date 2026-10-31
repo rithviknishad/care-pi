@@ -1882,6 +1882,17 @@ PENDING="/run/care-pi-address-change.pending"
 LOCK="/run/care-pi-address-change.lock"
 CARE_PI="/usr/local/bin/care-pi"
 
+# debounce_s prints the debounce time in seconds: 15 in the first 3 minutes after
+# the boot, else 5. At the boot, NetworkManager sends many events while the
+# interfaces start and the DHCP lease comes. $1 is the uptime file (/proc/uptime).
+debounce_s() {
+  up=$(cut -d. -f1 "$1" 2>/dev/null)
+  case "$up" in
+    '' | *[!0-9]*) echo 5 ;;
+    *) if [ "$up" -lt 180 ]; then echo 15; else echo 5; fi ;;
+  esac
+}
+
 if [ "${1:-}" = "--run" ]; then
   # One job waits at a time. An event that finds a waiting job ends at once:
   # the apply of the waiting job also sees its change.
@@ -1890,8 +1901,9 @@ if [ "${1:-}" = "--run" ]; then
   # Wait for the apply of an earlier job. Hold LOCK until this apply ends.
   exec 9>"$LOCK"
   flock 9
-  # Debounce: wait 5 s for more events of the same change.
-  sleep 5
+  # Debounce: wait for more events of the same change (15 s at the boot, else 5 s).
+  # "care-pi apply" also waits for a LAN IPv4 address (--address-wait, 60 s).
+  sleep "$(debounce_s /proc/uptime)"
   # From now on, a new event starts one more job after this apply.
   exec 8>&-
   # care-pi does not get fd 9, so its child processes cannot keep the lock.

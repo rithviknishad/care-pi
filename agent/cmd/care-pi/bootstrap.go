@@ -54,6 +54,9 @@ var bootstrapCmd = &cobra.Command{
    local, apply builds care_fe on this host (about 3 minutes, needs internet).
    A host with a lock.yaml (an earlier install) always gets the full apply.
 
+Before the apply, bootstrap waits for a LAN IPv4 address, at most --address-wait
+(60 s), as apply does.
+
 bootstrap holds the lock /run/care-pi/apply.lock for its full run.
 bootstrap asks no questions. --yes exists for the installer.`,
 	Args: cobra.NoArgs,
@@ -139,16 +142,17 @@ bootstrap asks no questions. --yes exists for the installer.`,
 
 		_, _ = fmt.Fprintf(w, "==> apply (phase %s)\n", phase)
 		_, err = apply.Run(cmd.Context(), apply.Options{
-			Paths:      p,
-			ConfigPath: cfgPath,
-			Reason:     "bootstrap",
-			Out:        w,
-			Host:       h,
-			IPs:        netinfo.System{},
-			S3:         s3admin.MinIO{},
-			Chown:      chown,
-			LockHeld:   true,
-			Phase:      phase,
+			Paths:       p,
+			ConfigPath:  cfgPath,
+			Reason:      "bootstrap",
+			Out:         w,
+			Host:        h,
+			IPs:         netinfo.System{},
+			S3:          s3admin.MinIO{},
+			Chown:       chown,
+			LockHeld:    true,
+			Phase:       phase,
+			AddressWait: addressWait,
 		})
 		if err != nil {
 			return err
@@ -256,5 +260,6 @@ func init() {
 	f.BoolVar(&bootstrapFlags.yes, "yes", false, "do not ask questions (bootstrap asks none)")
 	f.BoolVar(&bootstrapFlags.unattended, "unattended", false, "apply everything now (Phase 1 behaviour); no console setup")
 	addLockFlag(bootstrapCmd)
+	addAddressWaitFlag(bootstrapCmd)
 	rootCmd.AddCommand(bootstrapCmd)
 }

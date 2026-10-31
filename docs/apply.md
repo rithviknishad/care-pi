@@ -6,7 +6,7 @@ It is idempotent: a second run without a change prints `no changes` and exits wi
 (`POST /api/v1/apply`, `PATCH /api/v1/config?apply=true`, and the setup finish; `docs/console-server.md`).
 
 ```
-care-pi apply [--dry-run] [--config PATH] [--reason TEXT] [--update] [--phase bootstrap|full] [--lock-timeout DUR]
+care-pi apply [--dry-run] [--config PATH] [--reason TEXT] [--update] [--phase bootstrap|full] [--lock-timeout DUR] [--address-wait DUR]
 ```
 
 | Exit code | Description |
@@ -57,6 +57,11 @@ After the timeout, the command stops with exit code 1.
    A failed resolution ends its line with `failed`.
 5. **Find the addresses.** Read the LAN IPv4 addresses from the interfaces.
    The agent never resolves its own `.local` name (SP5 finding 6).
+   `care-pi apply` and `care-pi bootstrap` wait for at least one LAN IPv4 address first, at most
+   `--address-wait` (default 60 s; `0` does not wait). Before the wait they print
+   `wait for a network address (at most 60 s)` one time. Without an address after the wait, they render without a
+   LAN address (as an apply without the wait did), print a warning, and the next address change runs apply again.
+   The wait comes before the apply lock. The jobs of the console agent do not wait.
 6. **Render** every file in memory (see "Rendered files").
 7. **Compare** the rendered tree with the owned files on disk.
    Also compare the podman secrets with the secret files, and read the state of `care.target`.
@@ -162,6 +167,12 @@ the health check of each container. Without NTP, the boot would not complete.
 `Wants=network-online.target` and `After=network-online.target`, because the pod publishes on the LAN
 addresses (quadlet adds the same two lines by default). Thus `multi-user.target` does not wait for
 `NetworkManager-wait-online.service` (4.3 s on lumine, up to its timeout without a cable).
+`network-online.target` does not guarantee an IPv4 address on Pi OS trixie (lumine, wave 4d):
+`NetworkManager-wait-online.service` is enabled (`nm-online -s -q`, `NM_ONLINE_TIMEOUT=60`) and ends at
+NetworkManager "startup complete". The default connection "Wired connection 1" has `ipv4.may-fail=yes`
+and `ipv6.method=auto`, so eth0 is "activated" by the first of IPv4 and IPv6. On a LAN with IPv6 router
+advertisements, this can come before the DHCPv4 lease: in one boot `network-online.target` came at 13.9 s and the
+address at 14.5 s, after the start of the pod. Thus the address wait of apply (step 5) is the real protection.
 An older care-pi enabled `care.target`. When the link
 `/etc/systemd/system/multi-user.target.wants/care.target` exists, apply runs `systemctl disable care.target`
 before `systemctl enable care-start.service`.
@@ -341,7 +352,7 @@ restarts only the affected unit. `docs/config.md` lists the defaults that `env.b
 | `care-pi care create-superuser --username U --email E [--password-stdin]` | `podman exec care-api python manage.py createsuperuser`. With `--password-stdin` the password goes in `DJANGO_SUPERUSER_PASSWORD`, not on the command line. |
 | `care-pi clock wait [--timeout DUR]` | Wait for `timedatectl show -p NTPSynchronized` = `yes`. Then reload Caddy (see "Status pages and modes"). |
 | `care-pi host check [--json]` | Report the host prerequisites. Exit code 3 when a required one is missing. |
-| `care-pi bootstrap [--hostname NAME] [--preset NAME] [--fe-provider NAME] [--yes] [--unattended] [--lock-timeout DUR]` | Host check, directories, secrets, default `config.yaml`, a claim code, the start of `care-pi.service`, then apply. On a new host, apply has the phase `bootstrap` (setup mode, see "Setup mode"), and bootstrap prints the claim code and the console URLs. `--unattended` and a host with a `lock.yaml` get the full apply. `--fe-provider` (`local`, `artifact`, or `none`, default `local`) goes into a new `config.yaml`. bootstrap holds the apply lock for its full run. |
+| `care-pi bootstrap [--hostname NAME] [--preset NAME] [--fe-provider NAME] [--yes] [--unattended] [--lock-timeout DUR] [--address-wait DUR]` | Host check, directories, secrets, default `config.yaml`, a claim code, the start of `care-pi.service`, then apply. On a new host, apply has the phase `bootstrap` (setup mode, see "Setup mode"), and bootstrap prints the claim code and the console URLs. `--unattended` and a host with a `lock.yaml` get the full apply. `--fe-provider` (`local`, `artifact`, or `none`, default `local`) goes into a new `config.yaml`. bootstrap holds the apply lock for its full run. |
 | `care-pi serve` | The console API and the console (`care-pi.service`). `docs/console-server.md`. |
 | `care-pi auth …`, `setup …`, `config show\|set\|presets`, `jobs …`, `support-bundle`, `tls …`, `care info`, `power …` | The CLI parity commands of Phase 2 (`docs/api/README.md`, section 11; `docs/console-server.md`). |
 

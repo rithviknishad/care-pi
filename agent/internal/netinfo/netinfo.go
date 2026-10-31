@@ -5,11 +5,13 @@
 package netinfo
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/netip"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Iface is one network interface with its addresses.
@@ -138,6 +140,32 @@ func LANIPv4(src Source) ([]string, error) {
 		out = append(out, c.addr.String())
 	}
 	return out, nil
+}
+
+// WaitLANIPv4 reads src until it gives at least one LAN IPv4 address (LANIPv4), or until
+// timeout ends. It reads again each poll. Before the first wait it calls waiting once.
+// At the boot, NetworkManager can send an event before the DHCP lease (lumine, wave 4d), so
+// "care-pi apply" waits for an address before it renders the pod and the Caddyfile.
+// It returns the addresses of the last read: none after a timeout or a stop of ctx.
+func WaitLANIPv4(ctx context.Context, src Source, timeout, poll time.Duration, waiting func()) ([]string, error) {
+	deadline := time.Now().Add(timeout)
+	said := false
+	for {
+		ips, err := LANIPv4(src)
+		if err != nil || len(ips) > 0 || !time.Now().Before(deadline) {
+			return ips, err
+		}
+		if !said && waiting != nil {
+			waiting()
+			said = true
+		}
+		wait := min(poll, time.Until(deadline))
+		select {
+		case <-ctx.Done():
+			return ips, nil
+		case <-time.After(wait):
+		}
+	}
 }
 
 // MDNSName returns the mDNS host name for a hostname label.

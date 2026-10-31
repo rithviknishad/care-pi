@@ -61,6 +61,20 @@ func addLockFlag(c *cobra.Command) {
 		"maximum wait when another care-pi command holds the lock (0: no limit)")
 }
 
+// addressWait is --address-wait of apply and bootstrap.
+var addressWait time.Duration
+
+// defaultAddressWait is the default of --address-wait. At the boot of lumine (Pi OS trixie),
+// network-online.target came before the DHCP lease of eth0 (IPv6 came first), so the
+// NetworkManager hook ran apply without the LAN address (wave 4d).
+const defaultAddressWait = 60 * time.Second
+
+// addAddressWaitFlag adds --address-wait to a command that renders the pod and the Caddyfile.
+func addAddressWaitFlag(c *cobra.Command) {
+	c.Flags().DurationVar(&addressWait, "address-wait", defaultAddressWait,
+		"maximum wait for a LAN IPv4 address before the render (0: no wait); without one, render without it")
+}
+
 // takeApplyLock takes the apply lock for the full run of the command (applock).
 func takeApplyLock(cmd *cobra.Command) (func(), error) {
 	return applock.Acquire(cmd.Context(), rootPaths(), lockTimeout, cmd.OutOrStdout())

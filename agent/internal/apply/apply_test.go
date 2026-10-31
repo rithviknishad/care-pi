@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -50,6 +51,9 @@ type env struct {
 	cfg  string
 	// dbTimeout bounds the wait for care-db; 0 uses the default.
 	dbTimeout time.Duration
+	// ips replaces the two static LAN addresses; addressWait is Options.AddressWait.
+	ips         netinfo.Source
+	addressWait time.Duration
 }
 
 func newEnv(t *testing.T, config string) *env {
@@ -104,6 +108,10 @@ func (e *env) run(dry bool) (*Result, error) {
 	h.Git = &host.FakeGit{Refs: map[string]map[string]string{
 		"https://github.com/ohcnetwork/care_fe": {"refs/heads/develop": careFESHA},
 	}}
+	var ips netinfo.Source = netinfo.Static{"192.168.1.10", "10.0.0.5"}
+	if e.ips != nil {
+		ips = e.ips
+	}
 	return Run(context.Background(), Options{
 		Paths:          e.p,
 		ConfigPath:     e.cfg,
@@ -112,11 +120,12 @@ func (e *env) run(dry bool) (*Result, error) {
 		Reason:         "test",
 		Out:            &e.out,
 		Host:           h,
-		IPs:            netinfo.Static{"192.168.1.10", "10.0.0.5"},
+		IPs:            ips,
 		S3:             e.s3,
 		Now:            func() time.Time { return time.Date(2026, 10, 30, 10, 0, 0, 0, time.UTC) },
 		PollInterval:   time.Millisecond,
 		DBReadyTimeout: e.dbTimeout,
+		AddressWait:    e.addressWait,
 	})
 }
 
@@ -685,5 +694,86 @@ func TestLegacyTargetLinkIsDisabled(t *testing.T) {
 	data, _ = os.ReadFile(target)
 	if strings.Contains(string(data), "\n[Install]\n") {
 		t.Fatalf("care.target has an [Install] section:\n%s", data)
+	}
+}
+
+// lateAddress gives eth0 without an IPv4 address for the first n reads (only IPv6, as at the
+// boot of lumine before the DHCP lease), then 192.168.1.10.
+type lateAddress struct {
+	n, reads int
+}
+
+func (l *lateAddress) Interfaces() ([]netinfo.Iface, error) {
+	l.reads++
+	eth := netinfo.Iface{Name: "eth0", Up: true, Addrs: []netip.Prefix{netip.MustParsePrefix("fd29::5/64")}}
+	if l.reads > l.n {
+		eth.Addrs = append(eth.Addrs, netip.MustParsePrefix("192.168.1.10/24"))
+	}
+	return []netinfo.Iface{
+		{Name: "lo", Up: true, Loop: true, Addrs: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/8")}},
+		eth,
+	}, nil
+}
+
+func TestApplyWaitsForTheAddress(t *testing.T) {
+	e := newEnv(t, smallClinic)
+	e.targetState("inactive")
+	src := &lateAddress{n: 2}
+	e.ips, e.addressWait = src, time.Minute
+	res, err := e.run(false)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, e.out.String())
+	}
+	out := e.out.String()
+	if n := strings.Count(out, "wait for a network address"); n != 1 {
+		t.Fatalf("the wait line shows %d times, want 1:\n%s", n, out)
+	}
+	if !strings.Contains(out, "wait for a network address (at most 60 s)\n") ||
+		!strings.Contains(out, "network address 192.168.1.10 after ") || !strings.Contains(out, "addresses: 192.168.1.10\n") {
+		t.Fatalf("output:\n%s", out)
+	}
+	if !reflect.DeepEqual(res.Addresses, []string{"192.168.1.10"}) || len(res.Warnings) != 0 {
+		t.Fatalf("addresses %v, warnings %q", res.Addresses, res.Warnings)
+	}
+	pod, err := os.ReadFile(e.p.Abs("/etc/containers/systemd/care.pod"))
+	if err != nil || !strings.Contains(string(pod), "PublishPort=192.168.1.10:443:443") {
+		t.Fatalf("care.pod does not publish on the address: %v\n%s", err, pod)
+	}
+	// The wait comes before the render: 2 reads without the address, 1 with it, then Prepare.
+	if src.reads != 4 {
+		t.Fatalf("reads = %d, want 4", src.reads)
+	}
+}
+
+func TestApplyWithoutAddressWarnsAndRenders(t *testing.T) {
+	e := newEnv(t, smallClinic)
+	e.targetState("inactive")
+	e.ips, e.addressWait = &lateAddress{n: 1 << 30}, 200*time.Millisecond
+	res, err := e.run(false)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, e.out.String())
+	}
+	out := e.out.String()
+	if strings.Count(out, "wait for a network address") != 1 || !strings.Contains(out, "wait for a network address (at most 0.2 s)") ||
+		!strings.Contains(out, "warning: no LAN IPv4 address after 0.2 s") {
+		t.Fatalf("output:\n%s", out)
+	}
+	if !strings.Contains(out, "addresses: (no LAN IPv4 address)") {
+		t.Fatalf("apply did not render without the address:\n%s", out)
+	}
+	if len(res.Addresses) != 0 || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "no LAN IPv4 address") {
+		t.Fatalf("addresses %v, warnings %q", res.Addresses, res.Warnings)
+	}
+}
+
+func TestApplyWithAddressDoesNotWait(t *testing.T) {
+	e := newEnv(t, smallClinic)
+	e.targetState("inactive")
+	e.addressWait = time.Minute
+	if _, err := e.run(true); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(e.out.String(), "wait for a network address") {
+		t.Fatalf("apply waited with an address:\n%s", e.out.String())
 	}
 }
