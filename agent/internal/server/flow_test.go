@@ -419,12 +419,7 @@ func TestNotImplementedAndPublic(t *testing.T) {
 		{"GET", "/api/v1/backups/recovery-key", nil},
 		{"GET", "/api/v1/restore/points", nil},
 		{"POST", "/api/v1/restore", map[string]any{"kind": "pitr"}},
-		{"GET", "/api/v1/updates", nil},
-		{"POST", "/api/v1/updates/check", nil},
-		{"POST", "/api/v1/updates/apply", map[string]any{"version": nil}},
-		{"POST", "/api/v1/updates/rollback", nil},
-		{"GET", "/api/v1/plugs", nil},
-		{"PUT", "/api/v1/plugs/care_scribe", map[string]any{"enabled": false}},
+		// Phase 4 (wave 6a) implements /updates, /plugs, and /solutions: updates_test.go checks them.
 	} {
 		r := e.do(l.method, l.url, l.body)
 		e.want(r, 501, "not-implemented-in-this-version")

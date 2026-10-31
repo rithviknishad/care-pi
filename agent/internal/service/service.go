@@ -29,6 +29,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/s3admin"
 	"github.com/rithviknishad/care-pi/agent/internal/setup"
 	"github.com/rithviknishad/care-pi/agent/internal/status"
+	"github.com/rithviknishad/care-pi/agent/internal/update"
 )
 
 // Service holds the dependencies of each operation.
@@ -58,6 +59,8 @@ type Service struct {
 	ApplyHook func(*apply.Options)
 	// AfterPower runs the reboot or shutdown after the delay. nil runs systemctl.
 	AfterPower func(delay time.Duration, fn func())
+	// UpdateHook changes the update machine of each call (Phase 4). Tests set the verifier and the checkpoint.
+	UpdateHook func(*update.Updater)
 
 	mu           sync.Mutex
 	carePassword string
@@ -160,9 +163,6 @@ func unsupported(cfg *config.Config, base string) *problem.Problem {
 		items = append(items, item{tls + "/local_ca/enabled", "this version serves only the local CA mode; another mode comes in Phase 6", 6})
 	}
 	if base == "" {
-		if cfg.Solution.Track == "pinned" {
-			items = append(items, item{"/solution/track", "the track pinned comes in Phase 4", 4})
-		}
 		if cfg.Clock.Policy == "rtc" {
 			items = append(items, item{"/clock/policy", "the clock policy rtc comes in Phase 7 (spike SP9)", 7})
 		}
@@ -335,6 +335,13 @@ func (s *Service) applyOptions(o apply.Options) apply.Options {
 	o.Chown = s.Chown
 	if s.Now != nil {
 		o.Now = s.Now
+	}
+	// Phase 4: the plan action cutover takes the checkpoint of the update machine.
+	if o.Checkpoint == nil {
+		o.Checkpoint = func(ctx context.Context) error {
+			_, err := s.Updater().Checkpointer("apply-" + s.now().Format("20060102T150405Z")).Checkpoint(ctx)
+			return err
+		}
 	}
 	if s.ApplyHook != nil {
 		s.ApplyHook(&o)

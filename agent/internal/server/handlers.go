@@ -123,12 +123,21 @@ func (s *Server) table() []*route {
 	add(get, "/backups/recovery-key", notImplemented, reauth, phase(3))
 	add(get, "/restore/points", notImplemented, phase(3))
 	add(post, "/restore", notImplemented, reauth, phase(3))
-	add(get, "/updates", notImplemented, phase(4))
-	add(post, "/updates/check", notImplemented, phase(4))
-	add(post, "/updates/apply", notImplemented, phase(4))
-	add(post, "/updates/rollback", notImplemented, reauth, phase(4))
-	add(get, "/plugs", notImplemented, phase(4))
-	add(put, "/plugs/{plug_id}", notImplemented, phase(4))
+	add(get, "/updates", s.getUpdates)
+	add(post, "/updates/check", s.startUpdateCheck)
+	add(post, "/updates/apply", s.startUpdateApply)
+	add(post, "/updates/rollback", s.startRollback, reauth)
+	add(get, "/plugs", s.listPlugs)
+	add(put, "/plugs/{plug_id}", s.setPlug)
+	add(get, "/plugs/{plug_id}/settings-schema", s.plugSchema)
+	add(post, "/updates/stage", s.startUpdateStage)
+	add(get, "/updates/history", s.updateHistory)
+	add(get, "/updates/os", s.osUpdates)
+	add(post, "/updates/os/apply", s.startOSUpdate, reauth)
+	add(post, "/updates/os/reboot", s.osReboot, reauth)
+	add(get, "/solutions", s.listSolutions)
+	add(get, "/solutions/{name}", s.getSolution)
+	add(get, "/solutions/{name}/locks/{version}", s.getSolutionLock)
 	return out
 }
 
@@ -747,7 +756,8 @@ func (s *Server) plan(c *reqCtx) error {
 // ---- jobs ----
 
 var (
-	jobKinds  = map[string]bool{"apply": true, "setup": true, "fe-build": true, "fe-prune": true, "support-bundle": true, "backup": true, "verify": true, "restore": true, "update-check": true, "update": true, "rollback": true, "tls": true}
+	jobKinds = map[string]bool{"apply": true, "setup": true, "fe-build": true, "fe-prune": true, "support-bundle": true, "backup": true, "verify": true, "restore": true, "update-check": true, "update": true, "rollback": true, "tls": true,
+		"update-stage": true, "update-apply": true, "update-rollback": true, "os-update": true, "plug-change": true}
 	jobStates = map[string]bool{"queued": true, "running": true, "succeeded": true, "failed": true, "cancelled": true}
 )
 

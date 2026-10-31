@@ -94,6 +94,7 @@ func newEnv(t *testing.T) *env {
 	root := t.TempDir()
 	p := paths.New(root)
 	e := &env{t: t, p: p, fake: host.NewFake(), clock: &clock{t: time.Now().UTC().Truncate(time.Second)}, addr: "192.168.1.23"}
+	e.fake.Hook = host.PlugConfigHook
 	cfg, err := config.DefaultYAML("Sunrise Clinic", "care", "small-clinic", "none")
 	must(t, err)
 	must(t, os.MkdirAll(p.Abs(paths.EtcDir), 0o700))

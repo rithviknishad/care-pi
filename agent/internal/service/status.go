@@ -18,6 +18,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/setup"
 	"github.com/rithviknishad/care-pi/agent/internal/status"
+	"github.com/rithviknishad/care-pi/agent/internal/update"
 )
 
 // UnitStatus is the state of one unit (schema UnitStatus).
@@ -176,6 +177,8 @@ type Status struct {
 	Jobs       JobsSummary    `json:"jobs"`
 	Backups    any            `json:"backups"`
 	Updates    any            `json:"updates"`
+	// Maintenance is the maintenance page (Phase 4 contract, schema MaintenanceState).
+	Maintenance MaintenanceState `json:"maintenance"`
 	// Report is the Phase 1 report. care-pi status prints it as text.
 	Report *status.Report `json:"-"`
 }
@@ -402,6 +405,10 @@ func (s *Service) Status(ctx context.Context) (*Status, error) {
 		st.Lock = ls
 	}
 	st.Jobs = s.jobsSummary()
+	st.Maintenance = s.Maintenance()
+	if sum := s.UpdatesSummary(ctx); sum != nil {
+		st.Updates = sum
+	}
 
 	f := &st.Flags
 	f.Degraded = st.Degraded
@@ -481,6 +488,23 @@ type PublicStatus struct {
 	CareHealthy bool               `json:"care_healthy"`
 	Job         *PublicJobProgress `json:"job"`
 	Time        time.Time          `json:"time"`
+	Maintenance MaintenanceState   `json:"maintenance"`
+}
+
+// MaintenanceState is the maintenance page (schema MaintenanceState): the flag file
+// state/mode/maintenance and the job that holds the apply lock. Caddy's maintenance page polls it.
+type MaintenanceState struct {
+	Active    bool       `json:"active"`
+	Kind      *string    `json:"kind"`
+	JobID     *string    `json:"job_id"`
+	Step      *string    `json:"step"`
+	StartedAt *time.Time `json:"started_at"`
+}
+
+// Maintenance reports the maintenance page. Without the flag file, each other member is null.
+// Phase 4: maintenance.json gives the job and the time; the running step of that job gives step.
+func (s *Service) Maintenance() MaintenanceState {
+	return MaintenanceState(update.Maintenance(s.Paths))
 }
 
 // Site returns the page that Caddy serves at / now (docs/apply.md, "Status pages and modes").
@@ -510,7 +534,7 @@ func (s *Service) PublicStatus(ctx context.Context) *PublicStatus {
 	}
 	p := &PublicStatus{Site: s.Site(), SetupState: s.SetupStateName(), ClaimMethods: s.Auth.ClaimMethods(),
 		DisplayName: cfg.Identity.DisplayName, ConsolePort: paths.ConsolePort, CareHealthy: s.careHealthy(ctx),
-		Time: s.now().Truncate(time.Second)}
+		Time: s.now().Truncate(time.Second), Maintenance: s.Maintenance()}
 	p.Clock.Policy = cfg.Clock.Policy
 	if s.Host != nil && s.Host.Clock != nil {
 		p.Clock.Synchronized, _ = s.Host.Clock.NTPSynchronized(ctx)
