@@ -28,20 +28,57 @@ small{color:#7b8794}
 </main>
 <script>
 (function () {
+  // The sentence of each step: strings.steps.actions of the console (docs/console-ui.md section 9).
   var steps = {
-    "activate": "The device installs the new version.",
-    "checkpoint": "The device makes a backup point of the database.",
-    "cutover-maintenance-on": "The update starts.",
-    "full-cycle": "The device restarts CARE.",
-    "maintenance-off": "CARE is ready.",
-    "migrate": "The device updates the database. This can take some minutes.",
-    "os-upgrade": "The device updates the operating system.",
-    "plug-config": "The device sets the plugins.",
-    "rollback": "The update did not complete. The device installs the previous version again.",
-    "start": "The device starts CARE.",
-    "stop": "The device stops CARE.",
-    "verify": "The device checks CARE.",
-    "write-lock": "The device records the new version.",
+    "activate": "Install the new version",
+    "archive": "Make the support bundle file",
+    "checkpoint": "Make a backup point of the database",
+    "collect": "Collect the support data",
+    "create-care-superuser": "Make the Care administrator",
+    "cutover": "Install the new version behind the maintenance page",
+    "cutover-maintenance-on": "Show the maintenance page",
+    "daemon-reload": "Load the new service files",
+    "delete-files": "Delete the old configuration files",
+    "enable-target": "Start Care at each boot",
+    "ensure-buckets": "Make the file storage",
+    "ensure-dirs": "Make the directories",
+    "ensure-fe": "Build the Care web app",
+    "ensure-stanza": "Prepare the database backups",
+    "fetch-index": "Download the list of versions",
+    "fetch-lock": "Download the description of the version",
+    "full-cycle": "Stop and start all the services of Care",
+    "host-check": "Check the device",
+    "maintenance-off": "Remove the maintenance page",
+    "migrate": "Update the database",
+    "os-hold": "Hold the container packages again",
+    "os-refresh": "Read the list of OS packages",
+    "os-unhold": "Release the tested container packages",
+    "os-upgrade": "Install the OS updates",
+    "plan": "Find the changes",
+    "plug-config": "Send the plug settings to Care",
+    "prune": "Delete the old builds of the web app",
+    "prune-images": "Delete the old container images",
+    "pull-images": "Download the container images",
+    "reboot": "Restart the device",
+    "reload-caddy": "Load the new web server settings",
+    "render": "Make the configuration files",
+    "resolve-lock": "Resolve the versions of the images",
+    "resolve-refs": "Resolve the custom versions",
+    "restart": "Start the changed services again",
+    "rollback": "Go back to the previous version",
+    "set-hostname": "Set the host name",
+    "set-secrets": "Store the secret keys",
+    "stage-build": "Build the custom parts on this device",
+    "stage-bundles": "Download the web app and the plug files",
+    "stage-pull": "Download the new container images",
+    "start": "Start Care",
+    "start-target": "Start all the services of Care",
+    "stop": "Stop Care",
+    "validate": "Check the settings",
+    "verify": "Make sure that Care works",
+    "wait-healthy": "Wait until Care answers",
+    "write-files": "Write the configuration files",
+    "write-lock": "Record the installed versions",
   };
   function show(m) {
     var step = document.getElementById("step"), since = document.getElementById("since");
@@ -49,7 +86,7 @@ small{color:#7b8794}
       step.textContent = (m.step && steps[m.step]) || "Wait a few minutes. This page opens CARE again when the maintenance is complete.";
       if (m.started_at) {
         var t = new Date(m.started_at);
-        since.textContent = "Maintenance since " + t.toLocaleTimeString() + (m.step ? " (step: " + m.step + ")" : "") + ".";
+        since.textContent = "Maintenance since " + t.toLocaleTimeString() + ".";
       }
     }
   }

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/rithviknishad/care-pi/agent/internal/config"
+	"github.com/rithviknishad/care-pi/agent/internal/host"
 	"github.com/rithviknishad/care-pi/agent/internal/jobs"
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
@@ -199,6 +201,23 @@ func TestPlugsContract(t *testing.T) {
 			t.Fatalf("plug after the change %v", p)
 		}
 	}
+	// A setting of a plug that is off: path none. The agent stores the value (and the secret) and starts no job, also
+	// with apply=true; the value counts when the plug turns on.
+	r = e.do("PUT", "/api/v1/plugs/care_filly?apply=true", map[string]any{
+		"settings": map[string]any{"backend": map[string]any{"MEDISPEAK_API_KEY": "msk_live_0123456789abcdef", "MEDISPEAK_BASE_URL": "https://medispeak.example.org/api/v2"}}})
+	e.want(r, 200, "")
+	m = r.json(t)
+	if plan := m["plan"].(map[string]any); plan["path"] != "none" || plan["changed"] != false || m["written"] != true || m["job"] != nil {
+		t.Fatalf("setting of a plug that is off %v", m)
+	}
+	if p := m["plug"].(map[string]any); p["on"] != false || p["pending"] != false || p["settings_complete"] != true {
+		t.Fatalf("plug after the stored setting %v", p)
+	}
+	r = e.do("PUT", "/api/v1/plugs/care_filly?dry_run=true", map[string]any{"enabled": true})
+	e.want(r, 200, "")
+	if plan := r.json(t)["plan"].(map[string]any); plan["path"] != "cutover" {
+		t.Fatalf("turn on with the stored values %v", plan)
+	}
 	// Follow the solution again: the plug turns off.
 	r = e.do("PUT", "/api/v1/plugs/care_fasterappointments_fe", map[string]any{"enabled": nil})
 	e.want(r, 200, "")
@@ -239,5 +258,59 @@ func TestRollbackContract(t *testing.T) {
 	}
 	if l, _ := lock.Load(e.p); l.Solution.Version != "2026.11.0" {
 		t.Fatalf("lock after the rollback %+v", l.Solution)
+	}
+	// After a reload the console reads the offer from the job, the history entry, and last_result.
+	r = e.do("GET", "/api/v1/jobs/"+id, nil)
+	e.want(r, 200, "")
+	jobOffer := r.json(t)["result"].(map[string]any)["pitr_offer"]
+	if jobOffer == nil {
+		t.Fatalf("job %s", r.body)
+	}
+	r = e.do("GET", "/api/v1/updates/history", nil)
+	e.want(r, 200, "")
+	h := r.json(t)["items"].([]any)[0].(map[string]any)
+	if h["kind"] != "rollback" || h["outcome"] != "succeeded" || !reflect.DeepEqual(h["pitr_offer"], jobOffer) {
+		t.Fatalf("history entry %v, job offer %v", h, jobOffer)
+	}
+	r = e.do("GET", "/api/v1/updates", nil)
+	e.want(r, 200, "")
+	if lr := r.json(t)["last_result"].(map[string]any); !reflect.DeepEqual(lr["pitr_offer"], jobOffer) {
+		t.Fatalf("last_result %v", lr)
+	}
+}
+
+// TestAutomaticRollbackContract: a migration failure in update-apply rolls back by itself. The job is failed with
+// error.pitr_offer, and the history entry (outcome rolled-back) has the same offer.
+func TestAutomaticRollbackContract(t *testing.T) {
+	e, _ := readyForUpdates(t)
+	cfgPath := e.p.Abs(paths.ConfigFile)
+	data, err := os.ReadFile(cfgPath)
+	must(t, err)
+	must(t, os.WriteFile(cfgPath, []byte(strings.Replace(string(data), "track: stable", "track: pinned\n  pin: \"2026.11.0\"", 1)), 0o600))
+	e.jobOK(e.do("POST", "/api/v1/updates/check", nil))
+	e.jobOK(e.do("POST", "/api/v1/updates/apply", map[string]any{"now": true}))
+	e.clock.add(2 * time.Second)
+	e.fake.On("systemctl start care-beat.service", host.Response{Code: 1, Out: "Job for care-beat.service failed"}, host.Response{})
+	r := e.do("POST", "/api/v1/updates/apply", map[string]any{"version": "2026.11.1", "now": true})
+	e.want(r, 202, "")
+	id := r.json(t)["id"].(string)
+	if j := e.waitJob(id); j.State != jobs.StateFailed {
+		t.Fatalf("job %s", j.State)
+	}
+	r = e.do("GET", "/api/v1/jobs/"+id, nil)
+	e.want(r, 200, "")
+	jm := r.json(t)
+	jerr := jm["error"].(map[string]any)
+	if !strings.HasSuffix(jerr["type"].(string), "/migration-failed") || jerr["pitr_offer"] == nil || jm["result"] != nil {
+		t.Fatalf("job %s", r.body)
+	}
+	r = e.do("GET", "/api/v1/updates/history", nil)
+	e.want(r, 200, "")
+	h := r.json(t)["items"].([]any)[0].(map[string]any)
+	if h["kind"] != "update" || h["outcome"] != "rolled-back" || !reflect.DeepEqual(h["pitr_offer"], jerr["pitr_offer"]) {
+		t.Fatalf("history entry %v, job offer %v", h, jerr["pitr_offer"])
+	}
+	if l, _ := lock.Load(e.p); l.Solution.Version != "2026.11.0" {
+		t.Fatalf("lock after the automatic rollback %+v", l.Solution)
 	}
 }

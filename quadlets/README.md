@@ -51,8 +51,8 @@ Rules for the templates:
   `care-api` (gunicorn), `care-worker`, and `care-beat` (celery). Else systemd records a failure at each stop.
 - Never put a secret into a template. Use `Secret=` with a podman secret name.
 
-- The maintenance page (`status-maintenance.html.tmpl`) reads `GET /_care-pi/status` each 5 s and shows the step
-  of the update. It opens Care again when the site is `care`. It works without JavaScript too (a slow meta refresh).
+- The maintenance page (`status-maintenance.html.tmpl`) reads `GET /_care-pi/status` each 5 s and shows the sentence of
+  the step of the update (`render.MaintenanceSteps`, the same sentences as the console: `docs/console-ui.md` section 9). It opens Care again when the site is `care`. It works without JavaScript too (a slow meta refresh).
 
 After a change, update the goldens: `go test ./agent/internal/render -update`.
 Phase 4 files: `custom-build` holds the `.build` unit and the FE plug builder. Check them with quadlet of podman 5.4:

@@ -750,6 +750,9 @@ also accepts `file:///` (an update from a USB drive).
   that Care uses. The other kinds of this table cannot be cancelled.
 - A failed job has `error` (a `Problem`). An update, a rollback, or a plug change that failed after the migrations
   started has `error.pitr_offer`. `GET /updates` gives the same in `last_result`.
+- A rollback that succeeded (`update-rollback`, also a recovery) has `result.pitr_offer`. The history entry of each of these
+  jobs (`GET /updates/history`, and `last_result`) has the same `pitr_offer`, so the console can show the restore card
+  after a reload (section 14.5). The entry of a recovery has `outcome: rolled-back` (it undid the interrupted update).
 - Contract 0.5.0 replaced the reserved job kinds `update` and `rollback` (no agent made them) with `update-apply` and `update-rollback`.
 
 ### 14.3 The update state machine
@@ -786,6 +789,9 @@ The maintenance page:
   keeps the step name, index, and count for a progress bar.
 - The page polls `GET /_care-pi/status` every 5 s, shows the text of `maintenance.step` (the operator texts of
   `docs/console-ui.md` section 9; the agent renders them into the page), and loads `/` again when `site` is `care`.
+  The agent copy is `render.MaintenanceSteps`: the exact sentences of `strings.steps.actions` of the console, for example
+  "Update the database". `TestMaintenanceStepsMatchConsole` fails when the two tables differ. A key without a sentence
+  shows the general text ("Wait a few minutes. This page opens CARE again when the maintenance is complete.").
   Rate limit: 60 public reads each minute for each address (section 4), so 12 each minute is safe.
 - The step `maintenance-off` deletes the flag file. A failed rollback leaves it (`state: failed`).
 
@@ -812,9 +818,12 @@ The maintenance page:
 ### 14.5 Rollback and the PITR hand-off to Phase 3
 
 - An update that fails after the migrations started rolls back to the previous lock by itself. The code goes back;
-  the database keeps the migrations that ran. The history entry and the job error have `pitr_offer` (`PitrOffer`).
+  the database keeps the migrations that ran. The job is `failed`: `error.pitr_offer` has the offer, and `result` is `null`.
+  The history entry (`outcome: rolled-back`) has the same `pitr_offer` (`PitrOffer`).
 - `POST /updates/rollback` (reauthentication) installs a previous lock (`to_lock`, default `rollback.to_lock`). Its result
-  has the `pitr_offer` of the update that installed the lock that the rollback removes.
+  and its history entry (`kind: rollback`, `outcome: succeeded`) have the `pitr_offer` of the update that installed the
+  lock that the rollback removes. A recovery rollback (`docs/solutions.md` section 8.6) does the same, with
+  `outcome: rolled-back` and the offer of the interrupted update.
 - `PitrOffer.restore` is the body of `POST /restore` (Phase 3, `RestoreRequest`): `{"kind": "pitr", "target_time": <checkpoint target time>}`.
   The console shows the offer with its time, and asks for a reauthentication when the operator accepts. The agent never
   starts a PITR by itself. Care was stopped at the checkpoint, so the restore loses no data from before the update; it
@@ -857,7 +866,7 @@ loads it at the next page load). A secret goes to `/etc/care-pi/secrets/plug-<id
 2. The console shows the plan. For `cutover` and `build-and-cutover`, it says that Care shows the maintenance page and
    for how long.
 3. `PUT /plugs/{plug_id}?apply=true` with the same body. `202` with `job` (kind `plug-change`). The console follows
-   `GET /jobs/{job_id}/events`.
+   `GET /jobs/{job_id}/events`. With the path `none`, the agent writes and starts no job: `200` with `job: null`.
 
 | `path` | When |
 |---|---|
@@ -865,7 +874,7 @@ loads it at the next page load). A secret goes to `/etc/care-pi/secrets/plug-<id
 | `restart` | A backend plug off, or a backend setting. |
 | `cutover` | A backend plug on that the image contains (each plug of the solution; `docs/solutions.md` section 1.5). |
 | `build-and-cutover` | A backend plug on that the image does not contain (track `custom`). |
-| `none` | The change has no effect. |
+| `none` | The change has no effect now. For example a setting (backend or frontend, also a secret) of a plug that is off: the agent stores the value, and it counts when the plug turns on. |
 
 `enabled: null` removes the operator choice: the solution default and the `auto` rule apply again (`Plug.source`).
 `care_multihost_files_be` has `auto: when_multihost`: it turns on when Caddy serves more than one host name. Phase 4 serves

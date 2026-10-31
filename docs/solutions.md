@@ -79,6 +79,10 @@ A plug that is on and has a required setting without a value is an error (`plug-
 
 `plugs[].settings` is the form of the plug. The console builds the form from it (`docs/api/README.md` §14.6).
 
+`advanced` is not a JSON Schema keyword. The console reads it from `Plug.settings[].advanced` of `GET /plugs`, not from
+`GET /plugs/{plug_id}/settings-schema`. (That schema copies it as the annotation `x-advanced`, which a validator ignores.
+Do not depend on it.) The same applies to `placeholder` (`x-placeholder`).
+
 | Part | Value source | Destination | When it changes |
 |---|---|---|---|
 | `backend`, not `secret` | `solution.plugs.<id>.settings.backend.<KEY>`, else `default`, else `backend.configs.<KEY>` | `configs.<KEY>` of the `ADDITIONAL_PLUGS` entry | api, worker, and beat restart |
@@ -623,7 +627,8 @@ The lock (`write-lock`) is written only after `verify`. A failure before `write-
 
 - Downtime (expected): stop, about 20 s; checkpoint, seconds to a minute; `migrate`, 0 s to a few minutes; start
   of api and worker, about 45 s (`01` §8). Phase 4 measures it.
-- Caddy shows `status/maintenance.html`. The page polls `GET /_care-pi/status` and shows `maintenance.step` as text.
+- Caddy shows `status/maintenance.html`. The page polls `GET /_care-pi/status` and shows the sentence of `maintenance.step`:
+  the sentence of `docs/console-ui.md` section 9 ("Update the database"), the same as in the console.
   It needs no reload of Caddy.
 - The order beat, then worker and api, is the order of upstream compose (`depends_on: celery-beat healthy`).
 
@@ -683,7 +688,11 @@ An `apply` whose plan has the action `cutover` (section 7.5) uses the same check
   problem, the PITR offer, and the support bundle.
 - The job of a failed update has `state: failed` and an `error` with the type of the first failure
   (`checkpoint-failed`, `migration-failed`, `verify-failed`, `rollback-failed`, ...) and the member `pitr_offer`.
+  Its `result` is `null`. The history entry (`outcome: rolled-back` or `rollback-failed`) has the same `pitr_offer`.
   `GET /updates` gives the same in `last_result`.
+- A rollback that succeeded (section 9) has the offer in `result.pitr_offer` and in its history entry (`kind: rollback`,
+  `outcome: succeeded`). A recovery (section 8.6) does the same with `outcome: rolled-back` and the offer of the
+  interrupted update. Thus the console can show the restore card after a reload.
 
 ### 8.6 An interrupted update
 
@@ -720,8 +729,8 @@ authentication. Without `to_lock`, the target is `history.previous`.
    a missing image gives `build-required-offline`.
 3. `cutover-maintenance-on`, `stop`, `checkpoint` (a failure is a warning here: a rollback must not depend on a backup),
    `activate`, `migrate`, `start`, `plug-config`, `verify`, `write-lock`, `maintenance-off`.
-4. The result has the `pitr_offer` of the update that installed the lock that the rollback removes: the checkpoint of
-   that update. A rollback of the code does not undo its migrations. Only a PITR does.
+4. The result and the history entry have the `pitr_offer` of the update that installed the lock that the rollback
+   removes: the checkpoint of that update. A rollback of the code does not undo its migrations. Only a PITR does.
 
 `rollback-unavailable` (409): no previous lock, or the lock id is not in `state/locks/`.
 The track does not change. On `stable`, the next window installs the newest lock again. To stay, pin the version.
@@ -803,6 +812,11 @@ plan. With `apply=true` it starts a job of kind `plug-change`. The path is the l
 | BE plug off; BE settings | `restart`: render `ADDITIONAL_PLUGS`, restart beat, then worker and api | no | no | seconds of API break |
 | BE plug on, installed in the image | `cutover` (section 8): migrations of the plug can run | yes | yes | the cutover |
 | BE plug on, not installed (track `custom`) | `build-and-cutover`: local `.build` in staging, then the cutover | yes | yes | the build with 1 API worker, then the cutover |
+| A setting (backend, frontend, or secret) of a plug that is off | `none`: the agent stores the value (`config.yaml` or the secret file); no job | no | no | none now; the value counts when the plug turns on |
+
+With the path `none`, `apply=true` starts no job: the response is `200` with `job: null`. A plug that is off has no
+`ADDITIONAL_PLUGS` entry and no `plug_config` row, so its settings have no runtime effect. When the plug turns on, the
+plan of that change uses the stored values (and a required value must be there, else `plug-settings-invalid`).
 
 A plug change changes the on-device lock (`components.plugs.<id>.enabled`). A switch of a plug of the solution
 needs no image build and no FE build (section 1.5). Outside the window, the operator confirms the path in the console;
@@ -959,6 +973,20 @@ This section records what the code does now. The sections above stay the specifi
 | Local FE plug build | `update.LocalPlugProvider`, `care-plug-build.container.tmpl`, `plug-build.sh.tmpl` | experimental (section 13.2) |
 | CI | `.github/workflows/solution-lock.yml`, `solution-index.yml`, `plug-bundle.yml`; changes to `fe-bundle.yml` (`workflow_call`) and `solution-image.yml` | done; the short flow of section 5.2; not run on GitHub yet |
 | Development locks | `solutions/scripts/make-lock.sh`, `make lock-local` | done |
+
+Notes for the console (wave 6b alignment):
+
+- The running identities: the console reads the running care digest from `GET /status`: `pull` of the entry
+  `name: care` of `Status.images` (`<repo>@<digest>` of the image that runs: the solution image, or the tag of a local
+  build). It reads the running care_fe sha from `Status.care_fe_sha`. `GET /updates` (`components`) gives the upstream
+  identities of the lock, the target, and the tracked refs.
+- The `advanced` flag of a setting comes from `Plug.settings[].advanced` (section 1.4), not from the settings schema.
+- The maintenance page of Caddy shows the sentence of `maintenance.step` from `render.MaintenanceSteps`, a verbatim copy of
+  `strings.steps.actions` of the console (`docs/console-ui.md` section 9). `TestMaintenanceStepsMatchConsole`
+  (`agent/internal/render`) fails when the two tables differ.
+- `pitr_offer`: a rollback that succeeded has it in `result` and in its history entry; an update with an automatic
+  rollback has it in `error` and in its history entry (`outcome: rolled-back`). Section 8.5.
+- A setting of a plug that is off has the path `none` (section 12.1).
 
 Decisions of wave 6a:
 

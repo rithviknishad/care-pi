@@ -295,6 +295,11 @@ func TestUpdateCheckStageApplyRollback(t *testing.T) {
 	if fe.Current(e.p) != e.fx.FEBuildID["2026.11.0"] {
 		t.Fatalf("fe/current after rollback %s", fe.Current(e.p))
 	}
+	// The history entry of the rollback has the same offer as the job result: the console shows it after a reload.
+	if h := ReadHistory(e.p); h[0].Kind != HistRollback || h[0].Outcome != OutcomeSucceeded || h[0].PitrOffer == nil ||
+		!reflect.DeepEqual(h[0].PitrOffer, rr.PitrOffer) {
+		t.Fatalf("rollback history entry %+v, result offer %+v", h[0], rr.PitrOffer)
+	}
 	// Stable installs N+1 again at the next window: the update is available.
 	if ov := e.overview(); ov.LastResult == nil || ov.LastResult.Kind != HistRollback {
 		t.Fatalf("last result %+v", ov.LastResult)

@@ -90,6 +90,10 @@ func TestPlugPlans(t *testing.T) {
 		{"care_filly", PlugChange{Backend: map[string]any{"NOPE": "x"}}, "", problem.PlugSettingsInvalid},
 		{"care_scribe", PlugChange{SetEnabled: true, Enabled: &on}, "", problem.PlugUnknown},
 		{"care_onboarding_fe", PlugChange{SetEnabled: true}, PathNone, ""},
+		// A setting of a plug that is off: path none (no runtime effect; the value counts when the plug turns on).
+		{"care_fasterappointments_fe", PlugChange{Frontend: map[string]any{"config.auto_create_invoice": true}}, PathNone, ""},
+		{"care_filly", PlugChange{Backend: map[string]any{"MEDISPEAK_API_KEY": "msk_live_off"}}, PathNone, ""},
+		{"care_multihost_files_be", PlugChange{Backend: map[string]any{"ALLOWED_HOSTS": []any{"*.lan"}}}, PathNone, ""},
 	}
 	for _, c := range cases {
 		out, err := e.u.PlanChange(context.Background(), cfg, c.id, c.change)
@@ -105,6 +109,9 @@ func TestPlugPlans(t *testing.T) {
 		}
 		if out.Plan.Path != c.path {
 			t.Errorf("%s %+v: path %s, want %s", c.id, c.change, out.Plan.Path, c.path)
+		}
+		if c.path == PathNone && (out.Plan.Changed || out.Plan.Maintenance || out.Plan.Checkpoint || len(out.Plan.Restarts) > 0 || len(out.Plan.Steps) > 0) {
+			t.Errorf("%s %+v: plan none has an effect: %+v", c.id, c.change, out.Plan)
 		}
 		if c.path == PathCutover && (!out.Plan.Checkpoint || !out.Plan.Maintenance || out.Plan.Steps[len(out.Plan.Steps)-1] != "maintenance-off") {
 			t.Errorf("%s: cutover plan %+v", c.id, out.Plan)
@@ -284,6 +291,10 @@ func TestRecovery(t *testing.T) {
 	}
 	if e.u.PendingRecovery() != nil {
 		t.Fatal("the recovery stays pending")
+	}
+	// A recovery undoes the interrupted update: outcome rolled-back, with the offer of that update.
+	if h := ReadHistory(e.p); h[0].Kind != HistRollback || h[0].Outcome != OutcomeRolledBack || h[0].PitrOffer == nil || h[0].Problem != nil {
+		t.Fatalf("recovery history entry %+v", h[0])
 	}
 	if l := e.running(); l.Solution.Version != "2026.11.0" {
 		t.Fatalf("lock %+v", l.Solution)

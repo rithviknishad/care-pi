@@ -419,7 +419,9 @@ func (s *Service) SetPlug(ctx context.Context, w PlugWrite) (*PlugChangeResult, 
 		return nil, err
 	}
 	res.Written, res.ETag = true, etagOf(data)
-	if w.Apply {
+	// Path none (for example a setting of a plug that is off): the value is stored and counts when the plug turns on.
+	// No job starts, also with apply=true (docs/solutions.md section 12.1).
+	if w.Apply && out.Plan.Path != update.PathNone {
 		path := out.Plan.Path
 		j, err := s.Jobs.Start(ctx, jobs.Spec{Kind: jobs.KindPlugChange, Source: w.Source, Reason: w.Change.Reason, Lock: true},
 			func(ctx context.Context, rec *jobs.Recorder) (any, error) {
