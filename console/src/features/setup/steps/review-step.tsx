@@ -100,7 +100,20 @@ export function ReviewStep({ setup, mode, onBack, onEdit }: StepProps & { onEdit
             <Row label={r.fe} value={d.env.fe.provider} step="env" setup={setup} onEdit={onEdit} />
           </>
         ) : null}
-        <Row label={r.backups} value={strings.common.none} step="backups" setup={setup} onEdit={onEdit} />
+        <Row
+          label={r.backups}
+          value={
+            d.backups && d.backups.destinations.length > 0
+              ? fmt(r.backupsValue, {
+                  count: d.backups.destinations.length,
+                  key: (strings.backupsPage.keyStates[d.backups.recovery_key.state] ?? "").toLowerCase(),
+                })
+              : strings.common.none
+          }
+          step="backups"
+          setup={setup}
+          onEdit={onEdit}
+        />
         <Row
           label={r.careAdmin}
           value={d.care_admin.username ? `${d.care_admin.username} <${d.care_admin.email ?? ""}>` : "—"}

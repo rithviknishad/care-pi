@@ -1,6 +1,8 @@
 // The state of the mock agent and the fixtures that it derives from the state.
 
 import { createHash, randomBytes } from "node:crypto";
+import { freshBackups } from "./backups-state.mjs";
+import { backupsConfig } from "./backups-view.mjs";
 
 export const CLAIM_CODE = "4F7K-Q2MX-9PDA";
 export const OS_PASSWORD = "imager-password";
@@ -82,13 +84,16 @@ function freshSteps() {
   );
 }
 
-// scenario: unclaimed | setup | review | ready
+// scenario: unclaimed | setup | review | ready | restore (claimed, with the backup disk of an old device).
+// backups (scenario ready only): ok | degraded | unconfirmed | no-destination | legacy (docs: console/README.md).
 export function freshState(options = {}) {
   const scenario = options.scenario ?? "unclaimed";
+  const backupsScenario = options.backups ?? process.env.MOCK_BACKUPS ?? "ok";
   const state = {
     scenario,
     stepMs: Number(options.step_ms ?? process.env.MOCK_STEP_MS ?? 1000),
     failStep: options.fail_step ?? null,
+    forceReauth: options.force_reauth === true,
     ramBytes: Math.round(Number(options.ram_gib ?? 2) * GIB) - 25 * 1024 * 1024,
     diskKind: options.disk ?? "usb",
     devBuild: options.dev_build ?? true,
@@ -119,6 +124,9 @@ export function freshState(options = {}) {
     appliedHostname: "care",
     startedAt: now(),
   };
+  const fresh = freshBackups(scenario, backupsScenario);
+  state.backups = fresh.backups;
+  if (fresh.destinations.length > 0) state.file.backups = { destinations: fresh.destinations };
   if (scenario !== "unclaimed") {
     state.claimed = true;
     state.claimMethods = [];
@@ -156,12 +164,14 @@ export function freshState(options = {}) {
     state.file.identity = { display_name: "Sunrise Clinic", hostname: "care" };
     state.careAdmin = { username: "admin", email: "admin@sunrise.example", password: "another long care password" };
   }
+  if (scenario === "restore") state.setup.state = "claimed";
   if (scenario === "ready") {
     state.setup.state = "ready";
     state.setup.readyAt = "2026-10-30T10:20:00Z";
+    // A host of Phase 2 (backups: legacy) skipped the step backups; a host of Phase 3 did it.
     for (const id of STEP_IDS) {
       state.setup.steps[id] = {
-        status: id === "env" || id === "backups" ? "skipped" : "done",
+        status: id === "env" || (id === "backups" && backupsScenario === "legacy") ? "skipped" : "done",
         updated_at: "2026-10-30T10:10:00Z",
         errors: [],
         warnings: [],
@@ -188,12 +198,7 @@ export function effectiveConfig(state) {
     size: { preset: "small-clinic", ...f.size },
     tls: f.tls,
     clock: { policy: "ntp" },
-    backups: {
-      wal_archive_timeout_min: 5,
-      schedule: { db_full: "Sun 01:00", db_incr: "daily 02:00", files: "daily 02:30", verify: "Sat 03:00" },
-      retention: { db_full: 2, archive_days: 14, files_keep_daily: 14, files_keep_weekly: 8 },
-      destinations: [],
-    },
+    backups: backupsConfig(f),
     updates: { auto: false, window: { days: ["Sun"], start: "02:00", end: "05:00" }, os_security: true },
     env: { backend: { ...(f.env?.backend ?? {}) }, frontend: { ...(f.env?.frontend ?? {}) } },
     fe: { provider: "local", artifact_url: null, artifact_sha256: null, ...f.fe },

@@ -38,6 +38,15 @@ export type ProblemSlug =
   | "not-implemented-in-this-version"
   | "care-not-running"
   | "unavailable"
+  | "destination-unreachable"
+  | "destination-untrusted-hostkey"
+  | "recovery-key-mismatch"
+  | "restore-window-exceeded"
+  | "disk-in-use"
+  | "no-destination"
+  | "no-recovery-key"
+  | "insufficient-space"
+  | "verify-failed"
   | "network"
   | "unknown";
 

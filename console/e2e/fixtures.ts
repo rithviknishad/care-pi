@@ -7,7 +7,10 @@ export const CLAIM_CODE = "4F7K-Q2MX-9PDA";
 interface Fixtures {
   // Each request of the page. Each test checks that no request leaves the origin.
   requests: string[];
-  resetMock: (scenario: "unclaimed" | "setup" | "review" | "ready", options?: Record<string, unknown>) => Promise<void>;
+  resetMock: (
+    scenario: "unclaimed" | "setup" | "review" | "ready" | "restore",
+    options?: Record<string, unknown>,
+  ) => Promise<void>;
 }
 
 // Playwright gives each fixture a function that runs the test. These fixtures call it "runTest".
@@ -47,6 +50,22 @@ export { expect };
 export async function login(page: Page, password = READY_PASSWORD) {
   await page.getByLabel("Console password").fill(password);
   await page.getByRole("button", { name: "Log in" }).click();
+}
+
+// mockState reads GET /__mock/state: the recovery key words of the mock (key_words, dr_words) for the journeys.
+export async function mockState(page: Page): Promise<{ key_words: string[] | null; dr_words: string[] }> {
+  const res = await page.request.get(`${MOCK_URL}/__mock/state`);
+  return (await res.json()) as { key_words: string[] | null; dr_words: string[] };
+}
+
+// boxes gives the position and the size of each element of the locator, rounded to whole pixels.
+export async function boxes(locator: import("@playwright/test").Locator): Promise<number[][]> {
+  return locator.evaluateAll((els) =>
+    els.map((el) => {
+      const r = el.getBoundingClientRect();
+      return [r.x, r.y, r.width, r.height].map((v) => Math.round(v));
+    }),
+  );
 }
 
 export function isMobile(page: Page): boolean {

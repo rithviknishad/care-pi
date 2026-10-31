@@ -48,6 +48,7 @@ function setup(
     job_id: null,
     claimed_at: null,
     ready_at: null,
+    restore: { available: true, job_id: null, job_state: null },
   };
 }
 

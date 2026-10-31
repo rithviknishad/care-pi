@@ -17,12 +17,15 @@ It has these pages:
 | `/certificate` | The root CA: fingerprint, downloads, steps for each OS, QR code | optional |
 | `/setup`, `/setup/<step>` | The setup wizard (`GET /setup` gives the steps) | yes |
 | `/setup/progress`, `/setup/done` | The setup job (SSE) and the hand-off card | yes |
-| `/dashboard` | `GET /status` each 10 s | yes, state `ready` |
+| `/setup/restore` | "Restore from backup": a new or replaced device from the recovery key and 1 destination (section 10.5) | yes, state `claimed` or `setup` |
+| `/dashboard` | `GET /status` each 10 s, with the backup banner row (section 10.6) | yes, state `ready` |
+| `/backups` | `GET /backups` and `GET /backups/health` each 30 s: the local backups, the destinations, the recovery key, the schedule, verify and the drill (section 10.3) | yes, state `ready` |
+| `/restore` | `GET /restore/points`: undo a mistake (point in time), files only, new device (section 10.4) | yes, state `ready` |
 | `/logs` | The journal of a unit, Follow over SSE | yes |
-| `/settings` | Identity, size, environment (`PUT /config`), FE build, power | yes, state `ready` |
+| `/settings` | Identity, size, environment, backups (`PUT /config`), FE build, power | yes, state `ready` |
 | `/security` | Password, recovery codes, TOTP, sessions | yes |
 | `/support` | Support bundle, versions | yes |
-| `/backups`, `/updates`, `/plugs` | Features of later phases: "Not available in this version" | yes, state `ready` |
+| `/updates`, `/plugs` | Features of later phases: "Not available in this version" | yes, state `ready` |
 
 Phase 2 exit (`plans/06-roadmap.md`): a non-technical tester completes setup from a phone and a laptop.
 Each decision below serves this goal.
@@ -84,9 +87,10 @@ careui (`https://careui.ohc.network`) is the component registry of Care. It uses
 - careui components import `clsx` and `tailwind-merge`. `vite.config.ts` points both names to the package `cn`,
   which does the same work with a smaller build.
 
-The items in the lock (34): alert, alert-dialog, badge, button, card, checkbox, collapsible, dialog, dropdown-menu,
+The items in the lock (35): alert, alert-dialog, badge, button, card, checkbox, collapsible, dialog, dropdown-menu,
 empty, field, input, input-group, input-otp, kbd, label, native-select, progress, radio-group, scroll-area, separator,
-sheet, skeleton, sonner, spinner, switch, table, tabs, textarea, toggle, toggle-group, tooltip, use-auto-space, use-mobile.
+sheet, skeleton, slider, sonner, spinner, switch, table, tabs, textarea, toggle, toggle-group, tooltip, use-auto-space,
+use-mobile. Phase 3 added `slider` (the time of a restore).
 
 ### 3.1 Add a component
 
@@ -162,6 +166,9 @@ The e2e test `e2e/login-dashboard.spec.ts` checks rules 1 to 3 in 2 ways:
 | Config | `GET /config?view=file` gives the `ETag`. `PUT /config?dry_run=true` with `If-Match` gives the plan preview. `PUT /config?apply=true` with the same `If-Match` starts the apply job. `412 config-changed` asks the operator to read the config again. |
 | Reauthentication | `403 reauth-required` opens the password dialog. Then the console sends the request again. |
 | Rate limits | `429` with `Retry-After`: the submit button stays disabled and the alert counts down. |
+| Backups | `GET /backups` and `GET /backups/health` each 30 s on the Backups page. The dashboard reads `Status.backups` (the same object): no second request. A job of the page (`POST /backups/run`, `/verify`, `/drill`, `/restore`, `/backups/disks/{id}/prepare`, `/backups/recovery-key/rotate`) shows in a dialog or in its panel, and its end reads the backup queries again. |
+| Destinations | `PATCH /config` (`application/merge-patch+json`) with `If-Match` and the full list `backups.destinations` (RFC 7396 replaces an array): first `dry_run=true` (the plan), then `apply=true`. An S3 destination: `PATCH` without apply, `PUT /backups/destinations/{id}/secrets`, then `POST /apply`. The keys are never in `config.yaml`. |
+| Reauthentication of a read | `GET /backups/recovery-key` and `GET /backups/recovery-key/download` can also give `403 reauth-required`: the same password dialog, then the console reads again. |
 
 ## 7. What the server must do for the SPA
 
@@ -208,6 +215,7 @@ Other rules for the server:
 | Unit | Vitest, Testing Library, jsdom | The API client (CSRF, 401, problems), recovery codes, the wizard logic, the job events, the env editor, the stable order, the formats. |
 | e2e | Playwright against the stateful mock and `vite preview` | Desktop (Chromium, 1280 px), iPhone 13 (WebKit, 390 px), and 360 px (Chromium). Claim to ready, login and dashboard, logs, certificate, settings, lockout, theme. Each test checks that each request stays on the origin. |
 | e2e (wave 4d) | Playwright against the mock | `e2e/progress-hardware.spec.ts`: the step text and the indeterminate bar of the lock resolution, a failed setup (mock `fail_step`) and its retry, the grouped host checks and the button in the window. `e2e/login-dashboard.spec.ts`: no side scroll, unit cards, and no cut label or value below 640 px. |
+| e2e (Phase 3) | Playwright against the mock | `e2e/backups-setup.spec.ts`: the key ceremony (a wrong word, then 4 letters), SFTP with the host key and the key of the device, a USB disk with the typed label and the password check. `e2e/backups.spec.ts`: the Backups page and its jobs, a destination that does not answer (here and on the dashboard), an S3 bucket from "Add a destination" (the keys never in `config.yaml`), the confirmation of a key from the page, the card boxes before and after the data, Settings > Backups. `e2e/restore.spec.ts`: a point in time with the password check, the 14 steps and their text, the undo; files into a side directory. `e2e/restore-dr.spec.ts`: claim, the entry of the wizard, the key as QR text and as the `.txt` file, inspect, the job, the login as the old device; a wrong key; SFTP host key; a failed job. |
 | e2e on a device | Playwright against a real device (`e2e/real`, `playwright.real.config.ts`) | Desktop (Chromium, 1280 × 800) and iPhone 13 (WebKit). Claim to ready on a new install, the phone journey (dashboard, certificate, logs, TOTP), a resume after a reboot. The Phase 2 exit test on lumine used them. |
 
 The mock implements the contract for the console (`console/README.md` section 3). When the contract changes,
@@ -247,8 +255,183 @@ argument of the step name. A key that is not in the map shows the raw step name 
 | `create-care-superuser` | Make the Care administrator | the user name |
 | `collect` | Collect the support data | the argument |
 | `archive` | Make the support bundle file | the argument |
-| `prune` | Delete the old builds of the web app | the argument |
+| `prune` | Delete the old builds of the web app (in `backup-verify`: "Remove the data of the old copies") | the argument |
+
+Phase 3 keys (`docs/api/README.md` section 13.8). The second line is the argument, except where the table tells it.
+
+| Key | Sentence | Key | Sentence |
+|---|---|---|---|
+| `ensure-mounts` | Prepare the backup disks | `ensure-repositories` | Prepare the backup destinations |
+| `ensure-timers` | Set the backup schedule | `pause-backups` | Stop the scheduled backups |
+| `resume-backups` | Start the scheduled backups again | `maintenance-on` | Show the maintenance page |
+| `maintenance-off` | Remove the maintenance page | `stop-app` | Stop Care |
+| `start-app` | Start Care | `stop-db` | Stop the database |
+| `start-db` | Start the database | `wait-promote` | Wait until the database accepts changes |
+| `checkpoint` | Record an undo point | `backup-incr` | Make an incremental backup |
+| `backup-full` | Make a full backup | `check-stanza` | Check the database backups |
+| `snapshot` | Copy the backup to the destination (`usb: database`, `usb: files`) | `forget` | Remove the old copies |
+| `verify-local` | Verify the backups on this device | `verify-destination` | Verify the copy at the destination |
+| `check-space` | Check the free disk space | `check-key` | Check the recovery key |
+| `check-destinations` | Check the backup destinations | `restore-db` | Restore the database (the local time of the target) |
+| `restore-files` | Restore the files | `verify-files` | Verify the restored files |
+| `stop-s3` | Stop the file storage | `start-s3` | Start the file storage |
+| `fetch-config` | Get the settings from the backup | `fetch-db-repo` | Get the database backup from the destination |
+| `fetch-files` | Get the files from the backup | `restore-account` | Restore the console account of the old device |
+| `finish` | Complete the restore | `check-disk` | Check the disk |
+| `wipe-disk` | Erase the disk | `partition` | Make the partition |
+| `format` | Make the file system | `write-mount-unit` | Write the mount settings |
+| `mount` | Mount the disk | `rekey-local` | Make the local backups with the new key |
+| `init-destination` | Prepare a new copy at the destination | `activate-key` | Use the new recovery key |
+| `remove-old-repositories` | Delete the old backups | `drill-restore` | Restore the latest backup into a test folder |
+| `drill-start` | Start a test database | `drill-check` | Check the test database |
+| `drill-cleanup` | Delete the test database | | |
+
+`strings.jobs.kinds` has a sentence for each `JobKind` (for example `restore-pitr`: "Restore the database to a point in time").
+`tests/step-text.test.ts` also fails when the contract has a kind without a sentence.
+
+The expected times of the backup steps come from spike SP6 on a Pi 5 with a 46 MB database (`plans/08-spike-log.md`):
+`checkpoint` and `backup-incr` 6 s, `backup-full` 4 s, `restore-db` 8 s, `wait-promote` 5 s, `verify-local` 1 s,
+`drill-restore` 8 s, `drill-start` 5 s, `stop-app` and `start-app` 10 s, and `wait-healthy` 35 s after a restore
+(a cold start of the stack took 44 s). They grow with the size of the database.
 
 The second line of a step is, in this order: its `detail` (a result or an error); while it runs, the message of its
 progress, the expected time ("Expected: about 3 min 40 s", `job-state.ts`), or its last output line; else the short
 argument above.
+
+## 10. Backups and restore (Phase 3)
+
+The contract is `docs/api/README.md` section 13. The plan is `plans/02-backups-and-restore.md` (section 7: what the operator sees).
+
+### 10.1 The recovery key ceremony
+
+`src/features/backups/recovery-key-ceremony.tsx`. The step backups of the wizard starts with it; the Backups page uses it for a key
+that is new or not confirmed, and for the new key of a rotation (`which: "pending"`).
+
+1. "Make the recovery key" (`POST /backups/recovery-key`). The response has the words one time.
+2. The 24 words in a numbered grid, in monospace, down each column (2 columns below 640 px, 3 from 640 px: the same order
+   as the `.txt` file of the agent), the QR code of `qr_payload` (`CARE-PI-RK1:` and the words in capital letters, made in the
+   browser), Print (only the sheet: the class `print-area`), and Download (.txt) (`GET /backups/recovery-key/download`, recent
+   authentication; the file name comes from `Content-Disposition`). The page has no copy button for the words.
+3. "I saved the recovery key" (a check box), then Continue: the words hide.
+4. The 3 words at `confirm_positions` (`POST /backups/recovery-key/confirm`). The console accepts a word of the list or its first
+   4 letters, and sends the full word. A word that is not in the list gives a field error before the request; `422
+   recovery-key-mismatch` puts "This is not word N of the key." on the field of `errors[].pointer`.
+5. "Show the words again": from the memory of the page, or `GET /backups/recovery-key` (recent authentication) after a reload.
+
+The words stay in the state of the component only. They go away when the operator leaves the page. A reminder ("The recovery key
+is not confirmed …") stays on the step, on the key card, and as the banner `recovery-key-unconfirmed` until the confirmation.
+The confirmation is a `div` with a button, not a `form`: the step is a form, and a form must not contain a form (a nested form
+reloaded the page in Chromium).
+
+### 10.2 Destinations: the 3 choices and the test
+
+"Where should backups go?" has 3 big choices (USB disk, Network folder (SFTP), Cloud bucket (S3)) and "Add another destination".
+Each choice opens `DestinationForm` (`src/features/backups/destination-form.tsx`): the name (the id), the fields, the test
+(`POST /backups/destinations/test`), the interval and the retention with the defaults (15 min; 14 days, 14 daily, 8 weekly,
+6 monthly) and the RPO that they give ("Data loss at most 20 min"). "Add this destination" needs a passed test
+(`next_action: none`). A value that is the default stays out of `config.yaml`.
+
+- **USB disk**: `GET /backups/disks`. The system disk shows with "This is the system disk. You cannot use it."; a disk with
+  care-pi backups shows "Use this disk"; a mounted disk shows why it cannot be used; another disk shows "Prepare this disk". The
+  prepare asks the operator to type the new label (for example `care-usb1`) in an alert dialog that tells the model and the size
+  ("Preparing the disk deletes everything …"), then the password (recent authentication), then shows the job `disk-prepare`, then
+  tests the disk. A folder (advanced) is a tab: the test warns when the folder is on the root disk (the check `root-disk`).
+- **SFTP (TOFU, section 13.6)**: Test → the key type and the SHA-256 fingerprint, with the text to compare them with the server
+  (`ssh-keygen -lf`) → "Trust this server" (the same test with `accept_fingerprint`) → when the server refuses the key of the
+  device: the `authorized_keys` line of `GET /backups/ssh-key` with a copy button, a hint for a NAS and the command for a server
+  → "Test again" → passed. `422 destination-untrusted-hostkey` (a changed key) shows the new key in a red panel with "Trust the new
+  key only when you know why it changed". The destination gets `host_key` (the full public key of the test).
+- **S3**: endpoint, region, bucket, prefix, access key id, secret access key. `next_action: create-bucket` shows "The bucket … does
+  not exist. The device can make it." and "Make the bucket" (the same test with `create_bucket: true`). The keys go to the step
+  (`credentials`) or to `PUT /backups/destinations/{id}/secrets`, never to `config.yaml`.
+
+The step backups writes the destinations with `PUT /setup/steps/backups` (`recovery_key_words: null`: the ceremony confirmed the
+key before). Continue needs a confirmed key and 1 destination or more. "Skip this step" shows only in a dev build.
+
+### 10.3 The Backups page
+
+`src/features/backups/backups-page.tsx`, from top to bottom: the banner row (section 10.6), the row of the running job ("Runs now:
+Back up" and "Show the progress"), "This device" (state, restore window, last full and incremental backup, last change archived,
+size, free space, key; Back up now = the checkpoint `scope: local-db, type: incr`, Full backup now), the recovery key (state, key
+id, Show the recovery key with the password check, Make a new key = the rotation, Change the key of the local backups for a Phase 2
+host), the destinations (one card each: type icon, state badge OK / Degraded / Unreachable / Waits, last database and file copy,
+size, free space, next copy, data loss at most, a reserved line for the last error, Back up now, Verify, Change, Remove; "Add a
+destination"), the schedule and the retention (the timers in plain words: "Each Sunday at 01:00"; the retention; "How much data
+can you lose?": `archive_timeout` on this device, interval + `archive_timeout` off-site; "Change the schedule" opens
+Settings > Backups), verify and the test restore (last and next; "Verify now", "Test restore (drill)"), and the SSH key of the device.
+
+Layout: each card has a fixed set of rows; the skeleton of the destinations has the number of destinations of the last visit
+(`localStorage` `care-pi.backups.destinations`, 2 the first time). The button rows and the RPO and retention texts render
+invisible with the default values before the data, so they wrap the same way (monospace). A value below 640 px is short (the
+relative time only, the window without the year), so it does not wrap. `e2e/backups.spec.ts` checks the boxes at 1280, 390, and
+360 px. A job opens in a dialog, so the page does not move. The ages ("5 min ago", "for 1 d 2 h") use `generated_at` of the
+report as "now" (the clock of the device), so a wrong clock of the browser does not change them.
+
+Change and Remove of a destination: Change edits the interval, the retention, and new S3 keys; to change the place, add a destination
+and remove the old one. Remove asks first; the data at the destination stays.
+
+Settings > Backups (`src/features/settings/backups-tab.tsx`) edits `backups.*` with the flow of section 6 (plan preview, then
+apply): the archive timeout (with the RPO that it gives), the 5 calendars (systemd calendar text), the test restore on or off, the
+full backups to keep, the daily and weekly copies, the hours before a problem, and the pause.
+
+### 10.4 The Restore page
+
+`src/features/backups/restore-page.tsx`: 3 entry cards (`?kind=pitr|files|device`), then the panel of the kind.
+
+- **Undo a mistake** (`kind: pitr`): the earliest time and "Now" (a restore job archives the current WAL first, so the window
+  ends at the start of the job), a slider (careui `slider`, 1-minute steps) and an `<input type="datetime-local">` with `min` and
+  `max` (local time of the browser; its time zone shows). The nearest files snapshot shows ("Nearest file backup: 02:30. The files
+  can differ by up to 7 h 10 min."), then a red alert: "Records after HH:MM will be lost.", "Care stops for about 1 minute", the
+  SP6 times, and the undo point. "Restore to HH:MM" → a confirm dialog → the password → the job in the panel with the 14 steps.
+- **Undo the last restore**: the newest checkpoint of a `restore-pitr` job of the last 24 hours (`RestorePoints.checkpoints`)
+  shows as a card above the panel, with "Undo this restore" (`checkpoint: <label>`).
+- **Files only** (`kind: files`): a files snapshot of a destination (newest first), into a separate folder (the default) or into
+  the storage of Care, optional paths below a bucket → confirm → the password → the job → the result with the side directory path
+  and a copy button.
+- **New or replaced device**: on a ready device, the text tells that it is for the wizard of a new device.
+
+### 10.5 The wizard branch "Restore from backup"
+
+`src/features/setup/restore-dr-page.tsx` at `/setup/restore`. The first page of the wizard (`recovery-codes`) shows the card "Do you
+replace a device?" with "I have a backup of another device" when `SetupState.restore.available`.
+
+1. The key: one text field for 24 words. It accepts words with spaces, commas, or lines; the QR text (`CARE-PI-RK1:…`); and the
+   `.txt` file of the agent (the numbered words in 3 columns: the numbers give the order). It shows "N of 24 words", the words that
+   are not in the BIP-39 list (`src/lib/bip39-english.ts`), and a wrong checksum (SHA-256 of Web Crypto; the agent checks again).
+2. The destination: the same 3 choices. USB lists only the disks with care-pi backups (and a folder tab); SFTP has the same host
+   key panel (from the problem `destination-untrusted-hostkey` of inspect); S3 has the keys.
+3. "Read the backup" (`POST /restore/dr/inspect`): the clinic, the device name, the version, the last database and file backups,
+   the database window, the sizes, the free space, and the warnings. Then the note on the console account, "Do not send backups
+   from this device" (`pause_backups`), and "Restore this device" → confirm → `POST /restore/dr` → the job.
+4. Success: the job ends each session. The console keeps the clinic name and `console_url` in `sessionStorage`
+   (`src/features/setup/dr-handoff.ts`) and opens the login page: "This device now runs <name>. Log in with the console password
+   of the old device." (and the new address when the host name of the old device is another name). Failure: the form again with
+   the problem of the job; the account of the claim stays.
+
+`/setup/progress` and the wizard send a `restore-dr` job (state `applying`) to `/setup/restore`, which follows it after a reload.
+
+### 10.6 The banner row (dashboard and Backups page)
+
+`BackupHealthRow` (`src/features/backups/backup-banners.tsx`) is one alert with a fixed height (4.75 rem, 3.5 rem from 640 px)
+between the page title and the first card. Its skeleton has the same height. It shows the worst banner of `BackupsHealth.banners`
+(error, then warning, then info) in the console text of its code, and "N more"; or "The backups are OK. Last copy off this device
+5 min ago." The dashboard links to the Backups page; on the Backups page "N more" opens the list of each banner below the row (on a
+click only), and each banner links to its fix (`/backups?add=1`, `#recovery-key`, `#destination-<id>`). An agent of Phase 2
+(`Status.backups` is `null`) gives "This version has no backups." in the same space.
+
+| Code | Text |
+|---|---|
+| `no-destination` | No backup destination. The backups stay on this device only. |
+| `no-recovery-key` | This device has no recovery key. Make the recovery key. |
+| `recovery-key-unconfirmed` | The recovery key is not confirmed. Without the key, you cannot restore the backups on a new device. |
+| `destination-unreachable` | `<id>`: no successful backup since `<since>`. |
+| `destination-low-space` | `<id>`: the free space is low. |
+| `local-disk-low` | The disk of this device has little free space for the backups. |
+| `local-backup-failed` | The last scheduled backup on this device failed. |
+| `wal-archive-failing` | The archive of the database changes fails. New changes are not protected. |
+| `verify-failed` | The last verify found damage in a backup. |
+| `drill-failed` | The last test restore failed. |
+| `backups-paused` | The scheduled backups are paused. |
+| `local-repository-legacy-key` | The backups on this device use an old random key. Change it to the recovery key. |
+
+A code of a later version shows the `message` of the agent.

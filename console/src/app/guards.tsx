@@ -14,7 +14,7 @@ import { PublicLayout } from "./layout/public-layout";
 import { loginPath } from "./session";
 
 // The routes that need the setup state ready.
-const READY_ONLY = ["/dashboard", "/settings", "/backups", "/updates", "/plugs"];
+const READY_ONLY = ["/dashboard", "/settings", "/backups", "/restore", "/updates", "/plugs"];
 // The setup routes that stay open after the state becomes ready.
 const AFTER_SETUP = ["/setup/progress", "/setup/done"];
 

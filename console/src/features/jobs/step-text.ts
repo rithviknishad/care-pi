@@ -1,4 +1,5 @@
 import type { JobStep, LogUnit } from "@/api/types";
+import { formatDateTime } from "@/lib/format";
 import { fmt, strings } from "@/lib/strings";
 
 const s = strings.steps;
@@ -34,11 +35,18 @@ export interface StepTitle {
 }
 
 // stepTitle gives the operator text of a step (strings.steps). An unknown key gives the raw step name.
-export function stepTitle(step: Pick<JobStep, "action" | "name" | "state">): StepTitle {
+// kind is the kind of the job: a key can have another text in a job of one kind (prune in backup-verify).
+export function stepTitle(step: Pick<JobStep, "action" | "name" | "state">, kind?: string): StepTitle {
   const key = step.action ?? "";
   const running = step.state === "running" ? s.running[key] : undefined;
-  const text = running ?? s.actions[key];
+  const text = running ?? (kind ? s.byKind[kind]?.[key] : undefined) ?? s.actions[key];
   return text ? { text, raw: false } : { text: step.name, raw: true };
+}
+
+// jobKindText gives the operator text of a job kind, or the kind itself for a kind that is not known.
+export function jobKindText(kind: string | null | undefined): string {
+  if (!kind) return "";
+  return strings.jobs.kinds[kind] ?? kind;
 }
 
 // stepArgument gives a short text of the argument of a known step, or "".
@@ -71,6 +79,16 @@ export function stepArgument(step: Pick<JobStep, "action" | "name">): string {
     case "set-hostname": {
       const [from, to] = arg.split(/\s+->\s+/);
       return from && to ? fmt(s.hostname, { from, to }) : arg;
+    }
+    case "snapshot": {
+      // "snapshot: usb (db)" -> "usb: database".
+      const m = /^(\S+)\s+\((db|files)\)$/.exec(arg);
+      if (!m) return arg;
+      return fmt(m[2] === "db" ? s.snapshotDb : s.snapshotFiles, { destination: m[1] ?? "" });
+    }
+    case "restore-db": {
+      // "restore-db: 2026-10-30T09:40:00Z" -> the local time.
+      return /^\d{4}-\d{2}-\d{2}T/.test(arg) ? formatDateTime(arg) : arg;
     }
     default:
       return arg;

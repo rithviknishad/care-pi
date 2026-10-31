@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckIcon, CircleDotIcon, CircleIcon, MinusIcon } from "lucide-react";
+import { ArchiveRestoreIcon, CheckIcon, CircleDotIcon, CircleIcon, MinusIcon } from "lucide-react";
 import { useState } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
 import { api, call } from "@/api/client";
@@ -7,7 +7,8 @@ import { storeSetup, useSetup } from "@/api/queries";
 import type { SetupState } from "@/api/types";
 import { PageHeader } from "@/components/app/page";
 import { ProblemAlert } from "@/components/app/problem-alert";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -156,7 +157,10 @@ export default function SetupWizard() {
   if (setup.isPending) return <WizardSkeleton />;
   if (setup.isError) return <ProblemAlert error={setup.error} />;
   const s = setup.data;
-  if (s.state === "applying") return <Navigate to="/setup/progress" replace />;
+  if (s.state === "applying") {
+    const dr = s.restore.job_id !== null && s.restore.job_id === s.job_id;
+    return <Navigate to={dr ? "/setup/restore" : "/setup/progress"} replace />;
+  }
   if (s.state === "ready") return <Navigate to="/setup/done" replace />;
   if (!isWizardPage(page) || (mode === "easy" && page === "env")) {
     return <Navigate to={`/setup/${resumePage(s, mode)}`} replace />;
@@ -211,7 +215,30 @@ export default function SetupWizard() {
             )}
           </CardContent>
         </Card>
+        {page === wizardPages(mode)[0] && s.restore.available ? <RestoreEntry /> : null}
       </div>
     </div>
+  );
+}
+
+// The entry of the branch "Restore from backup" (docs/api/README.md section 13.9.3), on the first page of the wizard.
+function RestoreEntry() {
+  return (
+    <Card size="sm" className="lg:col-start-2" data-testid="restore-entry">
+      <CardHeader>
+        <CardTitle>
+          <h2>{strings.dr.entryTitle}</h2>
+        </CardTitle>
+        <CardDescription>{strings.dr.entryText}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button asChild variant="outline">
+          <Link to="/setup/restore" data-testid="restore-entry-link">
+            <ArchiveRestoreIcon data-icon="inline-start" />
+            {strings.dr.entry}
+          </Link>
+        </Button>
+      </CardContent>
+    </Card>
   );
 }

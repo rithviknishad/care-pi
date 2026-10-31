@@ -59,7 +59,7 @@ function StepRow({ step, view, kind }: { step: JobStep; view: JobView; kind: str
   const running = step.state === "running";
   const elapsed = useElapsed(step.started_at, step.finished_at, running);
   const progress = stepProgress(view.progress[step.index]);
-  const title = stepTitle(step);
+  const title = stepTitle(step, kind);
   const secondary = stepSecondary(step, view, kind);
   return (
     <li

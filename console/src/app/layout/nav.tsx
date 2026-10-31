@@ -1,6 +1,7 @@
 import {
   DatabaseBackupIcon,
   FileBadgeIcon,
+  HistoryIcon,
   LayoutDashboardIcon,
   LifeBuoyIcon,
   LockIcon,
@@ -35,12 +36,13 @@ function navItems(state: SetupStateName): NavItem[] {
   }
   return [
     { to: "/dashboard", label: strings.nav.dashboard, icon: LayoutDashboardIcon },
+    { to: "/backups", label: strings.nav.backups, icon: DatabaseBackupIcon },
+    { to: "/restore", label: strings.nav.restore, icon: HistoryIcon },
     { to: "/settings", label: strings.nav.settings, icon: SlidersHorizontalIcon },
     { to: "/logs", label: strings.nav.logs, icon: ScrollTextIcon },
     { to: "/certificate", label: strings.nav.certificate, icon: FileBadgeIcon },
     { to: "/security", label: strings.nav.security, icon: LockIcon },
     { to: "/support", label: strings.nav.support, icon: LifeBuoyIcon },
-    { to: "/backups", label: strings.nav.backups, icon: DatabaseBackupIcon, later: true },
     { to: "/updates", label: strings.nav.updates, icon: RefreshCwIcon, later: true },
     { to: "/plugs", label: strings.nav.plugs, icon: PuzzleIcon, later: true },
   ];

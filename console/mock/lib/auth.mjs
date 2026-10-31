@@ -216,6 +216,7 @@ export const authRoutes = [
       if (body.password !== state.password) fail(state, ctx.address, "The password is not correct.");
       success(state, ctx.address);
       session.authenticated_at = now();
+      state.forceReauth = false;
       sendJson(res, 200, sessionView(state, session));
     },
   },

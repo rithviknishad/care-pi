@@ -19,6 +19,7 @@ const UNITS = {
   "fe-build": "care-fe-build.service",
   target: "care.target",
   agent: "care-pi.service",
+  backup: "care-backup-*.service",
 };
 
 const MESSAGES = {
@@ -47,6 +48,11 @@ const MESSAGES = {
   "fe-build": ["npm ci: added 1456 packages", "vite v8.0.3 building for production..."],
   target: ["Reached target care.target."],
   agent: ["GET /api/v1/status 200 3ms", "session: login from 192.168.1.23", "apply: plan has 0 changes"],
+  backup: [
+    "care-backup-db@usb.service: snapshot 4f1e9a2c saved (db), 1.0 MiB added",
+    "care-backup-db@b2.service: Fatal: unable to open repository: dial tcp: no such host",
+    "care-backup-db-incr.service: backup 20261026-010002F_20261030-020003I (incr) completed",
+  ],
 };
 
 let cursorSeq = 0x1a2b;
@@ -342,14 +348,8 @@ function bundleBytes(id) {
   return gzipSync(Buffer.from(`care-pi support bundle ${id} (mock)\ngenerated ${now()}\n`));
 }
 
-// Operations with x-phase greater than 2 answer 501 after the auth checks.
+// Operations with x-phase greater than 3 answer 501 after the auth checks.
 export const phaseRoutes = [
-  ["GET", "/api/v1/backups", 3],
-  ["POST", "/api/v1/backups/run", 3],
-  ["POST", "/api/v1/backups/destinations/test", 3],
-  ["GET", "/api/v1/backups/recovery-key", 3],
-  ["GET", "/api/v1/restore/points", 3],
-  ["POST", "/api/v1/restore", 3],
   ["GET", "/api/v1/updates", 4],
   ["POST", "/api/v1/updates/check", 4],
   ["POST", "/api/v1/updates/apply", 4],

@@ -54,7 +54,11 @@ The mock (`mock/`) is a small Node HTTP server. It implements the contract for t
 - the session cookie, the CSRF token (`X-CSRF-Token`), and the `Origin` check;
 - the rate limits and the lockout with `Retry-After`;
 - the setup state machine, the setup job with SSE events, and the apply job;
-- logs with SSE follow, `If-Match` on `/config`, and `501` for each `x-phase` operation.
+- the backups and the restore (contract section 13): the recovery key (make, show, `.txt`, confirm, rotate), the destinations
+  through `PATCH /config` and the secrets, the destination test with the SFTP host key (TOFU) and the key of the device, the
+  disks and their prepare, the health and the banners, the restore points, and the jobs `backup-run`, `backup-verify`,
+  `restore-drill`, `disk-prepare`, `recovery-key-rotate`, `restore-pitr`, `restore-files`, and `restore-dr` with their steps;
+- logs with SSE follow, `If-Match` on `/config`, and `501` for each operation with `x-phase` greater than 3.
 
 It sends each other operation to Prism when Prism runs (`npm run mock`).
 
@@ -69,16 +73,39 @@ npm run dev
 ```
 
 Open `http://localhost:5173`. The mock starts in the scenario `unclaimed`.
-To select a scenario, set `MOCK_SCENARIO` (`unclaimed`, `setup`, `review`, or `ready`), or reset the mock.
+To select a scenario, set `MOCK_SCENARIO` (`unclaimed`, `setup`, `review`, `ready`, or `restore`), or reset the mock.
 `review` has each setup step done and the Care password in memory: the operator can start the setup on `/setup/review`.
+`restore` is a claimed device with the USB backup disk of an old device (`care-usb1`): the wizard offers "Restore from backup".
+
+The backups of the scenario `ready` have a switch: `MOCK_BACKUPS` (or the reset option `backups`).
+
+| `backups`        | The device                                                                                    |
+| ---------------- | --------------------------------------------------------------------------------------------- |
+| `ok` (default)   | A confirmed recovery key, a USB disk (`usb`) and an S3 bucket (`b2`), both OK. No banner.     |
+| `degraded`       | `b2` is degraded (no banner), `nas` (SFTP) does not answer for 26 hours: the banner of `nas`. |
+| `unconfirmed`    | The recovery key is not confirmed: the banner `recovery-key-unconfirmed`.                     |
+| `no-destination` | No destination: the banner `no-destination`.                                                  |
+| `legacy`         | A Phase 2 host after the upgrade: no key, no destination, the local backups with the old key. |
+
+```sh
+MOCK_SCENARIO=ready MOCK_BACKUPS=degraded npm run mock:state
+curl -X POST http://127.0.0.1:4011/__mock/reset -d '{"scenario":"ready","backups":"unconfirmed"}'
+```
+
+The backup of the old device (for "Restore from backup") is at the folder `/mnt/old-backup`, at the SFTP folder
+`nas.lan:/volume1/care` (user `care`), in the S3 bucket `sunrise-care` (any keys), and on the disk `care-usb1` of the scenario
+`restore`. `GET /__mock/state` gives its 24 words in `dr_words` (and the key of the device in `key_words`). After the restore, the
+console password is `correct horse battery staple`. Other places of the destination test: an SFTP host with `down` in its name
+does not answer; an S3 access key `bad` is refused; the buckets `sunrise-care` and `clinic-backups` exist (another bucket needs
+"Make the bucket"); a folder below `/mnt/` or `/media/` is not on the root disk.
 
 ```sh
 curl -X POST http://127.0.0.1:4011/__mock/reset -d '{"scenario":"ready","step_ms":200}'
 ```
 
 The console password of the scenarios `setup`, `review`, and `ready` is `correct horse battery staple`.
-Other reset options: `fail_step` (the action key of a setup step that fails one time, for example `ensure-stanza`),
-`ram_gib`, `disk`, `dev_build`. The setup job of the mock has the steps of the agent on lumine (wave 4d).
+Other reset options: `fail_step` (the action key of a step that fails one time, for example `ensure-stanza` or `fetch-db-repo`),
+`ram_gib`, `disk`, `dev_build`, and `force_reauth` (the next operation with a recent authentication asks for the password). The setup job of the mock has the steps of the agent on lumine (wave 4d).
 
 ## 4. Work with the Go dev server
 
@@ -108,21 +135,21 @@ and build the agent again to change that copy.
 
 ## 5. Layout of the source
 
-| Path                     | Content                                                                                                                                                    |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/api/`               | The typed API client (`client.ts`), the problem types (`problem.ts`), the queries (`queries.ts`), and the generated types (`types.gen.ts`).                |
-| `src/app/`               | The router, the session guards, and the shell (top bar, navigation, theme toggle).                                                                         |
-| `src/features/<page>/`   | 1 directory for each page: claim, login, setup, dashboard, certificate, logs, settings, security, support, and the pages of later phases (`unavailable/`). |
-| `src/components/ui/`     | careui components. Do not edit these files (section 6).                                                                                                    |
-| `src/components/app/`    | Console components that use careui components.                                                                                                             |
-| `src/lib/strings.ts`     | Each text of the console, in ASD-STE100 Simplified Technical English.                                                                                      |
-| `src/styles/careui.css`  | The careui design tokens. Do not edit this file.                                                                                                           |
-| `src/styles/console.css` | The few rules that the console adds.                                                                                                                       |
-| `public/`                | `favicon.svg` and `theme.js` (the theme before the first paint).                                                                                           |
-| `mock/`                  | The stateful mock of the agent.                                                                                                                            |
-| `tests/`                 | Unit tests.                                                                                                                                                |
-| `e2e/`                   | Playwright tests: desktop (Chromium, 1280 px), iPhone 13 (WebKit, 390 px), and 360 px (Chromium).                                                          |
-| `scripts/`               | `api-types.mjs`, `careui-add.mjs`, `clean-dist.mjs`.                                                                                                       |
+| Path                     | Content                                                                                                                                                                                   |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/api/`               | The typed API client (`client.ts`), the problem types (`problem.ts`), the queries (`queries.ts`), and the generated types (`types.gen.ts`).                                               |
+| `src/app/`               | The router, the session guards, and the shell (top bar, navigation, theme toggle).                                                                                                        |
+| `src/features/<page>/`   | 1 directory for each page: claim, login, setup, dashboard, certificate, logs, settings, security, support, backups (Backups and Restore), and the pages of later phases (`unavailable/`). |
+| `src/components/ui/`     | careui components. Do not edit these files (section 6).                                                                                                                                   |
+| `src/components/app/`    | Console components that use careui components.                                                                                                                                            |
+| `src/lib/strings.ts`     | Each text of the console, in ASD-STE100 Simplified Technical English.                                                                                                                     |
+| `src/styles/careui.css`  | The careui design tokens. Do not edit this file.                                                                                                                                          |
+| `src/styles/console.css` | The few rules that the console adds.                                                                                                                                                      |
+| `public/`                | `favicon.svg` and `theme.js` (the theme before the first paint).                                                                                                                          |
+| `mock/`                  | The stateful mock of the agent.                                                                                                                                                           |
+| `tests/`                 | Unit tests.                                                                                                                                                                               |
+| `e2e/`                   | Playwright tests: desktop (Chromium, 1280 px), iPhone 13 (WebKit, 390 px), and 360 px (Chromium).                                                                                         |
+| `scripts/`               | `api-types.mjs`, `careui-add.mjs`, `clean-dist.mjs`.                                                                                                                                      |
 
 ## 6. Add a careui component
 
@@ -149,6 +176,10 @@ The tests run one after the other, because each test resets the mock.
 | `e2e/logs.spec.ts`            | Follow over SSE, the sticky bottom, pause, and resume.                                                |
 | `e2e/certificate.spec.ts`     | The public certificate page: fingerprint, OS detection, tabs, downloads, QR code.                     |
 | `e2e/settings.spec.ts`        | A config change with `If-Match`, the plan preview, the apply job, and a `501` page.                   |
+| `e2e/backups-setup.spec.ts`   | The step backups: the key ceremony, SFTP with the host key (TOFU), a USB disk with the typed label.   |
+| `e2e/backups.spec.ts`         | The Backups page, its jobs, the banners (also on the dashboard), add S3, confirm a key, the layout.   |
+| `e2e/restore.spec.ts`         | A point in time with the password check and its undo, files into a side directory.                    |
+| `e2e/restore-dr.spec.ts`      | "Restore from backup" on a new device: key, destination, inspect, job, login as the old device.       |
 
 Each test also checks that each request of the page goes to the origin of the console.
 

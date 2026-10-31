@@ -122,9 +122,34 @@ export function jobKindFromId(id: string): string | undefined {
   return /^\d{8}T\d{6}(?:\.\d+)?Z-([a-z-]+)$/.exec(id)?.[1];
 }
 
+// The steps of the backup and restore jobs, from the measurements of spike SP6 on a Pi 5 with a 46 MB database
+// (plans/08-spike-log.md): a full backup 4 s, an incremental backup (the checkpoint) 4-6 s, a restore 7-8 s, the
+// recovery and the promote 3-5 s, pgbackrest verify 0.7 s, a cold start of the stack 44 s. They grow with the size.
+const BACKUP_EXPECTED_SECONDS: Partial<Record<string, number>> = {
+  checkpoint: 6,
+  "backup-incr": 6,
+  "backup-full": 4,
+  "restore-db": 8,
+  "wait-promote": 5,
+  "verify-local": 1,
+  "drill-restore": 8,
+  "drill-start": 5,
+  "stop-app": 10,
+  "start-app": 10,
+};
+
+const KIND_EXPECTED_SECONDS: Record<string, Partial<Record<string, number>>> = {
+  setup: SETUP_EXPECTED_SECONDS,
+  // After a restore, Care starts on a migrated database: the cold start of SP6 (44 s, with start-app).
+  "restore-pitr": { "wait-healthy": 35 },
+  "recovery-key-rotate": { "wait-healthy": 35 },
+  "restore-dr": { "start-target": 60, "wait-healthy": 60 },
+};
+
 // expectedSeconds gives the expected duration of a step of a job of this kind, or undefined.
 export function expectedSeconds(action: string | null | undefined, jobKind?: string): number | undefined {
   if (!action) return undefined;
-  if (jobKind === "setup" && SETUP_EXPECTED_SECONDS[action] !== undefined) return SETUP_EXPECTED_SECONDS[action];
-  return EXPECTED_SECONDS[action];
+  const byKind = jobKind ? KIND_EXPECTED_SECONDS[jobKind]?.[action] : undefined;
+  if (byKind !== undefined) return byKind;
+  return BACKUP_EXPECTED_SECONDS[action] ?? EXPECTED_SECONDS[action];
 }
