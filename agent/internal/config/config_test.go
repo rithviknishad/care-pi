@@ -137,7 +137,7 @@ func TestMemoryCaps(t *testing.T) {
 		{MemBeat, Mem{512, 128}},
 		{MemRedis, Mem{96, 0}},
 		{MemS3, Mem{256, 0}},
-		{MemCaddy, Mem{96, 0}},
+		{MemCaddy, Mem{128, 0}},
 	}
 	for i, c := range cases {
 		if c.got != c.want {

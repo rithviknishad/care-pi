@@ -124,7 +124,7 @@ Memory caps for each unit (`MemoryMax` / `MemorySwapMax`), measured in spike SP3
 | `care-db` | 384M / 0 | 384M / 0 | 512M / 0 | up to 192 MB buffers: 384M; up to 256 MB: 512M; above: buffers + 256M, rounded up to 128M |
 | `care-redis` | 96M / 0 | 96M / 0 | 96M / 0 | 96M / 0 |
 | `care-s3` | 256M / 0 | 256M / 0 | 256M / 0 | 256M / 0 |
-| `care-caddy` | 96M / 0 | 96M / 0 | 96M / 0 | 96M / 0 |
+| `care-caddy` | 128M / 0 | 128M / 0 | 128M / 0 | 128M / 0 |
 
 The `care-beat` cap is the same for each preset. care-beat runs `migrate` at each start.
 In the Phase 1 exit test, `migrate` on an empty database used 382 MiB of the old 384M cap and 85 MiB of swap.

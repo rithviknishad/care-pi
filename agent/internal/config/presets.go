@@ -56,7 +56,7 @@ func (m Mem) Swap() string {
 var (
 	MemRedis = Mem{MaxMB: 96}
 	MemS3    = Mem{MaxMB: 256}
-	MemCaddy = Mem{MaxMB: 96}
+	MemCaddy = Mem{MaxMB: 128}
 	MemBeat  = Mem{MaxMB: 512, SwapMB: 128}
 )
 

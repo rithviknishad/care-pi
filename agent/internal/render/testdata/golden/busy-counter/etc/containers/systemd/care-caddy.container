@@ -27,7 +27,7 @@ Volume=/run/care-pi:/run/care-pi
 [Service]
 # The bind mount needs the directory, also when the agent does not run.
 ExecStartPre=/bin/mkdir -p /run/care-pi
-MemoryMax=96M
+MemoryMax=128M
 MemorySwapMax=0
 Restart=always
 RestartSec=5
