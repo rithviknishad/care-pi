@@ -793,3 +793,218 @@ wave 4d (`wave4d-shots/`).
 
 New observation (follow-up 11, not fixed): the phone dashboard of lumine showed `care-caddy.service` at 95.5 MiB of
 its 96M cap (89.8 MiB a minute before). Measure the peak of Caddy before Phase 3, and raise the cap if necessary.
+
+## Phase 4 exit test — plan (wave 6a; run after the merge of Phase 3 and Phase 4)
+
+Status: **not run**. Wave 6a did not use lumine (wave 6a rule: a Phase 3 agent owned it). Run this plan after the
+merge. Keep the raw output in `local/wave6-exit/` (S39).
+
+Exit criteria (`06` Phase 4):
+
+1. A Pi on `stable` updates from lock N to N+1 inside its window, with a maintenance page, and returns healthy.
+2. A forced migration failure rolls back to N and offers PITR.
+3. A plug switch on and off gives a working Care.
+
+The repository is private, so a device cannot read the release assets (`docs/solutions.md` open point 1). The test
+uses a local dist (`file:///var/lib/care-pi-dist/`) that `solutions/scripts/make-lock.sh` makes on the Mac.
+The images come from ghcr (public, S43).
+
+### 0. Preconditions (Mac)
+
+```sh
+cd ~/ohc.network/care-pi            # the merged tree
+go test -race ./... && golangci-lint run ./... && make build-linux   # with the console
+mkdir -p local/wave6-exit
+```
+
+**The superset solution image.** The image `care-clinic-latest` of Phase 1 has only the plugs that are on (none
+with a backend). The superset rule (`docs/solutions.md` section 1.5) needs each backend plug in the image. Build a
+test version of the solution image on the merge branch (the workflow file exists on `main`; the version tag only,
+no `-latest`):
+
+```sh
+gh workflow run solution-image.yml --ref <merge branch> -f solution=care-clinic -f version=2026.11.90
+gh run watch "$(gh run list --workflow solution-image.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+SI=ghcr.io/rithviknishad/care-pi/care
+SI_DIGEST=$(skopeo inspect --override-os linux --override-arch arm64 --format '{{.Digest}}' docker://$SI:care-clinic-2026.11.90)
+CARE_DIGEST=$(skopeo inspect --override-os linux --override-arch arm64 --format '{{index .Labels "org.opencontainers.image.base.digest"}}' docker://$SI@$SI_DIGEST)
+echo "$SI@$SI_DIGEST base $CARE_DIGEST" | tee local/wave6-exit/00-images.txt
+```
+
+**The broken image** (criterion 2). `images/care-test/Containerfile.broken-migrate` adds one line to
+`/app/celery_beat.sh`: after `python manage.py migrate --noinput`, `exit 1` when `CARE_PI_TEST_FAIL_MIGRATE=1`.
+Without the variable the image runs as its base. So the image is safe on a device without the variable, and the
+failure comes after the real `migrate` (the agent is in the step `migrate`, after the checkpoint).
+
+```sh
+docker buildx build --platform linux/arm64 -f images/care-test/Containerfile.broken-migrate \
+  --build-arg BASE=$SI@$SI_DIGEST -t $SI:care-clinic-test-broken-migrate --push images/care-test
+BROKEN_DIGEST=$(skopeo inspect --override-os linux --override-arch arm64 --format '{{.Digest}}' docker://$SI:care-clinic-test-broken-migrate)
+```
+
+### 1. Install the merged agent on lumine; the version 1 lock
+
+```sh
+scp bin/care-pi_linux_arm64 lumine:care-pi
+ssh lumine 'sudo install -m 0755 care-pi /usr/local/bin/care-pi && sudo systemctl restart care-pi.service && care-pi version'
+ssh lumine 'sudo cp /etc/care-pi/lock.yaml ~/p4-lock.v1.yaml; head -3 /etc/care-pi/lock.yaml'   # version: 1 (or no version)
+ssh lumine 'sudo care-pi update status --json' | tee local/wave6-exit/10-status-v1.json
+ssh lumine 'sudo care-pi apply --dry-run' | tee local/wave6-exit/11-apply-dry-run.txt
+```
+
+Assert: `update status` reads the version 1 lock (`current.version: null`, `track: stable`). The plan has the
+podman secret `care-additional-plugs`, `backend.env` without `ADDITIONAL_PLUGS` (restart of beat, worker, api),
+the 4 timer files (`enable`, `start` of the 2 timers), the lock (`write-lock`), and an FE build: the superset rule
+adds the components of each plug to `REACT_MFE_REGISTERED_COMPONENTS`, so the build id changes (about 15 min).
+
+```sh
+ssh lumine 'sudo care-pi apply' | tee local/wave6-exit/12-apply.txt
+ssh lumine 'sudo head -12 /etc/care-pi/lock.yaml; systemctl list-timers "care-update-*" --no-pager; sudo care-pi status'
+ssh lumine 'sudo care-pi fe status --json' | tee local/wave6-exit/13-fe.json    # the build id X and the care_fe sha S
+```
+
+Assert: `lock.yaml` has `version: 2` and `history.previous`; both timers are active; each unit is healthy.
+
+### 2. Lock N and the local index
+
+Pack the FE build of lumine. It is the default bundle of the solution: same care_fe sha, same env.
+
+```sh
+X=$(jq -r .build_id local/wave6-exit/13-fe.json); S=$(jq -r .care_fe_sha local/wave6-exit/13-fe.json)   # .current must equal X
+ssh lumine "sudo tar --sort=name --owner=0 --group=0 --numeric-owner -czf - -C /var/lib/care-pi/fe/$X ." > local/wave6-exit/care_fe.tar.gz
+COMMON=(--solution care-clinic --out local/wave6-exit/dist --dist-base file:///var/lib/care-pi-dist/
+        --care-digest "$CARE_DIGEST" --solution-image "$SI@$SI_DIGEST" --care-fe-sha "$S" --fe-bundle local/wave6-exit/care_fe.tar.gz)
+solutions/scripts/make-lock.sh "${COMMON[@]}" --version 2026.11.0 --notes "Phase 4 exit test: lock N."
+```
+
+Assert: make-lock prints the FE build id `X` (else the env of lumine differs from the default: stop and check `env.frontend`).
+
+```sh
+rsync -a --delete --rsync-path='sudo rsync' local/wave6-exit/dist/ lumine:/var/lib/care-pi-dist/
+ssh lumine 'sudo care-pi config set updates.index_url=file:///var/lib/care-pi-dist/index/index.json'
+ssh lumine 'sudo care-pi update check && sudo care-pi update status --json' | tee local/wave6-exit/20-check-n.json
+ssh lumine 'sudo care-pi update apply --now' | tee local/wave6-exit/21-apply-n.txt
+ssh lumine 'sudo grep -A3 "^solution:" /etc/care-pi/lock.yaml; sudo care-pi status'
+```
+
+Assert: the check gives `update_available: true`, target `2026.11.0`; the apply has the steps of `docs/solutions.md`
+section 8.1 (`fetch-lock` … `prune-images`); `lock.yaml` has `solution.version: "2026.11.0"`, `source: lock`;
+the images run by digest (`podman ps --format '{{.Image}}'`); Care is healthy.
+
+### 3. Criterion 1: N → N+1 inside the window (the timer)
+
+N+1 differs from N in one plug default: `care_fasterappointments_fe` is on. The FE build id stays `X` (superset rule).
+
+```sh
+sed '/- id: care_fasterappointments_fe/,/enabled:/ s/enabled: false/enabled: true/' solutions/care-clinic/solution.yaml > local/wave6-exit/solution-n1.yaml
+solutions/scripts/make-lock.sh "${COMMON[@]}" --solution-file local/wave6-exit/solution-n1.yaml --version 2026.11.1 --notes "Phase 4 exit test: lock N+1."
+rsync -a --delete --rsync-path='sudo rsync' local/wave6-exit/dist/ lumine:/var/lib/care-pi-dist/
+```
+
+Open a window that starts in 5 minutes on lumine (host time zone), and turn on automatic updates:
+
+```sh
+ssh lumine 'd=$(date +%a); s=$(date -d "+5 min" +%H:%M); e=$(date -d "+65 min" +%H:%M);
+  sudo care-pi config set updates.auto=true "updates.window={\"days\":[\"$d\"],\"start\":\"$s\",\"end\":\"$e\"}" --apply;
+  systemctl list-timers "care-update-*" --no-pager'
+ssh lumine 'sudo care-pi update check && sudo care-pi update status --json' | tee local/wave6-exit/30-check-n1.json
+```
+
+Start the watcher on lumine before the window opens (1 line each second: time, HTTP status of `/`, `maintenance{}`):
+
+```sh
+ssh lumine 'H=$(sudo care-pi config show --json | jq -r .identity.hostname).local; IP=$(hostname -I | cut -d" " -f1);
+  nohup bash -c "while :; do printf \"%s %s %s\n\" \$(date +%T) \$(curl -sk --resolve $H:443:$IP -o /dev/null -w %{http_code} https://$H/) \"\$(curl -sk --resolve $H:443:$IP https://$H/_care-pi/status | jq -c .maintenance)\"; sleep 1; done" > ~/p4-watch.log 2>&1 &
+  echo $! > ~/p4-watch.pid'
+```
+
+Wait for `care-update-apply.timer` (the window start plus at most the random delay: 10 min for a 60 min window).
+Do not start the service by hand: the timer is part of the criterion. Then:
+
+```sh
+ssh lumine 'journalctl -u care-update-apply.service --no-pager -o short-iso' | tee local/wave6-exit/31-timer-journal.txt
+ssh lumine 'sudo care-pi jobs list --json | jq ".items[0]"' | tee local/wave6-exit/32-job.json
+ssh lumine 'sudo care-pi update history --json --limit 2; sudo grep -A6 "^solution:" /etc/care-pi/lock.yaml; sudo grep -A2 "^history:" /etc/care-pi/lock.yaml; sudo ls /var/lib/care-pi/state/locks/ | tail -3'
+ssh lumine 'kill "$(cat ~/p4-watch.pid)"; cat ~/p4-watch.log' > local/wave6-exit/33-watch.log
+```
+
+Assert:
+
+- The job is `update-apply`, `source: timer`, `succeeded`; its start is inside the window; the steps are the list of section 8.1.
+- `33-watch.log`: `503` with `maintenance.active: true` from `cutover-maintenance-on` to `maintenance-off`, the step text
+  changes (`stop`, `checkpoint`, `migrate`, `start`, `verify`), then `200`. Record the downtime (first and last `503`).
+- `lock.yaml`: `solution.version: "2026.11.1"`, `history.previous` names the file of 2026.11.0 in `state/locks/`.
+- `curl -sk https://<host>/api/v1/plug_config/ | jq '.results[] | {slug, url: .meta.url}'` lists `care_fasterappointments_fe`
+  with its `pages.dev` URL; `care-pi status` is healthy; `/ping/` 200.
+- In a browser (laptop): open Care, log in, the plug loads (no `PluginEngine` error in the console of the browser).
+- The checkpoint: `sudo podman exec care-db pgbackrest --stanza=main info` has an incremental backup at the time
+  of the step `checkpoint`; the history entry has `checkpoint.restore_point: care-pi-<job id>`.
+- Memory: `MemoryPeak` of `care-pi.service` and of `care-pi-apt` (none here) stay under their caps.
+
+### 4. Criterion 2: a forced migration failure rolls back to N and offers PITR
+
+Here N is the running lock 2026.11.1, and the target is 2026.11.2: N with the broken image. The broken lock is not in
+`index.json`, so the `stable` track never sees it. Install it with `--lock-file`.
+
+```sh
+solutions/scripts/make-lock.sh --solution care-clinic --out local/wave6-exit/dist-broken --dist-base file:///var/lib/care-pi-dist/ \
+  --care-digest "$CARE_DIGEST" --solution-image "$SI@$BROKEN_DIGEST" --care-fe-sha "$S" --fe-bundle local/wave6-exit/care_fe.tar.gz \
+  --solution-file local/wave6-exit/solution-n1.yaml --version 2026.11.2 --notes "TEST ONLY: broken migrate."
+scp local/wave6-exit/dist-broken/lock-care-clinic-2026.11.2/care-clinic-2026.11.2.lock.yaml lumine:p4-broken.lock.yaml
+ssh lumine 'sudo care-pi config set env.backend.CARE_PI_TEST_FAIL_MIGRATE=\"1\" --apply'   # the normal image ignores it
+ssh lumine 'sudo care-pi update apply --lock-file ~/p4-broken.lock.yaml --now; echo exit $?' | tee local/wave6-exit/40-broken.txt
+ssh lumine 'sudo care-pi jobs list --json | jq ".items[0] | {kind, state, error, steps: [.steps[].action]}"' | tee local/wave6-exit/41-job.json
+ssh lumine 'sudo care-pi update status --json | jq ".last_result"; sudo grep -A3 "^solution:" /etc/care-pi/lock.yaml'
+ssh lumine 'journalctl -u care-beat.service --since -15min --no-pager | grep -m1 "forced migration failure"'
+```
+
+Assert:
+
+- The job is `failed`; the steps end with `checkpoint`, `activate`, `migrate`, `rollback`, `maintenance-off`;
+  `error.type` ends with `/problems/migration-failed`; `error.pitr_offer` has `available: true`, `checkpoint_at`,
+  `target_time`, `restore_point: care-pi-<job id>`, and `restore: {kind: pitr, target_time: …}`.
+- `last_result.outcome: rolled-back` with the same `pitr_offer`.
+- `lock.yaml` still has `solution.version: "2026.11.1"` (`write-lock` did not run); `care-api` runs the image of N+1;
+  `/ping/` 200; the maintenance page is off; the beat journal has the line of the forced failure.
+- Do **not** run the PITR: it removes the data after `target_time` and Phase 3 owns the restore test. With the owner's
+  approval only: `POST /api/v1/restore` with `pitr_offer.restore` (Phase 3), then check that Care starts.
+
+Clean up: `sudo care-pi config set env.backend.CARE_PI_TEST_FAIL_MIGRATE=null --apply`.
+
+Also check the manual rollback (`docs/solutions.md` section 9): `sudo care-pi update rollback` (recent authentication
+is for the API only) installs 2026.11.0 with the `pitr_offer` of the update of step 3; then `sudo care-pi update apply
+--version 2026.11.1 --now` returns to N+1. On `stable`, `update status` must show `update_available: true` after the
+rollback (the next window installs N+1 again).
+
+### 5. Criterion 3: plug switches give a working Care
+
+```sh
+ssh lumine 'sudo care-pi plugs list'
+ssh lumine 'sudo care-pi plugs set care_fasterappointments_fe --enabled=false --dry-run'   # path plug-config, no page
+ssh lumine 'sudo care-pi plugs set care_fasterappointments_fe --enabled=false --apply'
+ssh lumine 'sudo care-pi plugs set care_multihost_files_be --enabled=true --dry-run'       # path cutover (in the image)
+ssh lumine 'sudo care-pi plugs set care_multihost_files_be --enabled=true --apply'
+ssh lumine 'sudo care-pi plugs set care_multihost_files_be --enabled=default --apply'      # off again: path restart
+ssh lumine 'sudo care-pi plugs set care_fasterappointments_fe --enabled=default --apply'   # back to the lock (on)
+```
+
+Assert after each step:
+
+- The job `plug-change` succeeded with the path of its dry run (`plug-config`, `cutover`, `restart`).
+- `/api/v1/plug_config/` has the row of `care_fasterappointments_fe` only when the plug is on.
+- `/ping/` gives 200, `care-pi status` is healthy, and `journalctl -u care-api.service --since -10min` has no `ModuleNotFoundError`.
+- Multihost on: `sudo podman exec care-api sh -c 'echo "$ADDITIONAL_PLUGS"' | jq -r '.[].name'` lists `care_multihost_files_be`
+  (do not save this output: it can contain secrets); `rendered/care/additional-plugs.json` lists it without secrets.
+- In a browser: the login works, and the FE plug loads when it is on and is gone when it is off.
+- Record the downtime of each path (the watcher of step 3).
+
+### 6. Optional
+
+- `agent-too-old`: a lock with `--min-agent v99.0.0` in the index gives `update check` the problem `agent-too-old`
+  and `blocked.reason: agent-too-old`; nothing changes.
+- OS updates: `sudo care-pi update --os --check --json` (read only). `sudo care-pi update --os --now` runs
+  `apt-get full-upgrade` on lumine: only with the owner's approval. Check that `apt-mark showhold` lists the 6 packages after it.
+- Interruption: during `migrate` of a normal update, `sudo systemctl kill -s KILL care-pi.service`; at the restart the
+  agent marks the job `interrupted` and runs `update-rollback` (`reason: recovery <job id>`).
+
+Write the results as the section "Phase 4 exit test" below this plan, and update `09` §8h.

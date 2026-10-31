@@ -240,10 +240,12 @@ stopped with `missing steps: tls`).
   events `<id>.events.jsonl`. The id is `<UTC time>-<kind>`, for example `20261030T101500.123Z-apply`.
   The CLI and the agent write the same files, so `GET /jobs` and `care-pi jobs list` show the jobs of both.
 - The kinds `apply`, `setup`, `fe-build`, and `fe-prune` hold the apply lock `/run/care-pi/apply.lock`.
+  Phase 4 adds `update-stage`, `update-apply`, `update-rollback`, `os-update`, and `plug-change`. `update-check` does
+  not hold it: a check changes no file that apply reads.
   The agent waits 5 s for the lock, then gives `409 job-running` with `job_id`
   (`null` when a CLI command without a journal holds the lock).
-- Cancel: `POST /jobs/{id}/cancel` and `care-pi jobs cancel ID` write `<id>.cancel`. Only `fe-build` and
-  `support-bundle` jobs stop. Another job gives `409 job-not-cancellable`.
+- Cancel: `POST /jobs/{id}/cancel` and `care-pi jobs cancel ID` write `<id>.cancel`. Only `fe-build`,
+  `support-bundle`, and (Phase 4) `update-stage` jobs stop. Another job gives `409 job-not-cancellable`.
 - The agent keeps the last 100 jobs and each job of the last 30 days, and up to 20000 events for each job.
 - `GET /jobs/{id}/events` with `Accept: text/event-stream` gives SSE: `retry: 3000`, then each event with
   `id:`, `event:`, and `data:` (one line of JSON), then `done` and the end of the stream.
@@ -272,6 +274,8 @@ stopped with `missing steps: tls`).
 | `/var/lib/care-pi/state/jobs/<id>.json`, `<id>.events.jsonl`, `<id>.cancel` | Job journals, events, cancel requests | root 0600 |
 | `/var/lib/care-pi/state/support/` | The support bundles (`.tar.gz`, redacted) | root 0700 |
 | `/var/lib/care-pi/caddy/caddy/pki/authorities/local/root.crt` | The root CA of Caddy (the agent reads it for `/tls/root-ca`) | root |
+| `/var/lib/care-pi/state/{updates.json,update-history.jsonl,update-cache/,staging/,plug-config.json,images.json}` | Phase 4: the update state (`docs/solutions.md` section 6.4) | root 0600, directories 0700 |
+| `/etc/care-pi/secrets/plug-<id>.json` | Phase 4: the secret settings of one plug | root 0600 |
 
 ## 8. CLI parity
 
@@ -384,7 +388,39 @@ Stop the agent with Ctrl-C. To start again from an unclaimed device, remove `.de
 - The flow tests: claim, recovery codes, CSRF, the steps, finish, ready; a failed finish and a second finish with
   a new host name; a Phase 1 host; the lockout with a fake clock; SSE resume and heartbeat; `412` and `428`;
   the `Origin` check; the operations of later phases (`501`).
+- Phase 4: `updates_test.go` checks each operation of `docs/api/README.md` §14 (`/updates*`, `/plugs*`,
+  `/solutions*`) with success and problem responses, on a fake host with a local `file://` index of two locks
+  (`internal/update/updatetest`). `maintenance_test.go` checks `maintenance{}` in both statuses.
 - The body limits, a slow body, `Sec-Fetch-Site`, and a live socket (`limits_test.go`).
 - `internal/auth`, `internal/jobs`, and `internal/setup` have unit tests. `internal/auth` also checks that the
   locks stay after a restart and that the claim hint orders `claim_methods`. `agent/internal/render` has the golden
   tree `small-clinic-bootstrap` (setup mode).
+
+## 11. Phase 4: updates, plugs, and solutions
+
+The routes of `docs/api/README.md` §14 are implemented (wave 6a). `agent/internal/service/updates.go` holds the
+logic of each operation, and `agent/internal/server/updates.go` the handlers. The update machine is the package
+`agent/internal/update` (`docs/solutions.md` sections 7 to 12).
+
+| Operation | Job kind | Notes |
+|---|---|---|
+| `GET /updates`, `GET /updates/history` | — | Reads `state/updates.json`, the cached index, and the history. No network. |
+| `POST /updates/check` | `update-check` | A running check is returned as it is (`202` with the same job). With `updates.auto`, a check that finds a target that needs no local build starts `update-stage`. |
+| `POST /updates/stage` | `update-stage` | Care stays up. Cancellable. |
+| `POST /updates/apply` | `update-apply` | Without `now: true`, outside the window: `409 update-window-closed` with `next_window_at`. |
+| `POST /updates/rollback` | `update-rollback` | Recent authentication. `409 rollback-unavailable` without a previous lock. |
+| `GET /updates/os`, `POST /updates/os/apply`, `POST /updates/os/reboot` | `os-update` | Recent authentication for apply and reboot. apt runs in the transient unit `care-pi-apt`. |
+| `GET /plugs`, `PUT /plugs/{plug_id}`, `GET /plugs/{plug_id}/settings-schema` | `plug-change` | `PUT` writes `solution.plugs.<id>` and `secrets/plug-<id>.json`, and returns the plan (`dry_run=true` writes nothing). `apply=true` starts the job. |
+| `GET /solutions`, `/solutions/{name}`, `/solutions/{name}/locks/{version}` | — | The embedded solutions and locks, the update cache, and the cached index. |
+
+`GET /status` (both forms) has `updates` (the summary) and `maintenance` (`active`, `job_id`, `kind`, `step`,
+`started_at`). The maintenance page reads the public form (`GET /_care-pi/status`).
+
+The sandbox of `care-pi.service` does not change in Phase 4. The agent runs the work that needs more rights or memory
+in units outside its sandbox: apt (`systemd-run --unit care-pi-apt`), the write of `/etc/apt/apt.conf.d/52care-pi.conf`
+(`systemd-run … tee`), the local image build (`care-build-<solution>-build.service`), and the FE plug build
+(`care-plug-build.service`). `systemctl reboot` is a D-Bus call to systemd.
+
+At start, `care-pi serve` marks interrupted jobs, then runs `RecoverUpdates`: a cutover that a power loss
+interrupted rolls back (`docs/solutions.md` section 8.6).
+

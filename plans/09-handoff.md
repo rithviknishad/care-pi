@@ -430,3 +430,48 @@ units table on a phone; raw step names and a 26 s silent lock resolution on the 
 failed setup; 43 checks (25 directories) on the hardware step~~ (done, C); small items (duplicate `X-Content-Type-Options`,
 empty 502 on port 443 in setup mode, duplicate CLI lines). ~~Pre-existing, not changed: `npm run api:check` fails
 since `efc6f60` (the contract changed, `src/api/types.gen.ts` was not made again).~~ Passes since `e499906`.
+
+### 8h. Phase 4 wave 6a: solutions, locks, plugs, updates — server side and CI (2026-10-31)
+
+Code complete on the branch `phase-4-solutions`; not run on a Pi. The spec is `docs/solutions.md` (section 17 has the
+status of each part); the contract is `docs/api/openapi.yaml` 0.5.0 and `docs/api/README.md` §14.
+
+What exists:
+
+- **CI.** `solution-lock.yml` (dispatch: resolve, the solution image with each backend plug, the default FE bundle
+  through `fe-bundle.yml`, each FE plug bundle through `plug-bundle.yml`, the lock, the release `lock-<s>-<v>`, the job
+  summary), `solution-index.yml` (`index.json` from each lock release and `withdrawn.yaml` into the release `index`),
+  `plug-bundle.yml`. No pull request and no push: the owner commits each lock to `solutions/<s>/locks/`.
+  `solutions/scripts/make-lock.sh` (`make lock-local`) makes the same lock on a dev machine. Not run on GitHub yet.
+- **Agent.** Lock version 2 with the migration from version 1 (`internal/lock`); solution locks, `index.json`, schemas,
+  settings schemas (`internal/solution`); the window (`internal/window`); the update machine (`internal/update`):
+  index client, tracks `stable`/`pinned`/`custom`, jobs `update-check`/`-stage`/`-apply`/`-rollback` with the cutover,
+  automatic rollback, PITR offer, recovery after an interruption, OS updates, plug changes, image retention;
+  `plug_config` rows through `manage.py shell` (`internal/plugcfg`); plan actions `cutover` and `plug-config`; the
+  podman secret `care-additional-plugs`; the timers `care-update-{check,apply}`; the local backend build
+  (`care-build-<solution>.build`, 768M); the local FE plug build (experimental). Each §14 route; CLI `update`,
+  `plugs`, `solution`.
+- **Tests.** Fake host end-to-end of N → N+1 → rollback, migration failure → automatic rollback with the offer,
+  checkpoint failure, withdrawn lock, `agent-too-old`, bad hash, HTTPS index, OS update commands, plug plans and the
+  restart path, the window run, recovery; DST table tests; lock migration; contract tests of each §14 operation;
+  goldens (`custom-build` is new); quadlet `-dryrun` (podman 5.4.2) of the `.build` and the plug builder.
+
+Decisions (owner informed; details in `docs/solutions.md` section 17):
+
+- The checkpoint is the interface `update.Checkpointer` with the stub `update.PGBackRestStub` (incremental backup,
+  restore point, `pgbackrest check`, stanza `main`). At the merge with Phase 3, set `Updater.NewCheckpointer` to the
+  backup package in `service.Updater()`.
+- apt runs in the transient unit `care-pi-apt`; the sandbox of `care-pi.service` does not change.
+- The `.build` quadlet uses `PodmanArgs=--build-arg=…` (podman 5.4 has no `BuildArg=`).
+- The default index URL is the release asset `index/index.json` of this repository: HTTP 404 while it is private
+  (open point 1 of `docs/solutions.md`). Tests use `updates.index_url: file:///…`.
+- `prune-images` keeps the images of the current lock and of `history.previous`.
+- Migrate limit 20 min. An interrupted cutover after `activate` rolls back (no resume after `migrate`).
+
+Merge notes for Phase 3: the shared files got only additions (`paths`, `config`, `render.Model`, `plan` kinds, server
+routes, `jobs` kinds, `problem` slugs). `service.applyOptions` sets `apply.Options.Checkpoint`. The problem members
+`pitr_offer`, `next_window_at`, and `min_agent_version` are in `internal/problem`.
+
+Next step: the Phase 4 exit test on lumine after the merge: `08-spike-log.md`, "Phase 4 exit test — plan".
+It needs a superset solution image (dispatch `solution-image.yml` on the merge branch) and the test image
+`images/care-test/Containerfile.broken-migrate` (pushed to a test tag).
