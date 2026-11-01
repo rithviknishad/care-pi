@@ -117,6 +117,10 @@ const (
 	// ConsolePort is the port of the console origin (S48).
 	ConsolePort = 8443
 
+	// ClockTrusted records a clock that the browser set at the claim (S52): the clock gate passes, but the clock is
+	// not trusted until NTP synchronizes it. A synchronized clock deletes the file.
+	ClockTrusted = "/var/lib/care-pi/state/clock-trusted.json"
+
 	// Flag files in ModeDir. Caddy checks them on each request.
 	ModeClockWait   = "clock-wait"
 	ModeMaintenance = "maintenance"

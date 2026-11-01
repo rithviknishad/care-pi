@@ -121,6 +121,13 @@ The agent implements `docs/api/README.md` sections 2 to 4. Facts of the implemen
   Spike SP10 read the user-data generator of rpi-imager and tested the method in a container boot of the image
   (`image/scripts/boot-test.sh`); a test on a Pi that Imager flashed is still to do. The code is behind the interface
   `auth.OSPassword`.
+- **Clock from the browser** (S52, `docs/api/README.md` section 16). The claim body has `client_time`. After the claim
+  secret is correct, and before the account and the session, `auth.Manager.ClaimWith` calls `Service.ClockFromBrowser`:
+  when NTP did not synchronize the clock and the time is plausible (after the build time of the agent, and before 10
+  years after it), the agent runs `date -u -s @<seconds>` and `fake-hwclock save` in the transient unit
+  `care-pi-clock-set`, writes `state/clock-trusted.json`, and reloads Caddy 2 s later. `GET /status` and
+  `GET /_care-pi/status` give `clock.source` and `clock.trusted`; a status read with a synchronized clock deletes the
+  record. The console shows "Clock not trusted" in the top bar until then.
 - **Sessions.** `/var/lib/care-pi/state/sessions.json` (root 0600) has the SHA-256 of each session id. A restart
   of the agent keeps the sessions. Idle timeout 2 h, absolute timeout 24 h (S49), 10 sessions at most.
   The cookie is `__Host-care_pi_session=<id>; Path=/; Max-Age=86400; HttpOnly; Secure; SameSite=Strict`.
@@ -285,6 +292,7 @@ stopped with `missing steps: tls`).
 | `/var/lib/care-pi/state/auth-unlock` | The unlock request of `care-pi auth unlock` | root 0600 |
 | `/var/lib/care-pi/state/auth-locks.json` | The claim lock, the address locks, and the failed attempts | root 0600 |
 | `/var/lib/care-pi/state/claim-hint` | The claim method that the operator has (`claim-code` after bootstrap), until the claim | root 0600 |
+| `/var/lib/care-pi/state/clock-trusted.json` | S52: the clock that the browser set at the claim, until NTP synchronizes the clock | root 0600 |
 | `/var/lib/care-pi/state/jobs/<id>.json`, `<id>.events.jsonl`, `<id>.cancel` | Job journals, events, cancel requests | root 0600 |
 | `/var/lib/care-pi/state/support/` | The support bundles (`.tar.gz`, redacted) | root 0700 |
 | `/etc/care-pi/secrets/recovery.key`, `recovery.key.pending` | The recovery key (64 hex digits). Never in a response, except `GET /backups/recovery-key` and its download. | root 0600 |

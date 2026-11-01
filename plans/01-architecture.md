@@ -240,6 +240,14 @@ Clock feasibility (your Q7): yes.
 - `fake-hwclock` (present on Pi OS) restores the *shutdown* time at boot — monotonic but wrong — so it is never treated as trusted time. The build-timestamp check is a last-resort sanity floor only.
 - Until the gate passes Care is not started; Caddy shows "Waiting for a reliable clock" with the reason.
 
+**Without internet (S52, `docs/api/README.md` §16).** At the claim the console sends the time of the browser
+(`client_time`). When NTP is not synchronized and the time is plausible (after the build time of the agent, before 10 years
+after it), the agent sets the clock one time (`date -s` and `fake-hwclock save` in a transient unit, so
+`systemd-timesyncd` keeps running) and records `state/clock-trusted.json` (source `browser`, not trusted). `care-pi clock
+wait` then tries NTP for 20 s more and passes with that clock, and reloads Caddy. `GET /status` and `/_care-pi/status` show
+`clock.source` (`ntp`, `browser`, `rtc`, `none`) and `clock.trusted`; the console shows a "clock not trusted" banner until
+NTP synchronizes the clock, which deletes the record. The RTC policy (SP9) comes later.
+
 ## 8. Memory budget and presets
 
 2 GB total; the kernel + Pi OS Lite baseline is ~120 MB with avahi/journald. Figures below

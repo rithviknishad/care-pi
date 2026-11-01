@@ -37,7 +37,7 @@ export default function ClaimPage() {
   const [codes, setCodes] = useState<{ codes: string[]; at: string } | null>(null);
 
   const claim = useMutation({
-    mutationFn: (body: { method: ClaimMethod; secret: string; new_password: string }) =>
+    mutationFn: (body: { method: ClaimMethod; secret: string; new_password: string; client_time: string }) =>
       call(api.POST("/session/claim", { body })),
     onSuccess: (res) => {
       storeSession(res.session);
@@ -132,6 +132,8 @@ export default function ClaimPage() {
       method: current,
       secret: current === "claim-code" ? formatClaimCode(secret) : secret,
       new_password: password,
+      // S52: a device without internet sets its clock from the browser at the claim (docs/api/README.md section 16).
+      client_time: new Date().toISOString(),
     });
   };
 

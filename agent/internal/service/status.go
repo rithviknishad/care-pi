@@ -100,6 +100,9 @@ type ClockStatus struct {
 	Time         time.Time `json:"time"`
 	Timezone     string    `json:"timezone"`
 	RTCPresent   bool      `json:"rtc_present"`
+	// Source and Trusted (S52): ntp (trusted), browser (the time of the browser at the claim), rtc, or none.
+	Source  string `json:"source"`
+	Trusted bool   `json:"trusted"`
 }
 
 // NetworkSummary is the network part of the status (schema NetworkSummary).
@@ -316,9 +319,7 @@ func (s *Service) mdnsAdvertised(ctx context.Context) *string {
 func (s *Service) clockStatus(ctx context.Context, cfg *config.Config) ClockStatus {
 	c := ClockStatus{Policy: cfg.Clock.Policy, Gate: "passed", Time: s.now().Truncate(time.Second), Timezone: timezone(s.Paths),
 		RTCPresent: fileExists(s.Paths.Abs("/dev/rtc0"))}
-	if s.Host != nil && s.Host.Clock != nil {
-		c.Synchronized, _ = s.Host.Clock.NTPSynchronized(ctx)
-	}
+	c.Source, c.Trusted, c.Synchronized = s.clockState(ctx)
 	if fileExists(s.Paths.Abs(paths.ModeDir + "/" + paths.ModeClockWait)) {
 		c.Gate = "waiting"
 	}
@@ -493,6 +494,8 @@ type PublicStatus struct {
 	Clock        struct {
 		Policy       string `json:"policy"`
 		Synchronized bool   `json:"synchronized"`
+		Source       string `json:"source"`
+		Trusted      bool   `json:"trusted"`
 	} `json:"clock"`
 	CareHealthy bool               `json:"care_healthy"`
 	Job         *PublicJobProgress `json:"job"`
@@ -562,9 +565,7 @@ func (s *Service) PublicStatus(ctx context.Context) *PublicStatus {
 		DisplayName: cfg.Identity.DisplayName, ConsolePort: paths.ConsolePort, CareHealthy: s.careHealthy(ctx),
 		Time: s.now().Truncate(time.Second), Maintenance: s.Maintenance()}
 	p.Clock.Policy = cfg.Clock.Policy
-	if s.Host != nil && s.Host.Clock != nil {
-		p.Clock.Synchronized, _ = s.Host.Clock.NTPSynchronized(ctx)
-	}
+	p.Clock.Source, p.Clock.Trusted, p.Clock.Synchronized = s.clockState(ctx)
 	if p.SetupState != setup.Ready {
 		p.FirstbootError = s.firstbootError()
 	}

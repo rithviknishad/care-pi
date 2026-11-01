@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "@/api/client";
 import type { ClaimMethod } from "@/api/types";
 import ClaimPage from "@/features/claim/claim-page";
 import { looksLikeClaimCode } from "@/lib/codes";
@@ -79,6 +80,26 @@ describe("claim page", () => {
     renderPage();
     await userEvent.type(screen.getByLabelText(OS_LABEL), "4f7k-q2mx-9pda and more");
     expect(screen.getByLabelText(OS_LABEL)).toHaveValue("4f7k-q2mx-9pda and more");
+  });
+
+  it("sends the time of the browser with the claim (S52)", async () => {
+    status.methods = ["claim-code", "os-password"];
+    const post = vi.spyOn(api, "POST").mockResolvedValue({
+      data: undefined,
+      error: { type: "about:blank", title: "x", status: 401 },
+      response: new Response(null, { status: 401 }),
+    } as never);
+    renderPage();
+    await userEvent.type(screen.getByLabelText(CODE_LABEL), "4F7K-Q2MX-9PDA");
+    await userEvent.type(screen.getByLabelText("New console password"), "a long console password");
+    await userEvent.type(screen.getByLabelText("Type the password again"), "a long console password");
+    const before = Date.now();
+    await userEvent.click(screen.getByRole("button", { name: "Claim the device" }));
+    expect(post).toHaveBeenCalledTimes(1);
+    const body = (post.mock.calls[0]![1] as { body: { client_time: string } }).body;
+    expect(body.client_time).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+    expect(Math.abs(Date.parse(body.client_time) - before)).toBeLessThan(10_000);
+    post.mockRestore();
   });
 
   it("keeps the Imager password field after the operator chose it", async () => {

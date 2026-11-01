@@ -624,6 +624,15 @@ state and the buttons; the slot is always there. Below 640 px it takes the place
 on 2 lines ("Maintenance in progress" and the step). The top bar keeps its height (56 px). The dashboard shows the same
 text first in its problems (`Status.maintenance`), and its state is "Maintenance".
 
+### 11.6.1 The clock banner (S52)
+
+`clock` of `GET /_care-pi/status` (`docs/api/README.md` section 16): while `clock.trusted` is `false`, the top bar shows
+"Clock not trusted" and the reason of `clock.source` (`browser`: the clock came from the browser at the claim; `rtc`; `none`)
+in the slot of the maintenance banner. The maintenance banner wins the slot while it shows. Below 640 px it takes the place
+of the device name, on 2 lines. The operator cannot close it; it goes at the next status read (each 15 s) after NTP
+synchronizes the clock. The claim page sends `client_time` (`new Date().toISOString()`). Tests: `tests/clock-banner.test.tsx`,
+`tests/claim-page.test.tsx`, and `e2e/clock.spec.ts` (the mock option `clock: "untrusted"`).
+
 ### 11.7 Copy
 
 The texts use the words of the operator: "Download the update" (stage), "Install now" (apply), "Roll back",

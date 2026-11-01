@@ -144,6 +144,15 @@ The Phase 6 options (`docs/console-ui.md` section 12.4):
 curl -X POST http://127.0.0.1:4011/__mock/reset -d '{"scenario":"ready","connectivity":"migrated","tailscale_login":"manual"}'
 ```
 
+The clock option (S52, also `MOCK_CLOCK=<clock>`): `clock` `ok` (default: NTP) or `untrusted` (no NTP). With `untrusted`,
+the claim records `client_time` (`GET /__mock/state` has it in `clock`) and the clock comes from the browser; a claimed
+scenario starts with the clock of the browser. The top bar then shows "Clock not trusted" until `POST /__mock/ntp-sync`.
+
+```sh
+curl -X POST http://127.0.0.1:4011/__mock/reset -d '{"scenario":"unclaimed","clock":"untrusted"}'
+curl -X POST http://127.0.0.1:4011/__mock/ntp-sync
+```
+
 ## 4. Work with the Go dev server
 
 The agent has a dev listener for console work (`docs/console-server.md` section 9).

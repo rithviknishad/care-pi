@@ -11,6 +11,7 @@
 //   curl -X POST localhost:4011/__mock/reset -d '{"scenario":"ready","backups":"degraded"}'
 //   MOCK_SCENARIO=restore node mock/server.mjs   (a claimed device with the backup disk of an old device)
 //   curl -X POST localhost:4011/__mock/reset -d '{"scenario":"ready","connectivity":"migrated"}'   (lib/connectivity.mjs)
+//   curl -X POST localhost:4011/__mock/reset -d '{"scenario":"unclaimed","clock":"untrusted"}'   (S52; then POST /__mock/ntp-sync)
 //
 // Credentials: claim code 4F7K-Q2MX-9PDA, Imager password "imager-password",
 // console password of the ready scenario "correct horse battery staple", TOTP code 000000.
@@ -121,6 +122,12 @@ async function control(req, res, pathname) {
     });
     return true;
   }
+  // S52: NTP synchronizes the clock of the device (the scenario clock: untrusted).
+  if (pathname === "/__mock/ntp-sync" && req.method === "POST") {
+    state.clock = { ...state.clock, synchronized: true, source: "ntp", trusted: true };
+    sendJson(res, 200, { clock: state.clock });
+    return true;
+  }
   if (pathname === "/__mock/tailscale-login" && req.method === "POST") {
     sendJson(res, 200, tailscaleLogin(state));
     return true;
@@ -132,6 +139,7 @@ async function control(req, res, pathname) {
       claim_code: state.claimCode,
       recovery_codes: state.recoveryCodes,
       sessions: state.sessions.size,
+      clock: state.clock,
       file: state.file,
       // The recovery key of the old device of the restore journey, and the recovery key of this device.
       dr_words: DR_KEY.words,

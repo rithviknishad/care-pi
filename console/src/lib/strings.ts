@@ -1429,6 +1429,16 @@ export const strings = {
     updates: "Updates",
     plugs: "Solution and plugs",
   },
+  clock: {
+    untrusted: "Clock not trusted",
+    // The title of the banner for each clock.source (docs/api/README.md section 16).
+    detail: {
+      browser:
+        "The clock of the device came from the browser at the claim. It becomes trusted when the device reaches a time server (NTP, needs internet).",
+      rtc: "The clock of the device comes from its RTC. It becomes trusted when the device reaches a time server (NTP, needs internet).",
+      none: "The device has no time server (NTP). Care starts when the clock is correct.",
+    } as Record<string, string>,
+  },
   maintenance: {
     banner: "Maintenance in progress: {step}",
     noStep: "Maintenance in progress",

@@ -260,9 +260,19 @@ func (s *Server) claim(c *reqCtx) error {
 		Method      *string `json:"method"`
 		Secret      *string `json:"secret"`
 		NewPassword *string `json:"new_password"`
+		ClientTime  *string `json:"client_time"`
 	}
 	if err := c.decode(&req, true); err != nil {
 		return err
+	}
+	// S52: the time of the browser, RFC 3339 with an offset.
+	var clientTime time.Time
+	if req.ClientTime != nil {
+		t, err := time.Parse(time.RFC3339Nano, *req.ClientTime)
+		if err != nil {
+			return problem.Invalid("/client_time", "use an RFC 3339 date-time with an offset, for example 2026-11-01T10:00:00.000Z", "format")
+		}
+		clientTime = t
 	}
 	switch {
 	case req.Method == nil:
@@ -277,7 +287,11 @@ func (s *Server) claim(c *reqCtx) error {
 	if err := lengthOK("/secret", *req.Secret, 1, 256); err != nil {
 		return err
 	}
-	g, err := s.a.Claim(c.client, *req.Method, *req.Secret, *req.NewPassword)
+	var verified func()
+	if !clientTime.IsZero() {
+		verified = func() { s.svc.ClockFromBrowser(c.r.Context(), clientTime) }
+	}
+	g, err := s.a.ClaimWith(c.client, *req.Method, *req.Secret, *req.NewPassword, verified)
 	if err != nil {
 		return err
 	}

@@ -20,6 +20,7 @@ import { Sheet, SheetBody, SheetContent, SheetHeader, SheetTitle, SheetTrigger }
 import { Skeleton } from "@/components/ui/skeleton";
 import { strings } from "@/lib/strings";
 import { cn } from "@/lib/utils";
+import { ClockBanner } from "./clock-banner";
 import { MaintenanceBanner } from "./maintenance-banner";
 import { NavList } from "./nav";
 import { ThemeToggle } from "./theme-toggle";
@@ -91,6 +92,9 @@ function AccountMenu() {
 export function TopBar({ session, menu }: { session: Session | null; menu?: ReactNode }) {
   const maintenance = useMaintenance(Boolean(session));
   const active = Boolean(session && maintenance.data?.maintenance?.active);
+  // S52: the banner "Clock not trusted" has the same slot; the maintenance banner wins it.
+  const clock = Boolean(session && maintenance.data?.clock && !maintenance.data.clock.trusted && !active);
+  const banner = active || clock;
   return (
     <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur print:hidden">
       <a
@@ -102,25 +106,27 @@ export function TopBar({ session, menu }: { session: Session | null; menu?: Reac
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 px-3 sm:gap-3 sm:px-4">
         {menu}
         <Brand />
-        <DeviceName session={session} phoneHidden={active} />
-        {/* Below 640 px the maintenance banner takes the place of the device name. */}
-        {active ? (
+        <DeviceName session={session} phoneHidden={banner} />
+        {/* Below 640 px the maintenance banner (or the clock banner) takes the place of the device name. */}
+        {banner ? (
           <div className="flex min-w-0 flex-1 sm:hidden">
-            <MaintenanceBanner enabled compact />
+            {active ? <MaintenanceBanner enabled compact /> : <ClockBanner enabled compact />}
           </div>
         ) : null}
         {/* From 640 px: the width of the longest state with a session ("Setup runs"), so a state change moves nothing.
             On a phone the name gets the space (the maintenance banner, while it shows). The buttons stay at the right edge. */}
-        <div className={cn("shrink-0 text-xs sm:w-[calc(10ch+1rem)]", active && "hidden sm:block")}>
+        <div className={cn("shrink-0 text-xs sm:w-[calc(10ch+1rem)]", banner && "hidden sm:block")}>
           {session ? (
             <Badge variant={session.setup_state === "ready" ? "success" : "info"} size="sm" data-testid="setup-state">
               {strings.setupState[session.setup_state] ?? session.setup_state}
             </Badge>
           ) : null}
         </div>
-        {/* From 640 px the maintenance banner has this slot. It is always there, so the banner moves nothing. */}
+        {/* From 640 px the maintenance banner has this slot (else the clock banner). It is always there, so a banner
+            moves nothing. */}
         <div className="hidden min-w-0 flex-1 basis-0 justify-center sm:flex">
           {session ? <MaintenanceBanner enabled /> : null}
+          {session ? <ClockBanner enabled /> : null}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-1">
           <ThemeToggle />

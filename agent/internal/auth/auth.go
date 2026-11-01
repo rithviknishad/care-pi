@@ -347,6 +347,12 @@ func weak(pointer, reason, code string) *problem.Problem {
 // Claim checks the claim secret, sets the password, makes 8 recovery codes, deletes the
 // claim code, and starts a session.
 func (m *Manager) Claim(c Client, method, secret, newPassword string) (*Grant, error) {
+	return m.ClaimWith(c, method, secret, newPassword, nil)
+}
+
+// ClaimWith is Claim. verified runs after the claim secret is checked and before the account and the session are
+// made (S52: the clock from the browser, so the session has the new clock). A failed claim never runs it.
+func (m *Manager) ClaimWith(c Client, method, secret, newPassword string, verified func()) (*Grant, error) {
 	if err := m.gate(c); err != nil {
 		return nil, err
 	}
@@ -379,6 +385,9 @@ func (m *Manager) Claim(c Client, method, secret, newPassword string) (*Grant, e
 		m.Limits.FailClaim()
 		m.audit("claim failed", c, "method", method)
 		return nil, problem.New(problem.BadCredentials, "The claim secret is not correct.")
+	}
+	if verified != nil {
+		verified()
 	}
 	hash, err := HashPassword(newPassword, m.params)
 	if err != nil {

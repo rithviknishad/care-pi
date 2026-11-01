@@ -87,6 +87,7 @@ function freshSteps() {
 
 // scenario: unclaimed | setup | review | ready | restore (claimed, with the backup disk of an old device).
 // backups (scenario ready only): ok | degraded | unconfirmed | no-destination | legacy (docs: console/README.md).
+// clock: ok (NTP) | untrusted (no NTP: the claim sets the clock from client_time; POST /__mock/ntp-sync trusts it).
 export function freshState(options = {}) {
   const scenario = options.scenario ?? "unclaimed";
   const backupsScenario = options.backups ?? process.env.MOCK_BACKUPS ?? "ok";
@@ -125,6 +126,7 @@ export function freshState(options = {}) {
     feBuilds: [],
     appliedHostname: "care",
     startedAt: now(),
+    clock: freshClock(options.clock ?? process.env.MOCK_CLOCK ?? "ok", scenario),
   };
   const fresh = freshBackups(scenario, backupsScenario);
   state.backups = fresh.backups;
@@ -184,6 +186,24 @@ export function freshState(options = {}) {
     state.feBuilds = [{ id: "8d2f0c1a9b7e", bytes: 13_421_772, modified_at: "2026-10-30T10:19:00Z", current: true }];
   }
   return state;
+}
+
+// freshClock is the clock of the device (S52). untrusted: no NTP; a claimed device has the clock of the browser.
+function freshClock(mode, scenario) {
+  if (mode !== "untrusted") return { mode: "ok", synchronized: true, source: "ntp", trusted: true, clientTime: null };
+  return {
+    mode,
+    synchronized: false,
+    source: scenario === "unclaimed" ? "none" : "browser",
+    trusted: false,
+    clientTime: null,
+  };
+}
+
+// clockView is the clock member of the public status: policy, synchronized, source, trusted.
+export function clockView(state) {
+  const c = state.clock;
+  return { policy: "ntp", synchronized: c.synchronized, source: c.source, trusted: c.trusted };
 }
 
 export function effectiveConfig(state) {

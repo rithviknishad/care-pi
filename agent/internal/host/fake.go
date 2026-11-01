@@ -47,6 +47,17 @@ func (f *Fake) On(cmdline string, rs ...Response) *Fake {
 	return f
 }
 
+// Set replaces the responses of a command line, and starts them again at the first one.
+func (f *Fake) Set(cmdline string, rs ...Response) *Fake {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.Script[cmdline] = rs
+	if f.pos != nil {
+		delete(f.pos, cmdline)
+	}
+	return f
+}
+
 // Run implements Runner.
 func (f *Fake) Run(_ context.Context, c Cmd) ([]byte, error) {
 	f.mu.Lock()

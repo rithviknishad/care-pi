@@ -116,6 +116,11 @@ When `care-pi bootstrap` makes the claim code, `claim_methods` lists `claim-code
 console shows the claim code field first. The console also switches to the claim code field when the
 operator types `XXXX-XXXX-XXXX` in the Imager password field.
 
+Contract 0.7.1 (S52): the claim body has `client_time`, the time of the browser (`new Date().toISOString()`). A device
+without internet has no NTP, so its clock gate does not pass. When the claim secret is correct and NTP did not
+synchronize the clock, the agent sets the clock one time from `client_time` before it makes the session. Section 16
+tells the rules.
+
 ### 2.3 The first-contact flow
 
 ```mermaid
@@ -1663,3 +1668,32 @@ Each operation of Phase 6 also returns `setup-incomplete` before the setup is fi
 | Wi-Fi | A secondary NetworkManager connection, not a bond (SP11). |
 | Rotate | `care-pi tls public rotate` is CLI only: the credentials change without a change of the name. |
 | `POST /tls/local-ca/rotate` | Stays `x-phase: 7`. A device on a new network needs it (`local_ca.uncovered`). |
+
+## 16. Clock without internet (S52)
+
+The clock gate (`01` section 7) starts Care only with a correct clock. Policy `ntp` waits for an NTP synchronization. A Pi
+without internet has no NTP, and a Pi 4 has no RTC, so the install at the end of the setup waited (`docs/image.md` section
+10, point 5). The owner decided S52: the browser gives the time at the claim.
+
+| Item | Rule |
+|---|---|
+| The request | `POST /session/claim` has the optional `client_time` (RFC 3339 with an offset). The console sends `new Date().toISOString()`. A value that is not a date-time gives `422 invalid-request` (`/client_time`). |
+| When the agent sets the clock | Only after the claim secret is correct (a failed claim never changes the clock), and before the agent makes the account and the session (so the session has the new clock). Only when NTP did not synchronize the clock (`timedatectl show -p NTPSynchronized`), when the browser did not set it before, and when the time is plausible: after the build time of the agent, and before 10 years after it. Else the agent ignores `client_time`. |
+| How | `date -u -s @<seconds>` and `fake-hwclock save`, in the transient unit `care-pi-clock-set`. `timedatectl set-time` refuses while NTP is on, and `set-ntp false` would stop `systemd-timesyncd`; with `date`, timesyncd keeps running and corrects the clock when an NTP server answers. `fake-hwclock` keeps the time over a reboot. |
+| The record | `/var/lib/care-pi/state/clock-trusted.json`: `{"trusted": false, "source": "browser", "set_at", "host_time_before"}`. |
+| The gate | `care-pi clock wait` (in `care-clock.service`) passes on NTP, or, when the record exists, after 20 s more of NTP tries. It reloads Caddy in both cases. The record stays over a reboot: the next boot passes with the clock of `fake-hwclock`. |
+| Caddy | After the jump, the agent reloads Caddy (`caddy reload --force`, 2 s after the claim, so the answer of the claim goes out first): the local leaf certificates (12 h) and the intermediate were made with the old clock. The claim never restarts Caddy. |
+| Trusted | `clock.source` (`ClockSource`: `ntp`, `browser`, `rtc`, `none`) and `clock.trusted` in `GET /status` (`ClockStatus`) and `GET /_care-pi/status`. `trusted` is `true` only with `source: ntp`. At each read of the status (and in `clock wait`), a synchronized clock deletes the record. |
+| The console | The banner "Clock not trusted" in the slot of the maintenance banner of the top bar (the slot is always there, so the banner moves nothing). It shows with a session while `clock.trusted` is `false`, and it goes at the next status read after NTP. The operator cannot close it. |
+
+The RTC policy (`clock.policy: rtc`, SP9) comes later. An NTP server on the LAN also works: then the gate passes on NTP.
+
+### 16.1 Changes of contract 0.7.1
+
+All changes are additive.
+
+- `ClaimRequest.client_time` (S52).
+- `ClockStatus.source` and `ClockStatus.trusted`; `PublicStatus.clock.source` and `PublicStatus.clock.trusted`; the schema
+  `ClockSource` (S52).
+- `PublicStatus.firstboot_error`: why the first boot of the image did not use the pre-seed (`docs/image.md` section 5).
+  The claim page of the console and the setup page on port 443 show it until the setup is finished.

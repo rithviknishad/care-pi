@@ -2476,7 +2476,9 @@ export interface components {
          *       "console_port": 8443,
          *       "clock": {
          *         "policy": "ntp",
-         *         "synchronized": true
+         *         "synchronized": true,
+         *         "source": "ntp",
+         *         "trusted": true
          *       },
          *       "care_healthy": false,
          *       "job": null,
@@ -2498,7 +2500,9 @@ export interface components {
          *       "console_port": 8443,
          *       "clock": {
          *         "policy": "ntp",
-         *         "synchronized": true
+         *         "synchronized": true,
+         *         "source": "ntp",
+         *         "trusted": true
          *       },
          *       "care_healthy": false,
          *       "job": {
@@ -2548,6 +2552,9 @@ export interface components {
                 policy: "ntp" | "rtc";
                 /** @description The clock gate passed. */
                 synchronized: boolean;
+                source: components["schemas"]["ClockSource"];
+                /** @description Contract 0.7.1 (S52). `true` only when NTP synchronized the clock. The console shows a banner while it is `false`. */
+                trusted: boolean;
             };
             /** @description care-api is active and healthy. */
             care_healthy: boolean;
@@ -2836,7 +2843,8 @@ export interface components {
          * @example {
          *       "method": "claim-code",
          *       "secret": "4F7K-Q2MX-9PDA",
-         *       "new_password": "correct horse battery staple"
+         *       "new_password": "correct horse battery staple",
+         *       "client_time": "2026-11-01T10:15:00.000Z"
          *     }
          */
         ClaimRequest: {
@@ -2849,6 +2857,16 @@ export interface components {
              */
             secret: string;
             new_password: components["schemas"]["Password"];
+            /**
+             * Format: date-time
+             * @description Contract 0.7.1 (S52, design note section 16). The time of the browser, RFC 3339 with an offset (the console
+             *     sends `new Date().toISOString()`). When the claim secret is correct and NTP did not synchronize the clock,
+             *     the agent sets the clock one time from it, before it makes the session: the time must be after the build time
+             *     of the agent and before 10 years after it. The clock gate then passes; `clock.trusted` stays `false` until NTP
+             *     synchronizes the clock. An agent ignores it when NTP synchronized the clock or the time is not plausible.
+             * @example 2026-11-01T10:15:00.000Z
+             */
+            client_time?: string;
         };
         /**
          * @description The new session and the 8 recovery codes. The agent shows the codes only in this response.
@@ -3962,7 +3980,9 @@ export interface components {
          *         "gate": "passed",
          *         "time": "2026-10-30T11:00:00Z",
          *         "timezone": "Asia/Kolkata",
-         *         "rtc_present": true
+         *         "rtc_present": true,
+         *         "source": "ntp",
+         *         "trusted": true
          *       },
          *       "network": {
          *         "mdns_configured": "care.local",
@@ -4388,7 +4408,19 @@ export interface components {
          *       "gate": "passed",
          *       "time": "2026-10-30T11:00:00Z",
          *       "timezone": "Asia/Kolkata",
-         *       "rtc_present": true
+         *       "rtc_present": true,
+         *       "source": "ntp",
+         *       "trusted": true
+         *     }
+         * @example {
+         *       "policy": "ntp",
+         *       "synchronized": false,
+         *       "gate": "passed",
+         *       "time": "2026-11-01T10:20:00Z",
+         *       "timezone": "Asia/Kolkata",
+         *       "rtc_present": false,
+         *       "source": "browser",
+         *       "trusted": false
          *     }
          */
         ClockStatus: {
@@ -4416,7 +4448,23 @@ export interface components {
             timezone: string;
             /** @description `/dev/rtc0` exists. */
             rtc_present: boolean;
+            source: components["schemas"]["ClockSource"];
+            /**
+             * @description Contract 0.7.1 (S52). `true` only when NTP synchronized the clock (`source: ntp`). The console shows the banner
+             *     "clock not trusted" while it is `false`. The agent checks NTP at each status read; when NTP synchronizes the
+             *     clock, it deletes the record of the browser time (`state/clock-trusted.json`).
+             */
+            trusted: boolean;
         };
+        /**
+         * @description Contract 0.7.1 (S52). Where the clock of the host comes from now:
+         *     `ntp` NTP synchronized it; `browser` the agent set it from the time of the browser at the claim (no NTP since);
+         *     `rtc` the host has an RTC (`/dev/rtc0`) and no NTP (the battery is not verified, SP9); `none` none of them (the
+         *     clock gate waits).
+         * @example browser
+         * @enum {string}
+         */
+        ClockSource: "ntp" | "browser" | "rtc" | "none";
         /**
          * @description The network members that `hostnames`, `addresses`, and `published` do not give. `GET /network` has the full state.
          * @example {

@@ -89,11 +89,12 @@ To add a subcommand, add one file in `cmd/care-pi/`. Register the command on `ro
 | `internal/dnsclient` (Phase 6) | The client of the DNS/ACME service (`services/dns/API.md`): the Ed25519 signatures, register, address, status, rotate, delete, retries. `Fake` is an `httptest` server of the same protocol. |
 | `internal/tailscale` (Phase 6) | `tailscale status --json`, the install in the transient unit `care-pi-tailscale-install`, `up` with an auth key file or the login link (`care-pi-tailscale-up`), `down`, `logout`. |
 | `internal/wifi` (Phase 6) | The NetworkManager connection `care-pi-wifi`: the keyfile (through `care-pi-wifi-keyfile`), the scan, the country, the link state, the route check, remove. |
+| `internal/clockgate` (S52) | The clock without internet: the time of the browser at the claim (plausible, one time), the record `state/clock-trusted.json`, the source and the trust of the clock, and the Caddy reload after a jump. |
 
 The agent runs `systemctl`, `systemd-run`, `podman`, `skopeo`, `journalctl`, `timedatectl`, and `hostnamectl` as commands.
 Phase 4 adds `dpkg-query`, `apt-cache`, and, in the transient unit `care-pi-apt`, `apt-get` and `apt-mark`.
 Phase 6 adds `nmcli`, `ip route`, `tailscale`, and, in transient units, `apt-get install tailscale`, `raspi-config` (or `iw`),
-and the write of the Wi-Fi keyfile.
+and the write of the Wi-Fi keyfile. S52 adds `date -s` and `fake-hwclock save` in the transient unit `care-pi-clock-set`.
 It reads git refs over HTTPS, so the host needs no git.
 
 ## Tests

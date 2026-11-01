@@ -7,7 +7,17 @@ import { Problem, sendJson } from "./http.mjs";
 import { APPLY_STEPS, FE_BUILD_STEPS, runningHostJob, startJob, summary } from "./jobs.mjs";
 import { backupsOverview } from "./backups-logic.mjs";
 import { validateDestinations } from "./restore-api.mjs";
-import { ADDRESS, PRESETS, effectiveConfig, etagOf, hostCheck, network, now, presetMemory } from "./state.mjs";
+import {
+  ADDRESS,
+  PRESETS,
+  clockView,
+  effectiveConfig,
+  etagOf,
+  hostCheck,
+  network,
+  now,
+  presetMemory,
+} from "./state.mjs";
 import { agentVersion, maintenanceOf, runningIdentity, updatesSummary } from "./updates.mjs";
 import { publicHost, tailscaleHost, tlsSummary } from "./connectivity.mjs";
 
@@ -143,8 +153,7 @@ export function status(state) {
       },
     ],
     clock: {
-      policy: "ntp",
-      synchronized: true,
+      ...clockView(state),
       gate: "passed",
       time: now(),
       timezone: "Asia/Kolkata",
@@ -467,7 +476,7 @@ export const systemRoutes = [
         claim_methods: state.claimMethods,
         display_name: state.file.identity.display_name,
         console_port: 8443,
-        clock: { policy: "ntp", synchronized: true },
+        clock: clockView(state),
         care_healthy: state.setup.state === "ready",
         job: running
           ? {

@@ -74,6 +74,8 @@ type Service struct {
 	DNSBackoff time.Duration
 	CertWait   time.Duration
 	LoginWait  time.Duration
+	// ClockReloadDelay is the wait before care-caddy reloads after the claim set the clock (S52). 0: 2 s.
+	ClockReloadDelay time.Duration
 
 	mu           sync.Mutex
 	carePassword string

@@ -4718,7 +4718,7 @@ components:
           type: object
           additionalProperties: false
           description: The clock gate (`01` §7).
-          required: [policy, synchronized]
+          required: [policy, synchronized, source, trusted]
           properties:
             policy:
               type: string
@@ -4727,6 +4727,11 @@ components:
             synchronized:
               type: boolean
               description: The clock gate passed.
+            source:
+              $ref: '#/components/schemas/ClockSource'
+            trusted:
+              type: boolean
+              description: Contract 0.7.1 (S52). `true` only when NTP synchronized the clock. The console shows a banner while it is `false`.
         care_healthy:
           type: boolean
           description: care-api is active and healthy.
@@ -4757,6 +4762,8 @@ components:
           clock:
             policy: ntp
             synchronized: true
+            source: ntp
+            trusted: true
           care_healthy: false
           job: null
           time: '2026-10-30T10:15:00Z'
@@ -4770,6 +4777,8 @@ components:
           clock:
             policy: ntp
             synchronized: true
+            source: ntp
+            trusted: true
           care_healthy: false
           job: {kind: update-apply, step: 'migrate: start care-beat.service', step_index: 9, step_count: 15, started_at: '2026-11-22T02:03:00Z'}
           time: '2026-11-22T02:06:10Z'
@@ -5065,10 +5074,21 @@ components:
           examples: [4F7K-Q2MX-9PDA]
         new_password:
           $ref: '#/components/schemas/Password'
+        client_time:
+          type: string
+          format: date-time
+          description: |
+            Contract 0.7.1 (S52, design note section 16). The time of the browser, RFC 3339 with an offset (the console
+            sends `new Date().toISOString()`). When the claim secret is correct and NTP did not synchronize the clock,
+            the agent sets the clock one time from it, before it makes the session: the time must be after the build time
+            of the agent and before 10 years after it. The clock gate then passes; `clock.trusted` stays `false` until NTP
+            synchronizes the clock. An agent ignores it when NTP synchronized the clock or the time is not plausible.
+          examples: ['2026-11-01T10:15:00.000Z']
       examples:
         - method: claim-code
           secret: 4F7K-Q2MX-9PDA
           new_password: correct horse battery staple
+          client_time: '2026-11-01T10:15:00.000Z'
     ClaimResponse:
       type: object
       additionalProperties: false
@@ -6155,6 +6175,8 @@ components:
             time: '2026-10-30T11:00:00Z'
             timezone: Asia/Kolkata
             rtc_present: true
+            source: ntp
+            trusted: true
           network:
             mdns_configured: care.local
             mdns_advertised: care.local
@@ -6478,7 +6500,7 @@ components:
       type: object
       additionalProperties: false
       description: The clock and the clock gate (`01` §7).
-      required: [policy, synchronized, gate, time, timezone, rtc_present]
+      required: [policy, synchronized, gate, time, timezone, rtc_present, source, trusted]
       properties:
         policy:
           type: string
@@ -6502,6 +6524,14 @@ components:
         rtc_present:
           type: boolean
           description: '`/dev/rtc0` exists.'
+        source:
+          $ref: '#/components/schemas/ClockSource'
+        trusted:
+          type: boolean
+          description: |
+            Contract 0.7.1 (S52). `true` only when NTP synchronized the clock (`source: ntp`). The console shows the banner
+            "clock not trusted" while it is `false`. The agent checks NTP at each status read; when NTP synchronizes the
+            clock, it deletes the record of the browser time (`state/clock-trusted.json`).
       examples:
         - policy: ntp
           synchronized: true
@@ -6509,6 +6539,25 @@ components:
           time: '2026-10-30T11:00:00Z'
           timezone: Asia/Kolkata
           rtc_present: true
+          source: ntp
+          trusted: true
+        - policy: ntp
+          synchronized: false
+          gate: passed
+          time: '2026-11-01T10:20:00Z'
+          timezone: Asia/Kolkata
+          rtc_present: false
+          source: browser
+          trusted: false
+    ClockSource:
+      type: string
+      enum: [ntp, browser, rtc, none]
+      description: |
+        Contract 0.7.1 (S52). Where the clock of the host comes from now:
+        `ntp` NTP synchronized it; `browser` the agent set it from the time of the browser at the claim (no NTP since);
+        `rtc` the host has an RTC (`/dev/rtc0`) and no NTP (the battery is not verified, SP9); `none` none of them (the
+        clock gate waits).
+      examples: [browser]
     NetworkSummary:
       type: object
       additionalProperties: false

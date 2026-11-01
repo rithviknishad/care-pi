@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Systemd controls systemd units.
@@ -52,9 +54,10 @@ type Journal interface {
 	Show(ctx context.Context, unit string, follow bool, lines int) error
 }
 
-// Clock reads the time synchronisation state.
+// Clock reads the time synchronisation state, and sets the clock (S52).
 type Clock interface {
 	NTPSynchronized(ctx context.Context) (bool, error)
+	SetTime(ctx context.Context, t time.Time) error
 }
 
 // Host groups the clients that care-pi uses.
@@ -348,8 +351,23 @@ func (j ExecJournal) Show(ctx context.Context, unit string, follow bool, lines i
 	return err
 }
 
-// ExecClock runs timedatectl.
+// ExecClock runs timedatectl, and date to set the clock.
 type ExecClock struct{ R Runner }
+
+// SetClockUnit is the transient unit that sets the clock.
+const SetClockUnit = "care-pi-clock-set"
+
+// SetTime sets the system clock to t (S52: the time of the browser at the claim), to the second.
+// "date -s" sets the clock also while NTP is on: "timedatectl set-time" refuses that, and its "set-ntp false" would
+// stop systemd-timesyncd. timesyncd keeps running, and it corrects the clock when an NTP server answers.
+// "fake-hwclock save" (Raspberry Pi OS) keeps the time over a reboot without internet. The commands run in a
+// transient unit: care-pi.service cannot write /etc/fake-hwclock.data (ProtectSystem=strict).
+func (c ExecClock) SetTime(ctx context.Context, t time.Time) error {
+	script := `set -eu; date -u -s "@$1" >/dev/null; if command -v fake-hwclock >/dev/null 2>&1; then fake-hwclock save >/dev/null 2>&1 || true; fi`
+	_, err := c.R.Run(ctx, Cmd{Name: "systemd-run", Args: []string{"--wait", "--collect", "--pipe", "--quiet", "--unit=" + SetClockUnit,
+		"--", "/bin/sh", "-c", script, "sh", strconv.FormatInt(t.Unix(), 10)}})
+	return err
+}
 
 // NTPSynchronized implements Clock.
 func (c ExecClock) NTPSynchronized(ctx context.Context) (bool, error) {

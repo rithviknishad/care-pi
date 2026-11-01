@@ -135,6 +135,17 @@ export const authRoutes = [
           body.method === "claim-code" ? "The claim code is not correct." : "The password is not correct.",
         );
       checkPassword(body.new_password, "/new_password");
+      // S52: without NTP, the agent sets the clock from the browser after the claim secret is correct.
+      if (body.client_time !== undefined) {
+        const t = Date.parse(body.client_time);
+        if (typeof body.client_time !== "string" || Number.isNaN(t) || !/(Z|[+-]\d\d:\d\d)$/.test(body.client_time)) {
+          throw new Problem("invalid-request", "client_time is not an RFC 3339 date-time with an offset.", {
+            errors: [{ pointer: "/client_time", message: "use an RFC 3339 date-time with an offset", code: "format" }],
+          });
+        }
+        state.clock.clientTime = body.client_time;
+        if (!state.clock.synchronized && state.clock.source !== "browser") state.clock.source = "browser";
+      }
       success(state, ctx.address);
       state.claimed = true;
       state.claimMethods = [];

@@ -288,6 +288,8 @@ Open `https://<host name>.local:8443/` or `https://<IP address>:8443/`. The firs
 - The claim code is the fallback. Read it over SSH: `sudo care-pi auth claim-code`, or in
   `journalctl -u care-firstboot`. bootstrap does not record the claim hint `claim-code` on the image, because no
   terminal shows the code.
+- The claim also gives the time of the browser (S52). Without internet, the agent sets the clock from it, so the install
+  at the end of the setup does not wait for NTP. Use a computer or a phone with a correct clock for the claim.
 
 ### 6.3 The ACT LED
 
@@ -306,7 +308,7 @@ The image needs no internet for the first boot and for the setup:
 | Part | Without internet |
 |---|---|
 | Setup mode (Caddy, console, claim) | Works. The Caddy image comes from the solution lock in the cache. In setup mode, `care.target` does not wait for the clock gate. |
-| Install at the end of the setup | The lock comes from the dist snapshot. No pull (each image is in the storage), no FE build (the FE build of the lock exists), only the migrations and the first user. **But** the stack waits for the clock gate: with `clock.policy: ntp` (the only policy today), Care starts only after NTP synchronizes. Without internet and without an NTP server on the LAN, the install waits, and Caddy shows the clock page. This is open point 5 (section 10). |
+| Install at the end of the setup | The lock comes from the dist snapshot. No pull (each image is in the storage), no FE build (the FE build of the lock exists), only the migrations and the first user. The clock gate passes with the time of the browser (S52): the console sends it at the claim, and the agent sets the clock when NTP is not synchronized (`docs/api/README.md` section 16). The console shows "Clock not trusted" until the device reaches an NTP server. |
 | FE plugs with a built bundle | Work (pre-seeded). |
 | FE plugs with only a `url` (`requires_internet: true`, for example `care_onboarding_fe` today) | The browser cannot load them. Care works without them. |
 | A change of the frontend env (another FE build id) | Needs internet for the local FE build (`docs/fe.md`). |
@@ -378,9 +380,7 @@ For each device:
 3. `solution-lock.yml` does not start `pi-image.yml` (a release made with `GITHUB_TOKEN` starts no workflow). Run
    `pi-image.yml` by hand after a lock, or call it from `solution-lock.yml` (it adds about 50 minutes to a lock).
 4. The published index (`index` release) and its `index.json` must exist for the update after the first boot.
-5. **The clock gate without internet.** `clock.policy: ntp` waits for an NTP synchronization before Care starts
-   (`plans/01-architecture.md` section 7). A Pi without internet has no NTP; a Pi 4 has no RTC; the `rtc` policy waits for
-   SP9. So a first boot without internet reaches the claim and the wizard, but the install waits for the clock. The owner
-   must decide: for example a policy that takes the time of the browser at the claim (the console sends it, the agent sets
-   the clock when NTP is not synchronized), an NTP server on the LAN, or `rtc` after SP9. Until then, the Phase 5 exit
-   test needs an NTP source on the LAN (or internet for NTP only).
+5. ~~**The clock gate without internet.**~~ Resolved by S52: at the claim, the console sends the time of the browser, and
+   the agent sets the clock one time when NTP is not synchronized; the gate passes, and the console shows "Clock not
+   trusted" until NTP synchronizes the clock (`docs/api/README.md` section 16). After a reboot without internet the clock
+   continues from `fake-hwclock` (the time of its last save). The `rtc` policy still waits for SP9.
