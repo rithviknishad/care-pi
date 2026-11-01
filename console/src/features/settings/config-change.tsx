@@ -15,7 +15,7 @@ import { fmt, strings } from "@/lib/strings";
 
 const st = strings.settings;
 
-function Plan({ plan }: { plan: PlanPreview }) {
+export function Plan({ plan }: { plan: PlanPreview }) {
   if (!plan.changed) return <p className="text-sm">{st.noChange}</p>;
   return (
     <section className="flex flex-col gap-3 rounded-lg border p-4 text-sm" data-testid="plan-preview">

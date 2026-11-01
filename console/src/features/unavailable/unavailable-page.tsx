@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { fmt, strings } from "@/lib/strings";
 
 // A page of a later phase. The agent answers 501 not-implemented-in-this-version with the phase.
-export function UnavailablePage({ feature, title }: { feature: "backups" | "updates" | "plugs"; title: string }) {
+export function UnavailablePage({ feature, title }: { feature: "updates" | "plugs"; title: string }) {
   const probe = usePhaseProbe(feature);
   const problem = asProblem(probe.error);
   return (

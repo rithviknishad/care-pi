@@ -5,6 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Problem, sendJson } from "./http.mjs";
 import { APPLY_STEPS, FE_BUILD_STEPS, runningHostJob, startJob, summary } from "./jobs.mjs";
+import { backupsOverview } from "./backups-logic.mjs";
+import { validateDestinations } from "./restore-api.mjs";
 import {
   ADDRESS,
   FINGERPRINT,
@@ -166,7 +168,7 @@ export function status(state) {
         }
       : null,
     jobs: { running: running ? summary(running) : null, last: lastId ? summary(state.jobs.get(lastId).job) : null },
-    backups: null,
+    backups: state.claimed ? backupsOverview(state) : null,
     updates: null,
   };
 }
@@ -224,6 +226,44 @@ function plan(state, before, after) {
     });
     if (impact === "none") impact = "reload";
   }
+  if (changed(before.backups, after.backups)) {
+    const n = after.backups?.destinations?.length ?? 0;
+    const disks = (after.backups?.destinations ?? []).filter((d) => d.disk_label).length;
+    changes.push(
+      { path: "rendered/backup/timers", kind: "modify" },
+      { path: "rendered/backup/ssh_config", kind: "modify" },
+    );
+    actions.push(
+      {
+        kind: "write-files",
+        text: `write ${changes.length} file(s)`,
+        units: [],
+        paths: changes.map((c) => c.path),
+        names: [],
+        reason: "backups changed",
+      },
+      { kind: "daemon-reload", text: "daemon-reload", units: [], paths: [], names: [], reason: null },
+      ...(disks
+        ? [{ kind: "ensure-mounts", text: `ensure ${disks} mount(s)`, units: [], paths: [], names: [], reason: null }]
+        : []),
+      {
+        kind: "ensure-repositories",
+        text: `restic init where necessary (${n} destination(s))`,
+        units: [],
+        paths: [],
+        names: [],
+        reason: null,
+      },
+      {
+        kind: "ensure-timers",
+        text: `turn on ${4 + 2 * n} backup timer(s)`,
+        units: [],
+        paths: [],
+        names: [],
+        reason: null,
+      },
+    );
+  }
   const uniq = [...new Set(restarts)];
   if (uniq.length > 0) {
     actions.unshift({
@@ -266,19 +306,55 @@ function plan(state, before, after) {
   };
 }
 
-function startApply(state, onDone) {
+// The steps of an apply: the actions of the plan, or the default steps when the plan has no action.
+function applySteps(p) {
+  if (!p || p.actions.length === 0) return APPLY_STEPS;
+  return p.actions.map((a) => [
+    a.kind,
+    a.kind === "write-files" ? `write-files: ${a.paths.length} file(s)` : `${a.kind}: ${a.text}`,
+  ]);
+}
+
+function startApply(state, onDone, p = null) {
   const running = runningHostJob(state);
   if (running)
     throw new Problem("job-running", "Another job holds the apply lock. Wait until it ends.", { job_id: running.id });
+  const backupsChanged = state.backups.dirty || (p?.actions ?? []).some((a) => a.kind === "ensure-timers");
+  if (backupsChanged) syncDestinations(state);
   return startJob(state, {
     kind: "apply",
-    steps: APPLY_STEPS,
+    steps: backupsChanged && (!p || p.actions.length === 0) ? backupsApplySteps(state) : applySteps(p),
     result: () => ({ kind: "apply", changed: true, lock_changed: false, fe_build_id: "8d2f0c1a9b7e" }),
     onDone: (st, ok) => {
       if (ok) st.appliedHostname = st.file.identity.hostname;
       onDone?.(st, ok);
     },
   });
+}
+
+// An apply renders the units of each destination: a new destination is "pending", a removed one loses its
+// state and its secret (docs/api/README.md section 13.5).
+function syncDestinations(state) {
+  const ids = new Set((state.file.backups?.destinations ?? []).map((d) => d.id));
+  for (const id of Object.keys(state.backups.runtime)) if (!ids.has(id)) delete state.backups.runtime[id];
+  for (const id of Object.keys(state.backups.secrets)) if (!ids.has(id)) delete state.backups.secrets[id];
+  for (const id of ids) state.backups.runtime[id] ??= { state: "pending", recent_runs: [] };
+  for (const disk of state.backups.disks) {
+    const d = (state.file.backups?.destinations ?? []).find((x) => x.disk_label && x.disk_label === disk.care_label);
+    disk.destination_id = d?.id ?? null;
+  }
+  state.backups.dirty = false;
+}
+
+function backupsApplySteps(state) {
+  const n = state.file.backups?.destinations?.length ?? 0;
+  return [
+    ["write-files", "write-files: 2 file(s)"],
+    ["daemon-reload", "daemon-reload"],
+    ["ensure-mounts", "ensure-mounts"],
+    ["ensure-repositories", `ensure-repositories: ${n} destination(s)`],
+    ["ensure-timers", `ensure-timers: ${4 + 2 * n} timer(s)`],
+  ];
 }
 
 function configWrite(ctx, nextFile) {
@@ -312,13 +388,28 @@ function configWrite(ctx, nextFile) {
       errors: [{ pointer: "/version", message: "must be 1", code: "const" }],
     });
   }
+  const badBackups = Array.isArray(nextFile.backups?.destinations)
+    ? validateDestinations(nextFile.backups.destinations)
+    : null;
+  if (badBackups) {
+    badBackups.extra.errors = badBackups.extra.errors.map((e) => ({ ...e, pointer: `/backups${e.pointer}` }));
+    throw badBackups;
+  }
   const p = plan(state, effectiveConfig(state), { ...effectiveConfig({ ...state, file: nextFile }) });
   if (dryRun) {
     sendJson(res, 200, { written: false, etag, plan: p, job: null }, { ETag: etag });
     return;
   }
-  const job = apply ? startApply(state) : null;
+  const before = state.file;
   state.file = nextFile;
+  if (JSON.stringify(before.backups ?? null) !== JSON.stringify(nextFile.backups ?? null)) state.backups.dirty = true;
+  let job;
+  try {
+    job = apply ? startApply(state, undefined, p) : null;
+  } catch (e) {
+    state.file = before;
+    throw e;
+  }
   const newTag = etagOf(state.file);
   sendJson(
     res,

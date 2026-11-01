@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: care-pi agent API
-  version: 0.3.0
+  version: 0.4.0
   summary: The HTTP API between the care-pi agent and the console.
   description: |
     This document is the contract between the care-pi agent (`care-pi serve`) and the console.
@@ -28,9 +28,10 @@ info:
       `payload-too-large`, `rate-limited`, `internal`, and `unavailable`.
     - `x-cli` gives the CLI command with the same effect (CLI parity). `-` means that no CLI command is
       necessary: the operation only manages browser state. Root on the host needs no session.
-    - `x-phase: N` marks an operation or a member that Phase N implements. Without `x-phase`, Phase 2
-      implements it. In Phase 2, an operation with `x-phase` greater than 2 returns `501`
-      with the problem type `not-implemented-in-this-version`. A member with `x-phase` greater than 2 is `null`.
+    - `x-phase: N` marks an operation or a member that Phase N implements. Without `x-phase`, the agent of this
+      version implements it (Phase 2, or Phase 3 for the tags `backups` and `restore`). An agent returns `501`
+      with the problem type `not-implemented-in-this-version` for an operation with `x-phase` greater than its phase.
+      A member with `x-phase` greater than the phase of the agent is `null`.
     - `x-reauth: true` marks an operation that needs a recent authentication (5 minutes).
       Else the operation returns `403` with `reauth-required`.
     - Each response has `Cache-Control: no-store`, except the two root CA downloads.
@@ -80,9 +81,14 @@ tags:
   - name: power
     description: Reboot and shut down the host.
   - name: backups
-    description: Backups (Phase 3). The URLs and the shapes are reserved now.
+    description: |
+      Backups (Phase 3, S40, design note section 13). The local pgBackRest repository, the restic destinations,
+      the recovery key, the USB disks, verify, and the restore drill. `config.yaml` keeps the settings
+      (`backups.*`). This resource keeps the state, the actions, and the secrets.
   - name: restore
-    description: Restore (Phase 3). The URLs and the shapes are reserved now.
+    description: |
+      Restore (Phase 3, `02` §6, design note section 13). The restore window, a point-in-time restore on this device,
+      a files restore, and the restore of a new device from a backup (the setup wizard).
   - name: updates
     description: Solution updates (Phase 4). The URLs and the shapes are reserved now.
   - name: plugs
@@ -895,16 +901,29 @@ paths:
       operationId: setBackups
       summary: Set the backup destinations and confirm the recovery key
       description: |
-        Phase 3. At least 1 destination is necessary (S18). The agent tests each destination before it saves it.
-        In Phase 2 the step exists, but only a dev build can skip it (`POST /setup/steps/backups/skip`).
-        This is intentional: no release build exists before Phase 3.
-        Phase 3 adds a CLI command for the secrets of a destination.
+        At least 1 destination is necessary (S18). Make the recovery key first (`POST /backups/recovery-key`).
+        The agent does these things in this order. It stops at the first error and writes nothing:
+
+        1. It validates `destinations` against `backups.destinations` of the config schema (`invalid-config`).
+        2. Each `sftp` destination must have `host_key`. Else `422` with `destination-untrusted-hostkey`.
+           Get the key from `POST /backups/destinations/test` (TOFU).
+        3. It stores `credentials` as `PUT /backups/destinations/{destination_id}/secrets` does.
+           An `s3` destination without credentials in the body or on disk gives `invalid-request` (code `missing-credentials`).
+        4. It tests each destination as `POST /backups/destinations/test` does, without a bucket creation.
+           A failed test gives `422` with `destination-unreachable` and `destination_id`. The agent does not test again
+           a destination that passed a test with the same values in the last 15 minutes.
+        5. It checks `recovery_key_words` against the confirm positions of the recovery key (`recovery-key-mismatch`).
+           `null` is possible when the key is already confirmed (`POST /backups/recovery-key/confirm`).
+        6. It writes `backups.destinations` into `config.yaml`. Nothing is applied before the finish.
+
+        The step is `done` when `config.yaml` has 1 or more destinations and the recovery key is `confirmed`.
+        Only a dev build can skip the step (`POST /setup/steps/backups/skip`).
+        The finish job then makes the restic repositories, turns on the timers, and makes the first full backup.
       security:
         - session: []
           csrf: []
-      x-phase: 3
-      x-cli: care-pi config set backups.destinations=JSON
-      x-problems: [not-authenticated, csrf, invalid-request, invalid-config, setup-finished, job-running, not-implemented-in-this-version]
+      x-cli: care-pi config set backups.destinations=JSON && care-pi backup recovery-key confirm
+      x-problems: [not-authenticated, csrf, invalid-request, invalid-config, setup-finished, job-running, no-recovery-key, recovery-key-mismatch, destination-unreachable, destination-untrusted-hostkey]
       requestBody:
         required: true
         content:
@@ -921,11 +940,9 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
         '409':
-          $ref: '#/components/responses/Conflict'
+          $ref: '#/components/responses/BackupsConflict'
         '422':
-          $ref: '#/components/responses/UnprocessableContent'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+          $ref: '#/components/responses/BackupsUnprocessable'
   /setup/steps/care-admin:
     put:
       tags: [setup]
@@ -2128,11 +2145,17 @@ paths:
     get:
       tags: [backups]
       operationId: getBackups
-      summary: Get the backup state
-      description: Phase 3. The local pgBackRest repository and each restic destination (S40, `02` §7).
-      x-phase: 3
+      summary: Get the backup state for the Backups page
+      description: |
+        Everything that the Backups page shows, in one call (`02` §7): the local pgBackRest repository and its
+        restore window, each destination, the effective schedule with the next runs, the retention, the RPO,
+        the recovery key state, verify, the restore drill, the SSH key for SFTP, and the banners.
+        The shape is append-only. `Status.backups` has the same object.
+        The agent reads only its state files and the timers. It never connects to a destination in this operation.
+        The agent keeps the result for 2 s. Each setup state after the claim gives the object.
+        The settings are in `config.yaml` (`backups.*`): change them with `PATCH /config`, not here.
       x-cli: care-pi backup status --json
-      x-problems: [not-authenticated, not-implemented-in-this-version]
+      x-problems: [not-authenticated]
       responses:
         default:
           $ref: '#/components/responses/UnexpectedProblem'
@@ -2144,26 +2167,50 @@ paths:
                 $ref: '#/components/schemas/BackupsOverview'
         '401':
           $ref: '#/components/responses/NotAuthenticated'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
   /backups/run:
     post:
       tags: [backups]
       operationId: startBackup
       summary: Back up now
-      description: Phase 3. A job of kind `backup`. Without `destination`, the job backs up to each destination.
+      description: |
+        A job of kind `backup-run`. `scope` selects the work:
+
+        - `all` (the default when `destination` is `null`): a backup to the local repository (`type`),
+          then a `db` and a `files` snapshot to each destination. A failed destination does not stop the others.
+          The job fails when one step failed. Without a destination, the agent returns `409` with `no-destination`.
+        - `local-db`: only the backup to the local repository. With `type: incr` this is **the checkpoint**
+          (design note section 13.11): the backup also archives the current WAL segment. The result has the backup
+          label and the undo point. The update job of Phase 4 uses the same function. It needs no recovery key.
+        - `destination` (the default when `destination` is set): only the `db` and `files` snapshots to `destination`.
+          An unknown id gives `404` with `not-found`.
+
+        The job does not hold the apply lock. It waits (state `queued`) for a snapshot of the same destination that runs now.
+        While a job of kind `restore-pitr`, `restore-files`, `restore-dr`, or `recovery-key-rotate` runs,
+        the agent returns `409` with `job-running`. Before the setup state is `ready`, it returns `409` with `setup-incomplete`.
+        A snapshot needs the recovery key (`no-recovery-key`). A local full backup needs free space (`insufficient-space`, design note section 13.10).
       security:
         - session: []
           csrf: []
-      x-phase: 3
-      x-cli: care-pi backup run [--destination ID]
-      x-problems: [not-authenticated, csrf, invalid-request, job-running, not-implemented-in-this-version]
+      x-cli: care-pi backup run [--scope all|local-db|destination] [--type incr|full] [--destination ID] [--reason TEXT]
+      x-problems: [not-authenticated, csrf, invalid-request, not-found, job-running, setup-incomplete, no-destination, no-recovery-key, insufficient-space]
       requestBody:
         required: false
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/BackupRunRequest'
+            examples:
+              checkpoint:
+                summary: The checkpoint (Phase 4 calls the same function before an update)
+                value:
+                  scope: local-db
+                  type: incr
+                  destination: null
+                  reason: before the update to 2026.11.1
+              one-destination:
+                summary: Snapshots to one destination
+                value:
+                  destination: usb
       responses:
         default:
           $ref: '#/components/responses/UnexpectedProblem'
@@ -2173,57 +2220,128 @@ paths:
           $ref: '#/components/responses/NotAuthenticated'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
         '409':
-          $ref: '#/components/responses/Conflict'
+          $ref: '#/components/responses/BackupsConflict'
         '422':
           $ref: '#/components/responses/UnprocessableContent'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
   /backups/destinations/test:
     post:
       tags: [backups]
       operationId: testBackupDestination
       summary: Test a backup destination
-      description: Phase 3. The checks of `02` §3 (write, read back, free space). Nothing is saved.
+      description: |
+        The agent checks a candidate destination (`02` §3). It writes nothing into `config.yaml` and stores no secret.
+        It writes, reads, and deletes one test object. With `create_bucket: true` it creates the bucket.
+        `credentials: null` uses the stored secret of `destination.id`, when one exists.
+        Each setup state after the claim allows the test. A test takes up to 60 s.
+
+        The checks (the `name` of each item of `checks`), by type:
+
+        - `posix`: `mount` (only with `disk_label`), `write`, `read`, `delete`, `free-space`, `root-disk` (advised: the path is on the root disk), `repository`.
+        - `sftp`: `connect`, `host-key`, `authenticate`, `write`, `read`, `delete`, `free-space` (when the server tells it), `repository`.
+        - `s3`: `connect`, `authenticate`, `bucket`, `write`, `read`, `delete`, `object-lock` (advised, only information), `repository`.
+
+        `repository` tells if `<location>/care-pi-<key id>` exists (after a restore, or a second add of the same place),
+        and lists the key ids of other care-pi repositories at the location.
+
+        The SFTP host key (TOFU, design note section 13.6):
+
+        1. Without `accept_fingerprint` and without `destination.host_key`, the agent reads the host key of the server and stops.
+           `next_action` is `accept-host-key`. `host_key` has the key type and the SHA-256 fingerprint. The agent does not log in.
+        2. The operator compares the fingerprint with the server, then sends the same request with `accept_fingerprint`.
+           When the server presents another key now, the agent returns `422` with `destination-untrusted-hostkey`.
+           Else the agent logs in with its SSH key. When the server refuses the key, `next_action` is `install-ssh-key`,
+           and `public_key` is the line to add on the server.
+        3. When all checks pass, `host_key.public_key` is the value for `host_key` of the destination in `config.yaml`.
+
+        When `destination.host_key` is set and the server presents another key, the check `host-key` fails and
+        `next_action` is `accept-host-key`. Accept a changed key only when the operator knows why it changed.
+        An `s3` bucket that does not exist gives `next_action: create-bucket`. Send the request again with `create_bucket: true`.
+        An `sftp` test needs the recovery key, because the SSH key comes from it: else `409` with `no-recovery-key`.
       security:
         - session: []
           csrf: []
-      x-phase: 3
-      x-cli: care-pi backup destination test ...
-      x-problems: [not-authenticated, csrf, invalid-request, not-implemented-in-this-version]
+      x-cli: care-pi backup destination test ID [--accept-fingerprint SHA256:FP] [--create-bucket] [--destination-json FILE]
+      x-problems: [not-authenticated, csrf, invalid-request, no-recovery-key, destination-untrusted-hostkey]
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/DestinationTestRequest'
+            examples:
+              sftp-first-contact:
+                summary: 'SFTP, call 1: read the host key'
+                value:
+                  destination: {id: nas, type: sftp, host: nas.lan, user: care, path: /volume1/care}
+                  credentials: null
+                  accept_fingerprint: null
+              sftp-accept:
+                summary: 'SFTP, call 2: the operator accepts the fingerprint'
+                value:
+                  destination: {id: nas, type: sftp, host: nas.lan, user: care, path: /volume1/care}
+                  credentials: null
+                  accept_fingerprint: 'SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s'
       responses:
         default:
           $ref: '#/components/responses/UnexpectedProblem'
         '200':
-          description: The result of each check.
+          description: The result of each check. `ok` is `false` when a required check failed.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/DestinationTestResult'
+              examples:
+                sftp-host-key:
+                  summary: 'SFTP, call 1: the operator must accept the host key'
+                  value:
+                    ok: false
+                    checks:
+                      - {name: connect, level: required, ok: true, detail: 'nas.lan:22 answers'}
+                      - {name: host-key, level: required, ok: false, detail: 'first contact: compare the fingerprint with the server', fix: accept the fingerprint}
+                    host_key_fingerprint: 'SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s'
+                    public_key: null
+                    host_key:
+                      type: ecdsa-sha2-nistp256
+                      fingerprint_sha256: 'SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s'
+                      public_key: ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEXAMPLEEXAMPLEEXAMPLE=
+                      trusted: false
+                    next_action: accept-host-key
+                    repository: null
+                    free_bytes: null
+                    location: 'sftp:care@nas.lan:/volume1/care/care-pi-1a2b3c4d'
+                    tested_at: '2026-10-30T10:07:00Z'
         '401':
           $ref: '#/components/responses/NotAuthenticated'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/BackupsConflict'
         '422':
-          $ref: '#/components/responses/UnprocessableContent'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+          $ref: '#/components/responses/BackupsUnprocessable'
   /backups/recovery-key:
     get:
       tags: [backups]
       operationId: getRecoveryKey
       summary: Show the recovery key
-      description: Phase 3. The recovery key of `02` §2 as a word list. It needs a recent authentication.
-      x-phase: 3
+      description: |
+        The recovery key as 24 words and as the QR payload (`02` §2, design note section 13.3). It needs a recent authentication.
+        `key=pending` shows the new key of a rotation (`not-found` when no pending key exists).
+        Without a recovery key, the agent returns `409` with `no-recovery-key`.
+        The journal of `care-pi.service` records each show, without the words.
       x-reauth: true
-      x-cli: care-pi backup recovery-key
-      x-problems: [not-authenticated, reauth-required, not-implemented-in-this-version]
+      x-cli: care-pi backup recovery-key show [--pending]
+      x-problems: [not-authenticated, reauth-required, invalid-request, not-found, no-recovery-key]
+      parameters:
+        - name: key
+          in: query
+          description: '`active`: the key in use. `pending`: the new key of a rotation.'
+          schema:
+            type: string
+            enum: [active, pending]
+            default: active
       responses:
         default:
           $ref: '#/components/responses/UnexpectedProblem'
@@ -2237,49 +2355,640 @@ paths:
           $ref: '#/components/responses/NotAuthenticated'
         '403':
           $ref: '#/components/responses/Forbidden'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/BackupsConflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+    post:
+      tags: [backups]
+      operationId: createRecoveryKey
+      summary: Make the recovery key
+      description: |
+        The agent makes a 256-bit key from the random source of the kernel (design note section 13.3).
+
+        - When no key exists, the new key is the active key, in the state `unconfirmed`. The agent writes
+          `/etc/care-pi/secrets/recovery.key` (root 0600). When the local repository is empty, the agent also writes the cipher pass
+          that comes from the key (design note section 13.12). The setup wizard calls this operation at the start of the step `backups`.
+          A Phase 1 or Phase 2 host calls it on the Backups page.
+        - When a key exists, the new key is the pending key of a rotation. It replaces an older pending key.
+          The agent uses it only after `POST /backups/recovery-key/rotate`.
+
+        The response has the words one time. The operator then saves the key: the words on paper, the `.txt` file
+        (`GET /backups/recovery-key/download`), or a photo of the QR code. Then the operator types 3 words again
+        (`POST /backups/recovery-key/confirm`).
+        This operation needs no recent authentication: a new key protects nothing yet. To show a key again, use `GET /backups/recovery-key`.
+        While a job holds the apply lock, the agent returns `409` with `job-running`.
+      security:
+        - session: []
+          csrf: []
+      x-cli: care-pi backup recovery-key create
+      x-problems: [not-authenticated, csrf, job-running]
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '201':
+          description: The new key and the key state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryKeyCreated'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/BackupsConflict'
   /restore/points:
     get:
       tags: [restore]
       operationId: getRestorePoints
-      summary: Get the restore window
-      description: Phase 3. The earliest and latest point in time for a PITR, and the file snapshots of each destination.
-      x-phase: 3
-      x-cli: care-pi restore points --json
-      x-problems: [not-authenticated, not-implemented-in-this-version]
+      summary: Get the restore window and the restore points
+      description: |
+        The data of the restore page (`02` §6, §7):
+
+        - `pitr`: the earliest and the latest point in time of the local repository. A restore job archives the current
+          WAL segment first, so a time up to the start of the job is possible.
+        - `db_backups`: the backups of the local repository, newest first.
+        - `checkpoints`: the checkpoints, newest first. Restore a checkpoint to undo a restore (or, in Phase 4, an update).
+        - `file_snapshots`: the restic snapshots of each destination (`db` and `files`), newest first.
+        - `destinations`: when the agent listed each destination, and the error of the last list.
+
+        The agent keeps the snapshot list of each destination, and lists it again after each snapshot run.
+        `refresh=true` lists each destination now: one restic call for each destination, up to 60 s.
+        Before the first backup, `pitr` is `null` and the lists are empty.
+      x-cli: care-pi restore points --json [--refresh]
+      x-problems: [not-authenticated, invalid-request]
+      parameters:
+        - name: refresh
+          in: query
+          description: List the snapshots of each destination now.
+          schema:
+            type: boolean
+            default: false
       responses:
         default:
           $ref: '#/components/responses/UnexpectedProblem'
         '200':
-          description: The restore window.
+          description: The restore window and the restore points.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/RestorePoints'
         '401':
           $ref: '#/components/responses/NotAuthenticated'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
   /restore:
     post:
       tags: [restore]
       operationId: startRestore
-      summary: Restore from a backup
-      description: Phase 3. A job of kind `restore` (`02` §6). Data after the target time is lost, so it needs a recent authentication.
+      summary: Restore on this device
+      description: |
+        A restore on this device (`02` §6). Data after the target is lost, so it needs a recent authentication.
+        Before the setup state is `ready`, the agent returns `409` with `setup-incomplete`. For a new device, use `POST /restore/dr`.
+
+        - `kind: pitr` (job `restore-pitr`): the database goes back to `time`, or to the end of a `checkpoint`.
+          The job turns on the maintenance page, stops care-api, care-worker, and care-beat, and makes a checkpoint, so the
+          restore itself can be undone. Then it runs `pgbackrest restore --delta`, starts the stack, waits for the promote
+          and the health, turns off the maintenance page, and makes a new full backup (a new timeline).
+          Care is not available for about 1 minute at clinic scale (SP6: restore 8 s and recovery 5 s, plus the start of the stack).
+          The files in the S3 buckets do not change.
+          A `time` outside the restore window gives `422` with `restore-window-exceeded`. The window ends at the start of the job.
+        - `kind: files` (job `restore-files`): the files of one restic snapshot. `target: in-place` writes the files into
+          `/var/lib/care-pi/s3` while the maintenance page is on (care-s3 stops). A newer file that the snapshot does not
+          have stays. `target: side-dir` writes them into `/var/lib/care-pi/restore/<job id>/` and changes nothing else.
+          The database does not change.
+
+        Both jobs hold the apply lock and stop the backup timers until they end. Design note section 13.8 lists the steps.
       security:
         - session: []
           csrf: []
-      x-phase: 3
       x-reauth: true
-      x-cli: care-pi restore --kind pitr --time TIME
-      x-problems: [not-authenticated, csrf, reauth-required, invalid-request, job-running, not-implemented-in-this-version]
+      x-cli: care-pi restore pitr --time TIME|--checkpoint LABEL; care-pi restore files --destination ID --snapshot ID [--path PATH]... [--side-dir]
+      x-problems: [not-authenticated, csrf, reauth-required, invalid-request, not-found, job-running, setup-incomplete, no-recovery-key, restore-window-exceeded, destination-unreachable, insufficient-space]
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/RestoreRequest'
+            examples:
+              pitr-time:
+                summary: Go back to 09:40
+                value:
+                  kind: pitr
+                  time: '2026-10-30T09:40:00Z'
+                  checkpoint: null
+                  reason: undo the import of 09:42
+              pitr-undo:
+                summary: Undo the last restore (restore its checkpoint)
+                value:
+                  kind: pitr
+                  time: null
+                  checkpoint: 20261026-010002F_20261030-104705I
+              files-side-dir:
+                summary: One folder of files into a side directory
+                value:
+                  kind: files
+                  destination: usb
+                  snapshot_id: 4f1e9a2c
+                  paths: [patient-bucket/2026/10]
+                  target: side-dir
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/BackupsConflict'
+        '422':
+          $ref: '#/components/responses/BackupsUnprocessable'
+  /restore/dr/inspect:
+    post:
+      tags: [restore]
+      operationId: inspectDrBackup
+      summary: Read a backup before a restore of this device (setup wizard)
+      description: |
+        The first call of the branch "Restore from backup" of the setup wizard (`02` §6, design note section 13.9).
+        The agent derives the keys from `recovery_key`, opens the restic repository `care-pi-<key id>` at the destination,
+        and reads the newest config snapshot and the pgBackRest backup list of the newest `db` snapshot. It writes nothing.
+        The response tells the operator what the restore gives: the clinic, the times, the sizes, and the restore window.
+        Only in the setup states `claimed` and `setup`: else `409` with `setup-finished` or `job-running`.
+
+        - A word list with a bad checksum gives `422` with `invalid-request`. A key that cannot open the repository gives
+          `422` with `recovery-key-mismatch`.
+        - An `sftp` destination without `host_key` gives `422` with `destination-untrusted-hostkey`, and `host_key` in the
+          problem has the key that the server presents. Show the fingerprint. When the operator accepts it, send the request
+          again with `destination.host_key`.
+        - No answer, or a refused login, gives `422` with `destination-unreachable`.
+
+        The call takes up to 60 s.
+      security:
+        - session: []
+          csrf: []
+      x-cli: care-pi restore dr --inspect --destination-json FILE --recovery-key-stdin
+      x-problems: [not-authenticated, csrf, invalid-request, setup-finished, job-running, recovery-key-mismatch, destination-unreachable, destination-untrusted-hostkey]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DrInspectRequest'
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: What the destination holds for this recovery key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DrInspection'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/BackupsConflict'
+        '422':
+          $ref: '#/components/responses/BackupsUnprocessable'
+  /restore/dr:
+    post:
+      tags: [restore]
+      operationId: startDrRestore
+      summary: Restore this device from a backup (setup wizard)
+      description: |
+        A job of kind `restore-dr` (`02` §6, design note section 13.9). It rebuilds a new or a replaced device from one
+        destination and the recovery key, with no other input. Call `POST /restore/dr/inspect` first.
+        Only in the setup states `claimed` and `setup`. The state becomes `applying`, and `GET /setup` gives the job in `job_id`.
+
+        The job fetches the newest config snapshot (`config.yaml`, `lock.yaml`, and the secrets), applies it without a start
+        of care-db, fetches the pgBackRest repository, restores the database (the latest point, or `time`), fetches the files,
+        starts the stack, makes a new full backup, and turns on the backup timers (not with `pause_backups: true`).
+
+        - Success: the state becomes `ready`. **The console account of the old device comes back**: its password, its
+          recovery codes, and its TOTP. The agent deletes each session, so the browser must log in again with the console
+          password of the old device. The password of the claim is not valid any more.
+          The result has the URLs: the host name of the old device can differ from the host name now.
+        - Failure: the state becomes `setup` again, and `GET /setup` gives the failed job. `config.yaml` and the other secrets
+          stay as the job restored them. The console account of the claim stays. Send the request again, or continue the wizard.
+
+        The old device must be off. Else both devices write to the same destinations. For a test on a second device,
+        set `pause_backups: true` (the job writes `backups.paused: true`).
+        The job needs free space for the pgBackRest repository, the files, and the database (`insufficient-space`).
+        It holds the apply lock.
+      security:
+        - session: []
+          csrf: []
+      x-cli: care-pi restore dr --destination-json FILE --recovery-key-stdin [--time TIME] [--snapshot ID] [--no-files] [--pause-backups]
+      x-problems: [not-authenticated, csrf, invalid-request, not-found, setup-finished, job-running, recovery-key-mismatch, destination-unreachable, destination-untrusted-hostkey, restore-window-exceeded, insufficient-space]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DrRestoreRequest'
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/BackupsConflict'
+        '422':
+          $ref: '#/components/responses/BackupsUnprocessable'
+  /backups/health:
+    get:
+      tags: [backups]
+      operationId: getBackupsHealth
+      summary: Get the backup banners
+      description: |
+        The banner states of `02` §7 for the dashboard and the CLI. The same object as `BackupsOverview.health`.
+        Design note section 13.10 gives the rule of each banner code.
+      x-cli: care-pi backup health --json
+      x-problems: [not-authenticated]
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The banners.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupsHealth'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+  /backups/verify:
+    post:
+      tags: [backups]
+      operationId: startBackupVerify
+      summary: Verify the backups now
+      description: |
+        A job of kind `backup-verify`: `pgbackrest verify` of the local repository (0.7 s at 46 MB, SP6), and
+        `restic check --read-data-subset=<N>%` of each destination. A sample is the right check of a remote repository:
+        a full read over the network is slow (SP6: 77 s for 5 MB over SFTP).
+        `prune: true` also runs `restic forget` and `restic prune` first. The weekly timer (`backups.schedule.verify`)
+        runs the same job with `scope: all` and `prune: true` (`source: timer`).
+        A damaged repository fails the job with `verify-failed`, and the banner `verify-failed` shows.
+        The other rules are the same as `POST /backups/run`.
+      security:
+        - session: []
+          csrf: []
+      x-cli: care-pi backup verify [--scope all|local-db|destination] [--destination ID] [--read-data-subset PCT] [--prune]
+      x-problems: [not-authenticated, csrf, invalid-request, not-found, job-running, setup-incomplete, no-destination, no-recovery-key]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BackupVerifyRequest'
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/BackupsConflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+  /backups/destinations:
+    get:
+      tags: [backups]
+      operationId: listBackupDestinations
+      summary: List the backup destinations
+      description: |
+        Each destination of `config.yaml` with its state, in the order of the file. The same items as `BackupsOverview.destinations`.
+        To add, change, or remove a destination, change `backups.destinations` with `PATCH /config` (with `If-Match`), then apply.
+        The secrets go through `PUT /backups/destinations/{destination_id}/secrets`. Design note section 13.5 gives the order.
+      x-cli: care-pi backup destination list --json
+      x-problems: [not-authenticated]
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The destinations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DestinationList'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+  /backups/destinations/{destination_id}/secrets:
+    put:
+      tags: [backups]
+      operationId: setBackupDestinationSecrets
+      summary: Set the secret of a destination
+      description: |
+        The secret channel of a destination. Secrets are never in `config.yaml`.
+        Only an `s3` destination has a secret: the access key id and the secret access key. An `sftp` destination uses the
+        SSH key of the agent (`GET /backups/ssh-key`), and a `posix` destination has none. For those types the agent returns
+        `422` with `invalid-request` (code `no-secrets-for-type`).
+        The destination must be in `config.yaml` (`view=file`). Else the agent returns `404` with `not-found`.
+        The agent writes `/etc/care-pi/secrets/backup/<id>.json` (root 0600) and replaces an older secret. The response never has the secret.
+        The agent does not test the keys: use `POST /backups/destinations/test` with `credentials: null`, then apply.
+        `apply` deletes the secret of a destination that `config.yaml` does not have.
+      security:
+        - session: []
+          csrf: []
+      x-cli: care-pi backup destination secrets ID --access-key-id KEY --secret-stdin
+      x-problems: [not-authenticated, csrf, invalid-request, not-found]
+      parameters:
+        - name: destination_id
+          in: path
+          required: true
+          description: The `id` of the destination in `config.yaml`.
+          schema:
+            type: string
+            pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DestinationCredentials'
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The secret is stored.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DestinationSecretsState'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+  /backups/ssh-key:
+    get:
+      tags: [backups]
+      operationId: getBackupSshKey
+      summary: Get the SSH public key for SFTP destinations
+      description: |
+        The agent connects to each `sftp` destination with one ed25519 key. The key comes from the recovery key
+        (HKDF, design note section 13.3). So a device that a restore rebuilt has the same key, and the servers still accept it.
+        Add `authorized_keys_line` to `~/.ssh/authorized_keys` of the user on the server.
+        `key=pending` gives the key of the pending recovery key. Add it to each server before `POST /backups/recovery-key/rotate`.
+        The response has only public data. Without a recovery key, the agent returns `409` with `no-recovery-key`.
+      x-cli: care-pi backup ssh-key [--pending]
+      x-problems: [not-authenticated, invalid-request, not-found, no-recovery-key]
+      parameters:
+        - name: key
+          in: query
+          description: '`active`: the key in use. `pending`: the key of the pending recovery key.'
+          schema:
+            type: string
+            enum: [active, pending]
+            default: active
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The SSH public key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SshPublicKey'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/BackupsConflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+  /backups/disks:
+    get:
+      tags: [backups]
+      operationId: listBackupDisks
+      summary: List the disks for a USB backup disk
+      description: |
+        The block devices of the host (`lsblk`), for the choice "USB disk" (`02` §7).
+        `usage` tells what the disk holds. The console offers only a disk with `usage` other than `system`.
+        A disk with `usage: care-backup` has a file system with a care-pi label: use it with `disk_label`, without a prepare
+        (for example a backup disk after a restore of the device). Each setup state after the claim allows this operation.
+      x-cli: care-pi backup disk list --json
+      x-problems: [not-authenticated]
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The disks.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BackupDiskList'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+  /backups/disks/{disk_id}/prepare:
+    post:
+      tags: [backups]
+      operationId: prepareBackupDisk
+      summary: Erase a disk and prepare it for backups
+      description: |
+        A job of kind `disk-prepare`. **The job erases each partition of the disk.** So it needs a recent authentication and `wipe: true`.
+        The job makes one GPT partition with an ext4 file system and the label `label`, writes the mount unit and the automount
+        unit of `/var/lib/care-pi/disks/<label>` (`nofail`, `x-systemd.automount`), mounts the file system, and tests a write.
+        `apply` renders the same units for a `posix` destination with this `disk_label`. When no destination has the label,
+        the next apply removes the units. After the job, add the destination with `PATCH /config` (`{type: posix, disk_label}`).
+        A disk with `usage: system`, a mounted partition, or a label that a destination uses gives `409` with `disk-in-use`.
+        A disk that is not there gives `404` with `not-found`. The job holds the apply lock. Each setup state after the claim allows it.
+      security:
+        - session: []
+          csrf: []
+      x-reauth: true
+      x-cli: care-pi backup disk prepare DISK_ID [--label LABEL] --wipe
+      x-problems: [not-authenticated, csrf, reauth-required, invalid-request, not-found, disk-in-use, job-running]
+      parameters:
+        - name: disk_id
+          in: path
+          required: true
+          description: The `id` of `GET /backups/disks` (the name in `/dev/disk/by-id/`).
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DiskPrepareRequest'
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/BackupsConflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+  /backups/recovery-key/status:
+    get:
+      tags: [backups]
+      operationId: getRecoveryKeyStatus
+      summary: Get the state of the recovery key
+      description: |
+        If a key exists, if the operator confirmed it, the confirm positions, the pending key of a rotation,
+        and the key of the local repository. No secret. The same object as `BackupsOverview.recovery_key`.
+      x-cli: care-pi backup recovery-key status --json
+      x-problems: [not-authenticated]
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The state of the recovery key.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryKeyStatus'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+  /backups/recovery-key/download:
+    get:
+      tags: [backups]
+      operationId: downloadRecoveryKey
+      summary: Download the recovery key as a text file
+      description: |
+        The file `care-recovery-<clinic>.txt` (`02` §2): the clinic name, the key id, the date, the 24 numbered words,
+        and the instructions. It needs a recent authentication. The other rules are the same as `GET /backups/recovery-key`.
+      x-reauth: true
+      x-cli: care-pi backup recovery-key show --format txt [--pending] [--out FILE]
+      x-problems: [not-authenticated, reauth-required, invalid-request, not-found, no-recovery-key]
+      parameters:
+        - name: key
+          in: query
+          description: '`active`: the key in use. `pending`: the new key of a rotation.'
+          schema:
+            type: string
+            enum: [active, pending]
+            default: active
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The text file.
+          headers:
+            Content-Disposition:
+              $ref: '#/components/headers/ContentDisposition'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/RecoveryKeyText'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/BackupsConflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+  /backups/recovery-key/confirm:
+    post:
+      tags: [backups]
+      operationId: confirmRecoveryKey
+      summary: Confirm that the operator saved the recovery key
+      description: |
+        The operator types again the words at the 3 positions of `confirm_positions` (`RecoveryKeyStatus`).
+        The agent chose the positions at random when it made the key. They do not change before the confirmation.
+        The agent accepts the first 4 letters of a word (BIP-39).
+        Correct words make the key `confirmed`, and the banner `recovery-key-unconfirmed` goes away.
+        A wrong word gives `422` with `recovery-key-mismatch`, and `errors` points at each wrong word.
+        Other positions give `422` with `invalid-request`. `key: pending` without a pending key gives `404` with `not-found`.
+        The setup step `backups` can also carry the 3 words.
+      security:
+        - session: []
+          csrf: []
+      x-cli: care-pi backup recovery-key confirm [--pending]
+      x-problems: [not-authenticated, csrf, invalid-request, not-found, no-recovery-key, recovery-key-mismatch]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryKeyConfirmRequest'
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The key is confirmed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryKeyStatus'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/BackupsConflict'
+        '422':
+          $ref: '#/components/responses/BackupsUnprocessable'
+  /backups/recovery-key/rotate:
+    post:
+      tags: [backups]
+      operationId: startRecoveryKeyRotation
+      summary: Use a new recovery key, or re-key the local repository
+      description: |
+        A job of kind `recovery-key-rotate` (design note sections 13.4 and 13.12). pgBackRest cannot re-key a repository
+        in place, so the job makes new repositories and new full backups.
+
+        - `new_key: true`: the job uses the pending key. Make it (`POST /backups/recovery-key`), confirm it, and add its SSH key
+          (`GET /backups/ssh-key?key=pending`) to each `sftp` server first. Else `409` with `state-conflict`.
+          The job makes a new local repository and a new restic repository `care-pi-<new key id>` at each destination,
+          makes a full backup and a first snapshot, and then the pending key becomes the active key.
+        - `new_key: false`: the job keeps the key and re-keys only the local repository of a Phase 1 or Phase 2 host
+          (`RecoveryKeyStatus.local_repository: legacy`, a random cipher pass). Else `409` with `state-conflict`.
+
+        `remove_old_repositories: true` deletes the old repositories after the first snapshot to each destination.
+        Then the restore window starts at the new full backup. With `false` the old repositories stay, and the agent does
+        not use them. Care restarts one time (the maintenance page, about 1 minute): care-db needs the new cipher pass.
+        The job first tests each destination with the new key. A destination that does not answer fails the job
+        (`destination-unreachable`) before a change. The job holds the apply lock and stops the backup timers.
+      security:
+        - session: []
+          csrf: []
+      x-reauth: true
+      x-cli: care-pi backup recovery-key rotate [--keep-key] [--keep-old-repositories]
+      x-problems: [not-authenticated, csrf, reauth-required, invalid-request, job-running, setup-incomplete, no-recovery-key, state-conflict]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryKeyRotateRequest'
       responses:
         default:
           $ref: '#/components/responses/UnexpectedProblem'
@@ -2290,11 +2999,47 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
         '409':
-          $ref: '#/components/responses/Conflict'
+          $ref: '#/components/responses/BackupsConflict'
         '422':
           $ref: '#/components/responses/UnprocessableContent'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
+  /backups/drill:
+    post:
+      tags: [backups]
+      operationId: startRestoreDrill
+      summary: Run the restore drill now
+      description: |
+        A job of kind `restore-drill` (`02` §4). The job restores the newest backup of the local repository into a temporary
+        directory, starts Postgres in a separate container with `archive_mode=off` and the same `pg1-path` (SP6), runs
+        `pg_controldata` and `SELECT 1`, and then deletes the container and the directory. Care stays available.
+        The agent keeps the result in `BackupsOverview.drill.last`.
+        The drill needs free space of 2 times the database size. Else the agent returns `409` with `insufficient-space`
+        (a timer run records the outcome `skipped`). A drill that fails fails the job with `verify-failed`.
+        The job does not hold the apply lock. While a job of kind `restore-pitr`, `restore-files`, `restore-dr`,
+        or `recovery-key-rotate` runs, the agent returns `409` with `job-running`.
+      security:
+        - session: []
+          csrf: []
+      x-cli: care-pi backup drill [--reason TEXT]
+      x-problems: [not-authenticated, csrf, invalid-request, job-running, setup-incomplete, insufficient-space]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreDrillRequest'
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/BackupsConflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
   /updates:
     get:
       tags: [updates]
@@ -2929,6 +3674,111 @@ components:
                 detail: The agent stops.
                 instance: /api/v1/health
                 retry_after_s: 5
+    BackupsConflict:
+      description: |
+        A state conflict of a backup or restore operation: `job-running`, `setup-incomplete`, `setup-finished`,
+        `state-conflict`, `no-destination`, `no-recovery-key`, `disk-in-use`, or `insufficient-space`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            no-destination:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/no-destination
+                title: No backup destination
+                status: 409
+                detail: Add a destination to backups.destinations first, or use the scope local-db.
+                instance: /api/v1/backups/run
+            no-recovery-key:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/no-recovery-key
+                title: No recovery key
+                status: 409
+                detail: Make the recovery key first with POST /backups/recovery-key.
+                instance: /api/v1/backups/ssh-key
+            disk-in-use:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/disk-in-use
+                title: The disk is in use
+                status: 409
+                detail: /dev/sdb1 is mounted at /media/usb. Unmount it, or choose another disk.
+                instance: /api/v1/backups/disks/usb-SanDisk_Extreme_55AE_323130364E-0:0/prepare
+            insufficient-space:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/insufficient-space
+                title: Not enough free disk space
+                status: 409
+                detail: The restore drill needs 2 times the database size.
+                instance: /api/v1/backups/drill
+                space: {path: /var/lib/care-pi, required_bytes: 2147483648, free_bytes: 1073741824}
+            job-running:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/job-running
+                title: A job runs now
+                status: 409
+                detail: A restore runs now. Backups start again when it ends.
+                instance: /api/v1/backups/run
+                job_id: 20261030T104200.000Z-restore-pitr
+    BackupsUnprocessable:
+      description: |
+        Validation, and the problems of a destination or a restore target: `invalid-request`, `invalid-config`,
+        `destination-unreachable`, `destination-untrusted-hostkey`, `recovery-key-mismatch`, or `restore-window-exceeded`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            destination-unreachable:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/destination-unreachable
+                title: The backup destination does not answer
+                status: 422
+                detail: 's3.eu-central-003.backblazeb2.com: 403 InvalidAccessKeyId.'
+                instance: /api/v1/setup/steps/backups
+                destination_id: b2
+            destination-untrusted-hostkey:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/destination-untrusted-hostkey
+                title: The SFTP host key is not trusted
+                status: 422
+                detail: nas.lan presents a host key that is not pinned. Compare the fingerprint with the server.
+                instance: /api/v1/restore/dr/inspect
+                host_key:
+                  type: ecdsa-sha2-nistp256
+                  fingerprint_sha256: 'SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s'
+                  public_key: ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEXAMPLEEXAMPLEEXAMPLE=
+                  trusted: false
+            recovery-key-mismatch:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/recovery-key-mismatch
+                title: The recovery key does not match
+                status: 422
+                detail: The word at position 11 is not the word of the recovery key.
+                instance: /api/v1/backups/recovery-key/confirm
+                errors:
+                  - pointer: /words/1/word
+                    message: not the word at position 11
+                    code: wrong-word
+            restore-window-exceeded:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/restore-window-exceeded
+                title: The time is outside the restore window
+                status: 422
+                detail: The earliest point in time is 2026-10-19T01:00:00Z.
+                instance: /api/v1/restore
+                restore_window: {from: '2026-10-19T01:00:00Z', to: '2026-10-30T10:55:00Z'}
+            invalid-config:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/invalid-config
+                title: The config is not valid
+                status: 422
+                detail: 1 value does not match the JSON Schema.
+                instance: /api/v1/setup/steps/backups
+                errors:
+                  - pointer: /destinations/0/disk_label
+                    message: 'must match the pattern ^care-[a-z0-9][a-z0-9-]{0,10}$'
+                    code: pattern
   schemas:
     Problem:
       type: object
@@ -2990,6 +3840,46 @@ components:
           minimum: 3
           description: For `not-implemented-in-this-version` and `unsupported-config`, the phase that adds the feature.
           examples: [3]
+        destination_id:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+          description: For `destination-unreachable` and `destination-untrusted-hostkey`, the destination. Not there for a candidate without an id.
+          examples: [b2]
+        host_key:
+          $ref: '#/components/schemas/HostKey'
+          description: For `destination-untrusted-hostkey`, the host key that the server presents now.
+        restore_window:
+          type: object
+          additionalProperties: false
+          description: For `restore-window-exceeded`, the restore window now.
+          required: [from, to]
+          properties:
+            from:
+              type: [string, 'null']
+              format: date-time
+              description: The earliest point in time. `null` without a backup.
+            to:
+              type: [string, 'null']
+              format: date-time
+              description: The latest point in time. `null` without a backup.
+        space:
+          type: object
+          additionalProperties: false
+          description: For `insufficient-space`, the space that the operation needs and the free space now.
+          required: [path, required_bytes, free_bytes]
+          properties:
+            path:
+              type: string
+              description: The directory that the operation writes to.
+              examples: [/var/lib/care-pi]
+            required_bytes:
+              type: integer
+              minimum: 0
+              description: The space that the operation needs.
+            free_bytes:
+              type: integer
+              minimum: 0
+              description: The free space of the file system now.
       examples:
         - type: https://care-pi.rithviknishad.dev/problems/job-running
           title: A job runs now
@@ -3037,6 +3927,15 @@ components:
         - https://care-pi.rithviknishad.dev/problems/not-implemented-in-this-version
         - https://care-pi.rithviknishad.dev/problems/care-not-running
         - https://care-pi.rithviknishad.dev/problems/unavailable
+        - https://care-pi.rithviknishad.dev/problems/destination-unreachable
+        - https://care-pi.rithviknishad.dev/problems/destination-untrusted-hostkey
+        - https://care-pi.rithviknishad.dev/problems/recovery-key-mismatch
+        - https://care-pi.rithviknishad.dev/problems/restore-window-exceeded
+        - https://care-pi.rithviknishad.dev/problems/disk-in-use
+        - https://care-pi.rithviknishad.dev/problems/no-destination
+        - https://care-pi.rithviknishad.dev/problems/no-recovery-key
+        - https://care-pi.rithviknishad.dev/problems/insufficient-space
+        - https://care-pi.rithviknishad.dev/problems/verify-failed
       examples: [https://care-pi.rithviknishad.dev/problems/invalid-config]
     ValidationError:
       type: object
@@ -3586,7 +4485,8 @@ components:
       enum: [unclaimed, claimed, setup, applying, ready]
       description: |
         The setup state machine. `unclaimed`: no console account. `claimed`: the account exists; no other step is done or skipped.
-        `setup`: steps are in progress. `applying`: the finish job runs. `ready`: setup is finished.
+        `setup`: steps are in progress. `applying`: the finish job (kind `setup`) or a restore from backup (kind `restore-dr`) runs.
+        `ready`: setup is finished.
       examples: [setup]
     Session:
       type: object
@@ -4015,7 +4915,7 @@ components:
       type: object
       additionalProperties: false
       description: The setup state machine, the steps, and the draft values.
-      required: [state, dev_build, current_step, steps, draft, can_finish, job_id, claimed_at, ready_at]
+      required: [state, dev_build, current_step, steps, draft, can_finish, job_id, claimed_at, ready_at, restore]
       properties:
         state:
           $ref: '#/components/schemas/SetupStateName'
@@ -4050,6 +4950,8 @@ components:
           type: [string, 'null']
           format: date-time
           description: The end of the successful finish job.
+        restore:
+          $ref: '#/components/schemas/SetupRestore'
       examples:
         - state: setup
           dev_build: true
@@ -4087,6 +4989,7 @@ components:
           job_id: null
           claimed_at: '2026-10-30T10:00:00Z'
           ready_at: null
+          restore: {available: true, job_id: null, job_state: null}
     SetupDraft:
       type: object
       additionalProperties: false
@@ -4106,8 +5009,7 @@ components:
         care_admin:
           $ref: '#/components/schemas/CareAdminDraft'
         backups:
-          x-phase: 3
-          description: The backup values (Phase 3). `null` before Phase 3.
+          description: The backup values. `null` only from an agent of Phase 2.
           oneOf:
             - $ref: '#/components/schemas/BackupsDraft'
             - type: 'null'
@@ -4245,46 +5147,50 @@ components:
           email: admin@sunrise.example
           password_set: true
     BackupsStep:
-      x-phase: 3
       type: object
       additionalProperties: false
-      description: The backup destinations (at least 1) and the confirmation of the recovery key (`02` §2, §3). Phase 3.
+      description: |
+        The body of the step `backups` (`02` §2, §3): the destinations (1 or more), their secrets, and the confirmation of the recovery key.
+        The agent writes `destinations` into `backups.destinations` of `config.yaml`.
       required: [destinations, credentials, recovery_key_words]
       properties:
         destinations:
           type: array
           minItems: 1
-          description: The restic destinations (S40). The same shape as `backups.destinations` of `config.yaml`.
+          description: The restic destinations (S40). The same shape as `backups.destinations` of `config.yaml`. Each `sftp` destination needs `host_key`.
           items:
             $ref: '../../agent/internal/config/schema/config.schema.json#/$defs/destination'
         credentials:
           type: object
-          description: The secret of each destination, by destination id. The agent stores them in `/etc/care-pi/secrets/`.
+          description: |
+            The secret of each `s3` destination, by destination id. The agent stores it in `/etc/care-pi/secrets/backup/<id>.json`.
+            An id can be absent when the agent already has its secret.
           propertyNames:
             pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
           additionalProperties:
             $ref: '#/components/schemas/DestinationCredentials'
         recovery_key_words:
-          type: array
+          type: [array, 'null']
           minItems: 3
           maxItems: 3
-          description: Three words of the recovery key, typed again by the operator.
+          description: The words of the recovery key at the 3 `confirm_positions`, typed again by the operator. `null` when the key is already `confirmed`.
           items:
             $ref: '#/components/schemas/RecoveryKeyWord'
       examples:
         - destinations:
-            - {id: usb, type: posix, path: /mnt/care-backup}
-          credentials: {}
+            - {id: usb, type: posix, disk_label: care-usb1}
+            - {id: b2, type: s3, endpoint: 'https://s3.eu-central-003.backblazeb2.com', region: eu-central-003, bucket: sunrise-care, prefix: care-pi}
+          credentials:
+            b2: {access_key_id: AKIAEXAMPLE, secret_access_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY}
           recovery_key_words:
-            - {index: 3, word: harbor}
-            - {index: 11, word: lemon}
-            - {index: 20, word: violet}
+            - {index: 3, word: able}
+            - {index: 11, word: account}
+            - {index: 20, word: action}
     BackupsDraft:
-      x-phase: 3
       type: object
       additionalProperties: false
-      description: The backup values of the draft, without secrets. Phase 3.
-      required: [destinations, recovery_key_confirmed]
+      description: The backup values of the draft, without secrets.
+      required: [destinations, recovery_key_confirmed, recovery_key, credentials]
       properties:
         destinations:
           type: array
@@ -4293,16 +5199,39 @@ components:
             $ref: '../../agent/internal/config/schema/config.schema.json#/$defs/destination'
         recovery_key_confirmed:
           type: boolean
-          description: The operator typed the three words correctly.
+          description: The operator typed the 3 words correctly. The same value as `recovery_key.state` is `confirmed`.
+        recovery_key:
+          $ref: '#/components/schemas/RecoveryKeyStatus'
+        credentials:
+          type: object
+          description: For each `s3` destination of `destinations`, if the agent has its secret.
+          propertyNames:
+            pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+          additionalProperties:
+            type: string
+            enum: [present, missing]
       examples:
         - destinations:
-            - {id: usb, type: posix, path: /mnt/care-backup}
+            - {id: usb, type: posix, disk_label: care-usb1}
+            - {id: b2, type: s3, endpoint: 'https://s3.eu-central-003.backblazeb2.com', region: eu-central-003, bucket: sunrise-care, prefix: care-pi}
           recovery_key_confirmed: true
+          recovery_key:
+            state: confirmed
+            key_id: 1a2b3c4d
+            created_at: '2026-10-30T10:06:00Z'
+            confirmed_at: '2026-10-30T10:08:00Z'
+            confirm_positions: null
+            pending: null
+            local_repository: none
+            rotation_job_id: null
+          credentials: {b2: present}
     DestinationCredentials:
-      x-phase: 3
       type: object
       additionalProperties: false
-      description: The secret of one destination. `s3` needs the keys. `sftp` uses the key that the agent makes; it needs nothing here.
+      description: |
+        The secret of one `s3` destination. An `sftp` destination uses the SSH key of the agent, and a `posix` destination needs nothing.
+        The agent never returns these values.
+      required: [access_key_id, secret_access_key]
       properties:
         access_key_id:
           type: string
@@ -4322,10 +5251,9 @@ components:
         - access_key_id: AKIAEXAMPLE
           secret_access_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
     RecoveryKeyWord:
-      x-phase: 3
       type: object
       additionalProperties: false
-      description: One word of the recovery key and its position.
+      description: One word of the recovery key and its position. The agent accepts the first 4 letters of a BIP-39 word.
       required: [index, word]
       properties:
         index:
@@ -4336,10 +5264,10 @@ components:
         word:
           type: string
           pattern: '^[a-z]{3,12}$'
-          description: The word.
+          description: The word, in lowercase letters.
       examples:
         - index: 3
-          word: harbor
+          word: able
     Status:
       type: object
       additionalProperties: false
@@ -4447,8 +5375,7 @@ components:
         jobs:
           $ref: '#/components/schemas/JobsSummary'
         backups:
-          x-phase: 3
-          description: The backup summary (Phase 3). `null` before Phase 3.
+          description: The backup state, the same object as `GET /backups`. Its `health` has the banners. `null` only from an agent of Phase 2.
           oneOf:
             - $ref: '#/components/schemas/BackupsOverview'
             - type: 'null'
@@ -5207,8 +6134,12 @@ components:
           kind: modify
     PlanActionKind:
       type: string
-      enum: [ensure-dirs, set-secrets, write-files, delete-files, daemon-reload, enable-target, pull-images, full-cycle, start-target, restart, reload-caddy, ensure-buckets, ensure-stanza, ensure-fe, write-lock]
-      description: The action kinds of `agent/internal/plan`, in execution order. A later version can add kinds.
+      enum: [ensure-dirs, set-secrets, write-files, delete-files, daemon-reload, enable-target, pull-images, full-cycle, start-target, restart, reload-caddy, ensure-buckets, ensure-stanza, ensure-mounts, ensure-repositories, ensure-timers, ensure-fe, write-lock]
+      description: |
+        The action kinds of `agent/internal/plan`, in execution order. A later version can add kinds.
+        Phase 3 adds `ensure-mounts` (the mount units of `disk_label` destinations), `ensure-repositories` (`restic init`
+        of a new destination; a destination that does not answer does not fail the apply, design note section 13.5),
+        and `ensure-timers` (turn the backup timers on or off, `backups.paused`).
       examples: [restart]
     PlanAction:
       type: object
@@ -5397,11 +6328,13 @@ components:
       examples: [20261030T101500.123Z-apply]
     JobKind:
       type: string
-      enum: [apply, setup, fe-build, fe-prune, support-bundle, backup, verify, restore, update-check, update, rollback, tls]
+      enum: [apply, setup, fe-build, fe-prune, support-bundle, update-check, update, rollback, tls, backup-run, backup-verify, restore-pitr, restore-files, restore-dr, disk-prepare, recovery-key-rotate, restore-drill]
       description: |
-        The kind of job. These kinds hold the apply lock: `apply`, `setup`, `fe-build`, `fe-prune`, `restore`, `update`,
-        `rollback`, `tls`. Phase 2 makes `apply`, `setup`, `fe-build`, `fe-prune`, `support-bundle`.
-        Phase 3 adds `backup`, `verify`, `restore`. Phase 4 adds `update-check`, `update`, `rollback`. Phase 6 adds `tls`.
+        The kind of job. These kinds hold the apply lock: `apply`, `setup`, `fe-build`, `fe-prune`, `update`,
+        `rollback`, `tls`, and the Phase 3 kinds `restore-pitr`, `restore-files`, `restore-dr`, `disk-prepare`, `recovery-key-rotate`.
+        Phase 2 makes `apply`, `setup`, `fe-build`, `fe-prune`, `support-bundle`.
+        Phase 3 makes `backup-run`, `backup-verify`, `restore-pitr`, `restore-files`, `restore-dr`, `disk-prepare`,
+        `recovery-key-rotate`, `restore-drill` (design note section 13.8). Phase 4 adds `update-check`, `update`, `rollback`. Phase 6 adds `tls`.
       examples: [apply]
     JobState:
       type: string
@@ -5439,6 +6372,13 @@ components:
           description: |
             A stable key of the step. For a plan action: a `PlanActionKind`. Other keys: `validate`, `host-check`,
             `resolve-lock`, `render`, `plan`, `wait-healthy`, `set-hostname`, `create-care-superuser`, `collect`, `archive`, `prune`.
+            Phase 3 keys (design note section 13.8): `pause-backups`, `resume-backups`, `maintenance-on`, `maintenance-off`,
+            `stop-app`, `start-app`, `stop-db`, `start-db`, `wait-promote`, `checkpoint`, `backup-incr`, `backup-full`,
+            `check-stanza`, `snapshot`, `forget`, `verify-local`, `verify-destination`, `check-space`, `check-key`,
+            `check-destinations`, `restore-db`, `restore-files`, `verify-files`, `stop-s3`, `start-s3`, `fetch-config`,
+            `fetch-db-repo`, `fetch-files`, `restore-account`, `finish`, `check-disk`, `wipe-disk`, `partition`, `format`,
+            `write-mount-unit`, `mount`, `rekey-local`, `init-destination`, `activate-key`, `remove-old-repositories`,
+            `drill-restore`, `drill-start`, `drill-check`, `drill-cleanup`.
             `null` for a journal of Phase 1 when the name does not start with a known key.
           examples: [restart]
         state:
@@ -5618,6 +6558,14 @@ components:
         - $ref: '#/components/schemas/FeBuildResult'
         - $ref: '#/components/schemas/FePruneResult'
         - $ref: '#/components/schemas/SupportBundleResult'
+        - $ref: '#/components/schemas/BackupRunResult'
+        - $ref: '#/components/schemas/BackupVerifyResult'
+        - $ref: '#/components/schemas/RestorePitrResult'
+        - $ref: '#/components/schemas/RestoreFilesResult'
+        - $ref: '#/components/schemas/RestoreDrResult'
+        - $ref: '#/components/schemas/DiskPrepareResult'
+        - $ref: '#/components/schemas/RecoveryKeyRotateResult'
+        - $ref: '#/components/schemas/RestoreDrillResult'
       discriminator:
         propertyName: kind
         mapping:
@@ -5626,6 +6574,14 @@ components:
           fe-build: '#/components/schemas/FeBuildResult'
           fe-prune: '#/components/schemas/FePruneResult'
           support-bundle: '#/components/schemas/SupportBundleResult'
+          backup-run: '#/components/schemas/BackupRunResult'
+          backup-verify: '#/components/schemas/BackupVerifyResult'
+          restore-pitr: '#/components/schemas/RestorePitrResult'
+          restore-files: '#/components/schemas/RestoreFilesResult'
+          restore-dr: '#/components/schemas/RestoreDrResult'
+          disk-prepare: '#/components/schemas/DiskPrepareResult'
+          recovery-key-rotate: '#/components/schemas/RecoveryKeyRotateResult'
+          restore-drill: '#/components/schemas/RestoreDrillResult'
       examples:
         - kind: fe-prune
           removed: [1a2b3c4d5e6f]
@@ -6045,9 +7001,10 @@ components:
           done: false
     LogUnit:
       type: string
-      enum: [api, worker, beat, db, redis, s3, caddy, pod, clock, fe-build, target, agent]
+      enum: [api, worker, beat, db, redis, s3, caddy, pod, clock, fe-build, target, agent, backup]
       description: |
         The short names of `care-pi logs`. `agent` is `care-pi.service` (new in Phase 2). `target` is `care.target`.
+        `backup` is each `care-backup-*.service` (the backup timers, new in Phase 3).
         Each other name `X` is `care-X.service`.
       examples: [api]
     LogUnitInfo:
@@ -6907,22 +7864,100 @@ components:
         - action: reboot
           at: '2026-10-30T11:00:05Z'
     BackupsOverview:
-      x-phase: 3
       type: object
       additionalProperties: false
-      description: The backup state (Phase 3, `02` §7).
-      required: [local, destinations, recovery_key_confirmed]
+      description: |
+        The backup state for the Backups page (`02` §7), in one object. Append-only.
+        `GET /backups` gives it, and `Status.backups` has the same object.
+      required: [local, destinations, recovery_key_confirmed, generated_at, configured, paused, health, recovery_key, schedule, retention, rpo, verify, drill, ssh_key, running_job]
       properties:
         local:
           $ref: '#/components/schemas/LocalBackupState'
         destinations:
           type: array
-          description: Each restic destination.
+          description: Each destination of `config.yaml`, in the order of the file.
           items:
             $ref: '#/components/schemas/DestinationState'
         recovery_key_confirmed:
           type: boolean
-          description: The operator confirmed a second copy of the recovery key. Else the console shows a banner.
+          description: The active recovery key is `confirmed`. Else the console shows a banner. The same value as `recovery_key.state` is `confirmed`.
+        generated_at:
+          type: string
+          format: date-time
+          description: The time of this report. The agent keeps a report for 2 s.
+        configured:
+          type: boolean
+          description: '`config.yaml` has 1 or more destinations.'
+        paused:
+          type: boolean
+          description: '`backups.paused`. The backup timers do not run. "Back up now" still works.'
+        health:
+          $ref: '#/components/schemas/BackupsHealth'
+        recovery_key:
+          $ref: '#/components/schemas/RecoveryKeyStatus'
+        schedule:
+          type: array
+          description: Each backup timer with its next run. First the local timers, then the timers of each destination.
+          items:
+            $ref: '#/components/schemas/ScheduleEntry'
+        retention:
+          type: object
+          additionalProperties: false
+          description: The effective retention of the local repository and the defaults of the destinations (`backups.retention`).
+          required: [db_full, files_keep_daily, files_keep_weekly]
+          properties:
+            db_full:
+              type: integer
+              minimum: 1
+              description: The full backups that the local repository keeps, with their WAL. The restore window is about this number of weeks.
+              examples: [2]
+            files_keep_daily:
+              type: integer
+              minimum: 0
+              description: The default of `retention.keep_daily` of a destination.
+              examples: [14]
+            files_keep_weekly:
+              type: integer
+              minimum: 0
+              description: The default of `retention.keep_weekly` of a destination.
+              examples: [8]
+        rpo:
+          type: object
+          additionalProperties: false
+          description: |
+            The recovery point objective (`02` §3, §7). Local: `archive_timeout`. Off-site: the interval of a destination plus `archive_timeout`.
+            The console shows it next to the controls of `wal_archive_timeout_min` and `interval_min`.
+          required: [wal_archive_timeout_min, local_minutes, offsite_minutes]
+          properties:
+            wal_archive_timeout_min:
+              type: integer
+              minimum: 1
+              description: '`backups.wal_archive_timeout_min`.'
+              examples: [5]
+            local_minutes:
+              type: integer
+              minimum: 1
+              description: The largest data loss on this device when the database is idle.
+              examples: [5]
+            offsite_minutes:
+              type: [integer, 'null']
+              minimum: 1
+              description: The smallest off-site RPO of the destinations. `null` without a destination.
+              examples: [20]
+        verify:
+          $ref: '#/components/schemas/VerifyState'
+        drill:
+          $ref: '#/components/schemas/DrillState'
+        ssh_key:
+          description: The SSH public key for `sftp` destinations (`GET /backups/ssh-key`). `null` without a recovery key.
+          oneOf:
+            - $ref: '#/components/schemas/SshPublicKey'
+            - type: 'null'
+        running_job:
+          description: The job of a backup kind or a restore kind that runs now. `null` when none runs. A timer snapshot is not a job; see `DestinationState.running`.
+          oneOf:
+            - $ref: '#/components/schemas/JobSummary'
+            - type: 'null'
       examples:
         - local:
             last_full_at: '2026-10-26T01:00:00Z'
@@ -6931,40 +7966,156 @@ components:
             window_from: '2026-10-19T01:00:00Z'
             window_to: '2026-10-30T10:55:00Z'
             size_bytes: 48234496
+            state: ok
+            repo_path: /var/lib/care-pi/backup/pg
+            key: derived
+            timeline: 1
+            backup_count: 9
+            last_backup:
+              label: 20261026-010002F_20261030-020003I
+              type: incr
+              started_at: '2026-10-30T02:00:03Z'
+              finished_at: '2026-10-30T02:00:08Z'
+              size_bytes: 48500000
+              repo_size_bytes: 26000
+              reason: null
+            last_error: null
+            wal_archive_failing_since: null
+            free_bytes: 221000000000
+            next_full_at: '2026-11-01T01:00:00Z'
+            next_incr_at: '2026-10-31T02:00:00Z'
+            last_verify: {job_id: 20261026T030000.000Z-backup-verify, finished_at: '2026-10-26T03:00:40Z', ok: true, detail: null}
           destinations:
-            - {id: usb, type: posix, state: ok, last_snapshot_at: '2026-10-30T10:45:00Z', size_bytes: 61234567, free_bytes: 120000000000, last_error: null}
+            - id: usb
+              type: posix
+              state: ok
+              last_snapshot_at: '2026-10-30T10:45:00Z'
+              size_bytes: 61234567
+              free_bytes: 120000000000
+              last_error: null
+              location: /var/lib/care-pi/disks/care-usb1/care-pi-1a2b3c4d
+              destination: {id: usb, type: posix, disk_label: care-usb1, interval_min: 15, retention: {keep_within_days: 14, keep_daily: 14, keep_weekly: 8, keep_monthly: 6}}
+              credentials: not-needed
+              host_key_fingerprint: null
+              last_db_snapshot_at: '2026-10-30T10:45:00Z'
+              last_files_snapshot_at: '2026-10-30T02:30:00Z'
+              last_attempt_at: '2026-10-30T10:45:00Z'
+              last_error_code: null
+              failing_since: null
+              next_db_run_at: '2026-10-30T11:00:00Z'
+              next_files_run_at: '2026-10-31T02:30:00Z'
+              rpo_minutes: 20
+              snapshot_count: 412
+              last_verify: null
+              running: false
+              recent_runs: []
           recovery_key_confirmed: true
+          generated_at: '2026-10-30T10:55:30Z'
+          configured: true
+          paused: false
+          health: {state: ok, banners: [], generated_at: '2026-10-30T10:55:30Z'}
+          recovery_key:
+            state: confirmed
+            key_id: 1a2b3c4d
+            created_at: '2026-10-30T10:06:00Z'
+            confirmed_at: '2026-10-30T10:08:00Z'
+            confirm_positions: null
+            pending: null
+            local_repository: derived
+            rotation_job_id: null
+          schedule:
+            - {id: db-full, kind: db-full, destination_id: null, unit: care-backup-db-full.timer, calendar: 'Sun 01:00', interval_min: null, enabled: true, next_run_at: '2026-11-01T01:00:00Z', last_run_at: '2026-10-26T01:00:00Z', last_ok: true}
+            - {id: 'db:usb', kind: snapshot-db, destination_id: usb, unit: 'care-backup-db@usb.timer', calendar: null, interval_min: 15, enabled: true, next_run_at: '2026-10-30T11:00:00Z', last_run_at: '2026-10-30T10:45:00Z', last_ok: true}
+          retention: {db_full: 2, files_keep_daily: 14, files_keep_weekly: 8}
+          rpo: {wal_archive_timeout_min: 5, local_minutes: 5, offsite_minutes: 20}
+          verify: {schedule: 'Sat 03:00', next_run_at: '2026-10-31T03:00:00Z', last: {job_id: 20261026T030000.000Z-backup-verify, finished_at: '2026-10-26T03:00:40Z', ok: true, detail: null}}
+          drill: {enabled: true, schedule: '*-*-01 04:00', next_run_at: '2026-11-01T04:00:00Z', last: null}
+          ssh_key: null
+          running_job: null
     LocalBackupState:
-      x-phase: 3
       type: object
       additionalProperties: false
-      description: The local pgBackRest repository (S40).
-      required: [last_full_at, last_incr_at, last_wal_archived_at, window_from, window_to, size_bytes]
+      description: The local pgBackRest repository (S40) and the restore window on this device.
+      required: [last_full_at, last_incr_at, last_wal_archived_at, window_from, window_to, size_bytes, state, repo_path, key, timeline, backup_count, last_backup, last_error, wal_archive_failing_since, free_bytes, next_full_at, next_incr_at, last_verify]
       properties:
         last_full_at:
           type: [string, 'null']
           format: date-time
-          description: The last full backup.
+          description: The end of the last full backup.
         last_incr_at:
           type: [string, 'null']
           format: date-time
-          description: The last incremental backup.
+          description: The end of the last incremental backup.
         last_wal_archived_at:
           type: [string, 'null']
           format: date-time
-          description: The last archived WAL segment.
+          description: The time of the last archived WAL segment.
         window_from:
           type: [string, 'null']
           format: date-time
-          description: The earliest point in time for a PITR.
+          description: The earliest point in time for a PITR (the end of the oldest full backup).
         window_to:
           type: [string, 'null']
           format: date-time
-          description: The latest point in time for a PITR.
+          description: The latest point in time for a PITR (the last archived WAL segment). A restore job archives the current segment first.
         size_bytes:
           type: [integer, 'null']
           minimum: 0
-          description: The size of the repository.
+          description: The size of the repository on disk.
+        state:
+          type: string
+          enum: [none, ok, degraded, error, unknown]
+          description: |
+            `none`: no backup yet (before the finish of setup). `ok`: the last backup and the WAL archive succeeded.
+            `degraded`: the last scheduled backup failed, but the WAL archive works. `error`: the WAL archive fails.
+            `unknown`: the agent cannot read the repository. A later version can add states.
+        repo_path:
+          type: string
+          description: The directory of the repository on the host.
+          examples: [/var/lib/care-pi/backup/pg]
+        key:
+          type: string
+          enum: [derived, legacy, none]
+          description: |
+            The source of the cipher pass. `derived`: from the recovery key. `legacy`: a random pass of Phase 1 or Phase 2
+            (re-key it with `POST /backups/recovery-key/rotate`, `new_key: false`; design note section 13.12). `none`: no repository yet.
+        timeline:
+          type: [integer, 'null']
+          minimum: 1
+          description: The Postgres timeline now. A PITR makes a new timeline.
+        backup_count:
+          type: integer
+          minimum: 0
+          description: The backups in the repository.
+        last_backup:
+          description: The newest backup. `null` without a backup.
+          oneOf:
+            - $ref: '#/components/schemas/LocalBackup'
+            - type: 'null'
+        last_error:
+          type: [string, 'null']
+          description: The error of the last failed backup or WAL archive. `null` after a success.
+        wal_archive_failing_since:
+          type: [string, 'null']
+          format: date-time
+          description: The first failed `archive-push` after the last success. `null` when the WAL archive works.
+        free_bytes:
+          type: [integer, 'null']
+          minimum: 0
+          description: The free space of the file system of the repository.
+        next_full_at:
+          type: [string, 'null']
+          format: date-time
+          description: The next run of the full backup timer. `null` when the timers are off.
+        next_incr_at:
+          type: [string, 'null']
+          format: date-time
+          description: The next run of the incremental backup timer. `null` when the timers are off.
+        last_verify:
+          description: The last `pgbackrest verify`. `null` before the first verify.
+          oneOf:
+            - $ref: '#/components/schemas/VerifyOutcome'
+            - type: 'null'
       examples:
         - last_full_at: '2026-10-26T01:00:00Z'
           last_incr_at: '2026-10-30T02:00:00Z'
@@ -6972,15 +8123,27 @@ components:
           window_from: '2026-10-19T01:00:00Z'
           window_to: '2026-10-30T10:55:00Z'
           size_bytes: 48234496
+          state: ok
+          repo_path: /var/lib/care-pi/backup/pg
+          key: derived
+          timeline: 1
+          backup_count: 9
+          last_backup: null
+          last_error: null
+          wal_archive_failing_since: null
+          free_bytes: 221000000000
+          next_full_at: '2026-11-01T01:00:00Z'
+          next_incr_at: '2026-10-31T02:00:00Z'
+          last_verify: null
     DestinationState:
-      x-phase: 3
       type: object
       additionalProperties: false
-      description: The health of one restic destination.
-      required: [id, type, state, last_snapshot_at, size_bytes, free_bytes, last_error]
+      description: The state of one restic destination. The agent reads it from its state files; it does not connect to the destination.
+      required: [id, type, state, last_snapshot_at, size_bytes, free_bytes, last_error, location, destination, credentials, host_key_fingerprint, last_db_snapshot_at, last_files_snapshot_at, last_attempt_at, last_error_code, failing_since, next_db_run_at, next_files_run_at, rpo_minutes, snapshot_count, last_verify, running, recent_runs]
       properties:
         id:
           type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
           description: The destination id.
           examples: [usb]
         type:
@@ -6989,49 +8152,156 @@ components:
           description: The destination type.
         state:
           type: string
-          enum: [ok, degraded, unknown]
-          description: '`degraded`: the last snapshot failed or is too old.'
+          enum: [pending, ok, degraded, error, unknown]
+          description: |
+            `pending`: no run yet (a new destination). `ok`: the last run succeeded.
+            `degraded`: the last run failed, but a snapshot younger than `backups.alert_after_hours` exists.
+            `error`: no successful snapshot for `backups.alert_after_hours`, the host key changed, or the secret is not there.
+            `unknown`: the agent cannot read the state. A later version can add states.
         last_snapshot_at:
           type: [string, 'null']
           format: date-time
-          description: The last successful snapshot.
+          description: The last successful snapshot of each kind.
         size_bytes:
           type: [integer, 'null']
           minimum: 0
-          description: The size of the repository.
+          description: The size of the restic repository (after the last snapshot).
         free_bytes:
           type: [integer, 'null']
           minimum: 0
-          description: The free space, when it is known.
+          description: The free space at the destination, when it is known (`posix`, some `sftp` servers).
         last_error:
           type: [string, 'null']
-          description: The last error.
+          description: The error of the last failed run. `null` after a success.
+        location:
+          type: string
+          description: The restic repository, without secrets.
+          examples: ['sftp:care@nas.lan:/volume1/care/care-pi-1a2b3c4d']
+        destination:
+          $ref: '../../agent/internal/config/schema/config.schema.json#/$defs/destination'
+          description: The destination of `config.yaml`, with the defaults of `interval_min` and `retention`.
+        credentials:
+          type: string
+          enum: [not-needed, present, missing]
+          description: The secret of an `s3` destination. `not-needed` for `posix` and `sftp`.
+        host_key_fingerprint:
+          type: [string, 'null']
+          pattern: '^SHA256:[A-Za-z0-9+/]{43}$'
+          description: The SHA-256 fingerprint of the pinned host key (`sftp`). `null` for the other types or without `host_key`.
+        last_db_snapshot_at:
+          type: [string, 'null']
+          format: date-time
+          description: The last successful `db` snapshot (the local repository and `/etc/care-pi`).
+        last_files_snapshot_at:
+          type: [string, 'null']
+          format: date-time
+          description: The last successful `files` snapshot (`/var/lib/care-pi/s3` and `/etc/care-pi`).
+        last_attempt_at:
+          type: [string, 'null']
+          format: date-time
+          description: The start of the last run.
+        last_error_code:
+          type: [string, 'null']
+          pattern: '^[a-z0-9][a-z0-9-]*$'
+          description: A problem slug (`destination-unreachable`, `destination-untrusted-hostkey`, `insufficient-space`) or a check name of the destination test.
+          examples: [destination-unreachable]
+        failing_since:
+          type: [string, 'null']
+          format: date-time
+          description: The first failed run after the last success. `null` when the last run succeeded.
+        next_db_run_at:
+          type: [string, 'null']
+          format: date-time
+          description: The next `db` snapshot. `null` when the timers are off.
+        next_files_run_at:
+          type: [string, 'null']
+          format: date-time
+          description: The next `files` snapshot. `null` when the timers are off.
+        rpo_minutes:
+          type: integer
+          minimum: 1
+          description: '`interval_min` + `backups.wal_archive_timeout_min`.'
+          examples: [20]
+        snapshot_count:
+          type: [integer, 'null']
+          minimum: 0
+          description: The snapshots in the repository after the last run.
+        last_verify:
+          description: The last `restic check` of this destination. `null` before the first verify.
+          oneOf:
+            - $ref: '#/components/schemas/VerifyOutcome'
+            - type: 'null'
+        running:
+          type: boolean
+          description: A snapshot, forget, prune, or check of this destination runs now.
+        recent_runs:
+          type: array
+          maxItems: 10
+          description: The last 10 runs, newest first. A timer run of every 15 minutes has no job, so this list is its history.
+          items:
+            $ref: '#/components/schemas/DestinationRun'
       examples:
-        - id: usb
-          type: posix
-          state: ok
-          last_snapshot_at: '2026-10-30T10:45:00Z'
+        - id: b2
+          type: s3
+          state: degraded
+          last_snapshot_at: '2026-10-30T10:30:00Z'
           size_bytes: 61234567
-          free_bytes: 120000000000
-          last_error: null
+          free_bytes: null
+          last_error: 'dial tcp: lookup s3.eu-central-003.backblazeb2.com: no such host'
+          location: s3:https://s3.eu-central-003.backblazeb2.com/sunrise-care/care-pi/care-pi-1a2b3c4d
+          destination: {id: b2, type: s3, endpoint: 'https://s3.eu-central-003.backblazeb2.com', region: eu-central-003, bucket: sunrise-care, prefix: care-pi, interval_min: 15, retention: {keep_within_days: 14, keep_daily: 14, keep_weekly: 8, keep_monthly: 6}}
+          credentials: present
+          host_key_fingerprint: null
+          last_db_snapshot_at: '2026-10-30T10:30:00Z'
+          last_files_snapshot_at: '2026-10-30T02:30:00Z'
+          last_attempt_at: '2026-10-30T10:45:00Z'
+          last_error_code: destination-unreachable
+          failing_since: '2026-10-30T10:45:00Z'
+          next_db_run_at: '2026-10-30T11:00:00Z'
+          next_files_run_at: '2026-10-31T02:30:00Z'
+          rpo_minutes: 20
+          snapshot_count: 388
+          last_verify: null
+          running: false
+          recent_runs:
+            - {started_at: '2026-10-30T10:45:00Z', finished_at: '2026-10-30T10:45:31Z', kind: db, source: timer, ok: false, snapshot_id: null, added_bytes: null, error_code: destination-unreachable, error: 'dial tcp: lookup s3.eu-central-003.backblazeb2.com: no such host', job_id: null}
     BackupRunRequest:
-      x-phase: 3
       type: object
       additionalProperties: false
-      description: The options of a backup now.
+      description: 'The options of "Back up now". An empty body is `scope: all`, `type: incr`.'
       properties:
         destination:
           type: [string, 'null']
           pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
-          description: One destination. `null` for each destination.
+          description: 'The destination for `scope: destination`. `null` for the other scopes.'
           examples: [usb]
+        scope:
+          type: string
+          enum: [all, local-db, destination]
+          description: |
+            `all`: the local backup, then the snapshots to each destination. `local-db`: only the local backup (the checkpoint
+            with `type: incr`). `destination`: only the snapshots to `destination`.
+            Default: `destination` when `destination` is set, else `all`.
+        type:
+          type: string
+          enum: [incr, full]
+          default: incr
+          description: The type of the local backup (`all` and `local-db`).
+        reason:
+          type: [string, 'null']
+          maxLength: 200
+          description: A text for the job journal. The local backup keeps it as the pgBackRest annotation `care-pi-reason`.
+          examples: [before the import of the lab results]
       examples:
         - destination: null
+        - scope: local-db
+          type: incr
+          destination: null
+          reason: before the update to 2026.11.1
     DestinationTestRequest:
-      x-phase: 3
       type: object
       additionalProperties: false
-      description: A destination to test, with its secret.
+      description: A candidate destination to test, with its secret, and the answers of the operator (host key, bucket).
       required: [destination, credentials]
       properties:
         destination:
@@ -7040,45 +8310,104 @@ components:
           oneOf:
             - $ref: '#/components/schemas/DestinationCredentials'
             - type: 'null'
-          description: The secret of an `s3` destination. `null` for the other types.
+          description: The secret of an `s3` destination. `null` uses the stored secret of `destination.id`, and is the value for the other types.
+        accept_fingerprint:
+          type: [string, 'null']
+          pattern: '^SHA256:[A-Za-z0-9+/]{43}$'
+          description: '`sftp`: the fingerprint that the operator accepted in the first call (TOFU). The agent continues only when the server presents this key.'
+          examples: ['SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s']
+        create_bucket:
+          type: boolean
+          default: false
+          description: '`s3`: create the bucket when it does not exist (`LocationConstraint` from `region`). Nothing else creates it (SP6).'
       examples:
         - destination: {id: b2, type: s3, endpoint: 'https://s3.eu-central-003.backblazeb2.com', bucket: sunrise-care, region: eu-central-003}
           credentials: {access_key_id: AKIAEXAMPLE, secret_access_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY}
+          accept_fingerprint: null
+          create_bucket: true
     DestinationTestResult:
-      x-phase: 3
       type: object
       additionalProperties: false
-      description: The result of each check of a destination.
-      required: [ok, checks, host_key_fingerprint, public_key]
+      description: The result of each check of a candidate destination, and what the console asks next.
+      required: [ok, checks, host_key_fingerprint, public_key, host_key, next_action, repository, free_bytes, location, tested_at]
       properties:
         ok:
           type: boolean
-          description: Each check passed.
+          description: Each check with the level `required` passed.
         checks:
           type: array
-          description: The checks.
+          description: The checks in order. The agent stops at the first failed required check.
           items:
             $ref: '#/components/schemas/HostCheckItem'
         host_key_fingerprint:
           type: [string, 'null']
-          description: The SFTP host key that the agent pins on the first connect (TOFU).
-          examples: ['ECDSA SHA256:abc123EXAMPLE']
+          pattern: '^SHA256:[A-Za-z0-9+/]{43}$'
+          description: '`sftp`: the SHA-256 fingerprint of the key that the server presents. The same value as `host_key.fingerprint_sha256`.'
+          examples: ['SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s']
         public_key:
           type: [string, 'null']
-          description: The SSH public key of the agent for an `sftp` destination.
-          examples: [ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLE care-pi@care]
+          description: '`sftp`: the SSH public key of the agent, when the server refused it. Add it to `~/.ssh/authorized_keys` on the server.'
+          examples: [ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLE care-pi@care-1a2b3c4d]
+        host_key:
+          description: '`sftp`: the key that the server presents. `null` for the other types.'
+          oneOf:
+            - $ref: '#/components/schemas/HostKey'
+            - type: 'null'
+        next_action:
+          type: string
+          enum: [none, accept-host-key, install-ssh-key, create-bucket, fix]
+          description: |
+            What the console asks next. `none`: each check passed. `accept-host-key`: show the fingerprint, then send `accept_fingerprint`.
+            `install-ssh-key`: show `public_key`. `create-bucket`: ask, then send `create_bucket: true`.
+            `fix`: show the failed check and its `fix`. A later version can add values.
+        repository:
+          type: [object, 'null']
+          additionalProperties: false
+          description: The care-pi repositories at the location. `null` when the agent could not list the location.
+          required: [exists, other_key_ids]
+          properties:
+            exists:
+              type: boolean
+              description: '`care-pi-<key id>` of this recovery key exists. The agent then uses it again.'
+            other_key_ids:
+              type: array
+              description: The key ids of other care-pi repositories at the location (another device, or an older key).
+              items:
+                type: string
+                pattern: '^[0-9a-f]{8}$'
+        free_bytes:
+          type: [integer, 'null']
+          minimum: 0
+          description: The free space at the destination, when it is known.
+        location:
+          type: [string, 'null']
+          description: The restic repository of this destination for the recovery key now. `null` without a recovery key.
+          examples: [/var/lib/care-pi/disks/care-usb1/care-pi-1a2b3c4d]
+        tested_at:
+          type: string
+          format: date-time
+          description: The time of the test.
       examples:
         - ok: true
           checks:
+            - {name: mount, level: required, ok: true, detail: LABEL=care-usb1 at /var/lib/care-pi/disks/care-usb1}
             - {name: write, level: required, ok: true, detail: wrote and read 1 MiB}
+            - {name: root-disk, level: advised, ok: true, detail: the path is not on the root disk}
           host_key_fingerprint: null
           public_key: null
+          host_key: null
+          next_action: none
+          repository: {exists: false, other_key_ids: []}
+          free_bytes: 120000000000
+          location: /var/lib/care-pi/disks/care-usb1/care-pi-1a2b3c4d
+          tested_at: '2026-10-30T10:07:00Z'
     RecoveryKey:
-      x-phase: 3
       type: object
       additionalProperties: false
-      description: The recovery key as 24 words (`02` §2).
-      required: [words, created_at]
+      description: |
+        The recovery key (`02` §2, design note section 13.3): 24 words of the BIP-39 English list (256 bits and an 8-bit checksum).
+        Only `GET /backups/recovery-key` (with a recent authentication) and `POST /backups/recovery-key` give it.
+      required: [words, created_at, key, key_id, qr_payload, file_name]
       properties:
         words:
           type: array
@@ -7087,83 +8416,110 @@ components:
           description: The words in order.
           items:
             type: string
-            pattern: '^[a-z]{3,12}$'
+            pattern: '^[a-z]{3,8}$'
         created_at:
           type: string
           format: date-time
           description: The creation of the key.
+        key:
+          type: string
+          enum: [active, pending]
+          description: '`active`: the key in use. `pending`: the new key of a rotation.'
+        key_id:
+          type: string
+          pattern: '^[0-9a-f]{8}$'
+          description: The key id (HKDF). It names the restic repositories (`care-pi-<key id>`) and is on the printed sheet. It is not secret.
+          examples: [1a2b3c4d]
+        qr_payload:
+          type: string
+          pattern: '^CARE-PI-RK1:[A-Z]{3,8}( [A-Z]{3,8}){23}$'
+          description: The text of the QR code. The QR alphanumeric mode keeps it small. The restore wizard reads it with the camera.
+        file_name:
+          type: string
+          pattern: '^care-recovery-[a-z0-9-]{1,64}\.txt$'
+          description: The file name of `GET /backups/recovery-key/download`.
+          examples: [care-recovery-sunrise-clinic.txt]
       examples:
-        - words: [able, acid, also, apex, aqua, arch, area, army, atom, aunt, axis, baby, back, bake, ball, band, bank, barn, base, bath, beam, bean, bear, beat]
-          created_at: '2026-10-30T10:00:00Z'
+        - words: [abandon, ability, able, about, above, absent, absorb, abstract, absurd, abuse, access, accident, account, accuse, achieve, acid, acoustic, acquire, across, act, action, actor, actress, actual]
+          created_at: '2026-10-30T10:06:00Z'
+          key: active
+          key_id: 1a2b3c4d
+          qr_payload: CARE-PI-RK1:ABANDON ABILITY ABLE ABOUT ABOVE ABSENT ABSORB ABSTRACT ABSURD ABUSE ACCESS ACCIDENT ACCOUNT ACCUSE ACHIEVE ACID ACOUSTIC ACQUIRE ACROSS ACT ACTION ACTOR ACTRESS ACTUAL
+          file_name: care-recovery-sunrise-clinic.txt
     RestorePoints:
-      x-phase: 3
       type: object
       additionalProperties: false
-      description: The restore window (`02` §6).
-      required: [pitr, file_snapshots]
+      description: The restore window and the restore points (`02` §6).
+      required: [pitr, file_snapshots, generated_at, db_backups, checkpoints, destinations]
       properties:
         pitr:
           type: [object, 'null']
           additionalProperties: false
           description: The PITR window of the local repository. `null` without a backup.
-          required: [from, to]
+          required: [from, to, timeline]
           properties:
             from:
               type: string
               format: date-time
-              description: The earliest point in time.
+              description: The earliest point in time (the end of the oldest full backup).
             to:
               type: string
               format: date-time
-              description: The latest point in time.
+              description: The latest archived point. A restore job archives the current WAL segment first, so a time up to the start of the job is possible.
+            timeline:
+              type: integer
+              minimum: 1
+              description: The timeline now. A time restore follows the newest timeline that contains the time.
         file_snapshots:
           type: array
-          description: The restic snapshots of each destination, newest first.
+          description: The restic snapshots of each destination (`db` and `files`), newest first.
           items:
-            type: object
-            additionalProperties: false
-            description: One snapshot.
-            required: [destination, snapshot_id, time]
-            properties:
-              destination:
-                type: string
-                description: The destination id.
-              snapshot_id:
-                type: string
-                pattern: '^[0-9a-f]{8,64}$'
-                description: The restic snapshot id.
-              time:
-                type: string
-                format: date-time
-                description: The time of the snapshot.
-      examples:
-        - pitr: {from: '2026-10-19T01:00:00Z', to: '2026-10-30T10:55:00Z'}
-          file_snapshots:
-            - {destination: usb, snapshot_id: 1a2b3c4d, time: '2026-10-30T02:30:00Z'}
-    RestoreRequest:
-      x-phase: 3
-      type: object
-      additionalProperties: false
-      description: A restore (`02` §6).
-      required: [kind]
-      properties:
-        kind:
+            $ref: '#/components/schemas/SnapshotInfo'
+        generated_at:
           type: string
-          enum: [pitr, files, device]
-          description: '`pitr`: undo a mistake on this device. `files`: files only. `device`: a new device from a destination.'
-        target_time:
-          type: [string, 'null']
           format: date-time
-          description: The point in time for `pitr` and `device`. `null` is the latest point.
-        destination:
-          type: [string, 'null']
-          description: The destination for `files` and `device`.
-        snapshot_id:
-          type: [string, 'null']
-          description: The restic snapshot for `files`.
+          description: The time of this report.
+        db_backups:
+          type: array
+          description: The backups of the local repository, newest first.
+          items:
+            $ref: '#/components/schemas/LocalBackup'
+        checkpoints:
+          type: array
+          description: The checkpoints, newest first (design note section 13.11).
+          items:
+            $ref: '#/components/schemas/Checkpoint'
+        destinations:
+          type: array
+          description: The list state of each destination.
+          items:
+            $ref: '#/components/schemas/SnapshotListing'
+      examples:
+        - pitr: {from: '2026-10-19T01:00:00Z', to: '2026-10-30T10:55:00Z', timeline: 1}
+          file_snapshots:
+            - {destination: usb, snapshot_id: 4f1e9a2c, time: '2026-10-30T10:45:00Z', contents: [db, config], size_bytes: 52428800, hostname: care, key_id: 1a2b3c4d}
+            - {destination: usb, snapshot_id: 1a2b3c4d, time: '2026-10-30T02:30:00Z', contents: [files, config], size_bytes: 734003200, hostname: care, key_id: 1a2b3c4d}
+          generated_at: '2026-10-30T10:56:00Z'
+          db_backups:
+            - {label: 20261026-010002F_20261030-020003I, type: incr, started_at: '2026-10-30T02:00:03Z', finished_at: '2026-10-30T02:00:08Z', size_bytes: 48500000, repo_size_bytes: 26000, reason: null}
+          checkpoints: []
+          destinations:
+            - {id: usb, listed_at: '2026-10-30T10:45:40Z', ok: true, error: null, snapshot_count: 412}
+    RestoreRequest:
+      description: A restore on this device (`02` §6). `kind` selects the variant. For a new device, use `POST /restore/dr`.
+      oneOf:
+        - $ref: '#/components/schemas/RestorePitrRequest'
+        - $ref: '#/components/schemas/RestoreFilesRequest'
+      discriminator:
+        propertyName: kind
+        mapping:
+          pitr: '#/components/schemas/RestorePitrRequest'
+          files: '#/components/schemas/RestoreFilesRequest'
       examples:
         - kind: pitr
-          target_time: '2026-10-30T09:40:00Z'
+          time: '2026-10-30T09:40:00Z'
+          checkpoint: null
+          reason: undo the import of 09:42
     UpdatesOverview:
       x-phase: 4
       type: object
@@ -7334,3 +8690,1784 @@ components:
           description: New values for the settings form.
       examples:
         - enabled: false
+    BackupsHealth:
+      type: object
+      additionalProperties: false
+      description: |
+        The backup banners of the dashboard (`02` §7). `state` is the worst `severity` of the banners, or `ok` without a banner.
+        Design note section 13.10 gives the rule of each code.
+      required: [state, banners, generated_at]
+      properties:
+        state:
+          type: string
+          enum: [ok, info, warning, error]
+          description: The worst severity of `banners`. `ok` when the list is empty.
+        banners:
+          type: array
+          description: The banners, the worst first.
+          items:
+            $ref: '#/components/schemas/BackupBanner'
+        generated_at:
+          type: string
+          format: date-time
+          description: The time of this report.
+      examples:
+        - state: error
+          banners:
+            - {code: destination-unreachable, severity: error, destination_id: b2, since: '2026-10-29T08:45:00Z', message: b2 has no successful snapshot for 26 hours}
+            - {code: recovery-key-unconfirmed, severity: warning, destination_id: null, since: '2026-10-30T10:06:00Z', message: the recovery key is not confirmed}
+          generated_at: '2026-10-30T10:55:30Z'
+    BackupBanner:
+      type: object
+      additionalProperties: false
+      description: One banner. The console shows its own text for `code`.
+      required: [code, severity, destination_id, since, message]
+      properties:
+        code:
+          type: string
+          enum: [no-destination, no-recovery-key, recovery-key-unconfirmed, destination-unreachable, destination-low-space, local-disk-low, local-backup-failed, wal-archive-failing, verify-failed, drill-failed, backups-paused, local-repository-legacy-key]
+          description: The condition (design note section 13.10). A later version can add codes.
+        severity:
+          type: string
+          enum: [info, warning, error]
+          description: '`error`: the backups do not protect the data now. `warning`: act soon. `info`: advice.'
+        destination_id:
+          type: [string, 'null']
+          pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+          description: The destination of the banner. `null` for a banner of the whole host.
+        since:
+          type: [string, 'null']
+          format: date-time
+          description: The start of the condition, when it is known.
+        message:
+          type: string
+          description: A short English text.
+      examples:
+        - code: destination-unreachable
+          severity: error
+          destination_id: b2
+          since: '2026-10-29T08:45:00Z'
+          message: b2 has no successful snapshot for 26 hours
+    ScheduleEntry:
+      type: object
+      additionalProperties: false
+      description: One backup timer, from `config.yaml` and systemd.
+      required: [id, kind, destination_id, unit, calendar, interval_min, enabled, next_run_at, last_run_at, last_ok]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-z][a-z-]*(:[a-z0-9][a-z0-9-]{0,30})?$'
+          description: A stable id. `<kind>` for a local timer, `db:<destination id>` and `files:<destination id>` for a destination.
+          examples: ['db:usb']
+        kind:
+          type: string
+          enum: [db-full, db-incr, verify, drill, snapshot-db, snapshot-files]
+          description: The work of the timer. A later version can add kinds.
+        destination_id:
+          type: [string, 'null']
+          pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+          description: The destination of a snapshot timer. `null` for a local timer.
+        unit:
+          type: string
+          pattern: '^care-backup-[a-z-]+(@[a-z0-9][a-z0-9-]{0,30})?\.timer$'
+          description: The systemd timer. `GET /logs/backup` has the journal of its service.
+          examples: [care-backup-db-full.timer]
+        calendar:
+          type: [string, 'null']
+          description: The systemd calendar text of the timer (`backups.schedule.*`). `null` for an interval timer.
+          examples: ['Sun 01:00']
+        interval_min:
+          type: [integer, 'null']
+          minimum: 1
+          description: The interval of a `snapshot-db` timer (`interval_min` of the destination). `null` for a calendar timer.
+        enabled:
+          type: boolean
+          description: The timer runs. `false` when `backups.paused` is `true`, and for `drill` when `backups.drill_enabled` is `false`.
+        next_run_at:
+          type: [string, 'null']
+          format: date-time
+          description: The next run. `null` when the timer does not run.
+        last_run_at:
+          type: [string, 'null']
+          format: date-time
+          description: The start of the last run.
+        last_ok:
+          type: [boolean, 'null']
+          description: The last run succeeded. `null` before the first run.
+      examples:
+        - id: db-full
+          kind: db-full
+          destination_id: null
+          unit: care-backup-db-full.timer
+          calendar: 'Sun 01:00'
+          interval_min: null
+          enabled: true
+          next_run_at: '2026-11-01T01:00:00Z'
+          last_run_at: '2026-10-26T01:00:00Z'
+          last_ok: true
+    LocalBackup:
+      type: object
+      additionalProperties: false
+      description: One backup of the local pgBackRest repository (`pgbackrest info`).
+      required: [label, type, started_at, finished_at, size_bytes, repo_size_bytes, reason]
+      properties:
+        label:
+          $ref: '#/components/schemas/BackupLabel'
+        type:
+          type: string
+          enum: [full, diff, incr]
+          description: The pgBackRest backup type.
+        started_at:
+          type: string
+          format: date-time
+          description: The start of the backup.
+        finished_at:
+          type: string
+          format: date-time
+          description: The end of the backup. A restore of this backup gives the data of this time.
+        size_bytes:
+          type: integer
+          minimum: 0
+          description: The size of the database.
+        repo_size_bytes:
+          type: integer
+          minimum: 0
+          description: The size of this backup in the repository (compressed, without the earlier backups).
+        reason:
+          type: [string, 'null']
+          description: The annotation `care-pi-reason` (the `reason` of "Back up now", or of the job that made the backup).
+      examples:
+        - label: 20261026-010002F_20261030-020003I
+          type: incr
+          started_at: '2026-10-30T02:00:03Z'
+          finished_at: '2026-10-30T02:00:08Z'
+          size_bytes: 48500000
+          repo_size_bytes: 26000
+          reason: null
+    BackupLabel:
+      type: string
+      pattern: '^[0-9]{8}-[0-9]{6}F(_[0-9]{8}-[0-9]{6}[DI])?$'
+      description: A pgBackRest backup label. `F` is a full backup. `_…D` and `_…I` are a differential and an incremental backup on that full backup.
+      examples: [20261026-010002F_20261030-104705I]
+    Checkpoint:
+      type: object
+      additionalProperties: false
+      description: |
+        A checkpoint (design note section 13.11): a local backup that a job made before it changed the database.
+        A restore of the checkpoint (`POST /restore`, `kind: pitr`, `checkpoint`) gives the data at `undo_point`.
+      required: [label, undo_point, timeline, job_id, job_kind, reason]
+      properties:
+        label:
+          $ref: '#/components/schemas/BackupLabel'
+        undo_point:
+          type: string
+          format: date-time
+          description: The end of the checkpoint backup. The application was stopped, so no write came after it.
+        timeline:
+          type: integer
+          minimum: 1
+          description: The timeline of the checkpoint.
+        job_id:
+          description: The job that made the checkpoint. `null` for a checkpoint of `POST /backups/run`.
+          oneOf:
+            - $ref: '#/components/schemas/JobId'
+            - type: 'null'
+        job_kind:
+          description: The kind of that job (`restore-pitr`; in Phase 4 also `update`). `null` with `job_id` `null`.
+          oneOf:
+            - $ref: '#/components/schemas/JobKind'
+            - type: 'null'
+        reason:
+          type: [string, 'null']
+          description: The reason of the job.
+      examples:
+        - label: 20261026-010002F_20261030-104705I
+          undo_point: '2026-10-30T10:47:10Z'
+          timeline: 1
+          job_id: 20261030T104700.000Z-restore-pitr
+          job_kind: restore-pitr
+          reason: undo the import of 09:42
+    SnapshotInfo:
+      type: object
+      additionalProperties: false
+      description: One restic snapshot of a destination.
+      required: [destination, snapshot_id, time, contents, size_bytes, hostname, key_id]
+      properties:
+        destination:
+          type: [string, 'null']
+          pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+          description: The destination id. `null` in a `DrInspection` (the device has no config yet).
+          examples: [usb]
+        snapshot_id:
+          type: string
+          pattern: '^[0-9a-f]{8,64}$'
+          description: The restic snapshot id (the short form of 8 hex digits is enough).
+          examples: [4f1e9a2c]
+        time:
+          type: string
+          format: date-time
+          description: The time of the snapshot.
+        contents:
+          type: array
+          description: '`db`: the local pgBackRest repository. `files`: `/var/lib/care-pi/s3`. `config`: `/etc/care-pi` (each snapshot has it).'
+          items:
+            type: string
+            enum: [db, files, config]
+        size_bytes:
+          type: [integer, 'null']
+          minimum: 0
+          description: The size of the data of the snapshot (the restic summary). `null` when restic does not tell it.
+        hostname:
+          type: string
+          description: The host name of the device that made the snapshot.
+          examples: [care]
+        key_id:
+          type: string
+          pattern: '^[0-9a-f]{8}$'
+          description: The key id of the repository.
+          examples: [1a2b3c4d]
+      examples:
+        - destination: usb
+          snapshot_id: 4f1e9a2c
+          time: '2026-10-30T10:45:00Z'
+          contents: [db, config]
+          size_bytes: 52428800
+          hostname: care
+          key_id: 1a2b3c4d
+    SnapshotListing:
+      type: object
+      additionalProperties: false
+      description: When the agent listed the snapshots of one destination, and the result.
+      required: [id, listed_at, ok, error, snapshot_count]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+          description: The destination id.
+        listed_at:
+          type: [string, 'null']
+          format: date-time
+          description: The time of the last list. `null` before the first list.
+        ok:
+          type: [boolean, 'null']
+          description: The last list succeeded. `null` before the first list.
+        error:
+          type: [string, 'null']
+          description: The error of the last list.
+        snapshot_count:
+          type: [integer, 'null']
+          minimum: 0
+          description: The snapshots of the last list.
+      examples:
+        - id: usb
+          listed_at: '2026-10-30T10:45:40Z'
+          ok: true
+          error: null
+          snapshot_count: 412
+    VerifyOutcome:
+      type: object
+      additionalProperties: false
+      description: The result of one verify of the local repository or of one destination.
+      required: [job_id, finished_at, ok, detail]
+      properties:
+        job_id:
+          description: The `backup-verify` job.
+          oneOf:
+            - $ref: '#/components/schemas/JobId'
+            - type: 'null'
+        finished_at:
+          type: string
+          format: date-time
+          description: The end of the verify.
+        ok:
+          type: boolean
+          description: The verify found no error.
+        detail:
+          type: [string, 'null']
+          description: The first error. `null` when `ok` is `true`.
+      examples:
+        - job_id: 20261026T030000.000Z-backup-verify
+          finished_at: '2026-10-26T03:00:40Z'
+          ok: true
+          detail: null
+    VerifyState:
+      type: object
+      additionalProperties: false
+      description: The verify timer and the last verify job.
+      required: [schedule, next_run_at, last]
+      properties:
+        schedule:
+          type: string
+          description: '`backups.schedule.verify`.'
+          examples: ['Sat 03:00']
+        next_run_at:
+          type: [string, 'null']
+          format: date-time
+          description: The next run. `null` when the timers are off.
+        last:
+          description: The last `backup-verify` job (each part). `null` before the first verify.
+          oneOf:
+            - $ref: '#/components/schemas/VerifyOutcome'
+            - type: 'null'
+      examples:
+        - schedule: 'Sat 03:00'
+          next_run_at: '2026-10-31T03:00:00Z'
+          last: null
+    DrillState:
+      type: object
+      additionalProperties: false
+      description: The restore drill (`02` §4).
+      required: [enabled, schedule, next_run_at, last]
+      properties:
+        enabled:
+          type: boolean
+          description: '`backups.drill_enabled`.'
+        schedule:
+          type: string
+          description: '`backups.schedule.drill`.'
+          examples: ['*-*-01 04:00']
+        next_run_at:
+          type: [string, 'null']
+          format: date-time
+          description: The next run. `null` when the drill is off.
+        last:
+          description: The last drill. `null` before the first drill.
+          oneOf:
+            - $ref: '#/components/schemas/DrillOutcome'
+            - type: 'null'
+      examples:
+        - enabled: true
+          schedule: '*-*-01 04:00'
+          next_run_at: '2026-11-01T04:00:00Z'
+          last: {job_id: 20261001T040000.000Z-restore-drill, finished_at: '2026-10-01T04:00:21Z', outcome: passed, duration_s: 21.4, detail: null}
+    DrillOutcome:
+      type: object
+      additionalProperties: false
+      description: The result of one restore drill. The agent keeps the last 12.
+      required: [job_id, finished_at, outcome, duration_s, detail]
+      properties:
+        job_id:
+          description: The `restore-drill` job.
+          oneOf:
+            - $ref: '#/components/schemas/JobId'
+            - type: 'null'
+        finished_at:
+          type: string
+          format: date-time
+          description: The end of the drill.
+        outcome:
+          type: string
+          enum: [passed, failed, skipped]
+          description: '`skipped`: the free disk space was less than 2 times the database size.'
+        duration_s:
+          type: [number, 'null']
+          minimum: 0
+          description: The time of the drill.
+        detail:
+          type: [string, 'null']
+          description: Why the drill failed or was skipped.
+      examples:
+        - job_id: 20261001T040000.000Z-restore-drill
+          finished_at: '2026-10-01T04:00:21Z'
+          outcome: passed
+          duration_s: 21.4
+          detail: null
+    HostKey:
+      type: object
+      additionalProperties: false
+      description: The host key that an SFTP server presents (TOFU, SP6 finding 2).
+      required: [type, fingerprint_sha256, public_key, trusted]
+      properties:
+        type:
+          type: string
+          enum: [ssh-ed25519, ecdsa-sha2-nistp256, ecdsa-sha2-nistp384, ecdsa-sha2-nistp521, ssh-rsa]
+          description: The key type. The agent pins one key and allows only its type.
+        fingerprint_sha256:
+          type: string
+          pattern: '^SHA256:[A-Za-z0-9+/]{43}$'
+          description: The fingerprint as `ssh-keygen -lf` prints it. The operator compares it with the server.
+          examples: ['SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s']
+        public_key:
+          $ref: '../../agent/internal/config/schema/config.schema.json#/$defs/destination/properties/host_key'
+          description: The key as `host_key` of the destination in `config.yaml` needs it.
+        trusted:
+          type: boolean
+          description: The key is the pinned key, or the `accept_fingerprint` of the request.
+      examples:
+        - type: ecdsa-sha2-nistp256
+          fingerprint_sha256: 'SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s'
+          public_key: ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEXAMPLEEXAMPLEEXAMPLE=
+          trusted: false
+    SshPublicKey:
+      type: object
+      additionalProperties: false
+      description: The SSH public key of the agent for `sftp` destinations. It comes from the recovery key (design note section 13.3).
+      required: [key, key_id, type, public_key, authorized_keys_line, fingerprint_sha256]
+      properties:
+        key:
+          type: string
+          enum: [active, pending]
+          description: The recovery key that the SSH key comes from.
+        key_id:
+          type: string
+          pattern: '^[0-9a-f]{8}$'
+          description: The key id of that recovery key.
+          examples: [1a2b3c4d]
+        type:
+          type: string
+          const: ssh-ed25519
+          description: The key type. restic uses the OpenSSH client of the host, so ed25519 works (SP6 used libssh2 of pgBackRest).
+        public_key:
+          type: string
+          pattern: '^ssh-ed25519 [A-Za-z0-9+/]+={0,2} care-pi@[a-z0-9-]+$'
+          description: The public key with the comment `care-pi@<hostname>-<key id>`.
+          examples: [ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLE care-pi@care-1a2b3c4d]
+        authorized_keys_line:
+          type: string
+          description: The line for `~/.ssh/authorized_keys`. `restrict` turns off the forwardings and the terminal; SFTP still works.
+          examples: [restrict ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLE care-pi@care-1a2b3c4d]
+        fingerprint_sha256:
+          type: string
+          pattern: '^SHA256:[A-Za-z0-9+/]{43}$'
+          description: The fingerprint of the key.
+      examples:
+        - key: active
+          key_id: 1a2b3c4d
+          type: ssh-ed25519
+          public_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLE care-pi@care-1a2b3c4d
+          authorized_keys_line: restrict ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLEEXAMPLEEXAMPLEEXAMPLEEXAMPLE care-pi@care-1a2b3c4d
+          fingerprint_sha256: 'SHA256:Wm1ZQ0vV2xYqk3p7mN8tR4sL6uH9jF0dE5cB2aG1iKo'
+    DestinationRun:
+      type: object
+      additionalProperties: false
+      description: One run of a destination timer or job.
+      required: [started_at, finished_at, kind, source, ok, snapshot_id, added_bytes, error_code, error, job_id]
+      properties:
+        started_at:
+          type: string
+          format: date-time
+          description: The start of the run.
+        finished_at:
+          type: [string, 'null']
+          format: date-time
+          description: The end of the run. `null` while it runs.
+        kind:
+          type: string
+          enum: [init, db, files, forget, prune, check]
+          description: '`init`: `restic init`. `db`, `files`: a snapshot. `forget`, `prune`, `check`: the retention and the verify.'
+        source:
+          type: string
+          enum: [timer, console, cli]
+          description: What started the run.
+        ok:
+          type: [boolean, 'null']
+          description: The run succeeded. `null` while it runs.
+        snapshot_id:
+          type: [string, 'null']
+          pattern: '^[0-9a-f]{8,64}$'
+          description: The new snapshot of a `db` or `files` run.
+        added_bytes:
+          type: [integer, 'null']
+          minimum: 0
+          description: The bytes that the run added to the repository (after deduplication and compression).
+        error_code:
+          type: [string, 'null']
+          pattern: '^[a-z0-9][a-z0-9-]*$'
+          description: A problem slug or a check name, for a failed run.
+        error:
+          type: [string, 'null']
+          description: The error of a failed run.
+        job_id:
+          description: The job of a run of the console or the CLI. `null` for a timer run of a snapshot.
+          oneOf:
+            - $ref: '#/components/schemas/JobId'
+            - type: 'null'
+      examples:
+        - started_at: '2026-10-30T10:45:00Z'
+          finished_at: '2026-10-30T10:45:04Z'
+          kind: db
+          source: timer
+          ok: true
+          snapshot_id: 4f1e9a2c
+          added_bytes: 1048576
+          error_code: null
+          error: null
+          job_id: null
+    DestinationList:
+      type: object
+      additionalProperties: false
+      description: The destinations of `config.yaml` with their state.
+      required: [items]
+      properties:
+        items:
+          type: array
+          description: In the order of `backups.destinations`.
+          items:
+            $ref: '#/components/schemas/DestinationState'
+      examples:
+        - items: []
+    DestinationSecretsState:
+      type: object
+      additionalProperties: false
+      description: The stored secret of a destination, without the secret.
+      required: [id, type, present, access_key_id_hint, updated_at]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+          description: The destination id.
+          examples: [b2]
+        type:
+          type: string
+          const: s3
+          description: Only an `s3` destination has a secret.
+        present:
+          type: boolean
+          description: The agent has the secret.
+        access_key_id_hint:
+          type: [string, 'null']
+          description: The first 4 and the last 4 characters of the access key id, for the operator to recognize it.
+          examples: [AKIA…MPLE]
+        updated_at:
+          type: [string, 'null']
+          format: date-time
+          description: The last change of the secret.
+      examples:
+        - id: b2
+          type: s3
+          present: true
+          access_key_id_hint: AKIA…MPLE
+          updated_at: '2026-10-30T10:07:00Z'
+    BackupDisk:
+      type: object
+      additionalProperties: false
+      description: One block device of the host, for the choice "USB disk".
+      required: [id, device, model, serial, size_bytes, transport, removable, usage, mounted, partitions, care_label, destination_id]
+      properties:
+        id:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$'
+          description: The name in `/dev/disk/by-id/`. It stays the same when the disk moves to another port.
+          examples: ['usb-SanDisk_Extreme_55AE_323130364E-0:0']
+        device:
+          type: string
+          pattern: '^/dev/[a-z0-9]+$'
+          description: The device now. It can change at the next connection.
+          examples: [/dev/sdb]
+        model:
+          type: [string, 'null']
+          description: The model, when the disk tells it.
+          examples: [SanDisk Extreme 55AE]
+        serial:
+          type: [string, 'null']
+          description: The serial number, when the disk tells it.
+        size_bytes:
+          type: integer
+          minimum: 0
+          description: The size of the disk.
+        transport:
+          type: string
+          enum: [usb, nvme, sata, sd, virtio, other]
+          description: The bus of the disk.
+        removable:
+          type: boolean
+          description: The kernel marks the disk as removable.
+        usage:
+          type: string
+          enum: [system, care-backup, empty, other-data]
+          description: |
+            `system`: the disk holds `/`, `/boot`, or swap. The agent never prepares it. `care-backup`: a partition has a care-pi label.
+            `empty`: no partition table or no file system. `other-data`: other file systems; a prepare erases them.
+        mounted:
+          type: boolean
+          description: A partition of the disk is mounted now (also by care-pi).
+        partitions:
+          type: array
+          description: The partitions.
+          items:
+            $ref: '#/components/schemas/BackupDiskPartition'
+        care_label:
+          type: [string, 'null']
+          pattern: '^care-[a-z0-9][a-z0-9-]{0,10}$'
+          description: The label of the care-pi file system of the disk. Use it as `disk_label`.
+        destination_id:
+          type: [string, 'null']
+          pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+          description: The destination of `config.yaml` with `disk_label` equal to `care_label`.
+      examples:
+        - id: 'usb-SanDisk_Extreme_55AE_323130364E-0:0'
+          device: /dev/sdb
+          model: SanDisk Extreme 55AE
+          serial: 323130364E
+          size_bytes: 500107862016
+          transport: usb
+          removable: false
+          usage: other-data
+          mounted: false
+          partitions:
+            - {device: /dev/sdb1, size_bytes: 500105764864, fs_type: exfat, label: SANDISK, mount: null}
+          care_label: null
+          destination_id: null
+    BackupDiskPartition:
+      type: object
+      additionalProperties: false
+      description: One partition of a disk.
+      required: [device, size_bytes, fs_type, label, mount]
+      properties:
+        device:
+          type: string
+          pattern: '^/dev/[a-z0-9]+$'
+          description: The partition device.
+          examples: [/dev/sdb1]
+        size_bytes:
+          type: integer
+          minimum: 0
+          description: The size of the partition.
+        fs_type:
+          type: [string, 'null']
+          description: The file system type, when one exists.
+          examples: [ext4]
+        label:
+          type: [string, 'null']
+          description: The file system label.
+          examples: [care-usb1]
+        mount:
+          type: [string, 'null']
+          description: The mount point now. `null` when it is not mounted.
+          examples: [/var/lib/care-pi/disks/care-usb1]
+      examples:
+        - device: /dev/sdb1
+          size_bytes: 500105764864
+          fs_type: ext4
+          label: care-usb1
+          mount: /var/lib/care-pi/disks/care-usb1
+    BackupDiskList:
+      type: object
+      additionalProperties: false
+      description: The block devices of the host.
+      required: [items, generated_at]
+      properties:
+        items:
+          type: array
+          description: The disks, `system` first.
+          items:
+            $ref: '#/components/schemas/BackupDisk'
+        generated_at:
+          type: string
+          format: date-time
+          description: The time of the list.
+      examples:
+        - items: []
+          generated_at: '2026-10-30T10:06:30Z'
+    DiskPrepareRequest:
+      type: object
+      additionalProperties: false
+      description: The confirmation and the label for a disk prepare.
+      required: [wipe]
+      properties:
+        wipe:
+          type: boolean
+          const: true
+          description: Always `true`. The operator agreed that the job erases the disk.
+        label:
+          type: [string, 'null']
+          pattern: '^care-[a-z0-9][a-z0-9-]{0,10}$'
+          description: 'The file system label (ext4 allows 16 bytes). `null`: the agent chooses `care-usb<N>`.'
+          examples: [care-usb1]
+      examples:
+        - wipe: true
+          label: care-usb1
+    RecoveryKeyStatus:
+      type: object
+      additionalProperties: false
+      description: The state of the recovery key, without a secret (`02` §2).
+      required: [state, key_id, created_at, confirmed_at, confirm_positions, pending, local_repository, rotation_job_id]
+      properties:
+        state:
+          type: string
+          enum: [none, unconfirmed, confirmed]
+          description: '`none`: no key. `unconfirmed`: the operator did not type the 3 words yet; the console shows a banner. `confirmed`.'
+        key_id:
+          type: [string, 'null']
+          pattern: '^[0-9a-f]{8}$'
+          description: The key id of the active key. `null` without a key.
+        created_at:
+          type: [string, 'null']
+          format: date-time
+          description: The creation of the active key.
+        confirmed_at:
+          type: [string, 'null']
+          format: date-time
+          description: The confirmation of the active key.
+        confirm_positions:
+          type: [array, 'null']
+          minItems: 3
+          maxItems: 3
+          description: The 3 positions (1 to 24) that the confirmation asks for, in order. `null` when the state is not `unconfirmed`.
+          items:
+            type: integer
+            minimum: 1
+            maximum: 24
+        pending:
+          type: [object, 'null']
+          additionalProperties: false
+          description: The new key of a rotation (`POST /backups/recovery-key` when a key exists). `null` without one.
+          required: [key_id, created_at, confirmed_at, confirm_positions]
+          properties:
+            key_id:
+              type: string
+              pattern: '^[0-9a-f]{8}$'
+              description: The key id of the pending key.
+            created_at:
+              type: string
+              format: date-time
+              description: The creation of the pending key.
+            confirmed_at:
+              type: [string, 'null']
+              format: date-time
+              description: The confirmation of the pending key. The rotation needs it.
+            confirm_positions:
+              type: [array, 'null']
+              minItems: 3
+              maxItems: 3
+              description: The 3 positions that the confirmation of the pending key asks for. `null` after the confirmation.
+              items:
+                type: integer
+                minimum: 1
+                maximum: 24
+        local_repository:
+          type: string
+          enum: [derived, legacy, none]
+          description: 'The cipher pass of the local repository. `legacy`: a random pass of Phase 1 or Phase 2 (design note section 13.12). `none`: no repository yet.'
+        rotation_job_id:
+          description: The last `recovery-key-rotate` job. `null` before the first rotation.
+          oneOf:
+            - $ref: '#/components/schemas/JobId'
+            - type: 'null'
+      examples:
+        - state: unconfirmed
+          key_id: 1a2b3c4d
+          created_at: '2026-10-30T10:06:00Z'
+          confirmed_at: null
+          confirm_positions: [3, 11, 20]
+          pending: null
+          local_repository: none
+          rotation_job_id: null
+    RecoveryKeyCreated:
+      type: object
+      additionalProperties: false
+      description: The new recovery key (one time) and the key state.
+      required: [key, status]
+      properties:
+        key:
+          $ref: '#/components/schemas/RecoveryKey'
+        status:
+          $ref: '#/components/schemas/RecoveryKeyStatus'
+      examples:
+        - key:
+            words: [abandon, ability, able, about, above, absent, absorb, abstract, absurd, abuse, access, accident, account, accuse, achieve, acid, acoustic, acquire, across, act, action, actor, actress, actual]
+            created_at: '2026-10-30T10:06:00Z'
+            key: active
+            key_id: 1a2b3c4d
+            qr_payload: CARE-PI-RK1:ABANDON ABILITY ABLE ABOUT ABOVE ABSENT ABSORB ABSTRACT ABSURD ABUSE ACCESS ACCIDENT ACCOUNT ACCUSE ACHIEVE ACID ACOUSTIC ACQUIRE ACROSS ACT ACTION ACTOR ACTRESS ACTUAL
+            file_name: care-recovery-sunrise-clinic.txt
+          status:
+            state: unconfirmed
+            key_id: 1a2b3c4d
+            created_at: '2026-10-30T10:06:00Z'
+            confirmed_at: null
+            confirm_positions: [3, 11, 20]
+            pending: null
+            local_repository: none
+            rotation_job_id: null
+    RecoveryKeyConfirmRequest:
+      type: object
+      additionalProperties: false
+      description: The 3 words at the `confirm_positions` of the active or the pending key.
+      required: [words]
+      properties:
+        key:
+          type: string
+          enum: [active, pending]
+          default: active
+          description: The key to confirm.
+        words:
+          type: array
+          minItems: 3
+          maxItems: 3
+          description: The words at the 3 `confirm_positions`, in order.
+          items:
+            $ref: '#/components/schemas/RecoveryKeyWord'
+      examples:
+        - key: active
+          words:
+            - {index: 3, word: able}
+            - {index: 11, word: acce}
+            - {index: 20, word: act}
+    RecoveryKeyRotateRequest:
+      type: object
+      additionalProperties: false
+      description: 'The options of a rotation. An empty body is `new_key: true`, `remove_old_repositories: true`.'
+      properties:
+        new_key:
+          type: boolean
+          default: true
+          description: '`true`: use the confirmed pending key. `false`: keep the key; re-key only a `legacy` local repository.'
+        remove_old_repositories:
+          type: boolean
+          default: true
+          description: Delete the old repositories after the first snapshot to each destination.
+        reason:
+          type: [string, 'null']
+          maxLength: 200
+          description: A text for the job journal.
+          examples: [the old sheet is lost]
+      examples:
+        - new_key: false
+          remove_old_repositories: true
+          reason: re-key the local repository of Phase 2
+    RecoveryKeyInput:
+      type: object
+      additionalProperties: false
+      description: |
+        A recovery key that the operator types, pastes from the `.txt` file, or scans from the QR code. The console splits it into words.
+        The agent accepts the first 4 letters of each word and checks the BIP-39 checksum (`invalid-request`, code `checksum`).
+      required: [words]
+      properties:
+        words:
+          type: array
+          minItems: 24
+          maxItems: 24
+          description: The 24 words in order, in lowercase letters.
+          items:
+            type: string
+            pattern: '^[a-z]{3,8}$'
+      examples:
+        - words: [abandon, ability, able, about, above, absent, absorb, abstract, absurd, abuse, access, accident, account, accuse, achieve, acid, acoustic, acquire, across, act, action, actor, actress, actual]
+    RecoveryKeyText:
+      type: string
+      description: The text file of the recovery key (UTF-8, LF line ends). It has the clinic name, the key id, the date, the 24 numbered words, and the instructions.
+      examples:
+        - |
+          care-pi recovery key
+          Clinic: Sunrise Clinic
+          Key id: 1a2b3c4d
+          Made: 2026-10-30
+
+           1 abandon    9 absurd    17 acoustic
+           2 ability   10 abuse     18 acquire
+           3 able      11 access    19 across
+           4 about     12 accident  20 act
+           5 above     13 account   21 action
+           6 absent    14 accuse    22 actor
+           7 absorb    15 achieve   23 actress
+           8 abstract  16 acid      24 actual
+
+          Keep this sheet in a safe place, away from the device.
+          You need it to restore the backups on a new device.
+    BackupVerifyRequest:
+      type: object
+      additionalProperties: false
+      description: 'The options of "Verify now". An empty body is `scope: all` with a 5 % sample.'
+      properties:
+        scope:
+          type: string
+          enum: [all, local-db, destination]
+          description: '`all`: the local repository and each destination. Default: `destination` when `destination` is set, else `all`.'
+        destination:
+          type: [string, 'null']
+          pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+          description: 'The destination for `scope: destination`.'
+        read_data_subset_pct:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 5
+          description: The percent of the data that `restic check --read-data-subset` reads back.
+        prune:
+          type: boolean
+          default: false
+          description: Run `restic forget` with the retention and `restic prune` before the check.
+      examples:
+        - scope: destination
+          destination: nas
+          read_data_subset_pct: 10
+          prune: false
+    RestoreDrillRequest:
+      type: object
+      additionalProperties: false
+      description: The options of "Test restore".
+      properties:
+        reason:
+          type: [string, 'null']
+          maxLength: 200
+          description: A text for the job journal.
+          examples: [check after the disk change]
+      examples:
+        - reason: null
+    RestorePitrRequest:
+      type: object
+      additionalProperties: false
+      description: |
+        A point-in-time restore on this device (`02` §6). Exactly one of `time` and `checkpoint` is a string.
+        `time` follows the newest timeline that contains the time. `checkpoint` restores the end of that checkpoint
+        (`pgbackrest restore --set=<label> --type=immediate`), on its timeline: use it to undo a restore.
+      required: [kind]
+      properties:
+        kind:
+          type: string
+          const: pitr
+          description: The variant.
+        time:
+          type: [string, 'null']
+          format: date-time
+          description: The point in time. It must be inside the restore window (`GET /restore/points`).
+        checkpoint:
+          oneOf:
+            - $ref: '#/components/schemas/BackupLabel'
+            - type: 'null'
+          description: The label of a checkpoint (`RestorePoints.checkpoints`).
+        reason:
+          type: [string, 'null']
+          maxLength: 200
+          description: A text for the job journal and the annotation of the checkpoint.
+      oneOf:
+        - required: [time]
+          properties:
+            time:
+              type: string
+        - required: [checkpoint]
+          properties:
+            checkpoint:
+              type: string
+      examples:
+        - kind: pitr
+          time: '2026-10-30T09:40:00Z'
+          checkpoint: null
+          reason: undo the import of 09:42
+    RestoreFilesRequest:
+      type: object
+      additionalProperties: false
+      description: A restore of files from one restic snapshot (`02` §6). The database does not change.
+      required: [kind, destination, snapshot_id]
+      properties:
+        kind:
+          type: string
+          const: files
+          description: The variant.
+        destination:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+          description: The destination of the snapshot.
+          examples: [usb]
+        snapshot_id:
+          type: string
+          pattern: '^[0-9a-f]{8,64}$'
+          description: A snapshot with `files` in `contents`.
+          examples: [1a2b3c4d]
+        paths:
+          type: [array, 'null']
+          minItems: 1
+          maxItems: 100
+          description: 'Files or directories below `/var/lib/care-pi/s3` (the first part is the bucket). `null`: each file of the snapshot.'
+          items:
+            type: string
+            maxLength: 1024
+            pattern: '^[A-Za-z0-9_-][A-Za-z0-9._-]*(/[A-Za-z0-9_-][A-Za-z0-9._-]*)*/?$'
+          examples: [[patient-bucket/2026/10]]
+        target:
+          type: string
+          enum: [in-place, side-dir]
+          default: in-place
+          description: '`in-place`: into `/var/lib/care-pi/s3` (the maintenance page is on). `side-dir`: into `/var/lib/care-pi/restore/<job id>/`.'
+        reason:
+          type: [string, 'null']
+          maxLength: 200
+          description: A text for the job journal.
+      examples:
+        - kind: files
+          destination: usb
+          snapshot_id: 1a2b3c4d
+          paths: null
+          target: in-place
+          reason: the upload folder was deleted
+    DrDestination:
+      description: The one destination for a restore of this device. The same keys as a destination of `config.yaml`, with the secret. No `id`.
+      oneOf:
+        - $ref: '#/components/schemas/DrDestinationPosix'
+        - $ref: '#/components/schemas/DrDestinationSftp'
+        - $ref: '#/components/schemas/DrDestinationS3'
+      discriminator:
+        propertyName: type
+        mapping:
+          posix: '#/components/schemas/DrDestinationPosix'
+          sftp: '#/components/schemas/DrDestinationSftp'
+          s3: '#/components/schemas/DrDestinationS3'
+      examples:
+        - type: posix
+          path: null
+          disk_label: care-usb1
+    DrDestinationPosix:
+      type: object
+      additionalProperties: false
+      description: |
+        A directory or a care-pi backup disk (`GET /backups/disks`, `usage: care-backup`). Exactly one of `path` and `disk_label` is a string.
+        The agent mounts a disk read-only at `/var/lib/care-pi/disks/<label>` for the job.
+      required: [type]
+      properties:
+        type:
+          type: string
+          const: posix
+          description: The destination type.
+        path:
+          oneOf:
+            - $ref: '../../agent/internal/config/schema/config.schema.json#/$defs/destination/properties/path'
+            - type: 'null'
+          description: A directory that holds `care-pi-<key id>`.
+        disk_label:
+          oneOf:
+            - $ref: '../../agent/internal/config/schema/config.schema.json#/$defs/destination/properties/disk_label'
+            - type: 'null'
+          description: The label of a care-pi backup disk.
+      oneOf:
+        - required: [path]
+          properties:
+            path:
+              type: string
+        - required: [disk_label]
+          properties:
+            disk_label:
+              type: string
+      examples:
+        - type: posix
+          path: null
+          disk_label: care-usb1
+    DrDestinationSftp:
+      type: object
+      additionalProperties: false
+      description: An SFTP server. The SSH key comes from the recovery key, so the server still accepts the device. `host_key` comes from the TOFU problem of the first call.
+      required: [type, host, user, path]
+      properties:
+        type:
+          type: string
+          const: sftp
+          description: The destination type.
+        host:
+          $ref: '../../agent/internal/config/schema/config.schema.json#/$defs/destination/properties/host'
+          description: The server.
+        port:
+          $ref: '../../agent/internal/config/schema/config.schema.json#/$defs/destination/properties/port'
+          description: The SSH port. Default 22.
+        user:
+          $ref: '../../agent/internal/config/schema/config.schema.json#/$defs/destination/properties/user'
+          description: The user on the server.
+        path:
+          $ref: '../../agent/internal/config/schema/config.schema.json#/$defs/destination/properties/path'
+          description: The directory that holds `care-pi-<key id>`.
+        host_key:
+          oneOf:
+            - $ref: '../../agent/internal/config/schema/config.schema.json#/$defs/destination/properties/host_key'
+            - type: 'null'
+          description: The host key that the operator accepted. `null` in the first call.
+      examples:
+        - type: sftp
+          host: nas.lan
+          port: 22
+          user: care
+          path: /volume1/care
+          host_key: ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBEXAMPLEEXAMPLEEXAMPLE=
+    DrDestinationS3:
+      type: object
+      additionalProperties: false
+      description: An S3 bucket, with its keys. The restored secrets of the old device replace these keys after the job.
+      required: [type, endpoint, bucket, access_key_id, secret_access_key]
+      properties:
+        type:
+          type: string
+          const: s3
+          description: The destination type.
+        endpoint:
+          $ref: '../../agent/internal/config/schema/config.schema.json#/$defs/destination/properties/endpoint'
+          description: The S3 service.
+        region:
+          oneOf:
+            - $ref: '../../agent/internal/config/schema/config.schema.json#/$defs/destination/properties/region'
+            - type: 'null'
+          description: The region.
+        bucket:
+          $ref: '../../agent/internal/config/schema/config.schema.json#/$defs/destination/properties/bucket'
+          description: The bucket.
+        prefix:
+          oneOf:
+            - $ref: '../../agent/internal/config/schema/config.schema.json#/$defs/destination/properties/prefix'
+            - type: 'null'
+          description: The prefix inside the bucket.
+        access_key_id:
+          type: string
+          writeOnly: true
+          minLength: 1
+          maxLength: 256
+          description: The S3 access key id.
+          examples: [AKIAEXAMPLE]
+        secret_access_key:
+          type: string
+          writeOnly: true
+          minLength: 1
+          maxLength: 256
+          description: The S3 secret access key.
+          examples: [wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY]
+      examples:
+        - type: s3
+          endpoint: 'https://s3.eu-central-003.backblazeb2.com'
+          region: eu-central-003
+          bucket: sunrise-care
+          prefix: care-pi
+          access_key_id: AKIAEXAMPLE
+          secret_access_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+    DrInspectRequest:
+      type: object
+      additionalProperties: false
+      description: The recovery key and the one destination of a restore of this device.
+      required: [recovery_key, destination]
+      properties:
+        recovery_key:
+          $ref: '#/components/schemas/RecoveryKeyInput'
+        destination:
+          $ref: '#/components/schemas/DrDestination'
+      examples:
+        - recovery_key:
+            words: [abandon, ability, able, about, above, absent, absorb, abstract, absurd, abuse, access, accident, account, accuse, achieve, acid, acoustic, acquire, across, act, action, actor, actress, actual]
+          destination: {type: posix, path: null, disk_label: care-usb1}
+    DrInspection:
+      type: object
+      additionalProperties: false
+      description: What a destination holds for a recovery key. The wizard shows it before the operator starts the restore.
+      required: [key_id, location, source, snapshots, newest_db_snapshot, newest_files_snapshot, pitr, sizes, space, warnings]
+      properties:
+        key_id:
+          type: string
+          pattern: '^[0-9a-f]{8}$'
+          description: The key id of the recovery key.
+          examples: [1a2b3c4d]
+        location:
+          type: string
+          description: The restic repository, without secrets.
+          examples: [/var/lib/care-pi/disks/care-usb1/care-pi-1a2b3c4d]
+        source:
+          type: object
+          additionalProperties: false
+          description: The old device, from `config.yaml` and `lock.yaml` of the newest config snapshot.
+          required: [display_name, hostname, agent_version, solution, config_time]
+          properties:
+            display_name:
+              type: string
+              description: '`identity.display_name`.'
+              examples: [Sunrise Clinic]
+            hostname:
+              type: string
+              description: '`identity.hostname`. The restored device gets this host name.'
+              examples: [care]
+            agent_version:
+              type: [string, 'null']
+              description: '`agent_version` of the lock. A newer version than this agent gives the warning `agent-older`.'
+              examples: [v0.4.0]
+            solution:
+              type: [string, 'null']
+              description: '`solution.name`.'
+              examples: [care-clinic]
+            config_time:
+              type: string
+              format: date-time
+              description: The time of the config snapshot.
+        snapshots:
+          type: array
+          description: The snapshots, newest first (50 at most).
+          items:
+            $ref: '#/components/schemas/SnapshotInfo'
+        newest_db_snapshot:
+          description: The newest `db` snapshot. The default source of the database.
+          oneOf:
+            - $ref: '#/components/schemas/SnapshotInfo'
+            - type: 'null'
+        newest_files_snapshot:
+          description: The newest `files` snapshot. `null` when none exists (the job then restores no file).
+          oneOf:
+            - $ref: '#/components/schemas/SnapshotInfo'
+            - type: 'null'
+        pitr:
+          type: [object, 'null']
+          additionalProperties: false
+          description: The restore window of the pgBackRest repository in the newest `db` snapshot. `null` when it has no backup.
+          required: [from, to]
+          properties:
+            from:
+              type: string
+              format: date-time
+              description: The earliest point in time.
+            to:
+              type: string
+              format: date-time
+              description: The latest point in time (`latest`).
+        sizes:
+          type: object
+          additionalProperties: false
+          description: What the job fetches and writes.
+          required: [db_repository_bytes, files_bytes, database_bytes]
+          properties:
+            db_repository_bytes:
+              type: integer
+              minimum: 0
+              description: The pgBackRest repository in the `db` snapshot.
+            files_bytes:
+              type: integer
+              minimum: 0
+              description: The files in the `files` snapshot.
+            database_bytes:
+              type: integer
+              minimum: 0
+              description: The database after the restore (the size of the newest backup).
+        space:
+          type: object
+          additionalProperties: false
+          description: The free space for the job.
+          required: [path, required_bytes, free_bytes, ok]
+          properties:
+            path:
+              type: string
+              description: The file system of `/var/lib/care-pi`.
+              examples: [/var/lib/care-pi]
+            required_bytes:
+              type: integer
+              minimum: 0
+              description: The sum of `sizes` and 1 GiB.
+            free_bytes:
+              type: integer
+              minimum: 0
+              description: The free space now.
+            ok:
+              type: boolean
+              description: '`free_bytes` is larger than `required_bytes`.'
+        warnings:
+          type: array
+          description: |
+            Things to tell the operator. Codes: `source-may-be-active` (the newest snapshot is younger than 2 intervals: the old
+            device can still run), `agent-older` (the backup comes from a newer agent), `no-files-snapshot`,
+            `files-older-than-db` (the skew of `02` §6, in `message`).
+          items:
+            $ref: '#/components/schemas/StepIssue'
+      examples:
+        - key_id: 1a2b3c4d
+          location: /var/lib/care-pi/disks/care-usb1/care-pi-1a2b3c4d
+          source: {display_name: Sunrise Clinic, hostname: care, agent_version: v0.4.0, solution: care-clinic, config_time: '2026-10-30T10:45:00Z'}
+          snapshots:
+            - {destination: null, snapshot_id: 4f1e9a2c, time: '2026-10-30T10:45:00Z', contents: [db, config], size_bytes: 52428800, hostname: care, key_id: 1a2b3c4d}
+          newest_db_snapshot: {destination: null, snapshot_id: 4f1e9a2c, time: '2026-10-30T10:45:00Z', contents: [db, config], size_bytes: 52428800, hostname: care, key_id: 1a2b3c4d}
+          newest_files_snapshot: {destination: null, snapshot_id: 1a2b3c4d, time: '2026-10-30T02:30:00Z', contents: [files, config], size_bytes: 734003200, hostname: care, key_id: 1a2b3c4d}
+          pitr: {from: '2026-10-19T01:00:00Z', to: '2026-10-30T10:44:00Z'}
+          sizes: {db_repository_bytes: 52428800, files_bytes: 734003200, database_bytes: 48500000}
+          space: {path: /var/lib/care-pi, required_bytes: 1908408320, free_bytes: 221000000000, ok: true}
+          warnings:
+            - {code: files-older-than-db, message: the newest files snapshot is 8 hours older than the database, pointer: null}
+    DrRestoreRequest:
+      type: object
+      additionalProperties: false
+      description: A restore of this device from one destination (`POST /restore/dr`).
+      required: [recovery_key, destination]
+      properties:
+        recovery_key:
+          $ref: '#/components/schemas/RecoveryKeyInput'
+        destination:
+          $ref: '#/components/schemas/DrDestination'
+        time:
+          type: [string, 'null']
+          format: date-time
+          description: 'The point in time of the database. `null`: the latest point of the `db` snapshot.'
+        snapshot_id:
+          type: [string, 'null']
+          pattern: '^[0-9a-f]{8,64}$'
+          description: 'The `db` snapshot. `null`: the newest. An older snapshot helps when the newest copy is damaged.'
+        files:
+          type: boolean
+          default: true
+          description: Restore the files of the newest `files` snapshot too.
+        pause_backups:
+          type: boolean
+          default: false
+          description: 'Write `backups.paused: true`, so the restored device does not write to the destinations. Use it for a test on a second device.'
+      examples:
+        - recovery_key:
+            words: [abandon, ability, able, about, above, absent, absorb, abstract, absurd, abuse, access, accident, account, accuse, achieve, acid, acoustic, acquire, across, act, action, actor, actress, actual]
+          destination: {type: s3, endpoint: 'https://s3.eu-central-003.backblazeb2.com', region: eu-central-003, bucket: sunrise-care, prefix: care-pi, access_key_id: AKIAEXAMPLE, secret_access_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY}
+          time: null
+          snapshot_id: null
+          files: true
+          pause_backups: false
+    SetupRestore:
+      type: object
+      additionalProperties: false
+      description: The entry point of the branch "Restore from backup" of the setup wizard (`POST /restore/dr`, design note section 13.9).
+      required: [available, job_id, job_state]
+      properties:
+        available:
+          type: boolean
+          description: '`POST /restore/dr` is possible now: the setup state is `claimed` or `setup`, and no job holds the apply lock.'
+        job_id:
+          description: The last job of kind `restore-dr`. `null` before the first one.
+          oneOf:
+            - $ref: '#/components/schemas/JobId'
+            - type: 'null'
+        job_state:
+          description: The state of that job.
+          oneOf:
+            - $ref: '#/components/schemas/JobState'
+            - type: 'null'
+      examples:
+        - available: true
+          job_id: null
+          job_state: null
+    BackupRunResult:
+      type: object
+      additionalProperties: false
+      description: The result of a `backup-run` job.
+      required: [kind, scope, local, destinations]
+      properties:
+        kind:
+          type: string
+          const: backup-run
+          description: The job kind.
+        scope:
+          type: string
+          enum: [all, local-db, destination]
+          description: The scope of the request.
+        local:
+          type: [object, 'null']
+          additionalProperties: false
+          description: 'The local backup. With `type: incr` it is a checkpoint. `null` for `scope: destination`.'
+          required: [label, type, undo_point, timeline, repo_size_bytes]
+          properties:
+            label:
+              $ref: '#/components/schemas/BackupLabel'
+            type:
+              type: string
+              enum: [full, incr]
+              description: The backup type.
+            undo_point:
+              type: string
+              format: date-time
+              description: The end of the backup. A restore of `label` gives the data of this time.
+            timeline:
+              type: integer
+              minimum: 1
+              description: The timeline.
+            repo_size_bytes:
+              type: integer
+              minimum: 0
+              description: The size of the backup in the repository.
+        destinations:
+          type: array
+          description: The snapshots to each destination.
+          items:
+            type: object
+            additionalProperties: false
+            description: The snapshots to one destination.
+            required: [id, db_snapshot_id, files_snapshot_id, added_bytes]
+            properties:
+              id:
+                type: string
+                pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+                description: The destination id.
+              db_snapshot_id:
+                type: string
+                pattern: '^[0-9a-f]{8,64}$'
+                description: The new `db` snapshot.
+              files_snapshot_id:
+                type: string
+                pattern: '^[0-9a-f]{8,64}$'
+                description: The new `files` snapshot.
+              added_bytes:
+                type: integer
+                minimum: 0
+                description: The bytes that the two snapshots added.
+      examples:
+        - kind: backup-run
+          scope: local-db
+          local: {label: 20261026-010002F_20261030-104705I, type: incr, undo_point: '2026-10-30T10:47:10Z', timeline: 1, repo_size_bytes: 25000}
+          destinations: []
+    BackupVerifyResult:
+      type: object
+      additionalProperties: false
+      description: The result of a `backup-verify` job that found no damage.
+      required: [kind, local, destinations]
+      properties:
+        kind:
+          type: string
+          const: backup-verify
+          description: The job kind.
+        local:
+          description: '`pgbackrest verify`. `null` for `scope: destination`.'
+          oneOf:
+            - $ref: '#/components/schemas/VerifyOutcome'
+            - type: 'null'
+        destinations:
+          type: array
+          description: The check of each destination.
+          items:
+            type: object
+            additionalProperties: false
+            description: The check of one destination.
+            required: [id, read_data_subset_pct, pruned_bytes, duration_s]
+            properties:
+              id:
+                type: string
+                pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+                description: The destination id.
+              read_data_subset_pct:
+                type: integer
+                minimum: 1
+                maximum: 100
+                description: The percent of the data that the check read.
+              pruned_bytes:
+                type: [integer, 'null']
+                minimum: 0
+                description: The bytes that `restic prune` freed. `null` without `prune`.
+              duration_s:
+                type: number
+                minimum: 0
+                description: The time of the check.
+      examples:
+        - kind: backup-verify
+          local: {job_id: 20261031T030000.000Z-backup-verify, finished_at: '2026-10-31T03:00:01Z', ok: true, detail: null}
+          destinations:
+            - {id: nas, read_data_subset_pct: 5, pruned_bytes: 0, duration_s: 41.2}
+    RestorePitrResult:
+      type: object
+      additionalProperties: false
+      description: The result of a `restore-pitr` job. `checkpoint` undoes the restore.
+      required: [kind, restored_to, timeline, checkpoint, full_backup_label, downtime_s]
+      properties:
+        kind:
+          type: string
+          const: restore-pitr
+          description: The job kind.
+        restored_to:
+          type: string
+          format: date-time
+          description: The point in time that the database has now (`time`, or the `undo_point` of the checkpoint of the request).
+        timeline:
+          type: integer
+          minimum: 1
+          description: The new timeline.
+        checkpoint:
+          $ref: '#/components/schemas/Checkpoint'
+        full_backup_label:
+          oneOf:
+            - $ref: '#/components/schemas/BackupLabel'
+            - type: 'null'
+          description: The full backup of the new timeline. `null` when it failed (the banner `local-backup-failed` shows; the timer tries again).
+        downtime_s:
+          type: number
+          minimum: 0
+          description: The time with the maintenance page.
+      examples:
+        - kind: restore-pitr
+          restored_to: '2026-10-30T09:40:00Z'
+          timeline: 2
+          checkpoint: {label: 20261026-010002F_20261030-104705I, undo_point: '2026-10-30T10:47:10Z', timeline: 1, job_id: 20261030T104700.000Z-restore-pitr, job_kind: restore-pitr, reason: undo the import of 09:42}
+          full_backup_label: 20261030-104830F
+          downtime_s: 71.5
+    RestoreFilesResult:
+      type: object
+      additionalProperties: false
+      description: The result of a `restore-files` job.
+      required: [kind, destination, snapshot_id, snapshot_time, target, path, files, bytes, verified]
+      properties:
+        kind:
+          type: string
+          const: restore-files
+          description: The job kind.
+        destination:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+          description: The destination.
+        snapshot_id:
+          type: string
+          pattern: '^[0-9a-f]{8,64}$'
+          description: The snapshot.
+        snapshot_time:
+          type: string
+          format: date-time
+          description: The time of the snapshot.
+        target:
+          type: string
+          enum: [in-place, side-dir]
+          description: The target of the request.
+        path:
+          type: string
+          description: The directory with the restored files.
+          examples: [/var/lib/care-pi/restore/20261030T110000.000Z-restore-files]
+        files:
+          type: integer
+          minimum: 0
+          description: The restored files.
+        bytes:
+          type: integer
+          minimum: 0
+          description: The restored bytes.
+        verified:
+          type: boolean
+          description: '`restic restore --verify` read each restored file back.'
+      examples:
+        - kind: restore-files
+          destination: usb
+          snapshot_id: 1a2b3c4d
+          snapshot_time: '2026-10-30T02:30:00Z'
+          target: side-dir
+          path: /var/lib/care-pi/restore/20261030T110000.000Z-restore-files
+          files: 214
+          bytes: 88080384
+          verified: true
+    RestoreDrResult:
+      type: object
+      additionalProperties: false
+      description: The result of a `restore-dr` job. The console shows the hand-off page with it, then the login page.
+      required: [kind, key_id, location, db_snapshot_id, db_snapshot_time, restored_to, timeline, files_snapshot_id, files_snapshot_time, skew_s, display_name, hostname, care_url, console_url, urls, backups_paused, console_account]
+      properties:
+        kind:
+          type: string
+          const: restore-dr
+          description: The job kind.
+        key_id:
+          type: string
+          pattern: '^[0-9a-f]{8}$'
+          description: The key id of the recovery key.
+        location:
+          type: string
+          description: The restic repository of the restore.
+        db_snapshot_id:
+          type: string
+          pattern: '^[0-9a-f]{8,64}$'
+          description: The `db` snapshot.
+        db_snapshot_time:
+          type: string
+          format: date-time
+          description: The time of the `db` snapshot.
+        restored_to:
+          type: string
+          format: date-time
+          description: The point in time of the database.
+        timeline:
+          type: integer
+          minimum: 1
+          description: The new timeline.
+        files_snapshot_id:
+          type: [string, 'null']
+          pattern: '^[0-9a-f]{8,64}$'
+          description: 'The `files` snapshot. `null` with `files: false` or without a `files` snapshot.'
+        files_snapshot_time:
+          type: [string, 'null']
+          format: date-time
+          description: The time of the `files` snapshot.
+        skew_s:
+          type: [integer, 'null']
+          description: '`restored_to` minus `files_snapshot_time`, in seconds (`02` §6, S18). The console shows it.'
+        display_name:
+          type: string
+          description: |
+            `identity.display_name` of the restored config (the clinic name). The job ends each session with the
+            event `done`, so the console cannot read `GET /config` after the restore; it shows this name on the hand-off page.
+          examples: [Sunrise Clinic]
+        hostname:
+          type: string
+          description: '`identity.hostname` of the restored config. The OS host name is now this name.'
+          examples: [care]
+        care_url:
+          type: string
+          format: uri
+          description: Care on the primary host name.
+          examples: [https://care.local/]
+        console_url:
+          type: string
+          format: uri
+          description: The console on the primary host name. Log in there with the console password of the old device.
+          examples: ['https://care.local:8443/']
+        urls:
+          type: array
+          description: Care on each host name and LAN address.
+          items:
+            type: string
+            format: uri
+        backups_paused:
+          type: boolean
+          description: '`backups.paused` is `true` (`pause_backups`).'
+        console_account:
+          type: string
+          const: restored
+          description: The console account of the old device is back. Each session ended.
+      examples:
+        - kind: restore-dr
+          key_id: 1a2b3c4d
+          location: s3:https://s3.eu-central-003.backblazeb2.com/sunrise-care/care-pi/care-pi-1a2b3c4d
+          db_snapshot_id: 4f1e9a2c
+          db_snapshot_time: '2026-10-30T10:45:00Z'
+          restored_to: '2026-10-30T10:44:00Z'
+          timeline: 2
+          files_snapshot_id: 1a2b3c4d
+          files_snapshot_time: '2026-10-30T02:30:00Z'
+          skew_s: 29640
+          display_name: Sunrise Clinic
+          hostname: care
+          care_url: https://care.local/
+          console_url: 'https://care.local:8443/'
+          urls: [https://care.local/, https://192.168.1.10/]
+          backups_paused: false
+          console_account: restored
+    DiskPrepareResult:
+      type: object
+      additionalProperties: false
+      description: 'The result of a `disk-prepare` job. Add the destination `{type: posix, disk_label: <label>}` next.'
+      required: [kind, disk_id, device, label, mount_path, fs_type, size_bytes]
+      properties:
+        kind:
+          type: string
+          const: disk-prepare
+          description: The job kind.
+        disk_id:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$'
+          description: The disk.
+        device:
+          type: string
+          pattern: '^/dev/[a-z0-9]+$'
+          description: The new partition.
+          examples: [/dev/sdb1]
+        label:
+          type: string
+          pattern: '^care-[a-z0-9][a-z0-9-]{0,10}$'
+          description: The file system label. Use it as `disk_label`.
+          examples: [care-usb1]
+        mount_path:
+          type: string
+          description: The mount point.
+          examples: [/var/lib/care-pi/disks/care-usb1]
+        fs_type:
+          type: string
+          const: ext4
+          description: The file system.
+        size_bytes:
+          type: integer
+          minimum: 0
+          description: The size of the file system.
+      examples:
+        - kind: disk-prepare
+          disk_id: 'usb-SanDisk_Extreme_55AE_323130364E-0:0'
+          device: /dev/sdb1
+          label: care-usb1
+          mount_path: /var/lib/care-pi/disks/care-usb1
+          fs_type: ext4
+          size_bytes: 492110393344
+    RecoveryKeyRotateResult:
+      type: object
+      additionalProperties: false
+      description: The result of a `recovery-key-rotate` job. The new key was confirmed before the job, so the active key is `confirmed`.
+      required: [kind, new_key, key_id, previous_key_id, local_rekeyed, full_backup_label, destinations, removed_repositories]
+      properties:
+        kind:
+          type: string
+          const: recovery-key-rotate
+          description: The job kind.
+        new_key:
+          type: boolean
+          description: The job activated the pending key.
+        key_id:
+          type: string
+          pattern: '^[0-9a-f]{8}$'
+          description: The key id of the active key now.
+        previous_key_id:
+          type: [string, 'null']
+          pattern: '^[0-9a-f]{8}$'
+          description: 'The key id before the job. `null` with `new_key: false`.'
+        local_rekeyed:
+          type: boolean
+          description: The job made a new local repository with the cipher pass of the key.
+        full_backup_label:
+          $ref: '#/components/schemas/BackupLabel'
+        destinations:
+          type: array
+          description: The repository of each destination now.
+          items:
+            type: object
+            additionalProperties: false
+            description: One destination.
+            required: [id, location, snapshot_id]
+            properties:
+              id:
+                type: string
+                pattern: '^[a-z0-9][a-z0-9-]{0,30}$'
+                description: The destination id.
+              location:
+                type: string
+                description: The restic repository.
+              snapshot_id:
+                type: string
+                pattern: '^[0-9a-f]{8,64}$'
+                description: The first snapshot after the rotation.
+        removed_repositories:
+          type: array
+          description: The old repositories that the job deleted (`remove_old_repositories`).
+          items:
+            type: string
+      examples:
+        - kind: recovery-key-rotate
+          new_key: false
+          key_id: 1a2b3c4d
+          previous_key_id: null
+          local_rekeyed: true
+          full_backup_label: 20261030-120102F
+          destinations:
+            - {id: usb, location: /var/lib/care-pi/disks/care-usb1/care-pi-1a2b3c4d, snapshot_id: 9c8b7a6d}
+          removed_repositories: [/var/lib/care-pi/backup/pg.legacy]
+    RestoreDrillResult:
+      type: object
+      additionalProperties: false
+      description: The result of a `restore-drill` job. A failed drill fails the job (`verify-failed`), so `outcome` is `passed` or `skipped`.
+      required: [kind, outcome, backup_label, restored_bytes, duration_s, checks, skipped_reason]
+      properties:
+        kind:
+          type: string
+          const: restore-drill
+          description: The job kind.
+        outcome:
+          type: string
+          enum: [passed, skipped]
+          description: '`skipped`: a timer run found less free space than 2 times the database size.'
+        backup_label:
+          oneOf:
+            - $ref: '#/components/schemas/BackupLabel'
+            - type: 'null'
+          description: The backup that the drill restored. `null` when skipped.
+        restored_bytes:
+          type: [integer, 'null']
+          minimum: 0
+          description: The size of the restored data directory.
+        duration_s:
+          type: number
+          minimum: 0
+          description: The time of the drill.
+        checks:
+          type: array
+          description: '`pg_controldata`, the start of Postgres, `SELECT 1`.'
+          items:
+            $ref: '#/components/schemas/HostCheckItem'
+        skipped_reason:
+          type: [string, 'null']
+          description: Why the drill was skipped.
+      examples:
+        - kind: restore-drill
+          outcome: passed
+          backup_label: 20261026-010002F_20261030-020003I
+          restored_bytes: 48500000
+          duration_s: 21.4
+          checks:
+            - {name: pg_controldata, level: required, ok: true, detail: 'cluster state: in production'}
+            - {name: select 1, level: required, ok: true, detail: 1 row}
+          skipped_reason: null

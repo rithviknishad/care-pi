@@ -15,6 +15,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import { JobProgress } from "@/features/jobs/job-progress";
+import { jobKindFromId } from "@/features/jobs/job-state";
 import { logUnitOf, stepTitle } from "@/features/jobs/step-text";
 import { fmt, problemText, strings } from "@/lib/strings";
 import { failedStep, failureDetails } from "./failure-logic";
@@ -126,6 +127,7 @@ export default function ProgressPage() {
     },
     [navigate],
   );
+  if (jobId && jobKindFromId(jobId) === "restore-dr") return <Navigate to="/setup/restore" replace />;
   if (!jobId) {
     if (setup.isPending) return <Skeleton className="h-96" />;
     if (setup.data?.state === "ready") return <Navigate to="/setup/done" replace />;

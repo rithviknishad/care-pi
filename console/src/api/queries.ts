@@ -24,6 +24,12 @@ export const qk = {
   job: (id: string) => ["job", id] as const,
   instructions: (os: ClientOs) => ["tls-instructions", os] as const,
   phase: (feature: string) => ["phase", feature] as const,
+  backups: ["backups"] as const,
+  backupsHealth: ["backups", "health"] as const,
+  restorePoints: ["backups", "restore-points"] as const,
+  disks: ["backups", "disks"] as const,
+  recoveryKeyStatus: ["backups", "recovery-key-status"] as const,
+  sshKey: (key: "active" | "pending") => ["backups", "ssh-key", key] as const,
 };
 
 export function createQueryClient(): QueryClient {
@@ -188,12 +194,63 @@ export function useInstructions(os: ClientOs) {
   });
 }
 
-// A Phase 3+ resource. The agent answers 501 not-implemented-in-this-version.
-export function usePhaseProbe(feature: "backups" | "updates" | "plugs") {
+// The backups (docs/api/README.md section 13). The Backups page reads the state each 30 s.
+export const BACKUPS_POLL_MS = 30_000;
+
+export function useBackups(refetchInterval: number | false = BACKUPS_POLL_MS) {
+  return useQuery({
+    queryKey: qk.backups,
+    queryFn: () => call(api.GET("/backups")),
+    refetchInterval,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export function useBackupsHealth(refetchInterval: number | false = BACKUPS_POLL_MS) {
+  return useQuery({
+    queryKey: qk.backupsHealth,
+    queryFn: () => call(api.GET("/backups/health")),
+    refetchInterval,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export function useRestorePoints() {
+  return useQuery({
+    queryKey: qk.restorePoints,
+    queryFn: () => call(api.GET("/restore/points")),
+    refetchInterval: BACKUPS_POLL_MS,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export function useBackupDisks(enabled = true) {
+  return useQuery({ queryKey: qk.disks, queryFn: () => call(api.GET("/backups/disks")), enabled, staleTime: 0 });
+}
+
+export function useRecoveryKeyStatus(enabled = true) {
+  return useQuery({
+    queryKey: qk.recoveryKeyStatus,
+    queryFn: () => call(api.GET("/backups/recovery-key/status")),
+    enabled,
+    staleTime: 0,
+  });
+}
+
+export function useSshKey(key: "active" | "pending" = "active", enabled = true) {
+  return useQuery({
+    queryKey: qk.sshKey(key),
+    queryFn: () => call(api.GET("/backups/ssh-key", { params: { query: { key } } })),
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+// A Phase 4+ resource. The agent answers 501 not-implemented-in-this-version.
+export function usePhaseProbe(feature: "updates" | "plugs") {
   return useQuery({
     queryKey: qk.phase(feature),
     queryFn: async () => {
-      if (feature === "backups") return call(api.GET("/backups"));
       if (feature === "updates") return call(api.GET("/updates"));
       return call(api.GET("/plugs"));
     },

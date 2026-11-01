@@ -153,26 +153,58 @@ Caddy never sends HSTS for the local CA names.
 | Key | Type | Default | Phase | Description |
 |---|---|---|---|---|
 | `backups.wal_archive_timeout_min` | integer 1 to 60 | `5` | Phase 1 | Postgres `archive_timeout`, in minutes. It is the RPO of an idle database. |
-| `backups.schedule.db_full` | systemd calendar text | `Sun 01:00` | validate (Phase 3) | Full pgBackRest backup. |
-| `backups.schedule.db_incr` | systemd calendar text | `daily 02:00` | validate (Phase 3) | Incremental pgBackRest backup. |
-| `backups.schedule.files` | systemd calendar text | `daily 02:30` | validate (Phase 3) | restic snapshots to the destinations. |
-| `backups.schedule.verify` | systemd calendar text | `Sat 03:00` | validate (Phase 3) | Backup verification. |
-| `backups.retention.db_full` | integer 1 to 52 | `2` | Phase 1 | `repo1-retention-full` of pgBackRest. |
-| `backups.retention.archive_days` | integer 1 to 3650 | `14` | validate (Phase 3) | Days of WAL to keep. |
-| `backups.retention.files_keep_daily` | integer 0 to 3650 | `14` | validate (Phase 3) | restic daily snapshots to keep. |
-| `backups.retention.files_keep_weekly` | integer 0 to 520 | `8` | validate (Phase 3) | restic weekly snapshots to keep. |
-| `backups.destinations` | list | `[]` | validate (Phase 3) | restic destinations (decision S40). |
+| `backups.schedule.db_full` | systemd calendar text | `Sun 01:00` | Phase 3 | Full pgBackRest backup to the local repository. |
+| `backups.schedule.db_incr` | systemd calendar text | `daily 02:00` | Phase 3 | Incremental pgBackRest backup to the local repository. |
+| `backups.schedule.files` | systemd calendar text | `daily 02:30` | Phase 3 | The `files` snapshot (`/var/lib/care-pi/s3` and `/etc/care-pi`) to each destination. |
+| `backups.schedule.verify` | systemd calendar text | `Sat 03:00` | Phase 3 | `pgbackrest verify` of the local repository, `restic prune` and `restic check --read-data-subset=5%` of each destination. |
+| `backups.schedule.drill` | systemd calendar text | `*-*-01 04:00` | Phase 3 | The restore drill. Only when `backups.drill_enabled` is `true`. |
+| `backups.retention.db_full` | integer 1 to 52 | `2` | Phase 1 | `repo1-retention-full` of pgBackRest. pgBackRest keeps the WAL of each kept full backup, so the restore window is about this number of weeks. |
+| `backups.retention.archive_days` | integer 1 to 3650 | `14` | not used | Valid, but Phase 3 does not use it. `retention.db_full` sets the restore window. |
+| `backups.retention.files_keep_daily` | integer 0 to 3650 | `14` | Phase 3 | The default of `retention.keep_daily` of each destination. |
+| `backups.retention.files_keep_weekly` | integer 0 to 520 | `8` | Phase 3 | The default of `retention.keep_weekly` of each destination. |
+| `backups.destinations` | list | `[]` | Phase 3 | The restic destinations (decision S40). Setup needs 1 or more. |
+| `backups.paused` | boolean | `false` | Phase 3 | `true` stops the backup timers. "Back up now" still works. A restore from backup on a second device can set it (docs/api/README.md section 13). |
+| `backups.alert_after_hours` | integer 1 to 720 | `24` | Phase 3 | A destination without a successful snapshot for this time gets the banner `destination-unreachable`. |
+| `backups.drill_enabled` | boolean | `true` | Phase 3 | Run the restore drill at `backups.schedule.drill`. The agent skips a drill when the free disk space is less than 2 times the database size. |
+
+A schedule is the `OnCalendar=` text of a systemd timer. systemd does not accept `daily HH:MM`, so `apply` writes
+`*-*-* HH:MM` for it. Other texts go to the timer unchanged. Run `systemd-analyze calendar 'TEXT'` to check a text.
+
+pgBackRest has exactly one local encrypted repository: `/var/lib/care-pi/backup/pg`.
+Each destination is a restic repository. It gets two kinds of snapshot:
+
+- `db`: the local pgBackRest repository (already encrypted) and `/etc/care-pi`, every `interval_min` minutes;
+- `files`: `/var/lib/care-pi/s3` (with the xattrs of versitygw) and `/etc/care-pi`, at `backups.schedule.files`.
+
+The snapshots contain `/etc/care-pi/secrets/` without `recovery.key`. Secrets are never in this file.
+The S3 keys of a destination are in `/etc/care-pi/secrets/backup/<id>.json`. Set them with
+`PUT /api/v1/backups/destinations/{id}/secrets` or `care-pi backup destination secrets`.
 
 Each destination has `id` (`a-z0-9-`, up to 31 characters) and `type`:
 
 | `type` | Required keys | Optional keys |
 |---|---|---|
-| `posix` | `path` | — |
-| `sftp` | `host`, `user`, `path` | `port` |
-| `s3` | `endpoint`, `bucket` | `region` |
+| `posix` | `path` or `disk_label` (one of the two) | `interval_min`, `retention` |
+| `sftp` | `host`, `user`, `path` | `port` (default `22`), `host_key`, `interval_min`, `retention` |
+| `s3` | `endpoint`, `bucket` | `region`, `prefix`, `interval_min`, `retention` |
 
-Phase 1 renders no backup timers.
-pgBackRest has exactly one local encrypted repository: `/var/lib/care-pi/backup/pg`.
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `path` | absolute path | none | `posix`: a directory. `sftp`: the directory on the server. |
+| `disk_label` | `care-` and 1 to 11 characters `a-z0-9-` | none | `posix`: a disk that care-pi prepared (`POST /api/v1/backups/disks/{disk_id}/prepare`). `apply` writes a mount unit with `nofail` and `x-systemd.automount` at `/var/lib/care-pi/disks/<label>`. |
+| `host`, `port`, `user` | strings, integer | port `22` | `sftp`: the server and the user. The agent connects with its own SSH key (`GET /api/v1/backups/ssh-key`). |
+| `host_key` | `<key type> <base64>` | none | `sftp`: the pinned host key of the server. The destination test returns it at the first contact (TOFU). The timers do not connect to a server without it. |
+| `endpoint`, `region`, `bucket` | URL, strings | none | `s3`: the S3 service and the bucket. The destination test can create the bucket. |
+| `prefix` | key prefix | none | `s3`: a prefix inside the bucket, without `/` at the start or at the end. |
+| `interval_min` | integer 5 to 1440 | `15` | Minutes between two `db` snapshots. The off-site RPO is `interval_min` + `wal_archive_timeout_min`. |
+| `retention.keep_within_days` | integer 0 to 3650 | `14` | `restic forget --keep-within <N>d` for the `files` snapshots. The `db` snapshots always use `--keep-within 48h` (`docs/backups.md`, "Retention"). |
+| `retention.keep_daily` | integer 0 to 3650 | `retention.files_keep_daily` | `restic forget --keep-daily`. |
+| `retention.keep_weekly` | integer 0 to 520 | `retention.files_keep_weekly` | `restic forget --keep-weekly`. |
+| `retention.keep_monthly` | integer 0 to 120 | `6` | `restic forget --keep-monthly`. |
+
+The restic repository of a destination is the directory `care-pi-<key id>` below the location
+(`path`, the mount point of `disk_label`, or `<bucket>/<prefix>`). The key id comes from the recovery key.
+A new recovery key gives a new directory. docs/api/README.md section 13 tells the full model.
 
 ## `updates`
 

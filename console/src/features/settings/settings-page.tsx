@@ -35,10 +35,11 @@ import { validateSize } from "@/features/setup/size-logic";
 import { formatBytes, formatDateTime, formatTime } from "@/lib/format";
 import { reservedNames } from "@/lib/schema";
 import { fmt, strings } from "@/lib/strings";
+import { BackupsTab } from "./backups-tab";
 import { ConfigChange } from "./config-change";
 
 const st = strings.settings;
-const TABS = ["identity", "size", "env", "fe", "power"] as const;
+const TABS = ["identity", "size", "env", "backups", "fe", "power"] as const;
 type Tab = (typeof TABS)[number];
 
 function WithEffective({ render }: { render: (config: Config, etag: string) => React.ReactNode }) {
@@ -264,6 +265,7 @@ const TAB_LABELS: Record<Tab, string> = {
   identity: st.identity,
   size: st.size,
   env: st.env,
+  backups: st.backups,
   fe: st.fe,
   power: st.power,
 };
@@ -297,6 +299,9 @@ export default function SettingsPage() {
             </TabsContent>
             <TabsContent value="env">
               {tab === "env" ? <WithEffective render={(c, etag) => <EnvTab key={etag} config={c} />} /> : null}
+            </TabsContent>
+            <TabsContent value="backups">
+              {tab === "backups" ? <WithEffective render={(c, etag) => <BackupsTab key={etag} config={c} />} /> : null}
             </TabsContent>
             <TabsContent value="fe">{tab === "fe" ? <FeTab /> : null}</TabsContent>
             <TabsContent value="power">{tab === "power" ? <PowerTab /> : null}</TabsContent>

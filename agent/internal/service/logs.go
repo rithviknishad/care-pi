@@ -30,6 +30,7 @@ var LogUnits = []LogUnitInfo{
 	{"db", "care-db.service"}, {"redis", "care-redis.service"}, {"s3", "care-s3.service"},
 	{"caddy", "care-caddy.service"}, {"pod", "care-pod.service"}, {"clock", "care-clock.service"},
 	{"fe-build", "care-fe-build.service"}, {"target", "care.target"}, {"agent", paths.AgentUnit},
+	{"backup", "care-backup-*"},
 }
 
 // UnitOf returns the systemd unit of a short name. It also accepts care-api and care-api.service.
@@ -83,6 +84,15 @@ func parseJournal(raw []byte, unit string) (LogLine, bool) {
 		return s
 	}
 	l := LogLine{Cursor: str("__CURSOR"), Unit: unit, Priority: 6}
+	// A pattern (backup: care-backup-*) gives the unit of each line: UNIT for a line of systemd
+	// about the unit, else the unit that wrote the line.
+	if strings.Contains(unit, "*") {
+		if u := str("UNIT"); u != "" {
+			l.Unit = u
+		} else if u := str("_SYSTEMD_UNIT"); u != "" {
+			l.Unit = u
+		}
+	}
 	if !CursorRE.MatchString(l.Cursor) || len(l.Cursor) > 512 {
 		return LogLine{}, false
 	}

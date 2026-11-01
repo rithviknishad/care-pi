@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -189,6 +190,11 @@ func TestFirstApply(t *testing.T) {
 		"systemctl reset-failed "+unitList,
 		"systemctl start care.target",
 		stanzaCreate,
+		"systemctl list-units --all --plain --no-legend --no-pager var-lib-care*pi-disks-*",
+		"systemctl enable care-backup.target",
+		"systemctl start care-backup.target",
+		"systemctl list-units --all --plain --no-legend --no-pager care-backup-*.timer",
+		"podman exec --user postgres care-db pgbackrest --stanza=main info --output=json",
 	)
 	if got := e.mutating(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("commands:\n got  %q\n want %q", got, want)
@@ -280,7 +286,7 @@ func TestStanzaWaitsForTheDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, e.out.String())
 	}
-	if got := kinds(res.Plan); !reflect.DeepEqual(got, []plan.Kind{plan.EnsureBucket, plan.EnsureStanza}) {
+	if got := kinds(res.Plan); !reflect.DeepEqual(got, []plan.Kind{plan.EnsureBucket, plan.EnsureStanza, plan.EnsureMounts, plan.EnsureRepositories, plan.EnsureTimers}) {
 		t.Fatalf("plan %v", got)
 	}
 	want := []string{pgIsReady, pgIsReady, pgIsReady, stanzaCreate}
@@ -589,7 +595,7 @@ func TestFEFailureDoesNotStopTheStackSteps(t *testing.T) {
 		t.Fatalf("want a lock with the build id and no current build: %+v", lk)
 	}
 	// The stack steps ran before the FE build; the lock write after it also ran (see above).
-	if got := e.mutating(); got[len(got)-1] != stanzaCreate {
+	if got := e.mutating(); !slices.Contains(got, stanzaCreate) {
 		t.Fatalf("the stanza step did not run: %q", got)
 	}
 	if out := e.out.String(); strings.Index(out, "==> ensure-stanza") > strings.Index(out, "==> ensure-fe") || !strings.Contains(out, "==> write-lock") {

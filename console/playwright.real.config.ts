@@ -31,7 +31,8 @@ export default defineConfig({
   projects: [
     {
       name: "desktop",
-      testMatch: /desktop\.[a-z0-9-]+\.spec\.ts$/,
+      // backups.spec.ts runs on both projects (its jobs only on the desktop).
+      testMatch: [/desktop\.[a-z0-9-]+\.spec\.ts$/, /\/backups\.spec\.ts$/],
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 1280, height: 800 },
@@ -41,7 +42,7 @@ export default defineConfig({
     },
     {
       name: "phone",
-      testMatch: /phone\.[a-z0-9-]+\.spec\.ts$/,
+      testMatch: [/phone\.[a-z0-9-]+\.spec\.ts$/, /\/backups\.spec\.ts$/],
       use: { ...devices["iPhone 13"], ignoreHTTPSErrors: true },
     },
   ],

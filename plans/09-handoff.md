@@ -430,3 +430,44 @@ units table on a phone; raw step names and a 26 s silent lock resolution on the 
 failed setup; 43 checks (25 directories) on the hardware step~~ (done, C); small items (duplicate `X-Content-Type-Options`,
 empty 502 on port 443 in setup mode, duplicate CLI lines). ~~Pre-existing, not changed: `npm run api:check` fails
 since `efc6f60` (the contract changed, `src/api/types.gen.ts` was not made again).~~ Passes since `e499906`.
+
+### 8g. Phase 3 wave 5a: backups and restore, server side, and the exit test (2026-10-31)
+
+Wave 5a implements contract v0.4.0 (`docs/api/README.md` section 13) in the agent and runs the Phase 3 exit test on
+lumine. The console of the same contract is wave 5b (`5eb08f6`, a parallel agent). `docs/backups.md` is the guide
+(the model, the key derivation and its test vectors, the destinations, the units, the restore flows, the DR procedure).
+
+| Area | Content |
+|---|---|
+| `agent/internal/backup` | The recovery key (24 BIP-39 words, HKDF-SHA256 v1: key id, pgBackRest cipher pass, restic password, SSH ed25519 seed; QR and `.txt`), the key store (`recovery.key`, `.pending`, `state/backups/key.json`), the destinations (repository `care-pi-<key id>`), the restic session of each run (`/run/care-pi/backup/`, only paths in the environment), pgBackRest (`info`, the encrypted `backup.info`), the state files, the locks, the health and the banners, the destination tests (SSH TOFU, the SSH key, S3 with `create_bucket`, the posix probe), `ensure-repositories`. |
+| `agent/internal/restore` | PITR (maintenance, then the checkpoint; rollback to the checkpoint on failure), files (in place or side directory), the drill (a throwaway container, `archive_mode=off`), the rotation and the re-key, the restore from backup of a new device. |
+| `agent/internal/disks` | `lsblk` and the disk preparation (GPT, one ext4 partition `care-…`, mount and automount units). |
+| Render, plan, apply | `care-backup.target`, the timers and services (the CLI runs them), the mount units, `ssh_config` and `known_hosts`; the plan actions `ensure-mounts`, `ensure-repositories`, `ensure-timers`; the restore apply (`NoStart`). Golden tree `backups`. |
+| Service, server, CLI | Each operation of section 13; `SetupState.restore`; the step `backups`; `Status.backups`; `GET /logs/backup`; `care-pi backup …` and `care-pi restore …`. The dev host (`serve --fake-host`) answers the backup commands. |
+| Installer | `uninstall.sh` stops and removes the backup units and the mount units; `--purge-data` uses `rm -rf --one-file-system`. `care-pi.service` gets no new path and no capability (comment only). |
+
+Decisions of wave 5a (owner informed; override in `00` if wrong):
+
+- **Privilege.** No `CAP_SYS_ADMIN` and no new `ReadWritePaths` for `care-pi.service`. restic, the probe of a destination,
+  and `wipefs`/`sfdisk`/`mkfs.ext4` run in transient units (`systemd-run --wait --pipe`), as the image pulls of Phase 2;
+  systemd mounts the disks from rendered mount units. The timers run `care-pi backup …` as root in their own units.
+- **Timer runner and locks.** The CLI runs the timers, not the daemon. Backups never take the apply lock; each target has its
+  own lock (`/run/care-pi/backup-<id>.lock`, `backup-local.lock`). The restore jobs take the apply lock and stop
+  `care-backup.target` first. A destination timer writes no job, only its last 10 runs.
+- **Repository layout.** The local repository stays `/var/lib/care-pi/backup/pg` (the contract: one repository). The re-key of a
+  Phase 1 or Phase 2 host moves the old one to `pg.legacy` and deletes it after success. The destinations use
+  `care-pi-<key id>`.
+- **Retention.** `db` snapshots `--keep-within 48h` (owner decision), `files` snapshots `keep_within_days`; always `--keep-last 1`.
+- **Test targets on lumine.** S3: a second versitygw quadlet on lumine (`w5-s3`), fewer moving parts than MinIO on the Mac.
+  USB: a loop device (`losetup` exists on trixie). SFTP: the Mac over Tailscale.
+- **The local CA of Caddy is in each snapshot.** A restored device keeps the root CA that the clinic devices trust. The
+  switch happens after the event `done` (care-caddy restarts, a few seconds), so the open event stream keeps its certificate.
+- **Console alignment (wave 5b notes).** `RestoreDrResult.display_name`; the sessions end after the event `done` reached each
+  open stream of the job; the `.txt` download with `Accept: text/plain`; the label of `disk-prepare` from the request (a label
+  of another connected disk → 409); a PITR time up to the start of the job; `GET /logs/backup` with the unit of each line.
+
+Exit test: **PASS (9 of 9)**, 6 fixes before the commit (the calendar `daily HH:MM`, the drill `max_connections`, the drill
+start, a USB disk that is not connected, the local CA of Caddy in the snapshots and its switch after a restore from
+backup, the CLI that exited before the end of its job). Detail, timings, and memory: `08-spike-log.md`, "Phase 3 exit test".
+Follow-ups there: the Phase 3 console on the device, a real USB disk, an internet S3 provider, DR on a second Pi, the
+checkpoint of two restores in one day, the drill `max_connections` from the model.

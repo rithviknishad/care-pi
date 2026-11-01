@@ -7,6 +7,8 @@
 //   node mock/server.mjs                 port 4011 (MOCK_PORT)
 //   MOCK_SCENARIO=ready node mock/server.mjs
 //   curl -X POST localhost:4011/__mock/reset -d '{"scenario":"ready","step_ms":200}'
+//   curl -X POST localhost:4011/__mock/reset -d '{"scenario":"ready","backups":"degraded"}'
+//   MOCK_SCENARIO=restore node mock/server.mjs   (a claimed device with the backup disk of an old device)
 //
 // Credentials: claim code 4F7K-Q2MX-9PDA, Imager password "imager-password",
 // console password of the ready scenario "correct horse battery staple", TOTP code 000000.
@@ -17,6 +19,9 @@ import { authRoutes, reauthRecent } from "./lib/auth.mjs";
 import { setupRoutes } from "./lib/setup.mjs";
 import { systemRoutes } from "./lib/system.mjs";
 import { opsRoutes, phaseRoutes } from "./lib/ops.mjs";
+import { backupsRoutes } from "./lib/backups-api.mjs";
+import { restoreRoutes } from "./lib/restore-api.mjs";
+import { DR_KEY } from "./lib/backups-state.mjs";
 import { freshState, now } from "./lib/state.mjs";
 
 const PORT = Number(process.env.MOCK_PORT ?? 4011);
@@ -43,7 +48,15 @@ function compile(route) {
   return { ...route, re, keys };
 }
 
-const ROUTES = [...systemRoutes, ...authRoutes, ...setupRoutes, ...opsRoutes, ...phaseRoutes].map(compile);
+const ROUTES = [
+  ...systemRoutes,
+  ...authRoutes,
+  ...setupRoutes,
+  ...opsRoutes,
+  ...backupsRoutes,
+  ...restoreRoutes,
+  ...phaseRoutes,
+].map(compile);
 const UNSAFE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 function match(method, pathname) {
@@ -83,7 +96,7 @@ async function control(req, res, pathname) {
     const raw = await readBody(req);
     const opts = raw ? JSON.parse(raw) : {};
     state = freshState(opts);
-    sendJson(res, 200, { scenario: state.scenario, step_ms: state.stepMs });
+    sendJson(res, 200, { scenario: state.scenario, step_ms: state.stepMs, backups: state.backups.scenario });
     return true;
   }
   if (pathname === "/__mock/state" && req.method === "GET") {
@@ -94,6 +107,10 @@ async function control(req, res, pathname) {
       recovery_codes: state.recoveryCodes,
       sessions: state.sessions.size,
       file: state.file,
+      // The recovery key of the old device of the restore journey, and the recovery key of this device.
+      dr_words: DR_KEY.words,
+      key_words: state.backups.key?.words ?? null,
+      pending_words: state.backups.pending?.words ?? null,
     });
     return true;
   }
@@ -144,7 +161,9 @@ async function handle(req, res) {
       }
     }
   }
-  if (route.reauth && !reauthRecent(session)) {
+  // The reset option force_reauth makes the next operation with x-reauth ask for the password, so a test can see
+  // the dialog without a wait of 5 minutes.
+  if (route.reauth && (state.forceReauth || !reauthRecent(session))) {
     throw new Problem(
       "reauth-required",
       "This operation needs an authentication in the last 5 minutes. Use POST /session/reauth.",

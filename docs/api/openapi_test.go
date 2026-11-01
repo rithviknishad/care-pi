@@ -518,3 +518,58 @@ func TestProblemExamples(t *testing.T) {
 		}
 	}
 }
+
+// TestDiscriminators checks each discriminator: each mapping key is the const of the property in its variant,
+// each variant of oneOf has a mapping, and each key of JobResult is a JobKind.
+func TestDiscriminators(t *testing.T) {
+	doc := loadSpec(t)
+	kinds := map[string]bool{}
+	if jk := doc.Components.Schemas["JobKind"]; jk != nil && jk.Value != nil {
+		for _, v := range jk.Value.Enum {
+			s, _ := v.(string)
+			kinds[s] = true
+		}
+	}
+	const prefix = "#/components/schemas/"
+	for _, name := range sortedSchemaNames(doc) {
+		s := doc.Components.Schemas[name].Value
+		if s == nil || s.Discriminator == nil {
+			continue
+		}
+		prop := s.Discriminator.PropertyName
+		mapped := map[string]bool{}
+		for key, ref := range s.Discriminator.Mapping {
+			target, ok := strings.CutPrefix(ref.Ref, prefix)
+			variant := doc.Components.Schemas[target]
+			if !ok || variant == nil || variant.Value == nil {
+				t.Errorf("%s: mapping %q points to %q, not a component schema", name, key, ref.Ref)
+				continue
+			}
+			mapped[target] = true
+			p := variant.Value.Properties[prop]
+			if p == nil || p.Value == nil || p.Value.Const != key {
+				t.Errorf("%s: mapping %q: %s.%s must be const %q", name, key, target, prop, key)
+			}
+			if !slices.Contains(variant.Value.Required, prop) {
+				t.Errorf("%s: mapping %q: %s must require %s", name, key, target, prop)
+			}
+			if name == "JobResult" && !kinds[key] {
+				t.Errorf("JobResult: mapping %q is not a JobKind", key)
+			}
+		}
+		for _, v := range s.OneOf {
+			if target, _ := strings.CutPrefix(v.Ref, prefix); !mapped[target] {
+				t.Errorf("%s: oneOf %s has no mapping", name, v.Ref)
+			}
+		}
+	}
+}
+
+func sortedSchemaNames(doc *openapi3.T) []string {
+	names := make([]string, 0, len(doc.Components.Schemas))
+	for n := range doc.Components.Schemas {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}

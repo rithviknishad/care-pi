@@ -130,7 +130,7 @@ It stops if the host is not supported.
 | 10 | apt holds | The script runs `apt-mark hold` on `podman crun netavark aardvark-dns conmon skopeo`. A Care release updates these packages on purpose. The future command `care-pi update --os` lifts the holds. |
 | 11 | Directories | The script creates `/etc/care-pi` and `/var/lib/care-pi` with the owners and modes from the Phase 1 contract. |
 | 12 | Agent | The script installs `/usr/local/bin/care-pi`. See [Agent download](#agent-download). |
-| 13 | Agent service | The script writes `/etc/systemd/system/care-pi.service` (`care-pi serve`: the console API on `/run/care-pi/api.sock`), enables it, and starts it. It restarts the unit when the unit or the binary changed. After a reboot request, the unit starts at the next boot. `docs/console-server.md` describes the unit. |
+| 13 | Agent service | The script writes `/etc/systemd/system/care-pi.service` (`care-pi serve`: the console API on `/run/care-pi/api.sock`), enables it, and starts it. It restarts the unit when the unit or the binary changed. After a reboot request, the unit starts at the next boot. `docs/console-server.md` describes the unit. The backups add no path and no capability to its sandbox (`docs/backups.md`, "The sandbox"). |
 | 14 | NetworkManager hook | If NetworkManager is present, the script installs `/etc/NetworkManager/dispatcher.d/90-care-pi`. After an address change, it waits 5 s (15 s in the first 3 minutes after the boot, from `/proc/uptime`) and runs `care-pi apply --reason address-change`. The events of that time give one apply. An event during an apply gives one more apply after it. Two applies of the hook never overlap. The apply also waits up to 60 s for a LAN IPv4 address (`docs/apply.md`, step 5). |
 | 15 | Host check and bootstrap | The script runs `care-pi host check`. Then it runs `care-pi bootstrap --hostname NAME --preset NAME --fe-provider NAME --yes` (with `--unattended` when the script has it). On a new host, bootstrap starts setup mode and prints the claim code. With `--unattended` and `--fe-provider local`, bootstrap also makes the first care_fe build. A host with an earlier install (a `lock.yaml`) always gets the full apply. |
 
@@ -362,18 +362,21 @@ sudo sh installer/uninstall.sh --purge-data
 The script:
 
 1. runs `systemctl disable --now care-pi.service` (the console agent) and removes its socket,
-2. stops `care.target` and `care-clock.service`, and disables `care-start.service`, `care.target`, and `care-clock.service` with `systemctl`,
+2. stops `care.target` and `care-clock.service`, and disables `care-start.service`, `care.target`, and `care-clock.service` with `systemctl`.
+   It disables and stops `care-backup.target` and the `care-backup-*` units, and stops the mount units of the backup disks,
 3. waits until every `care-*` unit is inactive (except `care-pi-firewall.service`, which step 4 stops),
 4. runs `systemctl disable --now care-pi-firewall.service`. The stop deletes the table `inet care-pi`,
-5. removes the quadlets (`/etc/containers/systemd/care*`), the unit files (also `care-pi.service`), the NetworkManager hook, `/etc/care-pi/firewall.nft`, the files of an older install.sh, and the agent binary,
+5. removes the quadlets (`/etc/containers/systemd/care*`), the unit files (also `care-pi.service`, `care-backup.target`, and the mount units of the backup disks), the NetworkManager hook, `/etc/care-pi/firewall.nft`, the files of an older install.sh, and the agent binary,
 6. removes a leftover pod `care` with `podman pod rm -f`.
 
 The script never stops the pod unit with `systemctl`.
 
 The script keeps `/etc/care-pi` and `/var/lib/care-pi`.
 With `--purge-data`, it deletes them and the podman secrets `care-pi-*` (copies of `/etc/care-pi/secrets`).
-The data includes the database, the files, the secrets, and the backups on this host.
+The data includes the database, the files, the secrets, the recovery key, and the local backup repository.
 The script asks two questions before it does this, unless you add `--yes`.
+The delete uses `rm -rf --one-file-system`: a backup disk that is still mounted below `/var/lib/care-pi/disks` keeps its data.
+The backups on the destinations stay. A new install can restore from them with the recovery key (`docs/backups.md`, "Disaster recovery").
 
 The script does not undo the host preparation.
 The packages, the kernel command line, the zram, avahi, and journald settings, the host name, the apt holds, and the unattended-upgrades settings stay in place.

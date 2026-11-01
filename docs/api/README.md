@@ -498,6 +498,15 @@ An operation with a session can also return `csrf` (403); see §3.
 | `not-implemented-in-this-version` | 501 | An operation with `x-phase` greater than the version. `phase` tells when. |
 | `care-not-running` | 503 | The operation needs a healthy care-api. |
 | `unavailable` | 503 | The agent starts or stops. |
+| `destination-unreachable` | 422 | A backup destination does not answer, or it refuses the credentials or the SSH key. `destination_id` tells which. Also the error of a failed snapshot step. |
+| `destination-untrusted-hostkey` | 422 | An SFTP server presents a host key that is not pinned: the first contact, or a changed key. `host_key` has the key that the server presents. |
+| `recovery-key-mismatch` | 422 | The recovery key cannot open the repository at the destination, or a typed word is not the word of the key. |
+| `restore-window-exceeded` | 422 | The time of a restore is outside the restore window. `restore_window` tells the window. |
+| `disk-in-use` | 409 | The disk holds the system, a partition of it is mounted, or a destination uses its label. |
+| `no-destination` | 409 | The operation needs 1 or more backup destinations. |
+| `no-recovery-key` | 409 | The operation needs the recovery key. Make it with `POST /backups/recovery-key`. |
+| `insufficient-space` | 409 | The free disk space is not enough for the operation. `space` tells the space that it needs. |
+| `verify-failed` | 500 | A verify or a restore drill found damage. Only the `error` of a job has this type. |
 
 The type URIs need not resolve. The DNS/ACME service of Phase 6 can serve a page for each slug later.
 
@@ -595,7 +604,7 @@ The paths are below `/api/v1` on port 8443, except `/_care-pi/status`. Section 1
 | PUT | `/setup/steps/tls` | session + CSRF | `care-pi config set tls.local_ca.enabled=true` | 2 | new |
 | PUT | `/setup/steps/size` | session + CSRF | `care-pi config set size.preset=PRESET` | 2 | new |
 | PUT | `/setup/steps/env` | session + CSRF | `care-pi config set env.backend.NAME=VALUE env.frontend.NAME=VALUE fe.provider=PROVIDER` | 2 | new |
-| PUT | `/setup/steps/backups` | session + CSRF | `care-pi config set backups.destinations=JSON` | 3 | new |
+| PUT | `/setup/steps/backups` | session + CSRF | `care-pi config set backups.destinations=JSON && care-pi backup recovery-key confirm` | 3 | new |
 | PUT | `/setup/steps/care-admin` | session + CSRF | `care-pi setup finish --care-username USER --care-email EMAIL --care-password-stdin` | 2 | new |
 | POST | `/setup/steps/{step}/skip` | session + CSRF | `care-pi setup skip STEP` | 2 | new |
 | POST | `/setup/finish` | session + CSRF | `care-pi setup finish` | 2 | new |
@@ -632,11 +641,26 @@ The paths are below `/api/v1` on port 8443, except `/_care-pi/status`. Section 1
 | POST | `/power/reboot` | session + CSRF | `care-pi power reboot` | 2 | new |
 | POST | `/power/shutdown` | session + CSRF + reauth | `care-pi power shutdown` | 2 | new |
 | GET | `/backups` | session | `care-pi backup status --json` | 3 | new |
-| POST | `/backups/run` | session + CSRF | `care-pi backup run [--destination ID]` | 3 | new |
-| POST | `/backups/destinations/test` | session + CSRF | `care-pi backup destination test ...` | 3 | new |
-| GET | `/backups/recovery-key` | session + reauth | `care-pi backup recovery-key` | 3 | new |
-| GET | `/restore/points` | session | `care-pi restore points --json` | 3 | new |
-| POST | `/restore` | session + CSRF + reauth | `care-pi restore --kind pitr --time TIME` | 3 | new |
+| POST | `/backups/run` | session + CSRF | `care-pi backup run [--scope all\|local-db\|destination] [--type incr\|full] [--destination ID] [--reason TEXT]` | 3 | new |
+| POST | `/backups/destinations/test` | session + CSRF | `care-pi backup destination test ID [--accept-fingerprint SHA256:FP] [--create-bucket] [--destination-json FILE]` | 3 | new |
+| GET | `/backups/recovery-key` | session + reauth | `care-pi backup recovery-key show [--pending]` | 3 | new |
+| POST | `/backups/recovery-key` | session + CSRF | `care-pi backup recovery-key create` | 3 | new |
+| GET | `/restore/points` | session | `care-pi restore points --json [--refresh]` | 3 | new |
+| POST | `/restore` | session + CSRF + reauth | `care-pi restore pitr --time TIME\|--checkpoint LABEL`; `care-pi restore files --destination ID --snapshot ID [--path PATH]... [--side-dir]` | 3 | new |
+| POST | `/restore/dr/inspect` | session + CSRF | `care-pi restore dr --inspect --destination-json FILE --recovery-key-stdin` | 3 | new |
+| POST | `/restore/dr` | session + CSRF | `care-pi restore dr --destination-json FILE --recovery-key-stdin [--time TIME] [--snapshot ID] [--no-files] [--pause-backups]` | 3 | new |
+| GET | `/backups/health` | session | `care-pi backup health --json` | 3 | new |
+| POST | `/backups/verify` | session + CSRF | `care-pi backup verify [--scope all\|local-db\|destination] [--destination ID] [--read-data-subset PCT] [--prune]` | 3 | new |
+| GET | `/backups/destinations` | session | `care-pi backup destination list --json` | 3 | new |
+| PUT | `/backups/destinations/{destination_id}/secrets` | session + CSRF | `care-pi backup destination secrets ID --access-key-id KEY --secret-stdin` | 3 | new |
+| GET | `/backups/ssh-key` | session | `care-pi backup ssh-key [--pending]` | 3 | new |
+| GET | `/backups/disks` | session | `care-pi backup disk list --json` | 3 | new |
+| POST | `/backups/disks/{disk_id}/prepare` | session + CSRF + reauth | `care-pi backup disk prepare DISK_ID [--label LABEL] --wipe` | 3 | new |
+| GET | `/backups/recovery-key/status` | session | `care-pi backup recovery-key status --json` | 3 | new |
+| GET | `/backups/recovery-key/download` | session + reauth | `care-pi backup recovery-key show --format txt [--pending] [--out FILE]` | 3 | new |
+| POST | `/backups/recovery-key/confirm` | session + CSRF | `care-pi backup recovery-key confirm [--pending]` | 3 | new |
+| POST | `/backups/recovery-key/rotate` | session + CSRF + reauth | `care-pi backup recovery-key rotate [--keep-key] [--keep-old-repositories]` | 3 | new |
+| POST | `/backups/drill` | session + CSRF | `care-pi backup drill [--reason TEXT]` | 3 | new |
 | GET | `/updates` | session | `care-pi update status --json` | 4 | new |
 | POST | `/updates/check` | session + CSRF | `care-pi update check` | 4 | new |
 | POST | `/updates/apply` | session + CSRF | `care-pi update apply [--version VERSION]` | 4 | new |
@@ -676,3 +700,570 @@ Phase 2 adds these CLI commands (or flags):
 | CLI | `care-pi config set` replaces a CLI command for each setup step. The setup commands are `care-pi setup status`, `skip`, and `finish` (section 11). |
 | Backups step | Only a dev build can skip it. This is intentional: no release build exists before Phase 3. |
 | Root CA | The root CA with name constraints (07 §4.1) comes in Phase 7. Until then `CaRoot.name_constraints` is `null` (`x-phase: 7`). |
+
+## 13. Backups and restore
+
+Phase 3 implements this section (`plans/02-backups-and-restore.md`, decision S40, spike SP6).
+The server and the console implement it against `openapi.yaml` (v0.4.0, the tags `backups` and `restore`).
+Sections 1 to 12 stay valid. This section tells where Phase 3 adds to them.
+
+### 13.1 Two resources: `config` and `backups`
+
+The settings of the backups are part of the desired state. The rest is state, secrets, and actions.
+
+| Data | Where | Operations |
+|---|---|---|
+| Destinations without secrets, schedules, retention, `paused`, `alert_after_hours`, `drill_enabled` | `config.yaml`, keys `backups.*` (`docs/config.md`) | `GET /config`, `PATCH /config` with `If-Match`, then an apply |
+| The S3 keys of a destination | `/etc/care-pi/secrets/backup/<id>.json` | `PUT /backups/destinations/{destination_id}/secrets` |
+| The recovery key and the keys that come from it | `/etc/care-pi/secrets/recovery.key` | `/backups/recovery-key*`, `GET /backups/ssh-key` |
+| The state: the last backups, the restore window, the next runs, the banners | the state files of the agent, systemd, `pgbackrest info` | `GET /backups` (one call for the Backups page), `GET /backups/destinations`, `GET /backups/health`, `GET /restore/points` |
+| The actions | jobs (section 6) | `POST /backups/run`, `/backups/verify`, `/backups/drill`, `/backups/disks/{disk_id}/prepare`, `/backups/recovery-key/rotate`, `/restore`, `/restore/dr` |
+
+Rules:
+
+- No operation of the `backups` resource writes `config.yaml`. Two exceptions: the step `PUT /setup/steps/backups`
+  writes `backups.destinations` (as each step writes its keys), and the job `restore-dr` writes the restored file.
+- A JSON merge patch replaces an array as a whole (RFC 7396). To add, change, or remove one destination, the console
+  sends the full list `backups.destinations` in `PATCH /config`.
+- `GET /backups` reads only local data. It never connects to a destination. Only the test, the inspect of a restore,
+  `GET /restore/points?refresh=true`, and the jobs connect.
+- `Status.backups` is the same object as `GET /backups`. The dashboard needs no second call for the banners.
+
+### 13.2 Data model
+
+**The local repository.** pgBackRest has exactly one repository: `/var/lib/care-pi/backup/pg` (S40).
+`archive_command` writes only to this directory, so a destination that does not answer never stops the WAL archive.
+The cipher pass comes from the recovery key (section 13.3). A Phase 1 or Phase 2 host has a random pass (section 13.12).
+
+**The destinations.** Each destination is a restic repository. Its directory is `care-pi-<key id>` below the location:
+
+| Destination | restic repository |
+|---|---|
+| `posix` with `path` | `<path>/care-pi-<key id>` |
+| `posix` with `disk_label` | `/var/lib/care-pi/disks/<label>/care-pi-<key id>` |
+| `sftp` | `sftp:<user>@<host>:<path>/care-pi-<key id>` (the port and the host key are in the SSH config of the agent) |
+| `s3` | `s3:<endpoint>/<bucket>[/<prefix>]/care-pi-<key id>` |
+
+The key id in the path has these effects: a restore of a new device finds the repository from the location and the key
+only; a new key gives a new repository; and two devices can share one bucket or one folder.
+
+**The snapshots.** Each destination gets two kinds of restic snapshot, with the restic tags `db` and `files`:
+
+| Tag | Paths | When |
+|---|---|---|
+| `db` | `/var/lib/care-pi/backup/pg` (already encrypted by pgBackRest) and `/etc/care-pi` | every `interval_min` minutes (default 15) |
+| `files` | `/var/lib/care-pi/s3` (with the xattrs of versitygw, SP6 finding 7) and `/etc/care-pi` | `backups.schedule.files` (default `daily 02:30`) |
+
+`/etc/care-pi` is in each snapshot (`contents` has `config`), without `secrets/recovery.key`. The snapshot is encrypted
+with the restic password, so the other secrets can be in it. Each snapshot also has the local CA of Caddy
+(`/var/lib/care-pi/caddy/caddy/pki/authorities/local`, when it exists), so a restored device keeps the root CA that the
+clinic devices trust (wave 5a). One `db` snapshot holds the whole local repository of
+its time, so it gives the full restore window of that time.
+
+**The units.** `apply` renders one timer and one service for each kind of work:
+`care-backup-db-full`, `care-backup-db-incr`, `care-backup-verify`, `care-backup-drill`, and for each destination
+`care-backup-db@<id>` and `care-backup-files@<id>`. Each service runs `care-pi backup run` (or `verify`, `drill`) with
+the flag `--from-timer`. Each service is a separate unit with its own memory cap, not the cap of `care-pi.service`.
+A job of the console runs the same work in a transient unit (`systemd-run`), as the image pulls do.
+`GET /logs/backup` gives the journal of the `care-backup-*` services.
+
+**The state files.** `/var/lib/care-pi/state/backups/`: `local.json`, `destinations/<id>.json` (the last 10 runs and the
+snapshot list), `drill.json` (the last 12 drills). A snapshot of the timer writes no job journal: 96 runs each day for each
+destination would push the other jobs out of the journal (section 6.1). The list `recent_runs` of the destination is its
+history. The other timers (`db-full`, `db-incr`, `verify`, `drill`) write a job with `source: timer`.
+
+### 13.3 The recovery key and the keys that come from it
+
+- The agent makes 256 bits from the random source of the kernel. The words are the BIP-39 English list:
+  24 words for 256 bits and an 8-bit checksum. The agent accepts the first 4 letters of each word.
+  A wrong checksum gives `invalid-request` with the code `checksum`.
+- The agent stores the 32 bytes as 64 hex digits in `/etc/care-pi/secrets/recovery.key` (root 0600). The new key of a
+  rotation (the `pending` key) is in `recovery.key.pending`. Scheduled backups and restores on this device never ask for the key (`02` §2).
+- The agent derives each other key with HKDF-SHA256. The input key is the 32 bytes. The salt is the ASCII text
+  `care-pi recovery key v1`.
+
+| Output | HKDF `info` | Length | Form |
+|---|---|---|---|
+| key id | `key-id` | 4 bytes | 8 lowercase hex digits |
+| pgBackRest cipher pass (`repo1-cipher-pass`) | `pgbackrest-repo-cipher-pass` | 32 bytes | base64url without padding (43 characters) |
+| restic password | `restic-password` | 32 bytes | base64url without padding |
+| SSH key of the agent | `ssh-ed25519-seed` | 32 bytes | the seed of an ed25519 key (RFC 8032) |
+
+This table is part of the contract: a device of a later version must derive the same values from the same key.
+A change of the derivation needs a new salt (`v2`), and the agent must keep the `v1` derivation for a restore.
+
+- The agent writes the cipher pass to `secrets/pgbackrest_repo_cipher_pass`, because care-db reads it as a podman secret.
+  It derives the restic password and the SSH key in memory for each run. restic uses the OpenSSH client of the host,
+  so the agent writes the private key to a directory of the run below `/run/care-pi/backup/` (tmpfs, root 0700, the key 0600)
+  and deletes the directory after the run.
+- One SSH key serves each SFTP destination. A restored device derives the same key, so the servers still accept it.
+  A new recovery key gives a new SSH key.
+- The QR payload is `CARE-PI-RK1:` and the 24 words in uppercase letters, with one space between two words.
+  The QR alphanumeric mode keeps the code small. The restore wizard can read it with the camera of a phone.
+- The text file `care-recovery-<clinic>.txt` has the clinic name, the key id, the date, the 24 numbered words, and the
+  instructions. `<clinic>` is `identity.display_name` in lowercase, with `-` for each other character.
+- `GET /backups/recovery-key` and `GET /backups/recovery-key/download` need a recent authentication (section 2.4).
+  The journal of `care-pi.service` records each show and each download, never the words.
+  The words are never in a job journal, a log line, the support bundle, or a snapshot.
+  The console keeps the words only in memory, and it clears them when the operator leaves the page.
+- Loss of the key and of the device is loss of the data (`02` §2). The banner `recovery-key-unconfirmed` stays
+  until the operator confirms the key.
+
+### 13.4 The recovery key ceremony
+
+In the setup wizard, the step `backups` starts with the key. The console makes the key before the destinations,
+because the SSH key of an SFTP destination comes from the recovery key.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant O as Operator
+    participant B as Console
+    participant A as Agent
+    B->>A: GET /backups/recovery-key/status
+    A-->>B: state none
+    B->>A: POST /backups/recovery-key
+    A-->>B: 201 words, QR payload, file name, confirm_positions [3, 11, 20]
+    B->>O: show the 24 words and the QR code, offer the .txt file
+    opt the .txt file
+        B->>A: GET /backups/recovery-key/download (recent authentication)
+        A-->>B: care-recovery-sunrise-clinic.txt
+    end
+    O->>B: "I saved the key"
+    B->>B: hide the words
+    B->>O: ask for the words 3, 11, and 20
+    O->>B: three words
+    B->>A: POST /backups/recovery-key/confirm (or recovery_key_words in PUT /setup/steps/backups)
+    alt a word is wrong
+        A-->>B: 422 recovery-key-mismatch, errors point at the wrong words
+        B->>O: show the words again (GET /backups/recovery-key, recent authentication)
+    end
+    A-->>B: 200 state confirmed
+```
+
+Rules:
+
+- The agent chooses the 3 positions at random when it makes the key. They stay the same until the confirmation,
+  so a reload of the page asks for the same words.
+- After the setup, `GET /backups/recovery-key` (with a recent authentication) shows the key again on the Backups page
+  ("Show recovery key", `02` §7).
+
+**Rotation** (`02` §2: offered, not required). pgBackRest cannot re-key a repository in place,
+so a new key means new repositories and new full backups:
+
+1. `POST /backups/recovery-key` makes the new key (`pending`). The operator saves it and confirms it (`key: pending`).
+2. For each SFTP destination, the operator adds the new SSH key (`GET /backups/ssh-key?key=pending`) on the server.
+3. `POST /backups/recovery-key/rotate` (recent authentication) starts the job `recovery-key-rotate` with `new_key: true`.
+   The job tests each destination with the new key first. It then makes a new local repository and a new repository
+   `care-pi-<new key id>` at each destination, and makes a full backup and a first snapshot. Then the new key becomes the active key.
+4. With `remove_old_repositories: true` (default), the job deletes the old repositories at the end.
+   The restore window then starts at the new full backup. With `false`, the old repositories stay.
+   The agent does not use them, and the operator needs the old key to read them.
+
+Care restarts one time during the job (the maintenance page, about 1 minute): care-db reads the cipher pass at its start.
+A failed rotation can run again: each step checks its result first, so the job continues where it stopped.
+Until `activate-key`, the active key stays the old key, and `GET /backups/recovery-key/status` gives the failed job in `rotation_job_id`.
+
+### 13.5 Destinations: the lifecycle
+
+Add, test, secret, apply, first snapshot:
+
+1. **USB disk only.** `GET /backups/disks`, then `POST /backups/disks/{disk_id}/prepare` (recent authentication, job
+   `disk-prepare`). The job erases the disk, makes one ext4 file system with the label `care-…`, writes the mount unit and the
+   automount unit (`nofail`, `x-systemd.automount`), and mounts it at `/var/lib/care-pi/disks/<label>`.
+   A disk with `usage: care-backup` needs no prepare.
+2. **Test.** `POST /backups/destinations/test` with the candidate and its credentials. The test writes, reads, and deletes
+   one object, and tells `next_action`: `accept-host-key` (section 13.6), `install-ssh-key`, `create-bucket`, or `fix`.
+   The console sends the test again after each answer, until `next_action` is `none`.
+3. **Add.** `PATCH /config` with the full list `backups.destinations` and `If-Match`, without `apply`.
+   For SFTP, the destination has `host_key` from the test.
+4. **Secret.** `PUT /backups/destinations/{destination_id}/secrets` for an S3 destination.
+5. **Apply.** `POST /apply` (or `PATCH /config?apply=true` in step 3 when no secret is necessary). The plan has `write-files`
+   (the timers, the SSH config, `known_hosts`, the mount units), `daemon-reload`, `ensure-mounts`, `ensure-repositories`
+   (`restic init` of a new repository), and `ensure-timers`.
+6. **First snapshot.** The timer `care-backup-db@<id>` runs 1 minute after its start, then each `interval_min`.
+   "Back up now" (`POST /backups/run` with `destination`) does it at once.
+
+In the setup wizard, steps 1 and 2 are the same. `PUT /setup/steps/backups` does steps 3 and 4 for the draft and
+confirms the key. The finish job does step 5 and the first local full backup. The timers do step 6.
+
+Rules:
+
+- **Failure isolation** (S40). Each destination has its own units. A destination that does not answer marks only itself
+  (`degraded`, then `error` after `backups.alert_after_hours`), and its timer tries again at the next run. `ensure-repositories`
+  does not fail the apply when a destination does not answer: the destination gets `last_error_code`, and its timer runs
+  `restic init` again. A USB disk that is not connected is the same case (O10): the automount fails fast, and the next
+  snapshot after its return catches up by content.
+- **Remove.** `PATCH /config` without the destination, then apply. The apply stops and removes its units and deletes its secret.
+  The agent never deletes data at a destination, except the job `recovery-key-rotate` with `remove_old_repositories`.
+- **posix.** The test warns (level `advised`) when the path is on the root disk: a disk failure then loses both copies.
+- **s3.** Nothing else creates the bucket (SP6 finding 4). The test creates it only with `create_bucket: true`, with
+  `LocationConstraint` from `region`. The check `object-lock` is only information.
+- **Secrets.** An S3 destination without a secret is `error` with the code `missing-credentials`. The step `backups` and the
+  apply need the secret.
+
+### 13.6 The SFTP host key (TOFU)
+
+SP6 found that the server can offer another key type than the client expects (ECDSA, not ed25519). So the agent pins one
+key, shows its type and its fingerprint, and allows only that type (`HostKeyAlgorithms`).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant O as Operator
+    participant B as Console
+    participant A as Agent
+    participant S as SFTP server
+    B->>A: POST /backups/destinations/test {sftp, accept_fingerprint: null}
+    A->>S: SSH key exchange, no login
+    S-->>A: host key (for example ecdsa-sha2-nistp256)
+    A-->>B: 200 next_action accept-host-key, host_key {type, fingerprint_sha256, trusted: false}
+    B->>O: show the type and the fingerprint
+    O->>S: compare: ssh-keygen -lf on the host key file of the server (or ask its administrator)
+    O->>B: "The fingerprints are the same"
+    B->>A: POST /backups/destinations/test {sftp, accept_fingerprint}
+    A->>S: key exchange, the key must have this fingerprint
+    alt the server presents another key now
+        A-->>B: 422 destination-untrusted-hostkey, host_key
+    else the server refuses the SSH key of the agent
+        A-->>B: 200 next_action install-ssh-key, public_key
+        B->>O: show authorized_keys_line (GET /backups/ssh-key)
+        O->>S: add the line to ~/.ssh/authorized_keys of the user
+        B->>A: the same request again
+    end
+    A-->>B: 200 ok, next_action none, host_key.public_key
+    B->>A: PATCH /config: backups.destinations with host_key
+```
+
+Rules:
+
+- `config.yaml` keeps the full public key (`host_key`), not only the fingerprint: the OpenSSH client of restic needs the key
+  in `known_hosts`. `apply` writes `/etc/care-pi/rendered/backup/known_hosts` and an SSH config with
+  `StrictHostKeyChecking yes`, `HostKeyAlgorithms <type>`, `IdentitiesOnly yes`, and the port.
+- When the server changes its key later, each run fails with `destination-untrusted-hostkey`, and the destination is `error`.
+  The operator tests the destination again and accepts the new key only when the operator knows why it changed.
+- The restore of a new device uses the same check: `POST /restore/dr/inspect` without `host_key` gives the problem
+  `destination-untrusted-hostkey` with the key that the server presents (section 13.9).
+
+### 13.7 Schedules, RPO, and retention
+
+| Work | Default | Key |
+|---|---|---|
+| WAL archive (local) | `archive_timeout` 5 minutes | `backups.wal_archive_timeout_min` |
+| Incremental backup (local) | daily 02:00 | `backups.schedule.db_incr` |
+| Full backup (local) | Sunday 01:00 | `backups.schedule.db_full` |
+| `db` snapshot to each destination | every 15 minutes | `interval_min` of the destination |
+| `files` snapshot to each destination | daily 02:30 | `backups.schedule.files` |
+| Verify | Saturday 03:00 | `backups.schedule.verify` |
+| Restore drill | the first day of each month, 04:00 | `backups.schedule.drill`, `backups.drill_enabled` |
+
+- **RPO.** On this device: `archive_timeout` for an idle database. Off-site: `interval_min` + `archive_timeout`
+  (`BackupsOverview.rpo`, `DestinationState.rpo_minutes`). A loss of the local disk loses the points in time after the last `db` snapshot.
+- **Local retention.** `repo1-retention-full` = `backups.retention.db_full` (default 2). pgBackRest expires after each backup
+  and keeps the WAL of each kept full backup. So the restore window is about `db_full` weeks.
+  `backups.retention.archive_days` stays valid, but Phase 3 does not use it.
+- **Destination retention.** After each snapshot run, the agent runs `restic forget` on the snapshots of that tag
+  (`--group-by host,tags`) with `--keep-within <keep_within_days>d --keep-daily <keep_daily> --keep-weekly <keep_weekly>
+  --keep-monthly <keep_monthly>` (defaults 14 days, 14, 8, 6; `02` §4). For the `db` snapshots, `--keep-within` is always
+  `48h` (owner decision of wave 5a): each `db` snapshot holds the whole local repository, so 2 days of snapshots each
+  15 minutes are enough, and the daily, weekly, and monthly snapshots keep the older restore points. `forget` is fast. The weekly verify job runs
+  `restic prune` (it rewrites data, so it runs one time each week). The agent always adds `--keep-last 1`, so the newest
+  snapshot of each tag stays.
+- **The restore window of a destination** is from the start of the window of its oldest kept `db` snapshot to the time of its newest `db` snapshot.
+- **The first full backup.** The setup job ends with a full backup, so a PITR is possible at once (the golden path of `05` §7).
+  `ensure-timers` also starts one full backup when the local repository has none (for example a Phase 1 or Phase 2 host).
+- **Memory.** `process-max=1`, `compress-type=zst`, `compress-level=3` for pgBackRest; `GOMAXPROCS=2` for restic (`02` §4).
+  The services run at a low CPU and IO priority.
+
+### 13.8 Jobs
+
+| Kind | Apply lock | Cancel | Started by | Result |
+|---|---|---|---|---|
+| `backup-run` | no | yes, between steps | console, CLI, the timers `db-full` and `db-incr` | `BackupRunResult` |
+| `backup-verify` | no | yes, between steps | console, CLI, the timer `verify` | `BackupVerifyResult` |
+| `restore-drill` | no | yes | console, CLI, the timer `drill` | `RestoreDrillResult` |
+| `restore-pitr` | yes | no | console, CLI | `RestorePitrResult` |
+| `restore-files` | yes | no | console, CLI | `RestoreFilesResult` |
+| `restore-dr` | yes | no | console (setup wizard), CLI | `RestoreDrResult` |
+| `disk-prepare` | yes | no | console, CLI | `DiskPrepareResult` |
+| `recovery-key-rotate` | yes | no | console, CLI | `RecoveryKeyRotateResult` |
+
+Locks:
+
+- The backup kinds do not take the apply lock: a snapshot of 15 minutes must not block an apply. Each destination and the
+  local repository have their own lock (`/run/care-pi/backup-<id>.lock`, `/run/care-pi/backup-local.lock`). A job waits
+  in the state `queued` for a run of the same target.
+- `restore-pitr`, `restore-files`, `restore-dr`, and `recovery-key-rotate` take the apply lock. Their step `pause-backups`
+  stops the backup timers and waits (10 minutes at most) for each backup lock. Their step `resume-backups` starts the timers again.
+  While one of them runs, a backup kind gives `409 job-running`.
+
+The steps, in order (the keys of `JobStep.action`):
+
+| Kind | Steps |
+|---|---|
+| `backup-run` | `backup-incr` or `backup-full` (scopes `all`, `local-db`); for each destination (scopes `all`, `destination`): `snapshot` (`db`), `snapshot` (`files`), `forget` |
+| `backup-verify` | `verify-local`; for each destination: `forget` and `prune` (only with `prune: true`), `verify-destination` |
+| `restore-drill` | `check-space`, `drill-restore`, `drill-start`, `drill-check`, `drill-cleanup` |
+| `restore-pitr` | `pause-backups`, `maintenance-on`, `stop-app`, `checkpoint`, `stop-db`, `restore-db`, `start-db`, `wait-promote`, `start-app`, `wait-healthy`, `maintenance-off`, `backup-full`, `check-stanza`, `resume-backups` |
+| `restore-files` (`in-place`) | `pause-backups`, `check-space`, `maintenance-on`, `stop-s3`, `restore-files`, `verify-files`, `start-s3`, `maintenance-off`, `resume-backups` |
+| `restore-files` (`side-dir`) | `check-space`, `restore-files`, `verify-files` |
+| `restore-dr` | `check-key`, `check-space`, `fetch-config`, the plan actions of the restore apply (section 13.9), `fetch-db-repo`, `restore-db`, `fetch-files`, `start-target`, `wait-promote`, `wait-healthy`, `backup-full`, `ensure-repositories`, `ensure-timers`, `set-hostname`, `restore-account`, `finish` |
+| `disk-prepare` | `check-disk`, `wipe-disk`, `partition`, `format`, `write-mount-unit`, `mount`, `check-destinations` |
+| `recovery-key-rotate` | `check-destinations`, `pause-backups`, `maintenance-on`, `stop-app`, `stop-db`, `rekey-local`, `start-db`, `ensure-stanza`, `start-app`, `wait-healthy`, `maintenance-off`, `backup-full`; for each destination: `init-destination` (only `new_key: true`) and `snapshot`; then `activate-key` (only `new_key: true`), `remove-old-repositories` (only with that option), `resume-backups` |
+
+The step name has the target after the key, for example `snapshot: usb (db)` or `restore-db: 2026-10-30T09:40:00Z`.
+The setup job of section 5 gets the plan actions `ensure-mounts`, `ensure-repositories`, and `ensure-timers`, and ends
+with the step `backup-full`. The console needs an operator text for each new key (`docs/console-ui.md` section 9).
+
+A step of a destination that fails gives the step `failed` with the problem type in `detail`. The job `backup-run` with
+`scope: all` continues with the next destination and ends `failed`. Its `error` is the problem of the first failed step.
+
+### 13.9 Restore flows
+
+#### 13.9.1 Point in time, on this device (`POST /restore`, `kind: pitr`)
+
+`02` §6 names the steps checkpoint, maintenance, restore, and start. The job does the maintenance first, then the
+checkpoint: with the application stopped, no write comes after the checkpoint, so the undo point is complete.
+The extra downtime is the incremental backup (SP6: 4 to 6 s).
+
+1. `pause-backups`, `maintenance-on` (Caddy serves the maintenance page; `GET /_care-pi/status` shows the progress), `stop-app`.
+2. `checkpoint`: an incremental backup that also archives the current WAL segment (section 13.11). The job records it in
+   `RestorePoints.checkpoints` with its `job_id`. The result has it as `checkpoint`.
+3. `stop-db`, `restore-db`: `pgbackrest restore --delta --type=time --target=<time> --target-action=promote`, or for a
+   checkpoint `--set=<label> --type=immediate --target-action=promote`. The restore container mounts the data directory at the
+   same path as care-db, because pgBackRest writes `--pg1-path` into `restore_command` (SP6).
+4. `start-db`, `wait-promote`, `start-app` (through `care.target`, SP6 finding 6), `wait-healthy`, `maintenance-off`.
+5. `backup-full` (a new timeline, `02` §6), `check-stanza` (`pgbackrest check`), `resume-backups`.
+
+Rules:
+
+- `time` must be inside `[pitr.from, start of the job]`. Else `422 restore-window-exceeded` before a change.
+  A time restore follows the newest timeline that contains the time.
+- **Undo.** A restore of the checkpoint of a restore job goes back to the state before that restore:
+  `{kind: pitr, checkpoint: <label>}`. The golden path of `05` §7 ("restore latest → verify patient back") is this undo.
+- The files in the buckets do not change. A file that Care uploaded after `time` stays, without a database row (S18).
+
+#### 13.9.2 Files (`POST /restore`, `kind: files`)
+
+- `target: in-place` writes the files of the snapshot into `/var/lib/care-pi/s3` with the maintenance page, while care-s3 is stopped,
+  because versitygw must not serve a file that restic writes. A newer file that the snapshot does not have stays.
+- `target: side-dir` writes into `/var/lib/care-pi/restore/<job id>/` and changes nothing else. The operator copies files from there
+  with SSH. The agent deletes the directory after 7 days.
+- `paths` limits the restore to files or directories below `/var/lib/care-pi/s3`. The first part of a path is the bucket.
+- `verify-files` reads each restored file back (`restic restore --verify`). The database does not change.
+
+#### 13.9.3 A new or replaced device: "Restore from backup" in the setup wizard
+
+The branch of the wizard needs only the claim, the recovery key, and one destination (the exit criterion of Phase 3 in `06`).
+It is possible only before the setup is finished. It adds two transitions to the state machine of section 5:
+
+```mermaid
+stateDiagram-v2
+    claimed --> applying: POST /restore/dr
+    setup --> applying: POST /restore/dr
+    applying --> ready: the restore-dr job succeeded
+    applying --> setup: the restore-dr job failed
+```
+
+`applying` now means "the finish job or the restore job runs". `GET /setup` gives the job in `job_id`, and `SetupState.restore`
+is the entry point: `available`, and the last `restore-dr` job. A Phase 2 console that follows `job_id` in `applying` still works.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as Console (setup wizard)
+    participant A as Agent (new device)
+    participant D as Destination
+    B->>A: POST /session/claim (claim code or Imager password)
+    B->>A: GET /setup
+    A-->>B: state claimed, restore.available true
+    Note over B: the operator chooses "Restore from backup"
+    opt a USB backup disk
+        B->>A: GET /backups/disks
+        A-->>B: a disk with usage care-backup and care_label
+    end
+    B->>A: POST /restore/dr/inspect {recovery_key, destination}
+    A->>D: open care-pi-(key id) with the derived restic password
+    opt SFTP, first call
+        A-->>B: 422 destination-untrusted-hostkey, host_key
+        B->>A: POST /restore/dr/inspect with destination.host_key
+    end
+    A-->>B: 200 DrInspection: clinic, times, restore window, sizes, warnings
+    B->>A: POST /restore/dr {recovery_key, destination, time, files, pause_backups}
+    A-->>B: 202 job restore-dr, the setup state is applying
+    B->>A: GET /jobs/{job_id}/events (SSE)
+    A->>D: restic restore of /etc/care-pi, then of the pgBackRest repository, then of the files
+    A-->>B: event done with RestoreDrResult (with display_name)
+    Note over A: after the event done reached each open stream of the job, the agent deletes each session
+    B->>A: GET /session
+    A-->>B: 401 not-authenticated
+    Note over B: the login page: "Log in with the console password of the old device"
+```
+
+The job:
+
+1. `check-key`: derive the keys, open the repository (`recovery-key-mismatch`, `destination-unreachable`, `destination-untrusted-hostkey`).
+2. `check-space`: the pgBackRest repository, the files, and the database must fit (`insufficient-space`).
+3. `fetch-config`: restore `/etc/care-pi` of the newest snapshot with `config` (`config.yaml`, `lock.yaml`, the secrets).
+   The agent keeps the console account of the old device (`secrets/agent.json`) aside until step 9.
+   The recovery key of the request goes to `recovery.key`, in the state `confirmed` (the operator just typed it).
+   The local CA of Caddy of the snapshot goes to a stage. After the event `done` and the end of the sessions, the agent
+   replaces the CA of the new device with it and restarts care-caddy: the clinic devices that trust the old root need no
+   change. A restart before the event `done` would change the certificate of the open event stream.
+   The restored `pgbackrest_repo_cipher_pass` opens the restored repository, also a `legacy` one (section 13.12).
+4. The plan actions of `apply --phase=restore`: the same as a full apply (render, write, pull the images of the restored lock,
+   the FE build of the lock), but care-db, care-api, care-worker, and care-beat do not start. A start of care-db on an empty
+   data directory would make a new cluster (`initdb`).
+5. `fetch-db-repo`: restore `/var/lib/care-pi/backup/pg` from the `db` snapshot (`snapshot_id`, default the newest).
+   This is the two-step restore of S40: restic first, then pgBackRest.
+6. `restore-db`: `pgbackrest restore` into the empty data directory, to `time` or to the end of the WAL, with `--target-action=promote`.
+7. `fetch-files`: restore `/var/lib/care-pi/s3` from the newest `files` snapshot, with the xattrs (not with `files: false`).
+8. `start-target`, `wait-promote`, `wait-healthy`, `backup-full` (a new timeline), `ensure-repositories`, `ensure-timers`
+   (with `pause_backups: true` the job writes `backups.paused: true`, and the timers stay off).
+9. `set-hostname` (the host name of the restored config), `restore-account`: the console account of the old device becomes
+   the account. `finish`: the setup state is `ready`, each step is `done`.
+10. After the event `done`, the agent deletes each session. It first waits until each open event stream of the job sent the
+   event `done` (5 s at most). So the console gets the result before its session ends. The console cannot read `GET /config`
+   after this, so `RestoreDrResult.display_name` has the clinic name for the hand-off page.
+
+The console account: **after a restore from backup, the console password, the recovery codes, and the TOTP of the old device
+are valid. The password of the claim is not valid any more.** The console tells this before the start and on the hand-off page.
+An operator who does not know the old password uses a recovery code of the old device (`POST /session/recover`) or
+`sudo care-pi auth reset` (S46). When the job fails, the account of the claim stays, so the operator can log in and try again.
+
+Other rules:
+
+- The old device must be off. Else both devices write to the same repositories, and the newest `db` snapshot can come from
+  either device. `DrInspection.warnings` has `source-may-be-active` when the newest snapshot is younger than 2 intervals.
+  For a test on a second device, use `pause_backups: true`.
+- The skew between the database and the files is up to the gap of the two schedules (`02` §6, S18). The result has `skew_s`,
+  and the console shows the time of the files snapshot next to the time of the database.
+- The host name can differ from the host name of the claim. The result has the URLs, as the setup result has.
+- A failed job leaves the restored `config.yaml` and the restored secrets (except the account) as the draft.
+  The operator can send `POST /restore/dr` again (the job starts from step 1) or continue the wizard.
+
+### 13.10 Health and banners
+
+`BackupsHealth.banners` maps the banner states of `02` §7 to codes. `state` is the worst severity.
+
+| Code | Severity | Rule | `02` §7 |
+|---|---|---|---|
+| `no-destination` | error | `backups.destinations` is empty. In setup, the step `backups` blocks the finish. | no destination configured |
+| `no-recovery-key` | error | No recovery key (a Phase 1 or Phase 2 host after the upgrade). | — |
+| `recovery-key-unconfirmed` | warning | The active key is `unconfirmed`. | recovery key not confirmed |
+| `destination-unreachable` | error | One for each destination without a successful snapshot for `backups.alert_after_hours` (default 24), with a changed host key, or without its secret. | destination unreachable for more than N hours |
+| `destination-low-space` | warning | The free space at the destination is known, and it is less than 10 % or less than 2 GiB. | — |
+| `local-disk-low` | warning | The free space of the file system of the local repository is less than 2 times the last full backup plus 1 GiB. | local backup disk low |
+| `local-backup-failed` | warning | The last scheduled full or incremental backup failed. | — |
+| `wal-archive-failing` | error | `archive-push` fails for longer than 2 times `archive_timeout`. New points in time are not protected, and `pg_wal` grows. | — |
+| `verify-failed` | error | The last verify found damage (local or a destination). | verify failed |
+| `drill-failed` | warning | The last restore drill failed. | — |
+| `backups-paused` | warning | `backups.paused` is `true`. | — |
+| `local-repository-legacy-key` | info | `RecoveryKeyStatus.local_repository` is `legacy` (section 13.12). | — |
+
+A destination in the state `degraded` gets no banner. The Backups page shows it on the destination.
+
+Disk guards (`06` Phase 3):
+
+- A local full backup needs free space of 1.2 times the last full backup. Else the timer run fails with `insufficient-space`
+  and "Back up now" gives `409 insufficient-space`.
+- The restore drill needs 2 times the database size. Else a timer run records `skipped`, and `POST /backups/drill` gives `409`.
+- `restore-files` with `side-dir` needs the size of the files plus 10 %. `restore-dr` needs `DrInspection.space.required_bytes`.
+
+### 13.11 The checkpoint (a dependency of Phase 4)
+
+**The checkpoint** is the one primitive that the update orchestration of Phase 4 calls before a change to the database.
+Phase 4 refers to it by this name.
+
+- What: an incremental pgBackRest backup to the local repository. The backup ends with `pg_backup_stop`, which switches the WAL
+  segment, and pgBackRest waits until `archive-push` stored that segment (`archive-check=y`). So the checkpoint is also the archive push.
+- API form: `POST /backups/run` with `{scope: local-db, type: incr, reason}`. The job kind is `backup-run`; the result is
+  `BackupRunResult.local` (`label`, `undo_point`, `timeline`).
+- Inside another job: the step action `checkpoint`. The job then records a `Checkpoint` (`label`, `undo_point`, `timeline`,
+  `job_id`, `job_kind`, `reason`) in `RestorePoints.checkpoints`. Phase 4 adds `update` (and `rollback`) as a `job_kind`.
+- Undo: `POST /restore` with `{kind: pitr, checkpoint: <label>}` gives the database at `undo_point`.
+- It needs no network, no destination, and no recovery key (a `legacy` repository also works). It takes about 5 s at clinic
+  scale (SP6). It fails when the WAL archive fails. The caller must then stop: no change without a checkpoint.
+- The caller stops care-api, care-worker, and care-beat first, so that no write comes after the checkpoint (section 13.9.1).
+- After the change, the caller can copy the checkpoint off-site with `POST /backups/run` and `{scope: all}`. This is optional.
+
+### 13.12 Phase 1 and Phase 2 hosts
+
+A host of Phase 1 or Phase 2 has a local repository with a random cipher pass (`secrets/pgbackrest_repo_cipher_pass`), no
+recovery key, no destination, and no backup timer. After the upgrade to the agent of Phase 3:
+
+1. The setup state stays `ready`. `GET /backups` shows the banners `no-recovery-key`, `no-destination`, and
+   `local-repository-legacy-key` (`local_repository: legacy`).
+2. The operator makes and confirms the recovery key (section 13.4) and adds destinations (section 13.5). The apply turns on the
+   timers. `ensure-timers` starts a full backup when the local repository has none (Phase 1 and Phase 2 make none).
+3. These backups already protect the host: each snapshot has `/etc/care-pi/secrets/` with the random pass, so a restore of a new
+   device reads the pass from the snapshot.
+4. **Re-key (recommended, one time).** `POST /backups/recovery-key/rotate` with `{new_key: false}` (recent authentication) starts
+   the job `recovery-key-rotate`. It moves the old repository to `/var/lib/care-pi/backup/pg.legacy`, writes the cipher pass
+   that comes from the recovery key, restarts care-db (the maintenance page, about 1 minute), runs `stanza-create`, makes a
+   full backup, and sends a snapshot to each destination. With `remove_old_repositories: true` (default) it then deletes
+   `pg.legacy`. The restore window starts at the new full backup. The destinations keep the old copies until their retention removes them.
+5. After the re-key, the local repository needs only the recovery key, also without the snapshot of `/etc/care-pi`. The banner goes away.
+
+A new Phase 3 host needs no migration: the recovery key exists before the finish job, so the first `stanza-create` uses the
+derived pass. `care-pi bootstrap` still writes a random pass. When `POST /backups/recovery-key` makes the first key and the local
+repository is empty, the agent replaces the random pass with the derived pass. A dev build that skips the step `backups` keeps the
+random pass, so its repository is `legacy`.
+
+### 13.13 Problem types, members, and CLI
+
+- Section 7 lists the new slugs: `destination-unreachable`, `destination-untrusted-hostkey`, `recovery-key-mismatch`,
+  `restore-window-exceeded`, `disk-in-use`, `no-destination`, `no-recovery-key`, `insufficient-space`, `verify-failed`.
+- New members of `Problem`: `destination_id`, `host_key`, `restore_window`, `space`.
+- The responses `BackupsConflict` (409) and `BackupsUnprocessable` (422) have an example for each new slug.
+- Section 11 lists the operations of Phase 3 and their CLI commands (`care-pi backup …`, `care-pi restore …`).
+  The CLI as root needs no session and no recent authentication. `care-pi backup recovery-key confirm` asks for the words.
+  `--recovery-key-stdin` reads the 24 words, the text file, or the QR payload.
+- New step codes of the step `backups` (`StepIssue.code`): `no-recovery-key`, `recovery-key-unconfirmed`, `no-destination`,
+  `missing-credentials`, `host-key-not-pinned`.
+
+### 13.14 Changes to the reserved shapes of v0.3.0
+
+v0.3.0 reserved the shapes of Phase 3 with `x-phase: 3`. No agent implemented them (each gave `501`). Phase 3 keeps the
+members where they fit and adds members. These reserved parts changed:
+
+- `JobKind`: the placeholders `backup`, `verify`, and `restore` are replaced by the 8 kinds of section 13.8.
+- `RestoreRequest`: two variants by `kind` (`pitr`, `files`). `target_time` is now `time`. The kind `device` moved to
+  `POST /restore/dr`.
+- `DestinationCredentials`: only S3, both members required. `BackupsStep.recovery_key_words` can be `null`.
+- `RecoveryKey.words`: BIP-39 words of 3 to 8 letters.
+- `GET /backups/recovery-key` keeps its path. Its `x-cli` is now `care-pi backup recovery-key show`.
+- Each other reserved schema (`BackupsOverview`, `LocalBackupState`, `DestinationState`, `BackupRunRequest`,
+  `DestinationTestRequest`, `DestinationTestResult`, `RestorePoints`, `BackupsDraft`) keeps its members and gets new ones.
+- `Status.backups` and `SetupDraft.backups` lose `x-phase`. They are `null` only from an agent of Phase 2.
+
+Additive changes to Phase 2 parts: `SetupState.restore`, the wider use of the state `applying`, the `Problem` members, the problem slugs,
+`PlanActionKind` (`ensure-mounts`, `ensure-repositories`, `ensure-timers`), `LogUnit` (`backup`), and the keys of `JobStep.action`.
+Each Phase 2 operation is the same.
+
+Notes on the earlier sections, which stay as they are:
+
+- Section 5: the step `backups` is real now (`PUT /setup/steps/backups`, section 13.5). It is `done` with 1 or more destinations
+  and a `confirmed` key. Only a dev build can skip it, as in Phase 2. The finish job also runs `ensure-mounts`,
+  `ensure-repositories`, `ensure-timers`, and `backup-full`.
+- Section 6.1: "later `restore`" means `restore-pitr`, `restore-files`, and `restore-dr` (section 13.8).
+- Section 9.1: an agent of Phase 3 returns `501` for each operation with `x-phase` greater than 3.
+- Section 10: `info.version` is `0.4.0`.
+
+### 13.15 Decisions of wave 5 (owner informed; override in `00` if wrong)
+
+| Topic | Decision |
+|---|---|
+| Restore of a new device and the setup | Only in `claimed` and `setup` (a session needs the claim). It uses the state `applying`, as the finish does. Success: `ready` with the console account of the old device; each session ends. Failure: `setup`, with the account of the claim. |
+| Recovery key | 24 BIP-39 words (256 bits). HKDF-SHA256 with the salt `care-pi recovery key v1` (section 13.3). The key id names the restic repository (`care-pi-<key id>`). |
+| Key ceremony | The key comes first in the step `backups`. 3 random positions, fixed until the confirmation. For a rotation, the new key (`pending`) is confirmed before the job. |
+| SSH key | One ed25519 key for each recovery key, from HKDF, the same for each SFTP destination: `GET /backups/ssh-key` (public data, no `POST`). A restored device needs no new key on the servers. |
+| SFTP host key | TOFU in the test with `accept_fingerprint`. `config.yaml` keeps the full key (`host_key`), because OpenSSH needs it in `known_hosts`. |
+| USB disk | GPT, one ext4 partition, label `care-<1 to 11 characters>`, mount at `/var/lib/care-pi/disks/<label>` with `nofail` and `x-systemd.automount`. A recent authentication and `wipe: true`. `apply` owns the mount units. |
+| S3 bucket | The test creates it only with `create_bucket: true`. |
+| PITR order | Maintenance, then the checkpoint, so the undo point is complete. |
+| Snapshots | Two tags: `db` every `interval_min` (default 15), `files` at `schedule.files`. A timer snapshot writes no job journal. |
+| Retention | Local: `db_full` 2. Destinations: keep within 14 days (`db` snapshots: 48 hours), 14 daily, 8 weekly, 6 monthly; `prune` weekly. `archive_days` is not used. |
+| Restore drill | On by default (`drill_enabled: true`), the first day of each month at 04:00; skipped below 2 times the database size. |
+| Migration | The re-key of a Phase 1 or Phase 2 host is recommended, not required (the snapshots carry the random pass). It is the job `recovery-key-rotate` with `new_key: false`. |
+| New config keys | `backups.paused`, `backups.alert_after_hours`, `backups.drill_enabled`, `backups.schedule.drill`; for a destination `disk_label`, `host_key`, `prefix`, `interval_min`, `retention`. |

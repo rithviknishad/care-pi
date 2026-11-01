@@ -144,6 +144,8 @@ func (s *Server) jobEvents(c *reqCtx) error {
 		return err
 	}
 	defer release()
+	// The job restore-dr ends the sessions only after each stream of the job sent the event done.
+	defer s.svc.Jobs.Watch(id)()
 	ctx := c.r.Context()
 	beat := time.NewTicker(s.o.Heartbeat)
 	defer beat.Stop()

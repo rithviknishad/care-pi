@@ -33,6 +33,9 @@ func media(mt string) opt { return func(r *route) { r.mediaType = mt } }
 func credBody(r *route) { r.maxBody = CredentialBody }
 func bigBody(r *route)  { r.maxBody = MaxBody }
 
+// credBodyLarge is the limit of an operation with a destination and its secret (16 KiB).
+func credBodyLarge(r *route) { r.maxBody = 16 << 10 }
+
 func notImplemented(*reqCtx) error { return nil }
 
 // table lists each operation of docs/api/openapi.yaml.
@@ -75,7 +78,7 @@ func (s *Server) table() []*route {
 	add(put, "/setup/steps/tls", s.stepTLS, bigBody)
 	add(put, "/setup/steps/size", s.stepSize)
 	add(put, "/setup/steps/env", s.stepEnv, bigBody)
-	add(put, "/setup/steps/backups", notImplemented, phase(3))
+	add(put, "/setup/steps/backups", s.stepBackups, bigBody)
 	add(put, "/setup/steps/care-admin", s.stepCareAdmin)
 	add(post, "/setup/steps/{step}/skip", s.skipStep)
 	add(post, "/setup/finish", s.finishSetup)
@@ -117,12 +120,27 @@ func (s *Server) table() []*route {
 	add(post, "/power/reboot", s.power("reboot"))
 	add(post, "/power/shutdown", s.power("shutdown"), reauth)
 
-	add(get, "/backups", notImplemented, phase(3))
-	add(post, "/backups/run", notImplemented, phase(3))
-	add(post, "/backups/destinations/test", notImplemented, phase(3))
-	add(get, "/backups/recovery-key", notImplemented, reauth, phase(3))
-	add(get, "/restore/points", notImplemented, phase(3))
-	add(post, "/restore", notImplemented, reauth, phase(3))
+	add(get, "/backups", s.getBackups)
+	add(post, "/backups/run", s.startBackup)
+	add(post, "/backups/destinations/test", s.testDestination, credBodyLarge)
+	add(get, "/backups/recovery-key", s.getRecoveryKey, reauth)
+	add(post, "/backups/recovery-key", s.createRecoveryKey)
+	add(get, "/restore/points", s.restorePoints)
+	add(post, "/restore", s.startRestore, reauth)
+	add(post, "/restore/dr/inspect", s.inspectDR, credBodyLarge)
+	add(post, "/restore/dr", s.startDR, credBodyLarge)
+	add(get, "/backups/health", s.backupsHealth)
+	add(post, "/backups/verify", s.startVerify)
+	add(get, "/backups/destinations", s.listDestinations)
+	add(put, "/backups/destinations/{destination_id}/secrets", s.setDestinationSecrets, credBody)
+	add(get, "/backups/ssh-key", s.sshKey)
+	add(get, "/backups/disks", s.listDisks)
+	add(post, "/backups/disks/{disk_id}/prepare", s.prepareDisk, reauth)
+	add(get, "/backups/recovery-key/status", s.recoveryKeyStatus)
+	add(get, "/backups/recovery-key/download", s.downloadRecoveryKey, reauth)
+	add(post, "/backups/recovery-key/confirm", s.confirmRecoveryKey, credBody)
+	add(post, "/backups/recovery-key/rotate", s.rotateRecoveryKey, reauth)
+	add(post, "/backups/drill", s.startDrill)
 	add(get, "/updates", notImplemented, phase(4))
 	add(post, "/updates/check", notImplemented, phase(4))
 	add(post, "/updates/apply", notImplemented, phase(4))
@@ -747,7 +765,7 @@ func (s *Server) plan(c *reqCtx) error {
 // ---- jobs ----
 
 var (
-	jobKinds  = map[string]bool{"apply": true, "setup": true, "fe-build": true, "fe-prune": true, "support-bundle": true, "backup": true, "verify": true, "restore": true, "update-check": true, "update": true, "rollback": true, "tls": true}
+	jobKinds  = kindSet()
 	jobStates = map[string]bool{"queued": true, "running": true, "succeeded": true, "failed": true, "cancelled": true}
 )
 
@@ -996,4 +1014,12 @@ func (s *Server) power(action string) func(*reqCtx) error {
 		s.json(c.w, http.StatusAccepted, pa)
 		return nil
 	}
+}
+
+func kindSet() map[string]bool {
+	m := map[string]bool{}
+	for _, k := range jobs.Kinds {
+		m[k] = true
+	}
+	return m
 }

@@ -239,11 +239,14 @@ stopped with `missing steps: tls`).
 - A job is the journal `/var/lib/care-pi/state/jobs/<id>.json` (the Phase 1 format with more members) and its
   events `<id>.events.jsonl`. The id is `<UTC time>-<kind>`, for example `20261030T101500.123Z-apply`.
   The CLI and the agent write the same files, so `GET /jobs` and `care-pi jobs list` show the jobs of both.
-- The kinds `apply`, `setup`, `fe-build`, and `fe-prune` hold the apply lock `/run/care-pi/apply.lock`.
+- The kinds `apply`, `setup`, `fe-build`, `fe-prune`, `restore-pitr`, `restore-files`, `restore-dr`, `disk-prepare`, and
+  `recovery-key-rotate` hold the apply lock `/run/care-pi/apply.lock`. The backup kinds (`backup-run`, `backup-verify`,
+  `restore-drill`) hold the lock of their target (`/run/care-pi/backup-<id>.lock`, `backup-local.lock`) and wait in the
+  state `queued` for it (`docs/backups.md`, section 6).
   The agent waits 5 s for the lock, then gives `409 job-running` with `job_id`
   (`null` when a CLI command without a journal holds the lock).
-- Cancel: `POST /jobs/{id}/cancel` and `care-pi jobs cancel ID` write `<id>.cancel`. Only `fe-build` and
-  `support-bundle` jobs stop. Another job gives `409 job-not-cancellable`.
+- Cancel: `POST /jobs/{id}/cancel` and `care-pi jobs cancel ID` write `<id>.cancel`. Only `fe-build`,
+  `support-bundle`, `backup-run`, `backup-verify`, and `restore-drill` jobs stop. Another job gives `409 job-not-cancellable`.
 - The agent keeps the last 100 jobs and each job of the last 30 days, and up to 20000 events for each job.
 - `GET /jobs/{id}/events` with `Accept: text/event-stream` gives SSE: `retry: 3000`, then each event with
   `id:`, `event:`, and `data:` (one line of JSON), then `done` and the end of the stream.
@@ -252,6 +255,11 @@ stopped with `missing steps: tls`).
 - `GET /logs/{unit}?follow=true` with `Accept: text/event-stream` follows the journal (`journalctl --follow`).
   The event id is the journal cursor. The units are the units of `care-pi logs`, and `agent` (`care-pi.service`).
 - A session has 4 open streams at most, and the agent 16. When the session ends, the agent closes its streams.
+- The job `restore-dr` ends each session after the event `done`. It first waits until each open stream of the job sent
+  `done` (5 s at most; `jobs.Spec.AfterDone`, `Manager.Watch`). The result has `display_name`, because the console cannot
+  read `GET /config` after that.
+- A timer run of a destination snapshot writes no job (`docs/backups.md`, section 4). The other backup timers write
+  a job with `source: timer`.
 - `care-pi jobs follow ID` prints the same events on a terminal.
 
 ## 7. File locations
@@ -271,6 +279,10 @@ stopped with `missing steps: tls`).
 | `/var/lib/care-pi/state/claim-hint` | The claim method that the operator has (`claim-code` after bootstrap), until the claim | root 0600 |
 | `/var/lib/care-pi/state/jobs/<id>.json`, `<id>.events.jsonl`, `<id>.cancel` | Job journals, events, cancel requests | root 0600 |
 | `/var/lib/care-pi/state/support/` | The support bundles (`.tar.gz`, redacted) | root 0700 |
+| `/etc/care-pi/secrets/recovery.key`, `recovery.key.pending` | The recovery key (64 hex digits). Never in a response, except `GET /backups/recovery-key` and its download. | root 0600 |
+| `/etc/care-pi/secrets/backup/<id>.json` | The S3 keys of a destination | root 0600 |
+| `/var/lib/care-pi/state/backups/` | `key.json`, `local.json`, `destinations/<id>.json`, `drill.json`, `checkpoints.json` (`docs/backups.md`) | root 0700 |
+| `/run/care-pi/backup/` | The files of one restic run (password, SSH key, S3 keys); deleted after the run | root 0700 |
 | `/var/lib/care-pi/caddy/caddy/pki/authorities/local/root.crt` | The root CA of Caddy (the agent reads it for `/tls/root-ca`) | root |
 
 ## 8. CLI parity
@@ -279,7 +291,7 @@ stopped with `missing steps: tls`).
 `setup status|skip|finish`, `config show|set|presets`, `jobs list|show|follow|cancel`, `support-bundle`,
 `tls show|root-ca`, `care info`, `power reboot|shutdown`, and the flags `host check --probe`,
 `logs --since --json`, `logs agent`, and `fe status --json`. The `--json` output of a command is the JSON
-object of the operation.
+object of the operation. Phase 3 adds `backup …` and `restore …` (`docs/backups.md`, section 10) and `logs backup`.
 
 ## 9. The dev listener (for the console developer)
 
@@ -300,6 +312,9 @@ bin/care-pi serve --root ./.dev-root --listen tcp://127.0.0.1:8443 --insecure-de
 - The `Origin` check accepts `http://<Host header>`. `--allow-origin ORIGIN` adds one more origin.
 - `--fake-host` answers the host commands (`systemctl`, `podman`, `skopeo`, `journalctl`) with plausible
   output and changes nothing on the laptop. Each unit is active, each container is healthy.
+  The backup commands also answer: the local repository has one full and one incremental backup, `lsblk` shows
+  the SD card and one empty USB disk, the probe of a `posix` destination succeeds, and each restic run succeeds
+  with two snapshots. The tests of `sftp` and `s3` destinations connect to the real servers.
   Without `--fake-host` the agent runs the real commands.
 - The Vite dev server of the console sends `/api` and `/_care-pi` to the agent:
   `CARE_PI_API=http://127.0.0.1:8443 npm run dev` (in `console/`). The proxy sets `Host` and `Origin`
@@ -384,6 +399,10 @@ Stop the agent with Ctrl-C. To start again from an unclaimed device, remove `.de
 - The flow tests: claim, recovery codes, CSRF, the steps, finish, ready; a failed finish and a second finish with
   a new host name; a Phase 1 host; the lockout with a fake clock; SSE resume and heartbeat; `412` and `428`;
   the `Origin` check; the operations of later phases (`501`).
+- `backups_test.go` (Phase 3): the key ceremony, the destination tests (TOFU, the SSH key, the bucket), the disks, the
+  step `backups`, `SetupState.restore` and the restore from backup in setup, each job of section 13 of the contract with
+  its problems, the reauthentication, the lock between the restores and the backups, and the end of the sessions after
+  the event `done` of `restore-dr`.
 - The body limits, a slow body, `Sec-Fetch-Site`, and a live socket (`limits_test.go`).
 - `internal/auth`, `internal/jobs`, and `internal/setup` have unit tests. `internal/auth` also checks that the
   locks stay after a restart and that the claim hint orders `claim_methods`. `agent/internal/render` has the golden

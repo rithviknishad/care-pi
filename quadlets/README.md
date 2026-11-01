@@ -23,6 +23,11 @@ The templates use Go `text/template`. The data is `render.Model`.
 | `backend.env.tmpl` | `/etc/care-pi/rendered/care/backend.env` |
 | `pgbackrest.conf.tmpl` | `/etc/care-pi/rendered/db/pgbackrest.conf` |
 | `frontend.env.tmpl`, `fe-build.sh.tmpl` | `/etc/care-pi/rendered/fe/` (only `fe.provider: local`) |
+| `care-backup.target.tmpl` | `/etc/systemd/system/care-backup.target` (Phase 3). `WantedBy=multi-user.target`. It wants each backup timer and each automount unit of a backup disk (no timer with `backups.paused`). |
+| `care-backup.service.tmpl` | `/etc/systemd/system/care-backup-{db-full,db-incr,verify,drill}.service` and the templates `care-backup-{db,files}@.service` (Phase 3). `Type=oneshot`, `care-pi backup … --from-timer`, `MemoryMax=512M`, `Nice=10`, `IOSchedulingClass=idle`, `GOMAXPROCS=2`. |
+| `care-backup.timer.tmpl` | `/etc/systemd/system/care-backup-*.timer` (Phase 3). `PartOf=care-backup.target`. A calendar timer has `Persistent=true`; a destination timer has `OnActiveSec=1min` and `OnUnitActiveSec=<interval_min>min`. |
+| `care-backup-disk.mount.tmpl`, `care-backup-disk.automount.tmpl` | `/etc/systemd/system/var-lib-care\x2dpi-disks-<label>.{mount,automount}` (Phase 3). A backup disk with `nofail`; the automount unit unmounts it after 10 idle minutes. |
+| `backup-ssh_config.tmpl`, `backup-known_hosts.tmpl` | `/etc/care-pi/rendered/backup/{ssh_config,known_hosts}` (Phase 3). One `Host care-dest-<id>` for each SFTP destination with the pinned host key, `StrictHostKeyChecking yes`, and `BatchMode yes`. |
 | `care-secrets.tmpl`, `status-style.tmpl` | Shared blocks (`{{define}}`). No output. |
 
 Setup mode (`apply --phase bootstrap`, `docs/apply.md`) renders only `care.pod`, `care-caddy.container`,
@@ -45,6 +50,9 @@ Rules for the templates:
 - A container whose process exits with 143 (128 + SIGTERM) at a stop sets `SuccessExitStatus=143` in `[Service]`:
   `care-api` (gunicorn), `care-worker`, and `care-beat` (celery). Else systemd records a failure at each stop.
 - Never put a secret into a template. Use `Secret=` with a podman secret name.
+
+The backup units are plain systemd units, not quadlets. `docs/backups.md`, section 4, describes them.
+`systemd` does not accept the calendar text `daily HH:MM`; the renderer writes `*-*-* HH:MM` for it.
 
 After a change, update the goldens: `go test ./agent/internal/render -update`.
 `agent/README.md` describes how to check the output with the quadlet generator and Caddy.

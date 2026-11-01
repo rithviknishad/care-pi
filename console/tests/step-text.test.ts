@@ -1,30 +1,65 @@
 import types from "@/api/types.gen.ts?raw";
 import { describe, expect, it } from "vitest";
-import { logUnitOf, shortImage, stepArgument, stepTitle } from "@/features/jobs/step-text";
+import { jobKindText, logUnitOf, shortImage, stepArgument, stepTitle } from "@/features/jobs/step-text";
 import { groupChecks } from "@/features/setup/hardware-logic";
 import { strings } from "@/lib/strings";
 import type { HostCheckItem } from "@/api/types";
 
 // The action keys of the contract (src/api/types.gen.ts, made from docs/api/openapi.yaml; npm run api:check):
-// the enum PlanActionKind and the "Other keys" of JobStep.action.
+// the enum PlanActionKind, the "Other keys" and the "Phase 3 keys" of JobStep.action.
 function contractKeys(): string[] {
   const plan = /PlanActionKind: ([^;]+);/.exec(types)?.[1] ?? "";
-  const other = /Other keys: ([\s\S]*?)\.\s*\n/.exec(types)?.[1] ?? "";
-  const keys = [...plan.matchAll(/"([a-z-]+)"/g), ...other.matchAll(/`([a-z-]+)`/g)].map((m) => m[1] ?? "");
-  return keys.filter(Boolean);
+  const other = /Other keys: ([\s\S]*?)`null` for a journal/.exec(types)?.[1] ?? "";
+  const keys = [...plan.matchAll(/"([a-z0-9-]+)"/g), ...other.matchAll(/`([a-z0-9-]+)`/g)].map((m) => m[1] ?? "");
+  return [...new Set(keys.filter(Boolean))];
+}
+
+// The job kinds of the contract: the enum JobKind.
+function contractKinds(): string[] {
+  const kinds = /JobKind: ([^;]+);/.exec(types)?.[1] ?? "";
+  return [...kinds.matchAll(/"([a-z-]+)"/g)].map((m) => m[1] ?? "").filter(Boolean);
 }
 
 describe("step names", () => {
   it("has an operator sentence for each action key of the contract", () => {
     const keys = contractKeys();
-    expect(keys.length).toBeGreaterThanOrEqual(26);
+    expect(keys.length).toBeGreaterThanOrEqual(72);
     expect(keys).toContain("resolve-lock");
+    expect(keys).toContain("ensure-timers");
+    expect(keys).toContain("drill-cleanup");
     for (const k of keys) {
       const t = stepTitle({ action: k, name: `${k}: x`, state: "succeeded" });
       expect(t.raw, k).toBe(false);
       expect(t.text, k).not.toMatch(/^[a-z-]+:/);
     }
     expect(Object.keys(strings.steps.actions).sort()).toEqual([...keys].sort());
+  });
+
+  it("has an operator sentence for each job kind of the contract", () => {
+    const kinds = contractKinds();
+    expect(kinds).toContain("restore-pitr");
+    expect(kinds).toContain("recovery-key-rotate");
+    for (const k of kinds) expect(jobKindText(k), k).not.toBe(k);
+    expect(Object.keys(strings.jobs.kinds).sort()).toEqual([...kinds].sort());
+    expect(jobKindText("a-later-kind")).toBe("a-later-kind");
+  });
+
+  it("gives prune the text of its job kind", () => {
+    expect(stepTitle({ action: "prune", name: "prune: nas", state: "succeeded" }, "backup-verify").text).toBe(
+      "Remove the data of the old copies",
+    );
+    expect(stepTitle({ action: "prune", name: "prune: keep 2", state: "succeeded" }, "fe-prune").text).toBe(
+      "Delete the old builds of the web app",
+    );
+  });
+
+  it("gives a short argument of the backup steps", () => {
+    expect(stepArgument({ action: "snapshot", name: "snapshot: usb (db)" })).toBe("usb: database");
+    expect(stepArgument({ action: "snapshot", name: "snapshot: b2 (files)" })).toBe("b2: files");
+    expect(stepArgument({ action: "restore-db", name: "restore-db: latest" })).toBe("latest");
+    expect(stepArgument({ action: "restore-db", name: "restore-db: 2026-10-30T09:40:00Z" })).toMatch(
+      /^2026-10-30 \d{2}:\d{2}:00$/,
+    );
   });
 
   it("shows the raw name for an unknown key", () => {

@@ -153,6 +153,9 @@ type Model struct {
 	ConsolePort int
 	AgentSocket string
 	AgentUnit   string
+
+	// Backup holds the backup units (full phase only, docs/backups.md).
+	Backup BackupModel
 }
 
 // SecretNames holds the podman secret names for the templates.
@@ -443,6 +446,9 @@ func NewModel(in Input) (*Model, error) {
 
 	m.WALTimeoutSec = cfg.Backups.WALArchiveTimeoutMin * 60
 	m.PGRetentionFull = cfg.Backups.Retention.DBFull
+	if !in.Bootstrap {
+		m.Backup = newBackupModel(cfg)
+	}
 
 	if g, ok := in.Lock.Git["care_fe"]; ok && g.SHA != "" && !in.Bootstrap {
 		m.FEBuildID = fe.BuildID(g.SHA, pl.Frontend)

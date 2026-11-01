@@ -16,6 +16,7 @@ import (
 
 	"github.com/rithviknishad/care-pi/agent/internal/apply"
 	"github.com/rithviknishad/care-pi/agent/internal/auth"
+	"github.com/rithviknishad/care-pi/agent/internal/backup"
 	"github.com/rithviknishad/care-pi/agent/internal/buildinfo"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/exitcode"
@@ -58,12 +59,16 @@ type Service struct {
 	ApplyHook func(*apply.Options)
 	// AfterPower runs the reboot or shutdown after the delay. nil runs systemctl.
 	AfterPower func(delay time.Duration, fn func())
+	// BackupTester replaces the destination test (tests). nil: the real SSH and S3 clients.
+	BackupTester *backup.Tester
 
 	mu           sync.Mutex
 	carePassword string
 	statusCache  cached[*Status]
 	publicCache  cached[*PublicStatus]
 	servedCache  cached[map[string]bool]
+	localCache   cached[*localSnap]
+	backupsCache cached[*BackupsOverview]
 	probe        *DiskProbe
 	configMu     sync.Mutex
 }

@@ -34,6 +34,7 @@ func TestInvalidFixtures(t *testing.T) {
 		"invalid-custom-missing.yaml": "/size",
 		"invalid-version.yaml":        "/version",
 		"invalid-nested-unknown.yaml": "mode",
+		"invalid-posix-both.yaml":     "/backups/destinations/0",
 	}
 	for file, want := range cases {
 		t.Run(file, func(t *testing.T) {
@@ -108,7 +109,7 @@ func TestDefaultYAMLIsValid(t *testing.T) {
 }
 
 func TestRoundTrip(t *testing.T) {
-	for _, f := range []string{"testdata/valid-small-clinic.yaml", "testdata/valid-custom.yaml"} {
+	for _, f := range []string{"testdata/valid-small-clinic.yaml", "testdata/valid-custom.yaml", "testdata/valid-backups.yaml"} {
 		c, err := Load(f)
 		if err != nil {
 			t.Fatal(err)

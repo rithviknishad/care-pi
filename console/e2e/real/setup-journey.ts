@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Page, TestInfo } from "@playwright/test";
 import { expect } from "../fixtures";
+import { backupsWizardStep } from "./backups-journey";
 import { checkHandoffAndDashboard, checkServedChain, env, followSetupJob, note, saveState, shot } from "./real";
 
 // setupJourney is the first contact on a new device: claim -> recovery codes -> wizard -> finish -> job (SSE) ->
@@ -143,10 +144,8 @@ export async function setupJourney(page: Page, info: TestInfo, stateName: string
     .or(page.getByRole("button", { name: "Easy" }))
     .click();
 
-  // Step: backups. A dev build can skip it.
-  await expect(page.getByText("This is a dev build. You can skip this step.")).toBeVisible();
-  await shot(page, info, "10-backups");
-  await page.getByTestId("step-submit").click();
+  // Step: backups. The recovery key and BACKUP_DEST (backups-journey.ts), or the skip of a dev build.
+  await backupsWizardStep(page, info);
 
   // Step: Care administrator.
   await expect(page.getByTestId("step-title")).toHaveText("Care administrator");

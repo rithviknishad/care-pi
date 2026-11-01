@@ -112,13 +112,15 @@ type CareAdmin struct {
 
 // Record is the setup record.
 type Record struct {
-	Version    int                    `json:"version"`
-	ApplyPhase string                 `json:"apply_phase"`
-	ClaimedAt  *time.Time             `json:"claimed_at,omitempty"`
-	ReadyAt    *time.Time             `json:"ready_at,omitempty"`
-	JobID      string                 `json:"job_id,omitempty"`
-	Steps      map[string]*StepRecord `json:"steps"`
-	CareAdmin  CareAdmin              `json:"care_admin"`
+	Version    int        `json:"version"`
+	ApplyPhase string     `json:"apply_phase"`
+	ClaimedAt  *time.Time `json:"claimed_at,omitempty"`
+	ReadyAt    *time.Time `json:"ready_at,omitempty"`
+	JobID      string     `json:"job_id,omitempty"`
+	// RestoreJobID is the last restore-dr job (SetupState.restore).
+	RestoreJobID string                 `json:"restore_job_id,omitempty"`
+	Steps        map[string]*StepRecord `json:"steps"`
+	CareAdmin    CareAdmin              `json:"care_admin"`
 }
 
 // Store reads and writes the record.

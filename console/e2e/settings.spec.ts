@@ -16,9 +16,9 @@ test("change the size with a plan preview and an apply job", async ({ page, rese
   expect(requests.some((u) => u.includes("/api/v1/config?apply=true"))).toBeTruthy();
 });
 
-test("a phase 3 page shows the not-available state", async ({ page, resetMock }) => {
+test("a phase 4 page shows the not-available state", async ({ page, resetMock }) => {
   await resetMock("ready");
-  await page.goto("/login?next=%2Fbackups");
+  await page.goto("/login?next=%2Fupdates");
   await login(page);
-  await expect(page.getByTestId("not-available")).toContainText("This feature comes in Phase 3.");
+  await expect(page.getByTestId("not-available")).toContainText("This feature comes in Phase 4.");
 });

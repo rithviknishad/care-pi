@@ -9,18 +9,23 @@ import { FormField, PasswordInput } from "@/components/app/form-field";
 import { ProblemAlert } from "@/components/app/problem-alert";
 import { useRetryWait } from "@/hooks/use-retry-wait";
 import { TotpInput } from "@/components/app/totp-input";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
+import { clearDrHandoff, readDrHandoff } from "@/features/setup/dr-handoff";
 import { homeFor } from "@/features/setup/wizard";
-import { strings } from "@/lib/strings";
+import { fmt, strings } from "@/lib/strings";
 
 export default function LoginPage() {
   const id = useId();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const next = safeNext(params.get("next"));
+  // After the restore of a new device, the console account of the old device is back (docs/api/README.md 13.9.3).
+  // The page of the restore does not exist any more: the login opens the start page.
+  const [restored] = useState(readDrHandoff);
+  const next = restored ? null : safeNext(params.get("next"));
   const storeSession = useStoreSession();
   const session = useSession();
   const pub = usePublicStatus(session.data === null);
@@ -32,6 +37,7 @@ export default function LoginPage() {
     mutationFn: (body: { password: string; totp_code?: string }) => call(api.POST("/session/login", { body })),
     onSuccess: (s) => {
       qc.removeQueries({ predicate: (q) => q.queryKey[0] !== "session" });
+      clearDrHandoff();
       storeSession(s);
       navigate(next ?? homeFor(s.setup_state, true), { replace: true });
     },
@@ -62,7 +68,21 @@ export default function LoginPage() {
         </CardTitle>
         <CardDescription>{strings.login.intro}</CardDescription>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex flex-col gap-4">
+        {restored ? (
+          <Alert variant="success" data-testid="dr-restored">
+            <AlertDescription className="flex flex-col gap-1">
+              <p>{fmt(strings.dr.restored, { name: restored.name || pub.data?.display_name || "" })}</p>
+              {restored.consoleUrl && new URL(restored.consoleUrl).host !== window.location.host ? (
+                <p>
+                  <a href={restored.consoleUrl} className="underline underline-offset-4">
+                    {fmt(strings.dr.restoredMoved, { url: restored.consoleUrl })}
+                  </a>
+                </p>
+              ) : null}
+            </AlertDescription>
+          </Alert>
+        ) : null}
         <form onSubmit={submit} className="flex flex-col gap-2" noValidate>
           <FormField id={`${id}-pw`} label={strings.password.label} error={!needTotp ? wrong : null}>
             <PasswordInput

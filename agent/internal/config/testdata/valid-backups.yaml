@@ -1,0 +1,27 @@
+# Phase 3 backup keys (docs/config.md, "backups"; docs/api/README.md section 13).
+version: 1
+backups:
+  wal_archive_timeout_min: 5
+  paused: false
+  alert_after_hours: 24
+  drill_enabled: true
+  schedule: {db_full: "Sun 01:00", db_incr: "daily 02:00", files: "daily 02:30", verify: "Sat 03:00", drill: "*-*-01 04:00"}
+  retention: {db_full: 2, files_keep_daily: 14, files_keep_weekly: 8}
+  destinations:
+    - {id: usb, type: posix, disk_label: care-usb1, interval_min: 15}
+    - id: nas
+      type: sftp
+      host: nas.lan
+      port: 22
+      user: care
+      path: /volume1/care
+      host_key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl
+      retention: {keep_within_days: 14, keep_daily: 14, keep_weekly: 8, keep_monthly: 6}
+    - id: b2
+      type: s3
+      endpoint: https://s3.eu-central-003.backblazeb2.com
+      region: eu-central-003
+      bucket: sunrise-care
+      prefix: care-pi
+      interval_min: 60
+      retention: {keep_monthly: 0}

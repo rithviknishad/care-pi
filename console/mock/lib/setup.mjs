@@ -3,6 +3,7 @@
 import { Problem, sendJson } from "./http.mjs";
 import { SETUP_STEPS, runningHostJob, startJob } from "./jobs.mjs";
 import { STEP_IDS, normalizeCode, now, PRESETS } from "./state.mjs";
+import { backupsDraft, backupsStepErrors, backupsStepHandler, setupRestore } from "./restore-api.mjs";
 
 const REQUIRED = { env: false };
 const PHASE = { backups: 3 };
@@ -72,6 +73,9 @@ export function setupState(state) {
     steps: STEP_IDS.map((id) => ({
       id,
       ...s.steps[id],
+      ...(id === "backups" && s.steps[id].status !== "done" && s.steps[id].status !== "skipped"
+        ? { errors: backupsStepErrors(state) }
+        : {}),
       required: REQUIRED[id] !== false,
       skippable: skippable(state, id),
       phase: PHASE[id] ?? 2,
@@ -86,12 +90,13 @@ export function setupState(state) {
         email: state.careAdmin.email,
         password_set: Boolean(state.careAdmin.password),
       },
-      backups: null,
+      backups: backupsDraft(state),
     },
     can_finish: (s.state === "setup" || s.state === "claimed") && missingSteps(state).length === 0,
     job_id: s.jobId,
     claimed_at: s.claimedAt,
     ready_at: s.readyAt,
+    restore: setupRestore(state),
   };
 }
 
@@ -259,8 +264,7 @@ export const setupRoutes = [
   {
     method: "PUT",
     path: "/api/v1/setup/steps/backups",
-    phase: 3,
-    handler: () => {},
+    handler: (ctx) => backupsStepHandler(ctx, { markDone, setupState, guardChange }),
   },
   stepRoute("care-admin", ({ state, body }) => {
     if (typeof body.username !== "string" || !USERNAME.test(body.username) || /[._-]{2}/.test(body.username)) {
@@ -305,13 +309,27 @@ export const setupRoutes = [
       }
       const running = runningHostJob(state);
       if (running) throw new Problem("job-running", "Another job holds the apply lock.", { job_id: running.id });
+      // With backups (docs/api/README.md section 13.14): the plan actions of the backups and a first full backup.
+      const withBackups = state.setup.steps.backups.status === "done";
+      const n = (state.file.backups?.destinations ?? []).length;
+      const steps = SETUP_STEPS.flatMap(([a, name, o]) => {
+        const step = [
+          a,
+          a === "create-care-superuser" ? `create-care-superuser: ${state.careAdmin.username}` : name,
+          o,
+        ];
+        if (!withBackups || a !== "ensure-stanza") return [step];
+        return [
+          step,
+          ["ensure-mounts", "ensure-mounts"],
+          ["ensure-repositories", `ensure-repositories: ${n} destination(s)`],
+          ["ensure-timers", `ensure-timers: ${4 + 2 * n} timer(s)`],
+        ];
+      });
+      if (withBackups) steps.push(["backup-full", "backup-full: local"]);
       const job = startJob(state, {
         kind: "setup",
-        steps: SETUP_STEPS.map(([a, n, o]) => [
-          a,
-          a === "create-care-superuser" ? `create-care-superuser: ${state.careAdmin.username}` : n,
-          o,
-        ]),
+        steps,
         result: (st) => {
           const host = `${st.file.identity.hostname}.local`;
           return {
@@ -331,6 +349,24 @@ export const setupRoutes = [
             st.appliedHostname = st.file.identity.hostname;
             st.feBuilds = [{ id: "8d2f0c1a9b7e", bytes: 13_421_772, modified_at: now(), current: true }];
             st.careAdmin.password = null;
+            if (withBackups) {
+              const at = Date.now();
+              const iso = new Date(at).toISOString().replace(/\.\d{3}Z$/, "Z");
+              const stamp = iso.replace(/[-:]/g, "").replace("T", "-").replace("Z", "");
+              st.backups.backups = [
+                {
+                  label: `${stamp}F`,
+                  type: "full",
+                  started_at: iso,
+                  finished_at: iso,
+                  size_bytes: 12_000_000,
+                  repo_size_bytes: 1_400_000,
+                  reason: "setup",
+                },
+              ];
+              st.backups.walAt = at;
+              st.backups.localRepository = "derived";
+            }
           } else {
             st.setup.state = "setup";
             st.setup.jobId = job.id;

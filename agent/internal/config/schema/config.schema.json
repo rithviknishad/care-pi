@@ -163,7 +163,8 @@
             "db_full": { "$ref": "#/$defs/calendar" },
             "db_incr": { "$ref": "#/$defs/calendar" },
             "files": { "$ref": "#/$defs/calendar" },
-            "verify": { "$ref": "#/$defs/calendar" }
+            "verify": { "$ref": "#/$defs/calendar" },
+            "drill": { "$ref": "#/$defs/calendar" }
           }
         },
         "retention": {
@@ -179,6 +180,20 @@
         "destinations": {
           "type": "array",
           "items": { "$ref": "#/$defs/destination" }
+        },
+        "paused": {
+          "description": "Stop the backup timers. A manual backup is still possible.",
+          "type": "boolean"
+        },
+        "alert_after_hours": {
+          "description": "A destination without a successful snapshot for this time gets the banner destination-unreachable.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 720
+        },
+        "drill_enabled": {
+          "description": "Run the restore drill at schedule.drill.",
+          "type": "boolean"
         }
       }
     },
@@ -389,12 +404,36 @@
         "user": { "type": "string", "minLength": 1, "pattern": "^[^\\s@]+$" },
         "endpoint": { "type": "string", "pattern": "^https?://[^\\s]+$" },
         "bucket": { "type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$" },
-        "region": { "type": "string", "pattern": "^[a-z0-9-]{1,32}$" }
+        "region": { "type": "string", "pattern": "^[a-z0-9-]{1,32}$" },
+        "disk_label": {
+          "description": "posix: the label of a disk that care-pi prepared. The agent mounts it at /var/lib/care-pi/disks/<label>. Use path or disk_label, not both.",
+          "type": "string",
+          "pattern": "^care-[a-z0-9][a-z0-9-]{0,10}$"
+        },
+        "host_key": {
+          "description": "sftp: the pinned host key of the server (key type and base64, as in known_hosts). The destination test returns it at the first contact.",
+          "type": "string",
+          "maxLength": 1024,
+          "pattern": "^(ssh-ed25519|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521|ssh-rsa) [A-Za-z0-9+/]+={0,2}$"
+        },
+        "prefix": {
+          "description": "s3: a key prefix inside the bucket, without a slash at the start or at the end.",
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$"
+        },
+        "interval_min": {
+          "description": "Minutes between two snapshots of the local database repository to this destination.",
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 1440
+        },
+        "retention": { "$ref": "#/$defs/destinationRetention" }
       },
       "allOf": [
         {
           "if": { "properties": { "type": { "const": "posix" } } },
-          "then": { "required": ["path"] }
+          "then": { "oneOf": [{ "required": ["path"] }, { "required": ["disk_label"] }] }
         },
         {
           "if": { "properties": { "type": { "const": "sftp" } } },
@@ -405,6 +444,17 @@
           "then": { "required": ["endpoint", "bucket"] }
         }
       ]
+    },
+    "destinationRetention": {
+      "description": "The restic forget policy of one destination. A key that is not there gets its default.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "keep_within_days": { "type": "integer", "minimum": 0, "maximum": 3650 },
+        "keep_daily": { "type": "integer", "minimum": 0, "maximum": 3650 },
+        "keep_weekly": { "type": "integer", "minimum": 0, "maximum": 520 },
+        "keep_monthly": { "type": "integer", "minimum": 0, "maximum": 120 }
+      }
     }
   }
 }

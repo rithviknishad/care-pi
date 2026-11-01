@@ -38,6 +38,14 @@ const STEP_ERRORS = {
   "wait-healthy": "care-api.service did not become healthy in 10m0s.",
 };
 
+const PROBLEM_TITLES = {
+  internal: "Internal error",
+  "destination-unreachable": "The backup destination does not answer",
+  "verify-failed": "A verify found damage",
+  "insufficient-space": "Not enough free disk space",
+};
+const PROBLEM_STATUS = { "destination-unreachable": 422, "verify-failed": 500, "insufficient-space": 409 };
+
 export function jobId(kind) {
   const d = new Date();
   const p = (n, w = 2) => String(n).padStart(w, "0");
@@ -68,7 +76,10 @@ export function runningHostJob(state) {
   return null;
 }
 
-// spec: { kind, steps: [[action, name, {progress?: unit}]], cancellable, holdsLock, result(state), onDone(state, ok) }
+// spec: { kind, steps: [[action, name, opts]], cancellable, holdsLock, result(state), onDone(state, ok), reason }
+// opts: { progress?: unit, stream?, lines?: [log lines], fail?: detail, problem?: slug, continueOnFail?: bool }.
+// A step with fail fails with that detail. With continueOnFail the job continues and ends failed with the
+// problem of the first failed step (the backup-run job of docs/api/README.md section 13.8 does this).
 export function startJob(state, spec) {
   const id = jobId(spec.kind);
   const job = {
@@ -97,6 +108,7 @@ export function startJob(state, spec) {
   };
 
   let index = 0;
+  let firstProblem = null;
   const finish = (ok, problem) => {
     job.state = entry.cancelled ? "cancelled" : ok ? "succeeded" : "failed";
     job.finished_at = now();
@@ -112,14 +124,14 @@ export function startJob(state, spec) {
       return;
     }
     if (index >= spec.steps.length) {
-      finish(true);
+      finish(!firstProblem, firstProblem ?? undefined);
       return;
     }
     const [action, name, opts = {}] = spec.steps[index];
     const step = { index, name, action, state: "running", started_at: now(), finished_at: null, detail: null };
     job.steps[index] = step;
     emit("step", { ...step });
-    const lines = LOG_LINES[action] ?? [`${name}: start`];
+    const lines = opts.lines ?? LOG_LINES[action] ?? [`${name}: start`];
     let tick = 0;
     const ticks = Math.max(lines.length, opts.progress ? 4 : 1);
     const timer = setInterval(
@@ -140,22 +152,42 @@ export function startJob(state, spec) {
         tick++;
         if (tick >= ticks) {
           clearInterval(timer);
-          const failed = state.failStep && state.failStep === action;
-          const error = STEP_ERRORS[action] ?? `${action}: exit status 1`;
+          if (opts.skip) {
+            step.state = "skipped";
+            step.finished_at = now();
+            step.detail = opts.skip;
+            emit("step", { ...step });
+            index++;
+            setTimeout(runStep, 10);
+            return;
+          }
+          const injected = state.failStep && state.failStep === action;
+          const failed = injected || Boolean(opts.fail);
+          const error = opts.fail ?? STEP_ERRORS[action] ?? `${action}: exit status 1`;
           step.state = failed ? "failed" : "succeeded";
           step.finished_at = now();
-          step.detail = failed ? error : null;
+          step.detail = failed ? error : (opts.detail ?? null);
           emit("step", { ...step });
           if (failed) {
-            state.failStep = null;
-            finish(false, {
-              type: "https://care-pi.rithviknishad.dev/problems/internal",
-              title: "Internal error",
-              status: 500,
-              detail: `apply failed at ${action}: ${error}`,
+            if (injected) state.failStep = null;
+            const slug = opts.problem ?? "internal";
+            const problem = {
+              type: `https://care-pi.rithviknishad.dev/problems/${slug}`,
+              title: PROBLEM_TITLES[slug] ?? "Internal error",
+              status: PROBLEM_STATUS[slug] ?? 500,
+              detail:
+                slug === "internal"
+                  ? `${spec.kind === "setup" || spec.kind === "apply" ? "apply" : spec.kind} failed at ${action}: ${error}`
+                  : error,
               instance: `/api/v1/jobs/${id}`,
-            });
-            return;
+              ...(opts.problemExtra ?? {}),
+            };
+            if (opts.continueOnFail) {
+              firstProblem ??= problem;
+            } else {
+              finish(false, problem);
+              return;
+            }
           }
           index++;
           setTimeout(runStep, 10);

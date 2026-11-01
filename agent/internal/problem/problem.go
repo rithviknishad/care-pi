@@ -50,6 +50,17 @@ const (
 	NotImplemented       = "not-implemented-in-this-version"
 	CareNotRunning       = "care-not-running"
 	Unavailable          = "unavailable"
+
+	// Phase 3 (docs/api/README.md section 13.13).
+	DestinationUnreachable = "destination-unreachable"
+	DestinationUntrusted   = "destination-untrusted-hostkey"
+	RecoveryKeyMismatch    = "recovery-key-mismatch"
+	RestoreWindowExceeded  = "restore-window-exceeded"
+	DiskInUse              = "disk-in-use"
+	NoDestination          = "no-destination"
+	NoRecoveryKey          = "no-recovery-key"
+	InsufficientSpace      = "insufficient-space"
+	VerifyFailed           = "verify-failed"
 )
 
 type entry struct {
@@ -92,6 +103,16 @@ var catalogue = map[string]entry{
 	NotImplemented:       {501, "This version does not have the feature"},
 	CareNotRunning:       {503, "Care does not run"},
 	Unavailable:          {503, "The agent is not ready"},
+
+	DestinationUnreachable: {422, "The backup destination does not answer"},
+	DestinationUntrusted:   {422, "The SFTP host key is not trusted"},
+	RecoveryKeyMismatch:    {422, "The recovery key does not match"},
+	RestoreWindowExceeded:  {422, "The time is outside the restore window"},
+	DiskInUse:              {409, "The disk is in use"},
+	NoDestination:          {409, "No backup destination"},
+	NoRecoveryKey:          {409, "No recovery key"},
+	InsufficientSpace:      {409, "Not enough free disk space"},
+	VerifyFailed:           {500, "The verify found damage"},
 }
 
 // Known reports whether slug is in the catalogue.
@@ -124,6 +145,32 @@ type Problem struct {
 	MissingSteps []string
 	FailedChecks []string
 	Phase        int
+	// Phase 3 members (docs/api/README.md section 13.13).
+	DestinationID string
+	HostKey       *HostKey
+	Window        *Window
+	Space         *Space
+}
+
+// HostKey is the host key that an SFTP server presents (schema HostKey).
+type HostKey struct {
+	Type              string `json:"type"`
+	FingerprintSHA256 string `json:"fingerprint_sha256"`
+	PublicKey         string `json:"public_key"`
+	Trusted           bool   `json:"trusted"`
+}
+
+// Window is the restore window of restore-window-exceeded. A nil time is null.
+type Window struct {
+	From *string `json:"from"`
+	To   *string `json:"to"`
+}
+
+// Space is the space of insufficient-space.
+type Space struct {
+	Path          string `json:"path"`
+	RequiredBytes int64  `json:"required_bytes"`
+	FreeBytes     int64  `json:"free_bytes"`
 }
 
 // New returns a problem of the slug with the status and the title of the catalogue.
@@ -202,6 +249,20 @@ func Limited(slug string, retryAfterS int, detail string) *Problem {
 	return p
 }
 
+// NeedSpace returns insufficient-space.
+func NeedSpace(path string, required, free int64, detail string) *Problem {
+	p := New(InsufficientSpace, detail)
+	p.Space = &Space{Path: path, RequiredBytes: max(required, 0), FreeBytes: max(free, 0)}
+	return p
+}
+
+// Unreachable returns destination-unreachable for a destination ("" for a candidate without an id).
+func Unreachable(id, detail string) *Problem {
+	p := New(DestinationUnreachable, detail)
+	p.DestinationID = id
+	return p
+}
+
 // From returns the problem in err, or an internal problem with a generic detail.
 func From(err error) *Problem {
 	var p *Problem
@@ -229,6 +290,10 @@ type wire struct {
 	MissingSteps []string        `json:"missing_steps,omitempty"`
 	FailedChecks []string        `json:"failed_checks,omitempty"`
 	Phase        int             `json:"phase,omitempty"`
+	DestID       string          `json:"destination_id,omitempty"`
+	HostKey      *HostKey        `json:"host_key,omitempty"`
+	Window       *Window         `json:"restore_window,omitempty"`
+	Space        *Space          `json:"space,omitempty"`
 }
 
 // MarshalJSON writes the RFC 9457 form.
@@ -236,7 +301,8 @@ func (p *Problem) MarshalJSON() ([]byte, error) {
 	w := wire{
 		Type: p.Type(), Title: p.Title, Status: p.Status, Detail: p.Detail, Instance: p.Instance,
 		Errors: p.Errors, RetryAfter: p.RetryAfter, MissingSteps: p.MissingSteps,
-		FailedChecks: p.FailedChecks, Phase: p.Phase,
+		FailedChecks: p.FailedChecks, Phase: p.Phase, DestID: p.DestinationID, HostKey: p.HostKey,
+		Window: p.Window, Space: p.Space,
 	}
 	if w.Instance == "" {
 		w.Instance = "/"
@@ -260,7 +326,8 @@ func (p *Problem) UnmarshalJSON(b []byte) error {
 	*p = Problem{
 		Slug: strings.TrimPrefix(w.Type, Base), Status: w.Status, Title: w.Title, Detail: w.Detail,
 		Instance: w.Instance, Errors: w.Errors, RetryAfter: w.RetryAfter, MissingSteps: w.MissingSteps,
-		FailedChecks: w.FailedChecks, Phase: w.Phase,
+		FailedChecks: w.FailedChecks, Phase: w.Phase, DestinationID: w.DestID, HostKey: w.HostKey,
+		Window: w.Window, Space: w.Space,
 	}
 	if len(w.JobID) > 0 {
 		p.HasJobID = true

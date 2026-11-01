@@ -1,0 +1,9 @@
+# {{.Header}}
+
+[Unit]
+Description=care-pi backup disk {{.Label}} (automount)
+Documentation=https://github.com/rithviknishad/care-pi/blob/main/docs/backups.md
+
+[Automount]
+Where={{.Where}}
+TimeoutIdleSec=10min

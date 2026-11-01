@@ -284,6 +284,18 @@
         }
       ]
     },
+    "slider": {
+      "source": "https://careui.ohc.network/registry/care-ui/slider/slider.json",
+      "dependencies": [
+        "@base-ui/react"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/slider.tsx",
+          "sha256": "a5b5d040412231b56a9f51aeb5b1e6897ebdce17b22ad0958c344bb7240e18a3"
+        }
+      ]
+    },
     "sonner": {
       "source": "https://careui.ohc.network/registry/care-ui/sonner/sonner.json",
       "dependencies": [

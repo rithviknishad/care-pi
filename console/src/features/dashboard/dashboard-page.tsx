@@ -1,6 +1,8 @@
 import { AlertTriangleIcon, CheckCircle2Icon, RotateCcwIcon } from "lucide-react";
 import { Link } from "react-router";
 import { useStatus } from "@/api/queries";
+import { BackupHealthRow } from "@/features/backups/backup-banners";
+import { lastOffsiteCopy } from "@/features/backups/health";
 import type { Status, UnitStatus } from "@/api/types";
 import { DataList, DataRow, PageHeader } from "@/components/app/page";
 import { ProblemAlert } from "@/components/app/problem-alert";
@@ -285,6 +287,13 @@ export default function DashboardPage() {
         }
       />
       {status.isError ? <ProblemAlert error={status.error} /> : null}
+      {/* The backup banners (plans/02 section 7). Status.backups is GET /backups: no second request. */}
+      <BackupHealthRow
+        health={s?.backups?.health}
+        lastCopy={lastOffsiteCopy(s?.backups)}
+        loading={!s}
+        unavailable={Boolean(s) && !s?.backups}
+      />
       <StateCard status={s} />
       <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
         <Section title={d.host}>

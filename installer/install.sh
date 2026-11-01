@@ -1825,6 +1825,9 @@ OOMScoreAdjust=-100
 ProtectSystem=strict
 # /run: podman writes /run/containers, /run/libpod, and /run/crun.
 # /etc/hosts: the setup finish writes the 127.0.1.1 line of a new host name (hostnamectl writes /etc/hostname).
+# The backups need no other path and no capability: restic, the probe of a destination, and the
+# commands of a disk preparation (wipefs, sfdisk, mkfs.ext4) run in transient units (systemd-run),
+# and systemd mounts the backup disks from their mount units (docs/backups.md, "The sandbox").
 ReadWritePaths=/etc/care-pi /var/lib/care-pi /run /etc/containers/systemd /etc/systemd/system /var/lib/containers -/var/cache/containers -/etc/hosts
 ProtectHome=read-only
 PrivateTmp=yes
