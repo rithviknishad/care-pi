@@ -124,8 +124,9 @@ container. It unpacks the image, mounts the two partitions with loop devices, an
 The script does not boot the image. `image/scripts/boot-test.sh` does a container boot: it writes the files that Imager
 writes (`user-data` with `user:`, a yescrypt hash, and the host name `clinic`), then boots the root file system with
 `systemd-nspawn` in the build container, without a network. It checks cloud-init, `care-firstboot.service`, `care-pi
-bootstrap --from-image`, setup mode from the pre-pulled images (no pull), the claim method `os-password` first, a claim
-with the Imager password, and the LED path unit. It is not a Pi boot: no Pi kernel, no `rpi-resize`, and a fake zram line.
+bootstrap --from-image`, setup mode from the pre-pulled images (no pull), the solution lock of the image in the update
+cache (the solution and the lock version come from `/etc/care-pi/image-release.json` of the image), the claim method
+`os-password` first, a claim with the Imager password, and the LED path unit. It is not a Pi boot: no Pi kernel, no `rpi-resize`, and a fake zram line.
 
 ```sh
 docker run --rm --privileged --platform linux/arm64 -v /dev:/dev -v care-pi-image-work:/work \

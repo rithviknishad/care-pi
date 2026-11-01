@@ -35,6 +35,12 @@ p() { jq ".partitiontable.partitions[$1].$2" "${work}/parts.json"; }
 mount -o "loop,offset=$(($(p 1 start) * 512)),sizelimit=$(($(p 1 size) * 512))" "${work}/image.img" "${mnt}"
 mount -o "loop,offset=$(($(p 0 start) * 512)),sizelimit=$(($(p 0 size) * 512))" "${work}/image.img" "${mnt}/boot/firmware"
 
+# The solution and the lock version of the image (image/builder/run.sh writes image-release.json).
+release="${mnt}/etc/care-pi/image-release.json"
+solution="$(jq -er .solution "${release}")"
+lock_version="$(jq -er .lock_version "${release}")"
+echo "INFO  image: solution ${solution}, lock ${lock_version}"
+
 # What Imager 2.x writes (rpi-imager CustomisationGenerator): user-data with "user:" and a yescrypt hash.
 # A fixed, valid yescrypt setting (libxcrypt returns "*0" for a bad salt). Imager uses the cost j9T too.
 hash="$(perl -e 'print crypt($ARGV[0], q($y$j9T$F5Jx5fExrKuPp53xLKQ..1$))' "${password}")"
@@ -139,7 +145,8 @@ prefix="$(in_ct awk -F: '$1 == "clinic" { print substr($2, 1, 3) }' /etc/shadow 
 # shellcheck disable=SC2016
 check "the Imager user has a yescrypt hash in /etc/shadow (${prefix:-none})" test "${prefix}" = '$y$'
 check "config.yaml has the host name clinic" in_ct grep -q 'hostname: clinic' /etc/care-pi/config.yaml
-check "the solution lock of the image is in the update cache" in_ct test -f /var/lib/care-pi/state/update-cache/locks/care-clinic-2026.11.0.lock.yaml
+check "the solution lock of the image (${solution}-${lock_version}) is in the update cache" \
+	in_ct test -f "/var/lib/care-pi/state/update-cache/locks/${solution}-${lock_version}.lock.yaml"
 check "the dist snapshot is the cached index" bash -c "nsenter -t $(leader) -a -- grep -q 'file:///var/lib/care-pi-dist/' /var/lib/care-pi/state/update-cache/index.json"
 check "care-pi.service is active" test "$(in_ct systemctl is-active care-pi.service)" = active
 check "care-caddy.service is active" test "$(in_ct systemctl is-active care-caddy.service)" = active
