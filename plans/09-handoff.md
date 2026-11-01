@@ -720,3 +720,42 @@ Decisions (owner informed; override in `00` if wrong):
 Next step: the Phase 6 exit test on lumine after the merge: `08-spike-log.md`, "Phase 6 exit test — plan". It needs the
 deployed DNS service, a Tailscale auth key (or a login by the owner), the Wi-Fi SSID and passphrase, and the
 Let's Encrypt staging run first.
+
+### 8n. S52: the clock without internet (2026-11-01)
+
+Code complete on `main` (`f795ed6`); not run on a Pi. The review fixes of the merged Phases 5 and 6 came first (10 commits,
+`08-spike-log.md`, "Review fixes after the merge of Phases 5 and 6"). The spec is `docs/api/README.md` section 16;
+the contract is `docs/api/openapi.yaml` 0.7.1.
+
+What exists:
+
+- **Claim.** `POST /session/claim` has `client_time` (RFC 3339 with an offset; the console sends
+  `new Date().toISOString()`). `auth.Manager.ClaimWith` calls `Service.ClockFromBrowser` after the claim secret is correct
+  and before the account and the session, so a failed claim never changes the clock, and the session has the new clock.
+- **The set.** `internal/clockgate.FromBrowser`: only when NTP is not synchronized, no record exists, and the time is
+  plausible (after `buildinfo.Date`, before 10 years after it; a dev build uses 2026-10-01). `host.ExecClock.SetTime` runs
+  `date -u -s @N` and `fake-hwclock save` in the transient unit `care-pi-clock-set`. The record is
+  `state/clock-trusted.json` (`trusted: false`, `source: browser`, `set_at`, `host_time_before`). The agent reloads Caddy
+  2 s later (no restart: the answer of the claim goes through Caddy).
+- **The gate.** `care-pi clock wait` passes on NTP (and deletes the record), or with the record after 20 s more of NTP
+  tries; it reloads Caddy in both cases (F9). The record stays over a reboot, so a reboot without internet passes with the
+  clock of `fake-hwclock`.
+- **Status.** `clock.source` (`ntp`, `browser`, `rtc`, `none`) and `clock.trusted` in `GET /status` and
+  `GET /_care-pi/status`; a read with a synchronized clock deletes the record.
+- **Console.** The banner "Clock not trusted" in the reserved slot of the maintenance banner (top bar; in place of the
+  device name below 640 px); the maintenance banner wins the slot. Mock option `clock: untrusted` and
+  `POST /__mock/ntp-sync`; Vitest (`tests/clock-banner.test.tsx`, `tests/claim-page.test.tsx`); Playwright
+  `e2e/clock.spec.ts` (desktop, mobile, narrow).
+
+Decisions (owner informed; override in `00` if wrong):
+
+- `date -s`, not `timedatectl set-time`: `set-time` refuses while NTP is on, and the `set-ntp false` and `true` around it
+  would stop and start `systemd-timesyncd` (a crash between them leaves NTP off). With `date`, timesyncd keeps running and
+  corrects the clock when an NTP server answers. Not tested on Pi OS trixie yet.
+- One set only (the record blocks a second set). The time of the browser is not taken again at a later login: a device
+  that NTP synchronized once and then reboots without internet waits at the gate, as before S52.
+- `rtc` is a source (an RTC without NTP) but not trusted: the battery check of SP9 is not done.
+
+Next step: a first boot of a fresh image on a Pi without internet: the claim, the setup, Care starts, and the banner;
+then internet: the banner goes within 15 s of the NTP synchronization (`timedatectl show -p NTPSynchronized`).
+

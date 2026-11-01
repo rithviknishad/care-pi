@@ -1591,3 +1591,43 @@ ssh lumine 'sudo grep CURRENT_DOMAIN /etc/care-pi/rendered/care/backend.env; sys
 
 Assert: one name again (`lumine.local`); the plug is off; the timer and the firewall drop-in are gone. Ask the owner
 before the turn-off: the public name and Wi-Fi can stay on lumine for later phases.
+
+### Review fixes after the merge of Phases 5 and 6 (2026-11-01)
+
+A review of the merged tree (`c84ca21`) found 1 blocker, 3 major defects, and 6 minor defects. Each fix is one signed
+commit with a test; nothing ran on lumine. The owner decision S52 (the clock gate without internet) is one more commit.
+
+| # | Defect | Fix | Commit |
+|---|---|---|---|
+| B1 | A published address that is absent at the boot (Tailscale: an expired key, a logout; the Wi-Fi address) failed `care-pod`, and each container of Care with it. `care.target` stayed active, so apply never started the pod again | `/etc/sysctl.d/50-care-pi.conf` (`net.ipv4.ip_nonlocal_bind = 1`) from the installer (step 15) and from apply (an owned file; a test compares the 2 texts; the agent writes it through a transient unit and restarts `systemd-sysctl`); the wait stays. apply reads each unit of the stack: `podShrinkOnly` takes the state of `care-pod.service`, and a `failed` unit adds `start-target` | `d00f92f` |
+| m5 | `ca.IssuedCert` ignored `NotAfter`: with an expired public certificate, the DNS timer ran apply each 5 minutes | `ca.ValidCert` (before `NotAfter`) for the timer, the enrol job, and the render input | `08b17c7` |
+| M2 | The redirect `http://<local>` → public name was a `301`, which a browser keeps; a staging certificate counted as issued | `redir … 302` and `Cache-Control: no-store` on that port-80 block (the `308` to the same host stays); a staging certificate is not valid (`ca.StagingIssuer`), `public.primary` is false; `07` section 6, the README, `docs/connectivity.md`, and the plan above | `4795f8c` |
+| M1 | The verify of an update used the public name (SNI and Host) also without a valid certificate | `VerifyTarget.Host`: the public name only with a valid certificate (`ca.ValidCert`), else the primary local name with the local CA, else the LAN address | `2861616` |
+| M3 | The `/cert` page offered the files for each certificate in the link | The page parses the Name Constraints (2.5.29.30) and offers the files only for a CA with critical constraints below `.local` and `.care-pi.rithviknishad.dev` and private IPv4 ranges (10/8, 172.16/12, 192.168/16, 100.64/10); else it shows the constraints and the reasons. Fixtures: a root of `agent/internal/ca` and 10 bad roots | `ec2dd69` |
+| m1 | A lost answer of `rotate --new-key` left the device with the old key (401 for each later request) | The new key goes to `secrets/dns_client.key.pending` before the request; a `401 bad_signature` signs again once with it and promotes it; enable registers again and disable forgets the registration on a `401`. The fake service can lose answers | `30977e3` |
+| m2 | `apply.Activate` (update and plug jobs) did not run `ensure-ca`, so the Caddyfile could name a missing root | `Activate` runs `ensure-ca`, then `try-restart care-caddy.service` | `6865731` |
+| m3 | A bad pre-seed stopped the first boot before Caddy: a silent device | The checks of apply run on the pre-seed before the copy; any failure gives setup mode, `preseed.yaml.rejected`, and `state/firstboot-error.json`; `GET /_care-pi/status` has `firstboot_error` (contract 0.7.1; the claim page and the setup page show it); `care-firstboot` keeps the exit code, and the unit has `RestartPreventExitStatus=2` | `0fe1e88` |
+| m4 | `secrets/wifi.json` kept the Wi-Fi passphrase: nothing read it, and each backup copied it | No such file (NetworkManager's keyfile is the store; `config.yaml` has the SSID); the Wi-Fi jobs delete the file of an older agent | `448f247` |
+| m6 | `boot-test.sh` checked one fixed lock file name | The solution and the lock version come from `/etc/care-pi/image-release.json` of the image | `a7cdb3c` |
+| S52 | The clock gate without internet (owner decision) | The claim sends `client_time`; the agent sets the clock one time (`date -s` and `fake-hwclock save` in `care-pi-clock-set`), writes `state/clock-trusted.json`, and reloads Caddy; `clock wait` passes after 20 s more of NTP; `clock.source` and `clock.trusted`; the console banner "Clock not trusted"; contract 0.7.1 (`docs/api/README.md` section 16) | `f795ed6` |
+
+Checks on the Mac: `go test -race ./...` (34 packages), golangci-lint 0, `make api-lint`, shellcheck; the console
+(`api:check` 0.7.1, typecheck, lint, Vitest, build, the full Playwright suite with `e2e/clock.spec.ts`: 155 passed);
+`services/dns` `npm test` (one workerd test failed one time while the Go race suite and Playwright ran at the same time; 4
+later runs passed. `TestBackupsSetup` of the agent failed one time: it swaps 2 words of a random recovery key, and the
+8-bit checksum still matches 1 time in 256; not a defect of these fixes); quadlet `-dryrun` (podman 5.4.2) of `small-clinic` and `public-tailscale` (8 units each, 0 warnings);
+`caddy validate` (a local build of `images/caddy`) of `public`, `public-tailscale`, and `small-clinic`; a live Caddy of the
+`public` golden: `http://care.local` → `302` with `Cache-Control: no-store`, `http://192.168.1.10` → `308`.
+Goldens changed (`go test ./agent/internal/render -update`): `etc/sysctl.d/50-care-pi.conf` in each case (B1);
+`care.pod` of `public-tailscale` (B1, a comment); the Caddyfile of `public` (M2); `status/setup.html` in each case (m3).
+
+To check on lumine with the Phase 6 exit test:
+
+- B1: `sysctl net.ipv4.ip_nonlocal_bind` is `1`; with Tailscale on, `tailscale logout`, then a reboot: Care starts, and
+  `tailscale up` brings the address back without a pod cycle. A pod that failed (an older agent) starts at the next apply.
+  The mechanism was not shown in a container on the Mac: there `podman run -p <absent address>` gave no bind error.
+- M2: section 2 above (`308` with the staging certificate, then `302` with `Cache-Control: no-store`).
+- M1: an update with the public name on while its certificate is pending: the verify passes through `lumine.local`.
+- m1: `care-pi tls public rotate --new-key`, then `ls /etc/care-pi/secrets/` has no `dns_client.key.pending`.
+- m3 and S52 need a fresh image: a bad pre-seed shows the error on the claim page; a first boot without internet passes
+  the clock gate after the claim, and the banner goes when the Pi reaches NTP.
