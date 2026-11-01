@@ -1,0 +1,47 @@
+# care-pi DNS/ACME side service (docs/dns-service.md).
+# The account id, the zone id, and the D1 database id are not secrets.
+# The one secret is CF_DNS_API_TOKEN (wrangler secret put CF_DNS_API_TOKEN).
+
+name = "care-pi-dns"
+main = "src/index.ts"
+compatibility_date = "2026-10-20"
+account_id = "9df47fe134fdde8490d93c610a9ec93e"
+
+# The service has one host name. Clinic names (<id>.care-pi.rithviknishad.dev) are DNS records that
+# point to clinic LAN addresses; the Worker does not serve them.
+workers_dev = false
+preview_urls = false
+upload_source_maps = true
+routes = [
+  # A Custom Domain takes the host name only (no "/*"). Wrangler creates the DNS record and the certificate.
+  { pattern = "care-pi.rithviknishad.dev", custom_domain = true },
+]
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[[d1_databases]]
+binding = "DB"
+database_name = "care-pi-dns"
+database_id = "d56b89be-120b-4ab6-8c4c-f2f65fbd571b"
+migrations_dir = "migrations"
+
+# Housekeeping: stale ACME TXT records, expired nonces, the replay cache, old rate counters,
+# and the DNS records of revoked clinics.
+[triggers]
+crons = ["*/15 * * * *"]
+
+[vars]
+ZONE_ID = "f2b1e99594afa341b94411c77ae8624d"
+ZONE_NAME = "rithviknishad.dev"
+BASE_DOMAIN = "care-pi.rithviknishad.dev"
+SERVER_URL = "https://care-pi.rithviknishad.dev"
+# TTL in seconds of the A, AAAA, and TXT records (60 is the minimum on the Free plan).
+RECORD_TTL = "60"
+# Optional JSON that replaces entries of the default rate limits (src/ratelimit.ts), for example
+# '{"register":{"limit":10,"window":86400}}'.
+RATE_LIMITS = ""
+# "private" (default): the A record must be a private, CGNAT, or documentation address.
+# "any": also accept public addresses.
+ADDRESS_POLICY = "private"

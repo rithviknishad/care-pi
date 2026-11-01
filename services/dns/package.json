@@ -1,0 +1,28 @@
+{
+  "name": "care-pi-dns",
+  "version": "0.1.0",
+  "private": true,
+  "description": "care-pi DNS/ACME side service: clinic registration, DDNS, an acme-dns-compatible TXT API, and the /cert page.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc -p tsconfig.json && tsc -p test/tsconfig.json && tsc -p test/node/tsconfig.json",
+    "test": "npm run typecheck && vitest run && vitest run -c vitest.node.config.ts",
+    "vectors": "node scripts/vectors.mjs",
+    "migrate:local": "wrangler d1 migrations apply care-pi-dns --local",
+    "migrate:remote": "wrangler d1 migrations apply care-pi-dns --remote"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.4.11",
+    "@cloudflare/workers-types": "^5.20261101.1",
+    "@types/node": "^26.6.6",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12",
+    "wrangler": "4.156.0"
+  }
+}
