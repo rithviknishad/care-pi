@@ -3,11 +3,18 @@
 //
 // The script reads the certificate from location.hash, computes its SHA-256 fingerprint, shows the
 // names and dates, and builds the .crt, .pem, and .mobileconfig files on this device. It makes no network request.
+// It offers the files only for the root of a care-pi device: a CA with a critical Name Constraints extension that
+// permits only names below .local and the care-pi zone, and only private IPv4 ranges (docs/connectivity.md 2.2).
+// Anyone can put any certificate in the link, so the page must not help to install an unconstrained root.
 
 export const CERT_JS = String.raw`"use strict";
 (function () {
   var MAX_FRAGMENT = 16384;
   var NAMES = { "2.5.4.3": "CN", "2.5.4.6": "C", "2.5.4.7": "L", "2.5.4.8": "ST", "2.5.4.10": "O", "2.5.4.11": "OU" };
+  // The DNS subtrees of a care-pi root, and the IPv4 ranges that a care-pi root can permit (RFC 1918 and the
+  // shared address space 100.64.0.0/10 of CGNAT and Tailscale).
+  var DOMAINS = [".local", ".care-pi.rithviknishad.dev"];
+  var PRIVATE = [[[10, 0, 0, 0], 8], [[172, 16, 0, 0], 12], [[192, 168, 0, 0], 16], [[100, 64, 0, 0], 10]];
 
   function decodeB64(text) {
     var t = text;
@@ -128,20 +135,132 @@ export const CERT_JS = String.raw`"use strict";
     return cn;
   }
 
-  function isCA(b, tbsFields) {
+  // extension returns the extension with the OID id: its critical flag and the node of its value (inside the
+  // OCTET STRING), or null.
+  function extension(b, tbsFields, id) {
     for (var i = 0; i < tbsFields.length; i++) {
       if (tbsFields[i].tag !== 0xa3) continue;
       var exts = children(b, children(b, tbsFields[i])[0]);
       for (var j = 0; j < exts.length; j++) {
         var e = children(b, exts[j]);
-        if (oid(b, e[0]) !== "2.5.29.19") continue;
-        var value = e[e.length - 1];
-        var bc = node(b, value.start);
-        var inner = children(b, bc);
-        return inner.length > 0 && inner[0].tag === 0x01 && b[inner[0].start] !== 0;
+        if (oid(b, e[0]) !== id) continue;
+        var critical = e.length === 3 && e[1].tag === 0x01 && b[e[1].start] !== 0;
+        return { critical: critical, value: node(b, e[e.length - 1].start) };
       }
     }
+    return null;
+  }
+
+  function isCA(b, tbsFields) {
+    var ext = extension(b, tbsFields, "2.5.29.19");
+    if (!ext) return false;
+    var inner = children(b, ext.value);
+    return inner.length > 0 && inner[0].tag === 0x01 && b[inner[0].start] !== 0;
+  }
+
+  // prefixLength returns the length of a contiguous netmask, or -1.
+  function prefixLength(mask) {
+    var bits = 0;
+    var ended = false;
+    for (var i = 0; i < mask.length; i++) {
+      for (var k = 7; k >= 0; k--) {
+        if ((mask[i] >> k) & 1) {
+          if (ended) return -1;
+          bits++;
+        } else {
+          ended = true;
+        }
+      }
+    }
+    return bits;
+  }
+
+  // nameConstraints parses the Name Constraints extension (OID 2.5.29.30, RFC 5280 4.2.1.10): the permitted DNS
+  // names, the permitted IP ranges ("a.b.c.d/n", or an IPv6 range), and the other permitted name types.
+  // The excluded subtrees only narrow the permitted names, so the check does not need them.
+  function nameConstraints(b, tbsFields) {
+    var ext = extension(b, tbsFields, "2.5.29.30");
+    if (!ext) return null;
+    var out = { critical: ext.critical, dns: [], ips: [], ipv4: [], other: [] };
+    children(b, ext.value).forEach(function (part) {
+      if (part.tag !== 0xa0) return;
+      children(b, part).forEach(function (subtree) {
+        var base = children(b, subtree)[0];
+        if (base.tag === 0x82) {
+          out.dns.push(text(b, base));
+        } else if (base.tag === 0x87) {
+          var bytes = b.subarray(base.start, base.end);
+          if (bytes.length === 8) {
+            var bits = prefixLength(bytes.subarray(4, 8));
+            var addr = [bytes[0], bytes[1], bytes[2], bytes[3]];
+            out.ips.push(addr.join(".") + "/" + (bits < 0 ? "?" : bits));
+            out.ipv4.push({ addr: addr, bits: bits });
+          } else {
+            var half = bytes.length / 2;
+            var groups = [];
+            for (var g = 0; g + 1 < half; g += 2) groups.push(((bytes[g] << 8) | bytes[g + 1]).toString(16));
+            out.ips.push(groups.join(":") + "/" + prefixLength(bytes.subarray(half)));
+            out.ipv4.push(null);
+          }
+        } else {
+          out.other.push("0x" + base.tag.toString(16));
+        }
+      });
+    });
+    return out;
+  }
+
+  function inBlock(r, block) {
+    if (r.bits < block[1]) return false;
+    var a = ((r.addr[0] << 24) | (r.addr[1] << 16) | (r.addr[2] << 8) | r.addr[3]) >>> 0;
+    var n = ((block[0][0] << 24) | (block[0][1] << 16) | (block[0][2] << 8) | block[0][3]) >>> 0;
+    var mask = (0xffffffff << (32 - block[1])) >>> 0;
+    return ((a & mask) >>> 0) === n;
+  }
+
+  function dnsAllowed(c) {
+    var name = c.toLowerCase();
+    for (var i = 0; i < DOMAINS.length; i++) {
+      var d = DOMAINS[i];
+      if (name === d) return true;
+      if (name.length > d.length && name.slice(-d.length) === d) return true;
+    }
     return false;
+  }
+
+  // problems returns why the certificate is not the root of a care-pi device ([] when it is one).
+  function problems(info) {
+    var out = [];
+    if (!info.ca) out.push("It is not a certificate authority.");
+    var nc = info.constraints;
+    if (!nc) {
+      out.push("It has no name constraints: it could sign a certificate for any website.");
+      return out;
+    }
+    if (!nc.critical) out.push("Its name constraints are not marked critical.");
+    if (nc.dns.length === 0) out.push("It permits each DNS name.");
+    nc.dns.forEach(function (d) {
+      if (!dnsAllowed(d)) out.push("It permits the DNS name \"" + (d === "" ? "(all)" : d) + "\", which is not below " + DOMAINS.join(" or ") + ".");
+    });
+    if (nc.ipv4.length === 0) out.push("It permits each IP address.");
+    nc.ipv4.forEach(function (r, i) {
+      if (!r) {
+        out.push("It permits the IPv6 range " + nc.ips[i] + ".");
+      } else if (r.bits < 0 || !PRIVATE.some(function (block) { return inBlock(r, block); })) {
+        out.push("It permits the IP range " + nc.ips[i] + ", which is not a private IPv4 range.");
+      }
+    });
+    return out;
+  }
+
+  function describeConstraints(nc) {
+    if (!nc) return "None";
+    var parts = [];
+    parts.push("DNS: " + (nc.dns.length ? nc.dns.join(", ") : "(any)"));
+    parts.push("IP: " + (nc.ips.length ? nc.ips.join(", ") : "(any)"));
+    if (nc.other.length) parts.push("Other name types: " + nc.other.join(", "));
+    parts.push(nc.critical ? "critical" : "not critical");
+    return parts.join("; ");
   }
 
   function parseCert(der) {
@@ -158,7 +277,8 @@ export const CERT_JS = String.raw`"use strict";
       issuer: name(der, f[i + 2]),
       notBefore: time(der, validity[0]),
       notAfter: time(der, validity[1]),
-      ca: isCA(der, f)
+      ca: isCA(der, f),
+      constraints: nameConstraints(der, f)
     };
   }
 
@@ -271,10 +391,20 @@ export const CERT_JS = String.raw`"use strict";
       setText("not-before", info.notBefore);
       setText("not-after", info.notAfter);
       setText("ca", info.ca ? "Yes. This is a certificate authority." : "No. This is not a certificate authority. Do not install it as a root.");
+      setText("constraints", describeConstraints(info.constraints));
       setText("fingerprint", hex(fp, ":"));
-      setText("status", "The certificate is on this device only. Compare the fingerprint before you install it.");
       var d = el("details");
       if (d) d.hidden = false;
+      var bad = problems(info);
+      if (bad.length > 0) {
+        var s = el("status");
+        if (s) {
+          s.textContent = "This is not the certificate of a care-pi device. Do not install it. " + bad.join(" ");
+          s.className = "warn";
+        }
+        return { fingerprint: hex(fp, ":"), info: info, problems: bad };
+      }
+      setText("status", "The certificate is on this device only. Compare the fingerprint before you install it.");
       var buttons = [
         ["dl-crt", "care-pi-" + short + ".crt", "application/x-x509-ca-cert", function () { return der; }],
         ["dl-pem", "care-pi-" + short + ".pem", "application/x-pem-file", function () { return pem(der); }],
@@ -286,13 +416,13 @@ export const CERT_JS = String.raw`"use strict";
         b.disabled = false;
         b.addEventListener("click", function () { download(spec[1], spec[2], spec[3]()); });
       });
-      return { fingerprint: hex(fp, ":"), info: info };
+      return { fingerprint: hex(fp, ":"), info: info, problems: [] };
     });
   }
 
   var hook = typeof globalThis !== "undefined" ? globalThis.__CARE_PI_CERT_TEST__ : undefined;
   if (hook) {
-    hook.api = { decodeB64: decodeB64, parseCert: parseCert, pem: pem, mobileconfig: mobileconfig, hex: hex };
+    hook.api = { decodeB64: decodeB64, parseCert: parseCert, pem: pem, mobileconfig: mobileconfig, hex: hex, problems: problems };
   }
   var ready = main();
   if (hook) hook.ready = ready;

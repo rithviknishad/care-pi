@@ -90,8 +90,10 @@ A new device makes the new root in its first apply. It has no warning.
 
 The Certificate page of the console shows the fingerprint, the name constraints, and the install steps for each OS.
 Its QR code opens `https://care-pi.rithviknishad.dev/cert#<root DER, base64url>` (`07` section 4.4). The page of the
-DNS service reads the fragment in the browser: the fragment never goes to the server. With no internet, use the
-other QR code: it has only the fingerprint, to compare on the device.
+DNS service reads the fragment in the browser: the fragment never goes to the server. The page offers the files only
+for a root with the name constraints of section 2.2 (private IPv4 ranges only); it refuses the root of Caddy (no
+constraints) and each other certificate. With no internet, use the other QR code: it has only the fingerprint, to
+compare on the device.
 
 ## 3. The public name
 

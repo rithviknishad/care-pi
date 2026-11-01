@@ -364,6 +364,12 @@ enrols the next device with a QR code.
   dates, whether it is a CA, and the **SHA-256 fingerprint** (`AA:BB:…`, the same form as
   `openssl x509 -noout -fingerprint -sha256`).
 - The operator compares the fingerprint with the console screen. The screen is the authenticated channel.
+- Anybody can put a certificate in a link. The page offers the files only for the root of a care-pi device: a CA
+  (`cA` true) with a critical Name Constraints extension (OID 2.5.29.30) that permits at least 1 DNS subtree and at
+  least 1 IP range. Each permitted DNS subtree is `.local`, `.care-pi.rithviknishad.dev`, or a name below them (for
+  example `care.local`). Each permitted IP range is IPv4 and inside `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, or
+  `100.64.0.0/10` (CGNAT, Tailscale). Else the page shows the parsed constraints and the reasons, says "Do not
+  install it", and keeps the download buttons off. An unconstrained root could sign a certificate for any website.
 - The page builds the `.crt` (DER), `.pem`, and `.mobileconfig` (`com.apple.security.root` payload, profile
   UUIDs derived from the fingerprint, so a new download replaces the old profile) files on the device.
 - The page loads no external asset and makes no network request: CSP `connect-src 'none'`, no inline script,
@@ -385,5 +391,7 @@ and the Node tests of the browser scripts:
   clinic, IPv6 `/64` grouping;
 - the Cloudflare DNS client against a fake API, and the scheduled housekeeping;
 - the `/cert` page: static checks in workerd, and the page script in Node against an OpenSSL-made root
-  certificate (fingerprint, names, dates, `.crt`, `.pem`, `.mobileconfig`, bad input);
+  certificate (fingerprint, names, dates, `.crt`, `.pem`, `.mobileconfig`, bad input), a root of the agent
+  (`testdata/root-ca-agent.pem`), and 10 roots that the page must refuse (`testdata/bad-roots.pem`: no constraints,
+  not critical, not a CA, another domain, a public or a wide range, an IPv6 range, no IP or no DNS constraint);
 - the signature test vectors (`testdata/vectors.json`), also checked with Go `crypto/ed25519`.

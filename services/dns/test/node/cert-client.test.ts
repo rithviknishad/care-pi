@@ -1,5 +1,7 @@
 // Runs the /cert page script (src/pages/cert-client.ts) in Node with a small DOM stub, and checks it
-// against the fixture root certificate (testdata/root-ca.pem, made with OpenSSL).
+// against the fixture root certificates: testdata/root-ca.pem (made with OpenSSL), testdata/root-ca-agent.pem (made
+// by the agent, agent/internal/ca), and testdata/bad-roots.pem (roots that the page must refuse; Go crypto/x509, the
+// subject CN names the defect).
 
 import { X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -13,6 +15,16 @@ const pemText = readFileSync(join(import.meta.dirname, "..", "..", "testdata", "
 const x509 = new X509Certificate(pemText);
 const der = new Uint8Array(x509.raw);
 const derB64Url = Buffer.from(der).toString("base64url");
+
+function readPEM(file: string): X509Certificate[] {
+  const text = readFileSync(join(import.meta.dirname, "..", "..", "testdata", file), "utf8");
+  return text
+    .split("-----END CERTIFICATE-----")
+    .filter((b) => b.includes("-----BEGIN CERTIFICATE-----"))
+    .map((b) => new X509Certificate(`${b.trim()}\n-----END CERTIFICATE-----\n`));
+}
+
+const b64url = (c: X509Certificate) => Buffer.from(c.raw).toString("base64url");
 
 interface FakeElement {
   id: string;
@@ -56,7 +68,7 @@ interface Run {
 
 async function run(hash: string): Promise<Run> {
   const elements = new Map<string, FakeElement>();
-  for (const id of ["status", "details", "empty", "subject", "issuer", "not-before", "not-after", "ca", "fingerprint", "dl-crt", "dl-pem", "dl-mobileconfig"]) {
+  for (const id of ["status", "details", "empty", "subject", "issuer", "not-before", "not-after", "ca", "constraints", "fingerprint", "dl-crt", "dl-pem", "dl-mobileconfig"]) {
     elements.set(id, element(id));
   }
   const downloads: Run["downloads"] = [];
@@ -167,6 +179,71 @@ describe("/cert page script", () => {
       expect(r.elements.get("status")!.className).toBe("warn");
       expect(r.elements.get("status")!.textContent).toMatch(/not hold/);
       expect(r.elements.get("details")!.hidden).toBe(true);
+    }
+  });
+
+  it("shows the name constraints of a care-pi root and offers the files", async () => {
+    const r = await run(`#${derB64Url}`);
+    expect(r.elements.get("constraints")!.textContent).toBe("DNS: .local, .care-pi.rithviknishad.dev; IP: 192.168.1.23/32; critical");
+    expect(r.elements.get("status")!.className).not.toBe("warn");
+    expect(r.downloads).toHaveLength(3);
+    const [agent] = readPEM("root-ca-agent.pem");
+    const a = await run(`#${b64url(agent!)}`);
+    expect(a.elements.get("subject")!.textContent).toBe("O=care-pi, CN=care-pi care.local Root CA");
+    expect(a.elements.get("constraints")!.textContent).toBe(
+      "DNS: .local, .care-pi.rithviknishad.dev; IP: 100.100.1.0/24, 192.168.1.0/24; critical",
+    );
+    expect(a.elements.get("status")!.textContent).toMatch(/^The certificate is on this device only/);
+    expect(a.elements.get("dl-crt")!.disabled).toBe(false);
+    expect(a.downloads.map((d) => d.name.split(".").pop()).sort()).toEqual(["crt", "mobileconfig", "pem"]);
+  });
+
+  it("refuses a root that is not a name-constrained care-pi root", async () => {
+    const want: Record<string, RegExp> = {
+      unconstrained: /has no name constraints/,
+      "not critical": /not marked critical/,
+      "not a CA": /not a certificate authority/,
+      "other domain": /DNS name "\.example\.com"/,
+      "bare local": /DNS name "local"/,
+      "public range": /IP range 8\.8\.8\.0\/24, which is not a private/,
+      "wide range": /IP range 192\.0\.0\.0\/8, which is not a private/,
+      "ipv6 range": /IPv6 range fd00:0:0:0:0:0:0:0\/8\./,
+      "no ip constraint": /permits each IP address/,
+      "no dns constraint": /permits each DNS name/,
+    };
+    const roots = readPEM("bad-roots.pem");
+    expect(roots).toHaveLength(Object.keys(want).length);
+    for (const root of roots) {
+      const cn = /CN=([^\n,]+)/.exec(root.subject)![1]!;
+      const r = await run(`#${b64url(root)}`);
+      const status = r.elements.get("status")!;
+      expect(status.className, cn).toBe("warn");
+      expect(status.textContent, cn).toMatch(/^This is not the certificate of a care-pi device\. Do not install it\./);
+      expect(status.textContent, cn).toMatch(want[cn]!);
+      // The page still shows what the certificate is, with its constraints.
+      expect(r.elements.get("details")!.hidden, cn).toBe(false);
+      expect(r.elements.get("fingerprint")!.textContent, cn).toBe(root.fingerprint256);
+      expect(r.elements.get("constraints")!.textContent, cn).not.toBe("");
+      for (const id of ["dl-crt", "dl-pem", "dl-mobileconfig"]) expect(r.elements.get(id)!.disabled, cn).toBe(true);
+      expect(r.downloads, cn).toHaveLength(0);
+    }
+  });
+
+  it("allows exact names below the two domains and each private IPv4 block", async () => {
+    const r = await run(`#${derB64Url}`);
+    const problems = (r.hook.api as unknown as { problems: (info: unknown) => string[] }).problems;
+    const v4 = (s: string) => {
+      const [a, bits] = s.split("/");
+      return { addr: a!.split(".").map(Number), bits: Number(bits) };
+    };
+    const info = (dns: string[], ips: string[]) => ({ ca: true, constraints: { critical: true, dns, ips, ipv4: ips.map(v4), other: [] } });
+    const good = ["10.1.2.0/24", "172.16.5.0/24", "172.31.255.0/24", "192.168.0.0/16", "100.64.0.0/10", "100.127.1.0/24"];
+    expect(problems(info(["care.local", "Clinic-1.care-pi.rithviknishad.dev", ".sub.local"], good))).toEqual([]);
+    for (const ip of ["172.32.0.0/16", "172.0.0.0/8", "100.128.0.0/24", "11.0.0.0/8", "0.0.0.0/0", "192.169.0.0/24"]) {
+      expect(problems(info([".local"], [ip])), ip).toHaveLength(1);
+    }
+    for (const d of ["", "local", "care-pi.rithviknishad.dev", "evil.dev", "x.local.evil.dev"]) {
+      expect(problems(info([d], ["10.0.0.0/8"])), d).toHaveLength(1);
     }
   });
 

@@ -446,8 +446,11 @@ another network. Limit: 30 per minute per network. The page `GET /` calls this e
 The console shows a QR code with `https://care-pi.rithviknishad.dev/cert#<base64url of the DER root
 certificate, no padding>` (standard base64 also works). The fragment never goes to the server. The page shows
 the SHA-256 fingerprint (upper-case hex, `:`-separated, the same form as `openssl x509 -fingerprint -sha256`)
-and offers `.crt` (DER), `.pem`, and `.mobileconfig` files, built on the device. Keep the root certificate
-under about 1 KB of DER so that the QR code stays readable.
+and the name constraints. It offers `.crt` (DER), `.pem`, and `.mobileconfig` files, built on the device, only for a
+name-constrained care-pi root: a CA with a critical Name Constraints extension whose permitted DNS subtrees are below
+`.local` or `.care-pi.rithviknishad.dev` and whose permitted IP ranges are private IPv4 ranges (`10.0.0.0/8`,
+`172.16.0.0/12`, `192.168.0.0/16`, `100.64.0.0/10`); `docs/dns-service.md` section 10 has the rules. Else it shows
+the reasons and offers no file. Keep the root certificate under about 1 KB of DER so that the QR code stays readable.
 
 ## 9. What the agent must implement
 

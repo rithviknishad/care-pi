@@ -25,6 +25,7 @@ export const CERT_HTML = `<!doctype html>
 <dt>Valid from</dt><dd id="not-before" class="mono"></dd>
 <dt>Valid until</dt><dd id="not-after" class="mono"></dd>
 <dt>Authority</dt><dd id="ca"></dd>
+<dt>Name constraints</dt><dd id="constraints" class="mono"></dd>
 </dl>
 </div>
 
