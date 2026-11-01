@@ -53,6 +53,9 @@
 | S47 | Django admin (O16) | **Not routed in v1.** Support uses `care-pi care …` (`manage.py` in `care-api`). Revisit when support needs it. |
 | S48 | Console origin | The console SPA and its API are served on **port 8443** (`https://<host>:8443/`), not under `/console/` on 443. Reason: a same-origin console API lets an XSS in Care or a malicious FE plug act as the operator. Port 443 redirects `/console*` to 8443. Public endpoints (status, health, root CA) are on both ports. The pod publishes 8443 on each LAN IP; the firewall allows it. |
 | S49 | Console sessions | 2 h idle, 24 h absolute. Server-side store; cookie `__Host-care_pi_session`. |
+| S50 | DNS/ACME side service | A Cloudflare Worker + D1 in this repo (`services/dns/`) at `care-pi.rithviknishad.dev`. Ed25519 request signing; TXT written directly at `_acme-challenge.<id>.…` (no CNAME); private LAN addresses in public DNS by design. |
+| S51 | Image tool (SP10) | **pi-gen** (arm64 branch) builds the image. `rpi-image-gen` emits no cloud-init seed, so Imager cannot customise its output. Imager customisation needs a repository entry (`--repo` or the in-app content repository); "Use custom" gives none. |
+| S52 | Clock gate without internet | At the claim, the console sends the browser time. The agent sets the clock once (`timedatectl set-time`) and the gate passes. The console shows a "clock not trusted" banner until NTP syncs. The RTC policy (SP9) comes later. |
 
 ## B. PROPOSED — please confirm or override
 
