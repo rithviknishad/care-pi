@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"runtime"
+	"time"
 
 	"github.com/rithviknishad/care-pi/agent/internal/buildinfo"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
@@ -39,6 +41,10 @@ type Prepared struct {
 	CareBuild *render.CareBuild
 	// DistBase resolves the artefact references of SolutionLock.
 	DistBase string
+	// ACMEDNS is the value of the podman secret care-pi-acme-dns (secrets/acme_dns.json), or "" (Phase 6).
+	ACMEDNS string
+	// EnsureCA is true when the root of the agent does not exist and a LAN address is known (Phase 6).
+	EnsureCA bool
 }
 
 // PrepareOptions controls Prepare.
@@ -149,7 +155,7 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 		des.Wants.Plugs = map[string]lock.GitWant{}
 	}
 	if o.Strict {
-		if err := checkImplemented(cfg, sol, des); err != nil {
+		if err := checkImplemented(o.Paths, cfg, sol, des); err != nil {
 			return nil, exitcode.With(exitcode.BadInput, err)
 		}
 	}
@@ -192,8 +198,10 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 	if err != nil {
 		return nil, fmt.Errorf("cannot read the network interfaces: %w", err)
 	}
+	conn := readConnectivity(o.Paths, cfg, o.IPs, ips, time.Now())
 	m, err := render.NewModel(render.Input{Config: cfg, Solution: sol, Lock: lk, IPs: ips, Bootstrap: bootstrap,
-		SolutionLock: sl, PlugSecrets: plugSecrets, CareBuild: cb})
+		SolutionLock: sl, PlugSecrets: plugSecrets, CareBuild: cb,
+		CARoot: conn.caRoot, PublicIssued: conn.publicIssued, ACMEDNS: conn.acmeDNS != "", TailscaleIP: conn.tailscaleIP})
 	if err != nil {
 		return nil, exitcode.With(exitcode.BadInput, err)
 	}
@@ -211,12 +219,19 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 		return nil, err
 	}
 	return &Prepared{Config: cfg, Solution: sol, Desire: des, PrevLock: prev, Lock: lk, IPs: ips, Model: m, Tree: tree,
-		Phase: o.Phase, SolutionLock: sl, CareBuild: cb, DistBase: distBase}, nil
+		Phase: o.Phase, SolutionLock: sl, CareBuild: cb, DistBase: distBase,
+		ACMEDNS: conn.acmeDNS, EnsureCA: conn.caRoot && !conn.caExists}, nil
 }
 
-// checkImplemented rejects valid settings that this version cannot apply.
-func checkImplemented(cfg *config.Config, _ *solution.Solution, _ *render.Plan) error {
+// checkImplemented rejects valid settings that this version cannot apply, and settings that need a step
+// of an enrol job first (Phase 6).
+func checkImplemented(p paths.Paths, cfg *config.Config, _ *solution.Solution, _ *render.Plan) error {
 	errs := []error{cfg.CheckImplemented()}
+	if render.PublicHost(cfg) != "" {
+		if _, err := os.Stat(p.Abs(paths.ACMEDNSFile)); err != nil {
+			errs = append(errs, fmt.Errorf("tls.public.enabled is true, but this device has no registration with the DNS service (%s); run: care-pi tls public enable", paths.ACMEDNSFile))
+		}
+	}
 	if cfg.Clock.Policy == "rtc" {
 		errs = append(errs, fmt.Errorf("clock.policy rtc is %w (SP9); use ntp", config.ErrNotImplemented))
 	}

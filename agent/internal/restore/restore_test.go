@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/rithviknishad/care-pi/agent/internal/backup"
+	"github.com/rithviknishad/care-pi/agent/internal/ca"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/host"
 	"github.com/rithviknishad/care-pi/agent/internal/jobs"
@@ -614,5 +615,62 @@ func TestSwitchCA(t *testing.T) {
 	write(p.Abs(CAStage("j2")+"/root.crt"), "x")
 	if ok, err := SwitchCA(context.Background(), p, f, "j2"); ok || err == nil {
 		t.Fatal("an incomplete CA must fail")
+	}
+}
+
+// TestSwitchCAAgentRoot: a snapshot of Phase 6 has the root of the agent. The restore adopts it, clears the CA files of
+// Caddy (a new intermediate below the old root), and restarts care-caddy. A snapshot with only the CA of Caddy changes
+// nothing on a device with a root of the agent.
+func TestSwitchCAAgentRoot(t *testing.T) {
+	p := paths.New(t.TempDir())
+	f := host.NewFake()
+	if _, err := ca.Ensure(p, []string{"care.local"}, []string{"192.168.1.10"}, "new device", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	stage := paths.New(t.TempDir())
+	old, err := ca.Ensure(stage, []string{"care.local"}, []string{"10.0.0.5"}, "old device", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := p.Abs(AgentCAStage("j1"))
+	if err := os.MkdirAll(src, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{ca.CertFile, ca.KeyFile} {
+		data, _ := os.ReadFile(stage.Abs(paths.CADir + "/" + n))
+		if err := os.WriteFile(src+"/"+n, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(p.Abs(paths.CaddyCA), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(p.Abs(paths.CaddyCA+"/intermediate.crt"), []byte("intermediate of the new root"), 0o600)
+	ok, err := SwitchCA(context.Background(), p, f, "j1")
+	if !ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	got, err := ca.Load(p)
+	if err != nil || got.Fingerprint() != old.Root.Fingerprint() {
+		t.Fatalf("the root of the old device must be the root now: %v", err)
+	}
+	if _, err := os.Stat(p.Abs(paths.CaddyCA + "/intermediate.crt")); !os.IsNotExist(err) {
+		t.Fatal("the intermediate of the new root is still there")
+	}
+	if st := ca.ReadState(p); st.Fingerprint != old.Root.Fingerprint() || st.ChangedAt != nil {
+		t.Fatalf("state %+v: the devices trust this root, so no change warning", st)
+	}
+	check(t, "commands", f.Calls, []string{"systemctl restart care-caddy.service"})
+
+	// An older snapshot: only the CA of Caddy. The root of the agent stays.
+	for _, n := range []string{"root.crt", "root.key", "intermediate.crt", "intermediate.key"} {
+		_ = os.MkdirAll(p.Abs(CAStage("j2")), 0o700)
+		_ = os.WriteFile(p.Abs(CAStage("j2")+"/"+n), []byte("old "+n), 0o600)
+	}
+	if ok, err := SwitchCA(context.Background(), p, f, "j2"); ok || err != nil {
+		t.Fatalf("%v %v", ok, err)
+	}
+	if got, _ := ca.Load(p); got.Fingerprint() != old.Root.Fingerprint() {
+		t.Fatal("the root of the agent changed")
 	}
 }

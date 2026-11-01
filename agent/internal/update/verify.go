@@ -10,9 +10,9 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"time"
 
+	"github.com/rithviknishad/care-pi/agent/internal/ca"
 	"github.com/rithviknishad/care-pi/agent/internal/fe"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/plugcfg"
@@ -107,10 +107,15 @@ func (v HTTPVerifier) Verify(ctx context.Context, t VerifyTarget) error {
 }
 
 func (v HTTPVerifier) client(t VerifyTarget) (*http.Client, error) {
-	pool := x509.NewCertPool()
-	pem, err := os.ReadFile(v.Paths.Abs(paths.CaddyRootCA))
+	// The canonical host has a certificate of the local CA, or (Phase 6, the public name) of Let's Encrypt:
+	// trust the system roots and the root of the local CA.
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	pem, err := ca.TrustedPEM(v.Paths)
 	if err != nil {
-		return nil, fmt.Errorf("cannot read the root CA of Caddy: %w", err)
+		return nil, fmt.Errorf("cannot read the root CA: %w", err)
 	}
 	pool.AppendCertsFromPEM(pem)
 	timeout := v.Timeout

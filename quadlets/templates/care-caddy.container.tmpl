@@ -23,10 +23,25 @@ Volume={{path "PlugsDir"}}:/srv/plugs:ro
 Volume={{path "ModeDir"}}:/srv/mode:ro
 # A directory, not the socket file: the agent makes a new socket at each start.
 Volume={{path "RunDir"}}:{{path "RunDir"}}
+{{- if .CARoot}}
+# The name-constrained root of the agent (docs/connectivity.md). Read only.
+Volume={{path "CADir"}}:{{path "CACaddyDir"}}:ro
+{{- end}}
+{{- if .ACMEDNSSecret}}
+# The credentials of the acmedns module (public mode), as a file: {{.ACMEDNSFile}}.
+Secret={{.ACMEDNSSecret}},type=mount,mode=0400
+{{- end}}
+{{- if .TailscaleHost}}
+# The socket of tailscaled: Caddy gets the certificate of {{.TailscaleHost}} through it.
+Volume={{.TailscaleSocketDir}}:{{.TailscaleSocketDir}}
+{{- end}}
 
 [Service]
 # The bind mount needs the directory, also when the agent does not run.
 ExecStartPre=/bin/mkdir -p {{path "RunDir"}}
+{{- if .TailscaleHost}}
+ExecStartPre=/bin/mkdir -p {{.TailscaleSocketDir}}
+{{- end}}
 MemoryMax={{.MemCad.Max}}
 MemorySwapMax={{.MemCad.Swap}}
 Restart=always

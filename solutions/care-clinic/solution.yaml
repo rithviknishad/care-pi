@@ -55,6 +55,7 @@ plugs:
         ALLOWED_HOSTS:
           - "*.local"
           - "*.ts.net"
+          - "*.care-pi.rithviknishad.dev"
     settings:
       - part: backend
         key: ALLOWED_HOSTS

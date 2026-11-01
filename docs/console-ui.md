@@ -350,6 +350,25 @@ for `maintenance.step` (`docs/api/README.md` section 14.3), and so does the bann
 | `os-upgrade` | Install the OS updates | the packages |
 | `os-hold` | Hold the container packages again | the packages |
 | `reboot` | Restart the device | — |
+| `ensure-ca` (plan action) | Make the root certificate of the device | — |
+| `disable-units` (plan action) | Stop the DNS address timer | the units |
+| `reload-firewall` (plan action) | Load the new firewall rules | — |
+| `update-dns` (plan action) | Send the new address to the DNS service | — |
+| `write-config` | Save the settings | the keys |
+| `dns-register` | Register the device with the DNS service | the hint |
+| `dns-address` | Send the address to the DNS service | — |
+| `dns-delete` | Delete the public name | the id |
+| `wait-certificate` | Wait for the certificate of the public name (while it runs: "… (about 1 min)") | the name |
+| `tailscale-install` | Install Tailscale (while it runs: "… (about 1 min)") | — |
+| `tailscale-up` | Connect to the tailnet | — |
+| `tailscale-login` | Wait for the login to Tailscale (while it runs: "… (open the login link)") | — |
+| `tailscale-down` | Disconnect from the tailnet | — |
+| `tailscale-logout` | Remove the device from the tailnet | — |
+| `wifi-radio` | Turn on the Wi-Fi radio | — |
+| `wifi-profile` | Write the Wi-Fi settings | the SSID |
+| `wifi-connect` | Connect to the Wi-Fi network | the SSID |
+| `wifi-verify` | Check the network routes | — |
+| `wifi-remove` | Remove the Wi-Fi network | — |
 
 The second line of a step is, in this order: its `detail` (a result or an error); while it runs, the message of its
 progress, the expected time ("Expected: about 3 min 40 s", `job-state.ts`), or its last output line; else the short
@@ -358,6 +377,7 @@ argument above.
 Each `JobKind` has a name for the operator (`strings.jobs.kinds`; the dashboard and the job card of the Updates page use it):
 `update-check` "Check for updates", `update-stage` "Download an update", `update-apply` "Install an update",
 `update-rollback` "Go back to the previous version", `os-update` "Install the OS updates", `plug-change` "Change a plug",
+`tls-public-enrol` "Change the public name", `tls-tailscale-enrol` "Change Tailscale", `network-wifi` "Change the Wi-Fi",
 and the kinds of Phases 1 to 3. `tests/step-text.test.ts` fails when the contract has a kind without a name.
 
 ## 10. Backups and restore (Phase 3)
@@ -609,3 +629,62 @@ text first in its problems (`Status.maintenance`), and its state is "Maintenance
 The texts use the words of the operator: "Download the update" (stage), "Install now" (apply), "Roll back",
 "Install anyway" (`now: true`), "Show the effect" (dry run), "Turn on with these settings". `index.json`, lock, ETag,
 cutover, and checkpoint are not in the texts; "backup point" is the checkpoint, "list of versions" is the index.
+
+## 12. Connectivity (Phase 6)
+
+`docs/connectivity.md` is the specification. `src/features/connectivity/` holds the tab; `connectivity-logic.ts` has the
+rules that the tests check (the hint pattern, the QR content, the mode of each name, the rebinding check).
+
+### 12.1 Settings > Connectivity
+
+The second tab of Settings (`/settings?tab=connectivity`). One job card at the top (the last job of the 3 kinds), then
+3 cards. Each card has a fixed header (icon, title, state badge "On" or "Off") and keeps its place while a job runs.
+While a job of the tab runs, the buttons of each card are disabled. The Tailscale card shows "A change runs now. Wait until
+it ends." while its job waits.
+
+- **Public name.** Off: the start of the name (`hostname_hint`, `a-z0-9-`, the identity host name by default), the switch
+  "Use the test certificate of Let's Encrypt (staging)", and "Turn on". The note tells that the device and the devices that use
+  the name need the internet. On: the name as a link, the certificate state (issued, waits, expired, error; "test
+  certificate" for staging), the last DNS update, the advice "Bookmark this name", the HSTS note, and the result of the DNS
+  rebinding check (a button: the browser loads `public.health_url` with `no-cors`; a failure tells the operator to check
+  the router), and the limits of Let's Encrypt.
+  "Turn off" asks for a confirmation: the name never comes back.
+- **Tailscale.** Off: the optional auth key (`tskey-…`, a password field) and "Turn on" (a recent password check). While the
+  job waits for the login: the login link as a button, a copy button, and a QR code (for a phone), with "Waiting for the
+  login…". While a job of the tab runs, the console polls `GET /tls` each 2 s. On: the MagicDNS name as a link, the tailnet, the address, and a warning
+  when the tailnet gives no HTTPS certificates. "Turn off" asks for a confirmation.
+- **Wi-Fi.** "Find networks" (`GET /network/wifi/scan`): a radio list (SSID, signal bars, a lock for a secured network)
+  and "Other network (type the name)". The passphrase (write-only), the country (2 letters), the switch "Use Wi-Fi only
+  when ethernet is down" (on by default), and "Connect". The note tells that Care restarts the first time. On: the SSID,
+  the signal, the address, which link carries the traffic, "Remove". "Other Wi-Fi profiles" lists the profiles that
+  care-pi does not manage (the Imager settings). The DHCP reservation advice lists the MAC address and the address of
+  each interface. A device without Wi-Fi shows "This device has no Wi-Fi" and no form.
+
+### 12.2 The Certificate page
+
+- "Names that the certificate allows": the DNS names and the address ranges of the name constraints, with the sentence
+  "The root certificate of this device can only sign these names and addresses. It cannot sign the address of a bank or
+  another site." A root without constraints (before the switch) says that the next apply replaces it.
+- `local_ca.uncovered` not empty: a warning with the names.
+- After the one-time switch (`ca_changed_at`): the warning "The certificate of this device changed" with the time, the
+  start of the new fingerprint, and the old fingerprint, until the operator clicks "I installed it". `localStorage` key
+  `care-pi.ca-changed.dismissed` keeps the fingerprint that was closed, so a later switch shows the warning again.
+- The QR code has 3 modes ("The phone has"): "Internet" encodes `https://care-pi.rithviknishad.dev/cert#<root DER,
+  base64url>` (the default); "No internet" encodes the fingerprint, to compare on the phone; "Only this network" encodes
+  the download URL of the device (the behaviour of Phase 2).
+
+### 12.3 The dashboard
+
+The Network card lists each name that Care serves, in the order of `Status.tls` (public, local, Tailscale), with a badge of
+the mode and the certificate below the name ("Let's Encrypt certificate", "Certificate of this device", "Tailscale
+certificate"). Each name has 2 lines at each width, so the skeleton has the same height.
+
+### 12.4 Mock and tests
+
+Mock options (`POST /__mock/reset`): `connectivity` (`fresh`: a new device of Phase 6, the root with name constraints;
+`migrated`: after the one-time switch, with the warning; `public`; `tailscale`), `wifi_device` (`false`: no Wi-Fi), `public_fail: "dns"` (the DNS service
+does not answer), `tailscale_login: "manual"` (the login waits until `POST /__mock/tailscale-login`), `wifi_fail: "auth"`
+(a wrong passphrase). Vitest: `tests/connectivity-logic.test.ts`, `tests/connectivity-tab.test.tsx`. Playwright:
+`e2e/connectivity.spec.ts` (public name, Tailscale with the login link, Wi-Fi, the certificate page, the dashboard) and
+`e2e/real/connectivity.spec.ts` (opt-in on a device).
+

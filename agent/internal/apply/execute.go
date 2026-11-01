@@ -118,9 +118,9 @@ func (x *executor) run(ctx context.Context, a plan.Action) error {
 		if err := x.waitInactive(ctx); err != nil {
 			return err
 		}
-		return x.startTarget(ctx)
+		return x.recordPod(x.startTarget(ctx))
 	case plan.StartTarget:
-		return x.startTarget(ctx)
+		return x.recordPod(x.startTarget(ctx))
 	case plan.Restart:
 		return h.Systemd.Restart(ctx, a.Units...)
 	case plan.ReloadCaddy:
@@ -197,7 +197,20 @@ func (x *executor) run(ctx context.Context, a plan.Action) error {
 		x.pr.Lock.GeneratedAt = x.o.Now().UTC().Format(time.RFC3339)
 		return lock.Write(x.o.Paths, x.pr.Lock, x.o.Now())
 	case plan.Cutover:
-		return x.cutover(ctx, a)
+		return x.recordPod(x.cutover(ctx, a))
+	case plan.EnsureCA:
+		return x.ensureCA()
+	case plan.DisableUnits:
+		if _, err := h.Runner.Run(ctx, host.Cmd{Name: "systemctl", Args: append([]string{"disable", "--now"}, a.Units...)}); err != nil {
+			_, _ = fmt.Fprintf(x.o.Out, "    warning: cannot disable %s: %v\n", strings.Join(a.Units, " "), err)
+		}
+		return nil
+	case plan.ReloadFirewall:
+		// try-reload-or-restart does nothing when the installer did not install the firewall (--no-firewall).
+		_, err := h.Runner.Run(ctx, host.Cmd{Name: "systemctl", Args: append([]string{"try-reload-or-restart"}, a.Units...)})
+		return err
+	case plan.UpdateDNS:
+		return x.updateDNS(ctx)
 	case plan.PlugConfig:
 		rows := plugcfg.Desired(x.pr.Config, x.pr.Desire.Plugs, x.pr.Lock)
 		res, err := plugcfg.Sync(ctx, h, x.o.Paths, rows, x.o.Now())
@@ -208,6 +221,21 @@ func (x *executor) run(ctx context.Context, a plan.Action) error {
 	}
 	return fmt.Errorf("unknown action %s", a.Kind)
 }
+
+// recordPod records the care.pod of the started pod (state/pod-live.json) after a start without an error.
+func (x *executor) recordPod(err error) error {
+	if err != nil {
+		return err
+	}
+	if f, ok := x.pr.Tree[podFile]; ok {
+		if werr := writePodLive(x.o.Paths, f.Content); werr != nil {
+			_, _ = fmt.Fprintln(x.o.Out, "    warning: cannot record the running pod:", werr)
+		}
+	}
+	return nil
+}
+
+const podFile = paths.QuadletDir + "/care.pod"
 
 // legacyTargetLink is the link of "systemctl enable care.target" from an older care-pi.
 const legacyTargetLink = paths.SystemdDir + "/multi-user.target.wants/care.target"

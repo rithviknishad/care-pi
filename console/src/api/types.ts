@@ -54,6 +54,17 @@ export type ClientOs = S["ClientOs"];
 export type TlsInstructions = S["TlsInstructions"];
 export type InstructionStep = S["InstructionStep"];
 export type TlsState = S["TlsState"];
+// Phase 6: the public name, Tailscale, and Wi-Fi (docs/api/README.md section 15).
+export type TlsPublic = S["TlsPublic"];
+export type TlsTailscale = S["TlsTailscale"];
+export type PublicCertificate = S["PublicCertificate"];
+export type CaRoot = S["CaRoot"];
+export type NameConstraints = S["NameConstraints"];
+export type WifiState = S["WifiState"];
+export type WifiScan = S["WifiScan"];
+export type WifiNetwork = S["WifiNetwork"];
+export type WifiProfile = S["WifiProfile"];
+export type WifiRequest = S["WifiRequest"];
 export type FeStatus = S["FeStatus"];
 export type CareInfo = S["CareInfo"];
 export type PowerAction = S["PowerAction"];

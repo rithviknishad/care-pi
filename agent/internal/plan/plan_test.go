@@ -325,3 +325,126 @@ func TestUnifiedDiff(t *testing.T) {
 		t.Fatalf("unexpected diff for a new file:\n%s", added)
 	}
 }
+
+// Phase 6 (docs/connectivity.md).
+
+const livePod = `# header
+[Unit]
+After=network-online.target
+After=tailscaled.service
+
+[Pod]
+PodName=care
+# LAN
+PublishPort=192.168.1.10:443:443
+PublishPort=10.0.0.5:443:443
+# Tailscale
+PublishPort=100.101.102.103:443:443
+PublishPort=127.0.0.1:19000:9000
+
+[Service]
+ExecStartPre=-/usr/local/bin/care-pi network wait-address --address 100.101.102.103 --timeout 30s`
+
+func TestPodShrinkOnly(t *testing.T) {
+	failover := `# header
+[Unit]
+After=network-online.target
+After=tailscaled.service
+
+[Pod]
+PodName=care
+# LAN
+PublishPort=10.0.0.5:443:443
+# Tailscale
+PublishPort=100.101.102.103:443:443
+PublishPort=127.0.0.1:19000:9000
+
+[Service]
+ExecStartPre=-/usr/local/bin/care-pi network wait-address --address 100.101.102.103 --timeout 30s`
+	noTailscale := `# header
+[Unit]
+After=network-online.target
+
+[Pod]
+PodName=care
+# LAN
+PublishPort=192.168.1.10:443:443
+PublishPort=10.0.0.5:443:443
+PublishPort=127.0.0.1:19000:9000`
+	newAddress := strings.Replace(failover, "10.0.0.5", "10.0.0.6", 1)
+	newKey := strings.Replace(failover, "PodName=care", "PodName=care\nNetwork=host", 1)
+	cases := []struct {
+		name    string
+		desired string
+		live    string
+		active  bool
+		want    bool
+	}{
+		{"eth0 address went away", failover, livePod, true, true},
+		{"the address came back", livePod, livePod, true, true},
+		{"tailscale address went away", noTailscale, livePod, true, true},
+		{"a new address", newAddress, livePod, true, false},
+		{"a new key", newKey, livePod, true, false},
+		{"no record of the running pod", failover, "", true, false},
+		{"stack not running", failover, livePod, false, false},
+	}
+	for _, c := range cases {
+		var live []byte
+		if c.live != "" {
+			live = []byte(c.live)
+		}
+		if got := podShrinkOnly([]byte(c.desired), live, c.active); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+	// In a plan: the pod file is written and systemd reloads it, but nothing restarts.
+	p := Build(Input{Desired: tree(with(base(), pod, failover)), Current: current(with(base(), pod, livePod)), TargetActive: true,
+		PodLive: []byte(livePod)})
+	if got := kinds(p); !reflect.DeepEqual(got, []Kind{EnsureDirs, WriteFiles, DaemonReload}) {
+		t.Fatalf("failover plan %v", got)
+	}
+	p = Build(Input{Desired: tree(with(base(), pod, newAddress)), Current: current(with(base(), pod, livePod)), TargetActive: true,
+		PodLive: []byte(livePod)})
+	if !p.Has(FullCycle) {
+		t.Fatalf("a new address needs a full cycle: %v", kinds(p))
+	}
+}
+
+func TestEnsureCARestartsCaddy(t *testing.T) {
+	p := Build(Input{Desired: tree(with(base(), caddyCfg, "caddyfile v2 pki")), Current: current(base()), TargetActive: true, EnsureCA: true})
+	want := []Kind{EnsureDirs, EnsureCA, WriteFiles, Restart, EnsureBucket, EnsureStanza}
+	if got := kinds(p); !reflect.DeepEqual(got, want) {
+		t.Fatalf("plan %v, want %v", got, want)
+	}
+	if a, _ := p.Get(Restart); !reflect.DeepEqual(a.Units, []string{"care-caddy.service"}) {
+		t.Fatalf("restart %v: a reload keeps the old intermediate", a.Units)
+	}
+	// The first apply of a new host starts the stack after ensure-ca.
+	p = Build(Input{Desired: tree(base()), Current: map[string][]byte{}, EnsureCA: true})
+	if got := kinds(p); got[1] != EnsureCA || !p.Has(StartTarget) {
+		t.Fatalf("first apply %v", got)
+	}
+}
+
+func TestFirewallAndDNSTimer(t *testing.T) {
+	const dropIn = "/etc/systemd/system/care-pi-firewall.service.d/50-care-pi-tailscale.conf"
+	const dnsTimer = "/etc/systemd/system/care-dns-update.timer"
+	const dnsSvc = "/etc/systemd/system/care-dns-update.service"
+	on := with(base(), dropIn, "drop-in", dnsTimer, "timer", dnsSvc, "service")
+	p := Build(Input{Desired: tree(on), Current: current(base()), TargetActive: true, DNSStale: true})
+	want := []Kind{EnsureDirs, WriteFiles, DaemonReload, ReloadFirewall, EnableTarget, UpdateDNS}
+	if got := kinds(p); !reflect.DeepEqual(got, want) {
+		t.Fatalf("on: %v, want %v", got, want)
+	}
+	if a, _ := p.Get(EnableTarget); !strings.Contains(strings.Join(a.Units, " "), "care-dns-update.timer") {
+		t.Fatalf("enable %v", a.Units)
+	}
+	p = Build(Input{Desired: tree(base()), Current: current(on), TargetActive: true})
+	want = []Kind{EnsureDirs, DisableUnits, DeleteFiles, DaemonReload, ReloadFirewall}
+	if got := kinds(p); !reflect.DeepEqual(got, want) {
+		t.Fatalf("off: %v, want %v", got, want)
+	}
+	if a, _ := p.Get(DisableUnits); !reflect.DeepEqual(a.Units, []string{"care-dns-update.timer"}) {
+		t.Fatalf("disable %v", a.Units)
+	}
+}

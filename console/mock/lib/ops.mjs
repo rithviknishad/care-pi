@@ -305,27 +305,6 @@ export const opsRoutes = [
       res.end(data);
     },
   },
-  {
-    method: "GET",
-    path: "/api/v1/tls",
-    handler: ({ res, state }) =>
-      sendJson(res, 200, {
-        local_ca: {
-          enabled: true,
-          root: {
-            subject: "CN=care-pi care.local Root CA",
-            fingerprint_sha256: FINGERPRINT,
-            fingerprint_sha256_colon: FINGERPRINT_COLON,
-            not_before: "2026-10-30T10:00:00Z",
-            not_after: "2036-10-27T10:00:00Z",
-            name_constraints: null,
-          },
-          hostnames: [`${state.appliedHostname}.local`, "192.168.1.10"],
-        },
-        public: { enabled: false, clinic_id: null, hostname: null },
-        tailscale: { enabled: false, hostname: null },
-      }),
-  },
   { method: "GET", path: "/api/v1/tls/root-ca", public: true, handler: rootCa },
   { method: "GET", path: "/_care-pi/tls/root-ca", public: true, handler: rootCa },
   { method: "GET", path: "/api/v1/tls/root-ca/mobileconfig", public: true, handler: mobileconfig },
@@ -350,10 +329,8 @@ function bundleBytes(id) {
 
 // Operations of a later phase answer 501 after the auth checks. Phase 3 is in lib/backups-api.mjs and
 // lib/restore-api.mjs; Phase 4 is in lib/updates.mjs (reset option phase4: false gives 501 there).
+// Phase 6 is in lib/connectivity.mjs.
 export const phaseRoutes = [
-  ["PUT", "/api/v1/network/wifi", 6],
-  ["PUT", "/api/v1/tls/public", 6],
-  ["PUT", "/api/v1/tls/tailscale", 6],
   ["POST", "/api/v1/tls/local-ca/rotate", 7],
   ["PUT", "/api/v1/security/ssh", 7],
 ].map(([method, path, phase]) => ({ method, path, phase, handler: () => {} }));

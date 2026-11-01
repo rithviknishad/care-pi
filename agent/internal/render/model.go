@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/rithviknishad/care-pi/agent/internal/ca"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/fe"
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
@@ -173,7 +174,50 @@ type Model struct {
 	SolutionName string
 	// MaintenanceSteps maps a job step action to the text of the maintenance page.
 	MaintenanceSteps map[string]string
+
+	// Phase 6 (docs/connectivity.md). LocalHosts are the names of the local CA mode; LocalSites adds the LAN addresses.
+	LocalHosts []string
+	LocalSites []string
+	// CARoot renders the global pki option with the name-constrained root of the agent (07 §4.1).
+	// CACert and CAKey are the paths in care-caddy.
+	CARoot bool
+	CACert string
+	CAKey  string
+	// PublicHost is <clinic_id>.care-pi.rithviknishad.dev, or "". PublicACMECA overrides the ACME directory.
+	PublicHost   string
+	PublicACMECA string
+	// PublicIssued is true when Caddy has the certificate of PublicHost.
+	PublicIssued bool
+	// ACMEDNSSecret is the podman secret with the credentials of the acmedns module; ACMEDNSFile is its path in care-caddy.
+	ACMEDNSSecret string
+	ACMEDNSFile   string
+	// Port80Public lists the http:// sites that send the browser to the public name (301, 07 §6.1).
+	// Port80Same lists the http:// sites that send it to https:// on the same host (308).
+	Port80Public []string
+	Port80Same   []string
+	// TailscaleHost is the MagicDNS name, or "". TailscaleIP is the address of tailscale0 for PublishPort, or "".
+	TailscaleHost string
+	TailscaleIP   string
+	// TailscaleSocketDir is the directory of the socket of tailscaled (care-caddy mounts it).
+	TailscaleSocketDir string
+	// HSTS is the value of Strict-Transport-Security of the public and the Tailscale sites. The local CA sites never send it (F7).
+	HSTS string
+	// DNSUpdate renders care-dns-update.timer (public mode). FirewallTailscale renders the firewall drop-in (Tailscale mode).
+	DNSUpdate         bool
+	FirewallTailscale bool
+	// FirewallUnit is the unit of the firewall drop-in. WaitAddressTimeout bounds the wait of care-pod for the Tailscale address.
+	FirewallUnit       string
+	WaitAddressTimeout string
 }
+
+// ACMEDNSSecret is the podman secret with secrets/acme_dns.json (the acmedns module of Caddy reads it as a file).
+const ACMEDNSSecret = "care-pi-acme-dns"
+
+// DNSUpdateTimer is the timer of the public mode: it sends the LAN address to the DNS service.
+const DNSUpdateTimer = "care-dns-update.timer"
+
+// HSTSValue is the Strict-Transport-Security header of the public and the Tailscale names (07 §4.5).
+const HSTSValue = "max-age=31536000"
 
 // AdditionalPlugsSecret is the podman secret that holds ADDITIONAL_PLUGS (docs/solutions.md, section 1.4).
 const AdditionalPlugsSecret = "care-additional-plugs"
@@ -245,15 +289,55 @@ type Input struct {
 	PlugSecrets map[string]map[string]any
 	// CareBuild is the local image build of care, or nil.
 	CareBuild *CareBuild
+
+	// Phase 6 (docs/connectivity.md). Prepare reads these values from the host.
+	// CARoot is true when the root of the agent exists, or when ensure-ca makes it in this apply.
+	CARoot bool
+	// PublicIssued is true when Caddy has the certificate of the public name.
+	PublicIssued bool
+	// ACMEDNS is true when secrets/acme_dns.json exists (the registration with the DNS/ACME service).
+	ACMEDNS bool
+	// TailscaleIP is the IPv4 address of tailscale0, or "".
+	TailscaleIP string
 }
 
-// Hostnames returns the DNS names that the config serves. Phase 1 has only the local CA name.
+// Hostnames returns the DNS names that the config serves, the canonical name first (docs/connectivity.md):
+// the public name when tls.public is on (S36: primary when online), then the local CA name, then the
+// Tailscale name. More than one name turns on the plugs with auto: when_multihost (P10). IP addresses do not count.
 func Hostnames(cfg *config.Config) []string {
 	var out []string
-	if cfg.TLS.LocalCA.Enabled {
-		out = append(out, netinfo.MDNSName(cfg.Identity.Hostname))
+	if h := PublicHost(cfg); h != "" {
+		out = append(out, h)
+	}
+	out = append(out, LocalHostnames(cfg)...)
+	if h := TailscaleHost(cfg); h != "" {
+		out = append(out, h)
 	}
 	return out
+}
+
+// LocalHostnames returns the names of the local CA mode: <hostname>.local.
+func LocalHostnames(cfg *config.Config) []string {
+	if !cfg.TLS.LocalCA.Enabled {
+		return nil
+	}
+	return []string{netinfo.MDNSName(cfg.Identity.Hostname)}
+}
+
+// PublicHost returns <clinic_id>.care-pi.rithviknishad.dev when tls.public is on, else "".
+func PublicHost(cfg *config.Config) string {
+	if !cfg.TLS.Public.Enabled || cfg.TLS.Public.ClinicID == "" {
+		return ""
+	}
+	return cfg.TLS.Public.ClinicID + "." + ca.PublicZone
+}
+
+// TailscaleHost returns the MagicDNS name when tls.tailscale is on, else "".
+func TailscaleHost(cfg *config.Config) string {
+	if !cfg.TLS.Tailscale.Enabled {
+		return ""
+	}
+	return cfg.TLS.Tailscale.Hostname
 }
 
 // Plan holds what the config and the solution ask for, before the lock resolves it.
@@ -460,6 +544,9 @@ func NewModel(in Input) (*Model, error) {
 	if len(m.Sites) == 0 {
 		return nil, fmt.Errorf("render: no hostname and no LAN address to serve; connect the host to a network")
 	}
+	if err := connectivity(m, cfg, in); err != nil {
+		return nil, err
+	}
 
 	s := m.Sizing
 	m.MemAPI = config.MemAPI(s.GunicornWorkers)
@@ -566,6 +653,57 @@ func NewModel(in Input) (*Model, error) {
 		m.PlugBuild = cfg.Solution.Track == "custom" && cfg.FE.Provider == "local" && customFrontendRefs(cfg)
 	}
 	return m, nil
+}
+
+// connectivity fills the Phase 6 part of the model (docs/connectivity.md).
+func connectivity(m *Model, cfg *config.Config, in Input) error {
+	m.LocalHosts = LocalHostnames(cfg)
+	m.LocalSites = append(append([]string{}, m.LocalHosts...), m.IPs...)
+	if len(m.LocalSites) == 0 {
+		return fmt.Errorf("render: the local CA mode has no name and no LAN address to serve")
+	}
+	m.HSTS = HSTSValue
+	m.FirewallUnit = paths.FirewallUnit
+	m.WaitAddressTimeout = "30s"
+	m.TailscaleSocketDir = paths.TailscaleSocketDir
+	if in.CARoot {
+		m.CARoot = true
+		m.CACert = paths.CACaddyDir + "/" + ca.CertFile
+		m.CAKey = paths.CACaddyDir + "/" + ca.KeyFile
+	}
+	m.PublicHost = PublicHost(cfg)
+	if m.PublicHost != "" {
+		if !in.ACMEDNS {
+			return fmt.Errorf("render: tls.public is on, but this device has no registration with the DNS service (%s); run: care-pi tls public enable", paths.ACMEDNSFile)
+		}
+		m.PublicACMECA = cfg.TLS.Public.ACMECA
+		m.PublicIssued = in.PublicIssued
+		m.ACMEDNSSecret = ACMEDNSSecret
+		m.ACMEDNSFile = "/run/secrets/" + ACMEDNSSecret
+		m.DNSUpdate = !in.Bootstrap
+	}
+	m.TailscaleHost = TailscaleHost(cfg)
+	if m.TailscaleHost != "" {
+		m.TailscaleIP = in.TailscaleIP
+		m.FirewallTailscale = true
+	}
+	// Port 80 (07 §6.1): when the public name has its certificate, the local names and the public name send
+	// the browser to the public name. The LAN addresses keep their own redirect, so an IP still works offline.
+	if m.PublicHost != "" && m.PublicIssued {
+		m.Port80Public = append(append([]string{}, m.LocalHosts...), m.PublicHost)
+		m.Port80Same = append([]string{}, m.IPs...)
+	} else {
+		m.Port80Same = append(append([]string{}, m.LocalSites...), nonEmpty(m.PublicHost)...)
+	}
+	m.Port80Same = append(m.Port80Same, nonEmpty(m.TailscaleHost)...)
+	return nil
+}
+
+func nonEmpty(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return []string{s}
 }
 
 func customFrontendRefs(cfg *config.Config) bool {
@@ -727,6 +865,26 @@ var MaintenanceSteps = map[string]string{
 	"os-upgrade":             "Install the OS updates",
 	"os-hold":                "Hold the container packages again",
 	"reboot":                 "Restart the device",
+	// Phase 6 (docs/api/README.md section 15).
+	"ensure-ca":         "Make the root certificate of the device",
+	"disable-units":     "Stop the DNS address timer",
+	"reload-firewall":   "Load the new firewall rules",
+	"update-dns":        "Send the new address to the DNS service",
+	"write-config":      "Save the settings",
+	"dns-register":      "Register the device with the DNS service",
+	"dns-address":       "Send the address to the DNS service",
+	"dns-delete":        "Delete the public name",
+	"wait-certificate":  "Wait for the certificate of the public name",
+	"tailscale-install": "Install Tailscale",
+	"tailscale-up":      "Connect to the tailnet",
+	"tailscale-login":   "Wait for the login to Tailscale",
+	"tailscale-down":    "Disconnect from the tailnet",
+	"tailscale-logout":  "Remove the device from the tailnet",
+	"wifi-radio":        "Turn on the Wi-Fi radio",
+	"wifi-profile":      "Write the Wi-Fi settings",
+	"wifi-connect":      "Connect to the Wi-Fi network",
+	"wifi-verify":       "Check the network routes",
+	"wifi-remove":       "Remove the Wi-Fi network",
 }
 
 // GitHubSlug returns OWNER/NAME for a https://github.com/OWNER/NAME URL, else "".
@@ -809,4 +967,6 @@ var HostPaths = map[string]string{
 	"BuildPlugs":    paths.BuildPlugs,
 	"Binary":        paths.Binary,
 	"RunDir":        paths.RunDir,
+	"CADir":         paths.CADir,
+	"CACaddyDir":    paths.CACaddyDir,
 }

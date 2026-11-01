@@ -25,7 +25,7 @@ After you clear k3s/tailscale/cloudflared from lumine and `apt install podman sk
 | SP8 | mDNS resolution of `care.local` from Android (several versions), Windows 10/11, iOS, macOS | works or documented | IP/QR fallback already planned | pending. **Input from the Phase 1 exit test (macOS 27, lumine):** avahi publishes the A record and an AAAA record (the IPv6 ULA). The Mac prefers the AAAA (its resolver lists it first). The pod publishes 80/443 on IPv4 only, so the Pi answers the IPv6 SYN to 443 with an RST (`Connection refused`), and the fallback to IPv4 is fast: `curl https://lumine.local/ping/` 0.03–0.12 s. (`getaddrinfo` puts the A first, because RFC 6724 ranks a ULA below IPv4; an IPv6-only connect is refused after ≈ 1 s.) Tried and reverted: `use-ipv6=no` and `publish-aaaa-on-ipv4=no` (no AAAA). avahi sends no negative AAAA answer (avahi issue 428), so each macOS lookup for both families waited 2.7–5.0 s. **Follow-up:** publish 80/443 on the LAN IPv6 addresses too (pod `PublishPort`, Caddy sites, `DJANGO_ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`), so that the AAAA record is valid. Measure browsers and the other OSes here. |
 | SP9 | Pi 5 RTC passive battery verification; `fake-hwclock` interplay; timesyncd gating with `systemd-time-wait-sync` | gate behaves as specified in `01` §7 | `ntp` policy only in v1 | pending |
 | SP10 | `rpi-image-gen` trixie Lite image with a chroot hook running `install.sh` and skopeo pre-pull; Imager customisation still works | image boots on Pi 5 and Pi 4; hostname customisation reaches avahi | `pi-gen` | **`rpi-image-gen` FAIL → pi-gen** — `08` SP10: `rpi-image-gen` builds in Docker and runs chroot hooks, but its image has no cloud-init seed (no Imager customisation) and its `rpi5` layer is Pi-5-only; pi-gen `arm64` builds the image in Docker (Phase 5 build); Imager 2.x writes `user:` + yescrypt (agent fixed); boot on a Pi 5 and a Pi 4 pending |
-| SP11 | NetworkManager bond eth+wlan (gist approach) on Pi | failover keeps IP | Wi-Fi as a secondary connection without bonding (later phase anyway) | pending |
+| SP11 | NetworkManager bond eth+wlan (gist approach) on Pi | failover keeps IP | Wi-Fi as a secondary connection without bonding (later phase anyway) | **Secondary connection chosen; bond rejected** (Phase 6 design, before the test on lumine): the bond changes the eth0 profile and needs a MAC policy (`fail_over_mac`) that `brcmfmac` does not support well (`01` §12). `care-pi-wifi` is a second NetworkManager connection; with the failover, route metric 600 and autoconnect priority -10, so ethernet wins while the cable is in. The failover changes the address (each link has its own DHCP lease). The cable-pull test is in `08` "Phase 6 exit test — plan". |
 
 Exit: a written results table replacing the *inference* marks in `01` §4/§8.
 
@@ -111,6 +111,12 @@ Deliverables:
 Exit: a phone on mobile data (Tailscale) and a laptop on the clinic LAN (public
 name) both use the same Care without warnings; file links work from both.
 
+Status (2026-11-01): **the Phase 6 agent and console code is complete** (`09-handoff.md` §8m, `docs/connectivity.md`,
+contract v0.7.0). The DNS/ACME service is a separate project in `services/dns/` (`docs/dns-service.md`). The local CA is now
+the name-constrained root of the agent (S36; the first apply switches each existing device one time). The exit test on lumine
+is planned, not run (`08-spike-log.md` "Phase 6 exit test — plan"); it needs the deployed DNS service, a Tailscale auth key,
+and the Wi-Fi details from the owner.
+
 ## Phase 7 — Hardening and breadth · size M
 
 Opt-in telemetry (O12); generic-Linux installer across Debian/Ubuntu/Fedora;
@@ -168,6 +174,9 @@ build, and `care-firstboot.service`; `os_list.json` for Imager 2.x (`init_format
 `pi-image.yml` on `ubuntu-24.04-arm`. A container boot of the image (systemd-nspawn, no network) ran cloud-init, the first
 boot, and setup mode from the pre-pulled images. Open: the boot and the exit test on a Pi 5 and a Pi 4 (`docs/image.md`
 §9), the clock gate without internet (an owner decision, `docs/image.md` §10 point 5), a QEMU boot in CI, and the first
-run of `pi-image.yml` on GitHub.
+run of `pi-image.yml` on GitHub. The clock gate decision is S52 (browser time at the claim), to implement next.
+**Phase 6 code is complete** (agent, console, contract v0.7.0; the DNS/ACME service `services/dns/` is built and
+tested, its D1 database exists, deploy waits for the owner's `CF_DNS_API_TOKEN`). Its lumine exit test is planned
+(`08` "Phase 6 exit test — plan"), not run; it needs the deployed service, a tailnet, a phone on mobile data, and a Wi-Fi.
 The remaining open questions (`00` §C: O4, O6 plug set, O7 upstream PR timing, O9, O11, O12,
 O13, O16, O17) each become blocking only in the phase noted there.

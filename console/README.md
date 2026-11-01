@@ -130,6 +130,20 @@ The plugs are the plugs of `solutions/care-clinic/solution.yaml` and one externa
 (`care_token_display_fe`: a number with limits, a string with a pattern, and 2 advanced settings).
 The cutover steps take longer (`migrate` 8 times `step_ms`), so the maintenance banner stays in view.
 
+The Phase 6 options (`docs/console-ui.md` section 12.4):
+
+| Option            | Values                                               | What it gives                                                                                                                                                                                                                                   |
+| ----------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `connectivity`    | `fresh` (default), `migrated`, `public`, `tailscale` | `fresh`: a new device of Phase 6 (the root with name constraints, no switch). `migrated`: the root with name constraints and the one-time warning. `public`: the public name is on (issued). `tailscale`: the public name and Tailscale are on. |
+| `wifi_device`     | `true` (default), `false`                            | `false`: the device has no Wi-Fi (`GET /network/wifi/scan` gives `409 wifi-no-device`).                                                                                                                                                         |
+| `public_fail`     | `dns`                                                | The DNS service does not answer: the enrol job fails with `dns-service-unreachable`.                                                                                                                                                            |
+| `tailscale_login` | `auto` (default), `manual`                           | `manual`: the login waits until `POST /__mock/tailscale-login`.                                                                                                                                                                                 |
+| `wifi_fail`       | `auth`                                               | The next Wi-Fi job fails with `wifi-auth-failed`.                                                                                                                                                                                               |
+
+```sh
+curl -X POST http://127.0.0.1:4011/__mock/reset -d '{"scenario":"ready","connectivity":"migrated","tailscale_login":"manual"}'
+```
+
 ## 4. Work with the Go dev server
 
 The agent has a dev listener for console work (`docs/console-server.md` section 9).

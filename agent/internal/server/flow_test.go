@@ -329,7 +329,8 @@ func TestConfigResource(t *testing.T) {
 	e.want(patch(map[string]any{"size": map[string]any{"preset": "solo"}}, invalid), 428, "precondition-required")
 	e.want(patch(map[string]any{"size": map[string]any{"preset": "solo"}}, header("If-Match", `"0000000000000000"`)), 412, "config-changed")
 	e.want(patch(map[string]any{"size": map[string]any{"preset": "giant"}}, header("If-Match", etag)), 422, "invalid-config")
-	e.want(patch(map[string]any{"tls": map[string]any{"tailscale": map[string]any{"enabled": true}}}, header("If-Match", etag)), 422, "unsupported-config")
+	e.want(patch(map[string]any{"tls": map[string]any{"tailscale": map[string]any{"enabled": true}}}, header("If-Match", etag)), 422, "invalid-config")
+	e.want(patch(map[string]any{"tls": map[string]any{"local_ca": map[string]any{"enabled": false}}}, header("If-Match", etag)), 422, "unsupported-config")
 	r = e.do("PATCH", "/api/v1/config?dry_run=true", nil, rawBody([]byte(`{"size":{"preset":"solo"}}`)),
 		header("Content-Type", "application/merge-patch+json"), header("If-Match", etag))
 	e.want(r, 200, "")
@@ -408,9 +409,6 @@ func TestNotImplementedAndPublic(t *testing.T) {
 	}
 	for _, l := range []later{
 		{"PUT", "/api/v1/security/ssh", map[string]any{"enabled": false, "authorized_keys": []any{}}},
-		{"PUT", "/api/v1/network/wifi", map[string]any{"ssid": "x", "psk": "a wifi passphrase", "failover": true}},
-		{"PUT", "/api/v1/tls/public", map[string]any{"enabled": false, "clinic_id": nil}},
-		{"PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": false, "auth_key": nil}},
 		{"POST", "/api/v1/tls/local-ca/rotate", nil},
 		// Phase 3 implements /backups and /restore (backups_test.go); Phase 4 (wave 6a) implements /updates,
 		// /plugs, and /solutions (updates_test.go).

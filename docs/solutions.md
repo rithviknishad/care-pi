@@ -222,7 +222,7 @@ plugs:
         name: care_multihost_files_be
         package_name: git+https://github.com/ohcnetwork/care_multihost_files_be.git
         version: "@3edf06b127830e4fbf14823ac69568460eaed291"
-        configs: {ALLOWED_HOSTS: ["*.local", "*.ts.net"]}
+        configs: {ALLOWED_HOSTS: ["*.local", "*.ts.net", "*.care-pi.rithviknishad.dev"]}
   # ... care_fasterappointments_fe (frontend), care_filly (backend)
 images:
   postgres: {ref: "ghcr.io/rithviknishad/care-pi/postgres-pgbackrest:17", digest: "sha256:d80dc0a2…"}
@@ -893,9 +893,11 @@ What the agent writes for each FE plug that is on:
 ### 12.3 Multihost auto-enable
 
 `care_multihost_files_be` has `auto: when_multihost`. The agent turns it on when Caddy serves more than one host
-name (IP addresses do not count). Phase 4 serves only `<hostname>.local`, so the plug stays off. When Phase 6 adds a
-second name, the count crosses 1, the plug turns on, and the plan path is `cutover` (the plug is in the image).
-`ALLOWED_HOSTS` of the plug defaults to `configs` of the solution (`*.local`, `*.ts.net`); the operator can change it.
+name (IP addresses do not count). Phase 4 serves only `<hostname>.local`, so the plug stays off. Phase 6 adds the public
+name and the Tailscale name (`docs/connectivity.md` section 5): with a second name, the count crosses 1, the plug turns
+on, and the plan path is `cutover` (the plug is in the image). When the count goes back to 1, the plug turns off (a
+cutover too). `ALLOWED_HOSTS` of the plug defaults to `configs` of the solution (`*.local`, `*.ts.net`,
+`*.care-pi.rithviknishad.dev`); the operator can change it. The canonical host is the public name when it is on.
 O7: the `plug_config` rows keep the canonical host; Caddy sends `Access-Control-Allow-Origin: *` on `/plugs/*`
 (`01` §5). The upstream change for root-relative `meta.url` is open (O7).
 

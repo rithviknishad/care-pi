@@ -13,6 +13,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/rithviknishad/care-pi/agent/internal/backup"
+	"github.com/rithviknishad/care-pi/agent/internal/ca"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/host"
 	"github.com/rithviknishad/care-pi/agent/internal/jobs"
@@ -363,33 +364,65 @@ func fetchConfig(ctx context.Context, e Env, s *backup.Session, snap, stage stri
 // CAStage returns the directory that holds the local CA of Caddy of a restore-dr job until SwitchCA.
 func CAStage(jobID string) string { return paths.RestoreDir + "/" + jobID + "-caddy-ca" }
 
-// fetchCA restores the local CA of Caddy of the snapshot into CAStage. SwitchCA uses it after the
-// event done of the job: a restart of Caddy before it would change the certificate of the open
-// event stream. A snapshot of an older agent has no CA; the device then keeps its new CA.
+// AgentCAStage returns the directory that holds the root of the agent (Phase 6) of a restore-dr job until SwitchCA.
+func AgentCAStage(jobID string) string { return paths.RestoreDir + "/" + jobID + "-agent-ca" }
+
+// fetchCA restores the root of the agent (Phase 6, docs/connectivity.md) and the local CA of Caddy of the snapshot
+// into their stages. SwitchCA uses them after the event done of the job: a restart of Caddy before it would change
+// the certificate of the open event stream. A snapshot of an older agent has no root of the agent; a snapshot of
+// Phase 1 or 2 has no CA. The device then keeps its new CA.
 func fetchCA(ctx context.Context, e Env, s *backup.Session, snap backup.Snapshot) error {
-	if !snap.HasPath(paths.CaddyCA) {
-		e.logf("the snapshot %s has no local CA of Caddy; the clinic devices must trust the new root CA", snap.ShortID)
-		return nil
-	}
-	dir := e.Paths.Abs(CAStage(e.Rec.ID()))
-	if err := os.RemoveAll(dir); err != nil {
+	restoreTo := func(sub, stage string) error {
+		dir := e.Paths.Abs(stage)
+		if err := os.RemoveAll(dir); err != nil {
+			return err
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+		_, err := s.Run(ctx, e.Runner, backup.RestoreArgs(snap.ID, sub, e.Paths.Host(dir), nil, false)...)
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+	switch {
+	case snap.HasPath(paths.CADir):
+		if err := restoreTo(paths.CADir, AgentCAStage(e.Rec.ID())); err != nil {
+			return err
+		}
+		e.logf("restored the root CA of the old device; the agent uses it after the end of the job")
+	case snap.HasPath(paths.CaddyCA):
+		if err := restoreTo(paths.CaddyCA, CAStage(e.Rec.ID())); err != nil {
+			return err
+		}
+		e.logf("restored the local CA of Caddy; the agent uses it after the end of the job")
+	default:
+		e.logf("the snapshot %s has no local CA; the clinic devices must trust the new root CA", snap.ShortID)
 	}
-	if _, err := s.Run(ctx, e.Runner, backup.RestoreArgs(snap.ID, paths.CaddyCA, e.Paths.Host(dir), nil, false)...); err != nil {
-		return err
-	}
-	e.logf("restored the local CA of Caddy; the agent uses it after the end of the job")
 	return nil
 }
 
-// SwitchCA replaces the local CA of Caddy with the CA of CAStage, deletes the certificates of the CA
-// of the new device, and restarts care-caddy. Caddy then issues new certificates from the restored
-// CA, and the clinic devices that trust the old root need no change. Without a stage it does nothing.
+// SwitchCA puts back the CA of the old device after a restore from backup, and restarts care-caddy. Caddy then
+// issues new certificates from the restored CA, and the clinic devices that trust the old root need no change.
+// With the root of the agent in the stage (a snapshot of Phase 6), it adopts that root. With only the local CA of
+// Caddy (an older snapshot), it replaces the CA of Caddy, but only on a device without a root of the agent: the
+// root of the agent wins over the root of Caddy (the Caddyfile names it), so the switch of 07 §4.1 happens anyway.
+// Without a stage it does nothing.
 func SwitchCA(ctx context.Context, p paths.Paths, r host.Runner, jobID string) (bool, error) {
+	agentSrc := p.Abs(AgentCAStage(jobID))
+	if _, err := os.Stat(filepath.Join(agentSrc, ca.CertFile)); err == nil {
+		if _, err := ca.Adopt(p, agentSrc, time.Now()); err != nil {
+			return false, err
+		}
+		_ = os.RemoveAll(agentSrc)
+		if _, err := r.Run(ctx, host.Cmd{Name: "systemctl", Args: []string{"restart", "care-caddy.service"}}); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
 	src := p.Abs(CAStage(jobID))
+	if ca.Exists(p) {
+		_ = os.RemoveAll(src)
+		return false, nil
+	}
 	for _, f := range []string{"root.crt", "root.key", "intermediate.crt", "intermediate.key"} {
 		if _, err := os.Stat(filepath.Join(src, f)); err != nil {
 			if errors.Is(err, fs.ErrNotExist) && f == "root.crt" {

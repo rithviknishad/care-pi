@@ -1,9 +1,13 @@
+import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2Icon, DownloadIcon, ShieldQuestionIcon, XCircleIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
 import { apiUrl } from "@/api/client";
-import { isProblem, useInstructions, useNetwork, useSession } from "@/api/queries";
-import type { ClientOs, Network } from "@/api/types";
+import { isProblem, useInstructions, useNetwork, useSession, useTls } from "@/api/queries";
+import type { ClientOs, Network, TlsState } from "@/api/types";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { CA_NOTICE_KEY, caNoticeVisible, certPageUrl, fingerprintQr } from "@/features/connectivity/connectivity-logic";
 import { CopyButton } from "@/components/app/copy-button";
 import { PageHeader } from "@/components/app/page";
 import { ProblemAlert } from "@/components/app/problem-alert";
@@ -14,7 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { fingerprintLines } from "@/lib/format";
+import { fingerprintLines, formatDateTime } from "@/lib/format";
 import { CLIENT_OSES, detectOs, isClientOs } from "@/lib/os";
 import { fmt, strings, tlsStepText } from "@/lib/strings";
 
@@ -171,6 +175,103 @@ function TrustCheck({ network }: { network: Network }) {
   );
 }
 
+// The name constraints of the root (07 §4.1): the names and the address ranges that the root can sign.
+function Constraints({ tls }: { tls: TlsState }) {
+  const root = tls.local_ca.root;
+  if (!root) return null;
+  const nc = root.name_constraints;
+  return (
+    <section className="flex flex-col gap-2" data-testid="ca-constraints">
+      <h2 className="font-semibold">{c.constraints}</h2>
+      {nc ? (
+        <>
+          <p className="text-xs text-soft-foreground">{c.constraintsHelp}</p>
+          <dl className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
+            <dt className="text-soft-foreground">{c.constraintsDns}</dt>
+            <dd className="min-w-0 font-mono" data-testid="ca-constraints-dns">
+              {nc.permitted_dns_domains.map((d) => (
+                <span key={d} className="block break-words">
+                  {d}
+                </span>
+              ))}
+            </dd>
+            <dt className="text-soft-foreground">{c.constraintsIp}</dt>
+            <dd className="min-w-0 font-mono" data-testid="ca-constraints-ip">
+              {nc.permitted_ip_ranges.map((r) => (
+                <span key={r} className="block">
+                  {r}
+                </span>
+              ))}
+            </dd>
+          </dl>
+          {tls.local_ca.uncovered.length > 0 ? (
+            <Alert variant="warning">
+              <AlertDescription>{fmt(c.uncovered, { names: tls.local_ca.uncovered.join(", ") })}</AlertDescription>
+            </Alert>
+          ) : null}
+        </>
+      ) : (
+        <p className="text-sm text-soft-foreground">{c.constraintsNone}</p>
+      )}
+    </section>
+  );
+}
+
+// The one-time warning after the switch to the name-constrained root. The browser keeps the dismissal for the
+// fingerprint of the new root.
+function ChangedNotice({ tls }: { tls: TlsState }) {
+  const fp = tls.local_ca.root?.fingerprint_sha256;
+  const [dismissed, setDismissed] = useState(() => localStorage.getItem(CA_NOTICE_KEY));
+  if (!caNoticeVisible(tls.local_ca.ca_changed_at, fp, dismissed)) return null;
+  return (
+    <Alert variant="warning" data-testid="ca-changed">
+      <AlertTitle>{c.changedTitle}</AlertTitle>
+      <AlertDescription className="flex flex-col gap-2">
+        <p>
+          {fmt(c.changed, {
+            time: formatDateTime(tls.local_ca.ca_changed_at),
+            fingerprint: fingerprintLines(fp ?? "")[0] ?? "",
+          })}
+        </p>
+        {tls.local_ca.previous_fingerprint_sha256 ? (
+          <p className="text-xs">
+            {fmt(c.changedOld, { fingerprint: fingerprintLines(tls.local_ca.previous_fingerprint_sha256)[0] ?? "" })}
+          </p>
+        ) : null}
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="self-start"
+          onClick={() => {
+            if (fp) localStorage.setItem(CA_NOTICE_KEY, fp);
+            setDismissed(fp ?? null);
+          }}
+          data-testid="ca-changed-dismiss"
+        >
+          {c.changedDismiss}
+        </Button>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+type QrMode = "page" | "fingerprint" | "download";
+
+// The DER root for the QR code of the certificate page (07 §4.4).
+function useRootDer(enabled: boolean) {
+  return useQuery({
+    queryKey: ["tls-root-der"],
+    queryFn: async () => {
+      const res = await fetch(apiUrl("/tls/root-ca", { format: "der" }), { credentials: "same-origin" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return new Uint8Array(await res.arrayBuffer());
+    },
+    enabled,
+    staleTime: 300_000,
+  });
+}
+
 export default function CertificatePage() {
   const [params, setParams] = useSearchParams();
   const detected = useMemo(() => detectOs(navigator.userAgent, navigator.maxTouchPoints), []);
@@ -179,17 +280,43 @@ export default function CertificatePage() {
   const session = useSession();
   const network = useNetwork(Boolean(session.data));
   const instructions = useInstructions(os);
+  const tls = useTls(Boolean(session.data));
   const root = instructions.data?.root;
-  const qrValue = root ? new URL(root.download_path, window.location.origin).toString() : null;
   const noCa = isProblem(instructions.error, "not-found");
+  const [qrMode, setQrMode] = useState<QrMode>("page");
+  const der = useRootDer(Boolean(root) && qrMode === "page");
+  const pageUrl = tls.data?.local_ca.cert_page_url ?? "https://care-pi.rithviknishad.dev/cert";
+  const qrValue = !root
+    ? null
+    : qrMode === "fingerprint"
+      ? fingerprintQr(root.fingerprint_sha256_colon)
+      : qrMode === "page"
+        ? der.data
+          ? certPageUrl(pageUrl, der.data)
+          : null
+        : new URL(root.download_path, window.location.origin).toString();
+  const qrText =
+    qrMode === "page"
+      ? c.qrPage
+      : qrMode === "fingerprint"
+        ? c.qrFingerprint
+        : fmt(c.qrDownload, { os: c.osNames[os] ?? os });
+  const publicName = tls.data?.public.hostname;
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader title={c.title} description={c.intro} />
+      {tls.data ? <ChangedNotice tls={tls.data} /> : null}
+      {publicName ? (
+        <Alert variant="info">
+          <AlertDescription>{fmt(c.publicHint, { name: `https://${publicName}/` })}</AlertDescription>
+        </Alert>
+      ) : null}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <Card>
           <CardContent className="flex flex-col gap-6">
             <Fingerprint hex={root?.fingerprint_sha256} colon={root?.fingerprint_sha256_colon} noCa={noCa} />
+            {tls.data ? <Constraints tls={tls.data} /> : null}
             <Tabs
               value={os}
               onValueChange={(v) => {
@@ -231,6 +358,30 @@ export default function CertificatePage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col items-center gap-3">
+              <div className="flex w-full flex-col gap-1">
+                <span className="text-xs text-soft-foreground" id="qr-mode-label">
+                  {c.qrMode}
+                </span>
+                <ToggleGroup
+                  aria-labelledby="qr-mode-label"
+                  orientation="vertical"
+                  variant="outline"
+                  size="sm"
+                  value={[qrMode]}
+                  onValueChange={(v: string[]) => {
+                    const next = v[0] as QrMode | undefined;
+                    if (next) setQrMode(next);
+                  }}
+                  className="w-full"
+                  data-testid="qr-mode"
+                >
+                  {(["page", "fingerprint", "download"] as const).map((m) => (
+                    <ToggleGroupItem key={m} value={m} className="w-full justify-start text-xs">
+                      {c.qrModes[m]}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              </div>
               {qrValue ? (
                 <QrCode value={qrValue} className="w-56" />
               ) : noCa ? (
@@ -238,8 +389,12 @@ export default function CertificatePage() {
               ) : (
                 <Skeleton className="size-56" />
               )}
-              <p className="min-h-8 text-center text-xs text-soft-foreground">
-                {noCa ? null : fmt(c.qr, { os: c.osNames[os] ?? os })}
+              <p
+                className="min-h-16 text-center text-xs text-soft-foreground"
+                data-testid="qr-text"
+                data-qr={qrValue ?? ""}
+              >
+                {noCa ? null : qrText}
               </p>
             </CardContent>
           </Card>

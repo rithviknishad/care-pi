@@ -7,18 +7,9 @@ import { Problem, sendJson } from "./http.mjs";
 import { APPLY_STEPS, FE_BUILD_STEPS, runningHostJob, startJob, summary } from "./jobs.mjs";
 import { backupsOverview } from "./backups-logic.mjs";
 import { validateDestinations } from "./restore-api.mjs";
-import {
-  ADDRESS,
-  FINGERPRINT,
-  PRESETS,
-  effectiveConfig,
-  etagOf,
-  hostCheck,
-  network,
-  now,
-  presetMemory,
-} from "./state.mjs";
+import { ADDRESS, PRESETS, effectiveConfig, etagOf, hostCheck, network, now, presetMemory } from "./state.mjs";
 import { agentVersion, maintenanceOf, runningIdentity, updatesSummary } from "./updates.mjs";
+import { publicHost, tailscaleHost, tlsSummary } from "./connectivity.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const SCHEMA_FILE = path.join(ROOT, "agent/internal/config/schema/config.schema.json");
@@ -90,10 +81,12 @@ export function status(state) {
   const problems = [];
   if (flags.mdns_collision) problems.push(`mDNS name collision: the host announces ${net.mdns.advertised}`);
   if (flags.recovery_codes_low) problems.push("2 or fewer recovery codes remain");
+  const pub = publicHost(state);
+  const ts = tailscaleHost(state);
   return {
-    hostnames: [net.mdns.advertised],
-    addresses: [ADDRESS],
-    published: [ADDRESS],
+    hostnames: [...(pub ? [pub] : []), net.mdns.advertised, ...(ts ? [ts] : [])],
+    addresses: net.addresses,
+    published: net.addresses,
     units: units(state),
     images: [
       {
@@ -158,11 +151,7 @@ export function status(state) {
       rtc_present: true,
     },
     network: { mdns_configured: net.mdns.configured, mdns_advertised: net.mdns.advertised, internet_reachable: true },
-    tls: {
-      local_ca: { enabled: true, fingerprint_sha256: FINGERPRINT, not_after: "2036-10-27T10:00:00Z" },
-      public: { enabled: false, hostname: null },
-      tailscale: { enabled: false, hostname: null },
-    },
+    tls: tlsSummary(state),
     fe: {
       provider: state.file.fe.provider,
       build_id: ready ? "8d2f0c1a9b7e" : null,

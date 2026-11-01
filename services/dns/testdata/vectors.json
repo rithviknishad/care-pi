@@ -1,0 +1,102 @@
+{
+  "description": "Test vectors for the care-pi DNS service request signature (services/dns/API.md section 3). The keys are the RFC 8032 section 7.1 test keys: never use them for a real clinic.",
+  "scheme": "CARE-PI-DNS-V1",
+  "canonical_format": "CARE-PI-DNS-V1\\nMETHOD\\nPATH\\nTIMESTAMP\\nhex(SHA-256(body))",
+  "keys": {
+    "current": {
+      "seed_hex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+      "public_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "public_base64": "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo="
+    },
+    "new": {
+      "seed_hex": "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb",
+      "public_hex": "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+      "public_base64": "PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw="
+    }
+  },
+  "empty_body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "acme_password_hash": {
+    "password": "q0kJ3Fh5mQzVb7pX2sLr9tYwN4cGd8eA1uZo6iHjKlM",
+    "sha256_hex": "41dc75c39feb2883704bf3d1d02df30279c469d5f03baae1bed314261fa8cbea"
+  },
+  "requests": [
+    {
+      "name": "register",
+      "method": "POST",
+      "path": "/v1/register",
+      "timestamp": "1798761600",
+      "body": "{\"hostname_hint\":\"lumine\",\"pubkey\":\"11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\",\"nonce\":\"AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA\",\"listing_opt_in\":false}",
+      "body_sha256": "8d76c7f84eae06beec45d4335a76979a13b740de13af1f5f86e1b64dd90648e6",
+      "canonical": "CARE-PI-DNS-V1\nPOST\n/v1/register\n1798761600\n8d76c7f84eae06beec45d4335a76979a13b740de13af1f5f86e1b64dd90648e6",
+      "canonical_hex": "434152452d50492d444e532d56310a504f53540a2f76312f72656769737465720a313739383736313630300a38643736633766383465616530366265656334356434333335613736393739613133623734306465313361663166356638366531623634646439303634386536",
+      "signature": "TRufeuMLWG2B8CDQNyp7GxuZ8upXWyj71NfrlqksXO49l965EEzaC7y55tUtIBsqlxcN9IQruS45n6W17V6NAQ=="
+    },
+    {
+      "name": "status",
+      "method": "GET",
+      "path": "/v1/clinics/lumine-k3x9",
+      "timestamp": "1798761600",
+      "body": "",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonical": "CARE-PI-DNS-V1\nGET\n/v1/clinics/lumine-k3x9\n1798761600\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonical_hex": "434152452d50492d444e532d56310a4745540a2f76312f636c696e6963732f6c756d696e652d6b3378390a313739383736313630300a65336230633434323938666331633134396166626634633839393666623932343237616534316534363439623933346361343935393931623738353262383535",
+      "signature": "4FGn2xCQ/rgRYOn3NC2gkWYvZRb1gpOP2X13blLQPr5NDD0RH0LZwXStI0EeoCk5mpSNcTLrPFU0pfrAe5CsDA=="
+    },
+    {
+      "name": "address",
+      "method": "PUT",
+      "path": "/v1/clinics/lumine-k3x9/address",
+      "timestamp": "1798761600",
+      "body": "{\"ipv4\":\"192.168.1.23\",\"ipv6\":null}",
+      "body_sha256": "339370aff12f70c67beeb06686b315840b3dfa576b34479a49767b624b6217d4",
+      "canonical": "CARE-PI-DNS-V1\nPUT\n/v1/clinics/lumine-k3x9/address\n1798761600\n339370aff12f70c67beeb06686b315840b3dfa576b34479a49767b624b6217d4",
+      "canonical_hex": "434152452d50492d444e532d56310a5055540a2f76312f636c696e6963732f6c756d696e652d6b3378392f616464726573730a313739383736313630300a33333933373061666631326637306336376265656230363638366233313538343062336466613537366233343437396134393736376236323462363231376434",
+      "signature": "Km62Ebr0YPOvKs+mD8HBbBIYGSIuH20JtOt/1AAsACiQ3NOFQL7vyYs6Dd78Byp8A/nzPDiPUrAgt37rAXfEBQ=="
+    },
+    {
+      "name": "settings",
+      "method": "PATCH",
+      "path": "/v1/clinics/lumine-k3x9",
+      "timestamp": "1798761600",
+      "body": "{\"listing_opt_in\":true}",
+      "body_sha256": "792a6d1e2a992282db62c32895974b472275654543a317597d331c4797bc19f5",
+      "canonical": "CARE-PI-DNS-V1\nPATCH\n/v1/clinics/lumine-k3x9\n1798761600\n792a6d1e2a992282db62c32895974b472275654543a317597d331c4797bc19f5",
+      "canonical_hex": "434152452d50492d444e532d56310a50415443480a2f76312f636c696e6963732f6c756d696e652d6b3378390a313739383736313630300a37393261366431653261393932323832646236326333323839353937346234373232373536353435343361333137353937643333316334373937626331396635",
+      "signature": "1LcyVp59J5wZKUmvgBOVgII+7AJLjnarjL8gmugOYqzXkW0o6gROW6DlBMgWYlZCaGwZFa9XfH9DRSEq+9WwAA=="
+    },
+    {
+      "name": "rotate_with_new_key",
+      "method": "POST",
+      "path": "/v1/clinics/lumine-k3x9/rotate",
+      "timestamp": "1798761600",
+      "body": "{\"pubkey\":\"PUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw=\"}",
+      "body_sha256": "25642bdd5b0bffc8404da23d9aac2ec2136a472f4897960f90bcc907b36d3bb8",
+      "canonical": "CARE-PI-DNS-V1\nPOST\n/v1/clinics/lumine-k3x9/rotate\n1798761600\n25642bdd5b0bffc8404da23d9aac2ec2136a472f4897960f90bcc907b36d3bb8",
+      "canonical_hex": "434152452d50492d444e532d56310a504f53540a2f76312f636c696e6963732f6c756d696e652d6b3378392f726f746174650a313739383736313630300a32353634326264643562306266666338343034646132336439616163326563323133366134373266343839373936306639306263633930376233366433626238",
+      "signature": "ORZueO8mjAMAP6xS51h5zOlOHmVUSYHg20U8THZNalkU0hbReD0Z5g6SDbwBjX0qUDIEB/30IoNCsHr6x6rQBA==",
+      "signature_new": "WL8PBwqw6JAG+ozKSJcSdaIYQ9ibFAxv1vJD4W3JnhM7QiKpxEZDXtfaXj9i4zmsQi+BNiESGEdopRyWYClJBA=="
+    },
+    {
+      "name": "rotate",
+      "method": "POST",
+      "path": "/v1/clinics/lumine-k3x9/rotate",
+      "timestamp": "1798761600",
+      "body": "{}",
+      "body_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "canonical": "CARE-PI-DNS-V1\nPOST\n/v1/clinics/lumine-k3x9/rotate\n1798761600\n44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "canonical_hex": "434152452d50492d444e532d56310a504f53540a2f76312f636c696e6963732f6c756d696e652d6b3378392f726f746174650a313739383736313630300a34343133366661333535623336373861313134366164313666376538363439653934666234666332316665373765383331306330363066363163616166663861",
+      "signature": "4xVU00igwKO4r5kTKNNnSykwz8D9ZRAZurKxXItqCk0qFp33zlCfXgC5tageIFXbnVgelxKcjtV+S5iFDz76AQ=="
+    },
+    {
+      "name": "delete",
+      "method": "DELETE",
+      "path": "/v1/clinics/lumine-k3x9",
+      "timestamp": "1798761600",
+      "body": "",
+      "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonical": "CARE-PI-DNS-V1\nDELETE\n/v1/clinics/lumine-k3x9\n1798761600\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "canonical_hex": "434152452d50492d444e532d56310a44454c4554450a2f76312f636c696e6963732f6c756d696e652d6b3378390a313739383736313630300a65336230633434323938666331633134396166626634633839393666623932343237616534316534363439623933346361343935393931623738353262383535",
+      "signature": "bYxrkrbQZlJI4O2E0Vuefs1/hmz389RJTQzGAZc2DdUoBIHMgXhfulJ5zfIo0iuPPXS/aigxMmtx0on9jBLvDQ=="
+    }
+  ]
+}

@@ -11,15 +11,22 @@
 		# Port 443/udp is not published, so HTTP/3 is off.
 		protocols h1 h2
 	}
+	# The local CA uses the name-constrained root of the agent (07 section 4.1, docs/connectivity.md).
+	# Caddy makes its intermediate and the leaf certificates below this root. The root permits
+	# only the names and the address ranges of its name constraints.
+	pki {
+		ca local {
+			name care-pi
+			root {
+				cert /etc/care-pi-ca/root.crt
+				key /etc/care-pi-ca/root.key
+			}
+		}
+	}
 }
 
-# Port 80 serves only this redirect.
-http://pharmacy.local, http://192.168.1.10, http://10.0.0.5 {
-	redir https://{host}{uri} 308
-}
-
-https://pharmacy.local, https://192.168.1.10, https://10.0.0.5 {
-	tls internal
+# The routes of Care on port 443. Each site of port 443 imports them.
+(care) {
 	encode zstd gzip
 	header -Server
 	log {
@@ -155,9 +162,8 @@ https://pharmacy.local, https://192.168.1.10, https://10.0.0.5 {
 }
 
 # The console origin (S48): the console SPA at /, the API at /api/v1/, and the public operations
-# at /_care-pi/. Each request goes to the agent. The same certificates as port 443, no HSTS.
-https://pharmacy.local:8443, https://192.168.1.10:8443, https://10.0.0.5:8443 {
-	tls internal
+# at /_care-pi/. Each request goes to the agent. Each site of port 8443 imports these routes.
+(console) {
 	header -Server
 	header {
 		X-Frame-Options SAMEORIGIN
@@ -191,4 +197,21 @@ https://pharmacy.local:8443, https://192.168.1.10:8443, https://10.0.0.5:8443 {
 		header Retry-After 5
 		respond `{"type":"https://care-pi.rithviknishad.dev/problems/unavailable","title":"The agent is not ready","status":503,"detail":"care-pi.service does not answer. Run: sudo systemctl status care-pi.service","instance":"/","retry_after_s":5}` 503
 	}
+}
+
+# Port 80 serves only redirects (P9).
+http://pharmacy.local, http://192.168.1.10, http://10.0.0.5 {
+	redir https://{host}{uri} 308
+}
+
+# The local CA mode: pharmacy.local and the LAN addresses. No HSTS (07 F7).
+https://pharmacy.local, https://192.168.1.10, https://10.0.0.5 {
+	tls internal
+	import care
+}
+
+# The console on port 8443: the same certificates as port 443.
+https://pharmacy.local:8443, https://192.168.1.10:8443, https://10.0.0.5:8443 {
+	tls internal
+	import console
 }

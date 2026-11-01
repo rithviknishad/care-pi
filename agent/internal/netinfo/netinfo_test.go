@@ -100,3 +100,25 @@ func TestWaitLANIPv4Timeout(t *testing.T) {
 		t.Fatalf("waiting called %d times, %d reads", said, src.reads)
 	}
 }
+
+func TestTailscaleIPv4(t *testing.T) {
+	src := fakeSource{
+		{Name: "eth0", Up: true, Addrs: []netip.Prefix{netip.MustParsePrefix("192.168.1.10/24")}},
+		{Name: "tailscale0", Up: true, Addrs: []netip.Prefix{netip.MustParsePrefix("fd7a:115c:a1e0::1/128"), netip.MustParsePrefix("100.101.102.103/32")}},
+	}
+	if got := TailscaleIPv4(src); got != "100.101.102.103" {
+		t.Fatalf("tailscale %q", got)
+	}
+	if lan, _ := LANIPv4(src); len(lan) != 1 || lan[0] != "192.168.1.10" {
+		t.Fatalf("the LAN list must not have the Tailscale address: %v", lan)
+	}
+	if got := TailscaleIPv4(fakeSource{{Name: "tailscale0", Up: false, Addrs: []netip.Prefix{netip.MustParsePrefix("100.101.102.103/32")}}}); got != "" {
+		t.Fatalf("a down interface gave %q", got)
+	}
+	if !WaitAddress(context.Background(), src, "100.101.102.103", time.Second, 10*time.Millisecond) {
+		t.Fatal("wait")
+	}
+	if WaitAddress(context.Background(), src, "100.1.1.1", 30*time.Millisecond, 10*time.Millisecond) {
+		t.Fatal("wait for a missing address")
+	}
+}

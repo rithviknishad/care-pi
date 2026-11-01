@@ -38,11 +38,12 @@ import { validateSize } from "@/features/setup/size-logic";
 import { formatBytes, formatDateTime, formatTime } from "@/lib/format";
 import { reservedNames } from "@/lib/schema";
 import { fmt, strings } from "@/lib/strings";
+import { ConnectivityTab } from "@/features/connectivity/connectivity-tab";
 import { BackupsTab } from "./backups-tab";
 import { ConfigChange } from "./config-change";
 
 const st = strings.settings;
-const TABS = ["identity", "size", "env", "backups", "fe", "solution", "power"] as const;
+const TABS = ["identity", "connectivity", "size", "env", "backups", "fe", "solution", "power"] as const;
 type Tab = (typeof TABS)[number];
 
 function WithEffective({ render }: { render: (config: Config, etag: string) => React.ReactNode }) {
@@ -322,6 +323,7 @@ function PowerTab() {
 
 const TAB_LABELS: Record<Tab, string> = {
   identity: st.identity,
+  connectivity: st.connectivity,
   size: st.size,
   env: st.env,
   backups: st.backups,
@@ -352,6 +354,11 @@ export default function SettingsPage() {
             <TabsContent value="identity">
               {tab === "identity" ? (
                 <WithEffective render={(c, etag) => <IdentityTab key={etag} config={c} />} />
+              ) : null}
+            </TabsContent>
+            <TabsContent value="connectivity">
+              {tab === "connectivity" ? (
+                <WithEffective render={(c) => <ConnectivityTab hostname={c.identity?.hostname ?? "care"} />} />
               ) : null}
             </TabsContent>
             <TabsContent value="size">

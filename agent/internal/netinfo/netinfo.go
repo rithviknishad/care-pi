@@ -168,6 +168,62 @@ func WaitLANIPv4(ctx context.Context, src Source, timeout, poll time.Duration, w
 	}
 }
 
+// tailnetPrefix is the CGNAT range of the Tailscale addresses.
+var tailnetPrefix = netip.MustParsePrefix("100.64.0.0/10")
+
+// TailscaleIPv4 returns the IPv4 address of the Tailscale interface (tailscale0), or "".
+// LANIPv4 never returns it: the LAN list drives default_sni and avahi. The pod publishes on this
+// address only when the Tailscale mode is on (docs/connectivity.md).
+func TailscaleIPv4(src Source) string {
+	ifs, err := src.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, i := range ifs {
+		if !i.Up || !strings.HasPrefix(i.Name, "tailscale") {
+			continue
+		}
+		for _, p := range i.Addrs {
+			if a := p.Addr(); a.Is4() && tailnetPrefix.Contains(a) {
+				return a.String()
+			}
+		}
+	}
+	return ""
+}
+
+// WaitAddress waits until an up interface has the address, or until timeout ends.
+// The pod unit runs it before the start when it publishes on the Tailscale address (care-pi network wait-address).
+func WaitAddress(ctx context.Context, src Source, addr string, timeout, poll time.Duration) bool {
+	want, err := netip.ParseAddr(addr)
+	if err != nil {
+		return false
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		if ifs, err := src.Interfaces(); err == nil {
+			for _, i := range ifs {
+				if !i.Up {
+					continue
+				}
+				for _, p := range i.Addrs {
+					if p.Addr() == want {
+						return true
+					}
+				}
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(min(poll, time.Until(deadline))):
+		}
+	}
+}
+
 // MDNSName returns the mDNS host name for a hostname label.
 func MDNSName(hostname string) string {
 	return hostname + ".local"

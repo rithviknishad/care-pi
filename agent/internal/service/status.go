@@ -16,6 +16,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/jobs"
 	"github.com/rithviknishad/care-pi/agent/internal/netinfo"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
+	"github.com/rithviknishad/care-pi/agent/internal/render"
 	"github.com/rithviknishad/care-pi/agent/internal/setup"
 	"github.com/rithviknishad/care-pi/agent/internal/status"
 	"github.com/rithviknishad/care-pi/agent/internal/update"
@@ -332,7 +333,9 @@ func (s *Service) tlsSummary(cfg *config.Config) TLSSummary {
 		t.LocalCA.Fingerprint, t.LocalCA.NotAfter = &fp, &na
 	}
 	t.Public.Enabled = cfg.TLS.Public.Enabled
+	t.Public.Hostname = strPtr(render.PublicHost(cfg))
 	t.Tailscale.Enabled = cfg.TLS.Tailscale.Enabled
+	t.Tailscale.Hostname = strPtr(render.TailscaleHost(cfg))
 	return t
 }
 

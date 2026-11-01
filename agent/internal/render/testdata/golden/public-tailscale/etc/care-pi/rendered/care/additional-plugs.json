@@ -1,0 +1,8 @@
+[
+  {
+    "name": "care_multihost_files_be",
+    "package_name": "git+https://github.com/ohcnetwork/care_multihost_files_be.git",
+    "version": "@cccccccccccccccccccccccccccccccccccccccc",
+    "configs": {}
+  }
+]

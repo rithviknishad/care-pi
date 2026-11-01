@@ -20,6 +20,7 @@ export const qk = {
   fe: ["fe"] as const,
   care: ["care"] as const,
   tls: ["tls"] as const,
+  wifiScan: ["network", "wifi-scan"] as const,
   jobs: ["jobs"] as const,
   job: (id: string) => ["job", id] as const,
   instructions: (os: ClientOs) => ["tls-instructions", os] as const,
@@ -181,8 +182,18 @@ export function useCare(enabled = true) {
   return useQuery({ queryKey: qk.care, queryFn: () => call(api.GET("/care")), enabled });
 }
 
-export function useTls(enabled = true) {
-  return useQuery({ queryKey: qk.tls, queryFn: () => call(api.GET("/tls")), enabled });
+export function useTls(enabled = true, refetchInterval: number | false = false) {
+  return useQuery({ queryKey: qk.tls, queryFn: () => call(api.GET("/tls")), enabled, refetchInterval });
+}
+
+// The scan takes about 5 s on the device. It runs when the operator asks (enabled false: refetch()).
+export function useWifiScan() {
+  return useQuery({
+    queryKey: qk.wifiScan,
+    queryFn: () => call(api.GET("/network/wifi/scan")),
+    enabled: false,
+    staleTime: 0,
+  });
 }
 
 export function useJobs() {

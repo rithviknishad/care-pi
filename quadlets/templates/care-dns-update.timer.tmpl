@@ -1,0 +1,15 @@
+# {{.Header}}
+# The public mode (docs/connectivity.md): send the LAN address of {{.PublicHost}} to the DNS service.
+# The service records the address that the agent sends (a LAN address), not the public address of the clinic.
+# "care-pi apply" of an address change (the NetworkManager hook) also sends it.
+
+[Unit]
+Description=care-pi DNS address update ({{.PublicHost}})
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target

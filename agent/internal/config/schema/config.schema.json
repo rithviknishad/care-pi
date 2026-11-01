@@ -127,7 +127,8 @@
             "clinic_id": {
               "type": ["string", "null"],
               "pattern": "^[a-z0-9][a-z0-9-]{1,62}$"
-            }
+            },
+            "acme_ca": { "type": ["string", "null"], "pattern": "^https://[^\\s]+$" }
           },
           "allOf": [
             {
@@ -140,8 +141,18 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "enabled": { "type": "boolean" }
-          }
+            "enabled": { "type": "boolean" },
+            "hostname": {
+              "type": ["string", "null"],
+              "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+ts\\.net$"
+            }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] },
+              "then": { "required": ["hostname"], "properties": { "hostname": { "type": "string" } } }
+            }
+          ]
         }
       }
     },
@@ -336,7 +347,8 @@
               "required": ["ssid"],
               "properties": {
                 "ssid": { "type": "string", "minLength": 1, "maxLength": 32 },
-                "failover": { "type": "boolean" }
+                "failover": { "type": "boolean" },
+                "country": { "type": ["string", "null"], "pattern": "^[A-Z]{2}$" }
               }
             }
           ]

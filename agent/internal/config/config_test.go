@@ -67,14 +67,32 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
-func TestPublicTLSIsApplyTimeError(t *testing.T) {
+// Phase 6 implements tls.public, tls.tailscale, and network.wifi. tls.local_ca stays required.
+func TestPhase6Keys(t *testing.T) {
 	c, err := Load("testdata/valid-public-tls.yaml")
 	if err != nil {
 		t.Fatalf("the schema must accept tls.public: %v", err)
 	}
-	err = c.CheckImplemented()
-	if !errors.Is(err, ErrNotImplemented) || !strings.Contains(err.Error(), "tls.public") {
-		t.Fatalf("want a not-implemented error for tls.public, got %v", err)
+	if err := c.CheckImplemented(); err != nil {
+		t.Fatalf("Phase 6 implements tls.public: %v", err)
+	}
+	c, err = Load("testdata/valid-phase6.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.TLS.Tailscale.Enabled || c.TLS.Tailscale.Hostname != "care.tail1234.ts.net" || c.TLS.Public.ACMECA == "" ||
+		c.Network.WiFi == nil || c.Network.WiFi.Country != "IN" || !c.Network.WiFi.Failover {
+		t.Fatalf("phase 6 keys: %+v %+v", c.TLS, c.Network.WiFi)
+	}
+	if err := c.CheckImplemented(); err != nil {
+		t.Fatal(err)
+	}
+	c.TLS.LocalCA.Enabled = false
+	if err := c.CheckImplemented(); !errors.Is(err, ErrNotImplemented) || !strings.Contains(err.Error(), "tls.local_ca") {
+		t.Fatalf("want a not-implemented error for tls.local_ca, got %v", err)
+	}
+	if _, err := Load("testdata/invalid-tailscale-no-hostname.yaml"); err == nil {
+		t.Fatal("tls.tailscale.enabled without hostname must fail")
 	}
 }
 

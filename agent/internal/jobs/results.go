@@ -44,3 +44,28 @@ type SupportBundleResult struct {
 	ExpiresAt    time.Time `json:"expires_at"`
 	DownloadPath string    `json:"download_path"`
 }
+
+// TLSPublicResult is the result of a tls-public-enrol job (schema TlsPublicResult).
+type TLSPublicResult struct {
+	Kind     string  `json:"kind"`
+	Enabled  bool    `json:"enabled"`
+	Hostname *string `json:"hostname"`
+	// Certificate is issued, pending, or none (the mode is off).
+	Certificate string `json:"certificate"`
+}
+
+// TLSTailscaleResult is the result of a tls-tailscale-enrol job (schema TlsTailscaleResult).
+type TLSTailscaleResult struct {
+	Kind     string  `json:"kind"`
+	Enabled  bool    `json:"enabled"`
+	Hostname *string `json:"hostname"`
+	Tailnet  *string `json:"tailnet"`
+}
+
+// WiFiResult is the result of a network-wifi job (schema NetworkWifiResult).
+type WiFiResult struct {
+	Kind      string  `json:"kind"`
+	SSID      *string `json:"ssid"`
+	Connected bool    `json:"connected"`
+	Address   *string `json:"address"`
+}

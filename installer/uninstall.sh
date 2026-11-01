@@ -7,6 +7,11 @@
 # It does not undo the host preparation of install.sh: the packages, the kernel
 # command line, the zram, avahi, and journald settings, the host name, the apt
 # holds, and the unattended-upgrades settings stay in place.
+# Phase 6 (docs/connectivity.md): the drop-in of the firewall and care-dns-update.timer
+# go with the units. The package tailscale (with its node key), the NetworkManager
+# profile care-pi-wifi, and the registration of the public name stay: the device can
+# need the Wi-Fi to stay reachable. Remove them first with "care-pi tls tailscale
+# disable", "care-pi network wifi remove", and "care-pi tls public disable".
 #
 # Usage: sudo sh uninstall.sh [--yes] [--purge-data]
 
@@ -51,6 +56,9 @@ Options:
 The script keeps the packages and the host settings that install.sh made
 (kernel command line, zram, avahi, journald, host name, apt holds, upgrades).
 It removes the care-pi firewall unit and its nftables table.
+It keeps tailscale, the Wi-Fi profile care-pi-wifi, and the public name. Before
+the uninstall, run "care-pi tls tailscale disable", "care-pi network wifi remove",
+and "care-pi tls public disable" to remove them.
 EOF
 }
 

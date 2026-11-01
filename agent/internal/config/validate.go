@@ -63,14 +63,9 @@ func (c *Config) check() []Detail {
 // apply calls it. render and config validate do not.
 func (c *Config) CheckImplemented() error {
 	var errs []error
+	// The local CA mode is the offline fallback of the public mode (S36.3) and serves the LAN addresses.
 	if !c.TLS.LocalCA.Enabled {
-		errs = append(errs, fmt.Errorf("tls.local_ca.enabled: false is %w; Phase 1 serves only the local CA mode", ErrNotImplemented))
-	}
-	if c.TLS.Public.Enabled {
-		errs = append(errs, fmt.Errorf("tls.public is %w (Phase 6); set tls.public.enabled to false", ErrNotImplemented))
-	}
-	if c.TLS.Tailscale.Enabled {
-		errs = append(errs, fmt.Errorf("tls.tailscale is %w (Phase 6); set tls.tailscale.enabled to false", ErrNotImplemented))
+		errs = append(errs, fmt.Errorf("tls.local_ca.enabled: false is %w; the local CA mode serves the LAN addresses and the offline fallback (S36)", ErrNotImplemented))
 	}
 	// Phase 4 implements solution.track pinned and solution.plugs (docs/solutions.md, sections 7 and 12).
 	if c.Solution.Track == "pinned" && c.Solution.Pin == "" {

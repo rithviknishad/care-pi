@@ -10,6 +10,7 @@
 //   curl -X POST localhost:4011/__mock/reset -d '{"scenario":"ready","step_ms":200}'
 //   curl -X POST localhost:4011/__mock/reset -d '{"scenario":"ready","backups":"degraded"}'
 //   MOCK_SCENARIO=restore node mock/server.mjs   (a claimed device with the backup disk of an old device)
+//   curl -X POST localhost:4011/__mock/reset -d '{"scenario":"ready","connectivity":"migrated"}'   (lib/connectivity.mjs)
 //
 // Credentials: claim code 4F7K-Q2MX-9PDA, Imager password "imager-password",
 // console password of the ready scenario "correct horse battery staple", TOTP code 000000.
@@ -25,6 +26,7 @@ import { restoreRoutes } from "./lib/restore-api.mjs";
 import { DR_KEY } from "./lib/backups-state.mjs";
 import { freshState, now } from "./lib/state.mjs";
 import { freshUpdates, updatesRoutes } from "./lib/updates.mjs";
+import { connectivityRoutes, freshConnectivity, tailscaleLogin } from "./lib/connectivity.mjs";
 
 const PORT = Number(process.env.MOCK_PORT ?? 4011);
 const PRISM_URL = process.env.PRISM_URL ?? null;
@@ -32,6 +34,7 @@ const PRISM_URL = process.env.PRISM_URL ?? null;
 function fresh(options) {
   const s = freshState(options);
   s.u = freshUpdates(options);
+  s.conn = freshConnectivity(options);
   return s;
 }
 
@@ -68,6 +71,7 @@ const ROUTES = [
   ...backupsRoutes,
   ...restoreRoutes,
   ...updatesRoutes,
+  ...connectivityRoutes,
   ...phaseRoutes,
 ].map(compile);
 const UNSAFE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -115,6 +119,10 @@ async function control(req, res, pathname) {
       backups: state.backups.scenario,
       updates: state.u.scenario,
     });
+    return true;
+  }
+  if (pathname === "/__mock/tailscale-login" && req.method === "POST") {
+    sendJson(res, 200, tailscaleLogin(state));
     return true;
   }
   if (pathname === "/__mock/state" && req.method === "GET") {

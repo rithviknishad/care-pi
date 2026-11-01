@@ -66,6 +66,7 @@ func checkPhase(p string) error {
 // runApply runs apply in this process behind the apply lock. When the agent runs, it does not
 // matter: the lock serialises the two, and the job journal of this run is in the same directory.
 func runApply(cmd *cobra.Command, reason string) error {
+	svc := newService(cmd)
 	_, err := apply.Run(cmd.Context(), apply.Options{
 		Paths:        rootPaths(),
 		ConfigPath:   configPath(cmd),
@@ -82,7 +83,9 @@ func runApply(cmd *cobra.Command, reason string) error {
 		Phase:        applyFlags.phase,
 		AddressWait:  addressWait,
 		// The plan action cutover takes the checkpoint of Phase 3 (docs/api/README.md section 13.11).
-		Checkpoint: newService(cmd).Checkpoint,
+		Checkpoint: svc.Checkpoint,
+		// The plan action update-dns: the apply of the NetworkManager hook sends a new LAN address to the DNS service.
+		DNSAddress: svc.UpdateDNSAddress,
 	})
 	return err
 }

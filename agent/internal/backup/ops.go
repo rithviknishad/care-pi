@@ -250,8 +250,12 @@ func (o Ops) backup(ctx context.Context, s *Session, tag string) (*BackupSummary
 		host = "care"
 	}
 	var extra []string
-	if _, err := os.Stat(o.Paths.Abs(paths.CaddyCA)); err == nil {
-		extra = append(extra, paths.CaddyCA)
+	// The root of the agent (Phase 6) and the local CA of Caddy: a restore from backup keeps the root that the
+	// clinic devices trust (docs/backups.md).
+	for _, dir := range []string{paths.CADir, paths.CaddyCA} {
+		if _, err := os.Stat(o.Paths.Abs(dir)); err == nil {
+			extra = append(extra, dir)
+		}
 	}
 	out, err := o.Runner.Run(ctx, s.Cmd(SnapshotArgs(tag, host, extra...)...))
 	if err != nil {

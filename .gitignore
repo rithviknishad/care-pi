@@ -33,3 +33,5 @@ console/playwright-report/
 
 # the Raspberry Pi image build (image/build.sh)
 image/out/
+# cloudflare wrangler local state
+.wrangler/
