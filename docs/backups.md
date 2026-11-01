@@ -121,6 +121,11 @@ A rotation (`POST /backups/recovery-key/rotate`, job `recovery-key-rotate`) has 
 With `remove_old_repositories: true` (the default; the CLI flag `--keep-old-repositories` turns it off), the job deletes
 the old repositories at the end. Care restarts one time in the job (the maintenance page, about 1 minute).
 
+The step `rekey-local` records the re-key in `/var/lib/care-pi/state/rekey.json` (the job id and both key ids) before it
+moves the repository. A failed rotation that runs again resumes the re-key only from that record. With
+`--keep-old-repositories`, the old local repository stays as `/var/lib/care-pi/backup/pg.legacy-<key id>`, so the next
+rotation never takes a kept `pg.legacy` for its own; a `pg.legacy` without the record is kept as well (renamed), never deleted.
+
 ## 3. Destinations
 
 | Type | Location | restic repository |

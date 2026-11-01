@@ -278,6 +278,75 @@ func TestRotateKeepKey(t *testing.T) {
 	check(t, "steps", te.steps(), []string{"check-destinations:succeeded", "pause-backups:succeeded", "maintenance-on:succeeded", "stop-app:succeeded",
 		"stop-db:succeeded", "rekey-local:succeeded", "start-db:succeeded", "ensure-stanza:succeeded", "start-app:succeeded",
 		"wait-healthy:succeeded", "maintenance-off:succeeded", "backup-full:succeeded", "remove-old-repositories:succeeded", "resume-backups:succeeded"})
+	if _, err := os.Stat(te.p.Abs(RekeyFile)); !os.IsNotExist(err) {
+		t.Fatalf("the record of the re-key stays: %v", err)
+	}
+}
+
+// TestRotateKeptLegacy: a pg.legacy that an earlier rotation kept (--keep-old-repositories) is not a resumed
+// re-key: the next rotation keeps it and the live repository, and renames its own old repository pg.legacy-<key id>.
+// A record of this re-key (a failed run) resumes it.
+func TestRotateKeptLegacy(t *testing.T) {
+	write := func(p paths.Paths, rel, data string) {
+		t.Helper()
+		if err := os.MkdirAll(p.Abs(rel), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p.Abs(rel+"/marker"), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func(p paths.Paths, rel string) string {
+		data, _ := os.ReadFile(p.Abs(rel + "/marker"))
+		return string(data)
+	}
+	setPass := func(context.Context, string) error { return nil }
+
+	te := newTenv(t, jobs.KindRecoveryKeyRotate)
+	k, _, _, err := te.e.Keys().Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	te.fake.On(infoCmd, host.Response{Out: info("20261030-010000F")})
+	write(te.p, paths.BackupPG, "live")
+	write(te.p, LegacyDir, "kept by an earlier rotation")
+	if _, err := Rotate(context.Background(), te.e, RotateRequest{Source: jobs.SourceCLI}, setPass); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(te.p, LegacyDir+"-"+k.ID()); got != "live" {
+		t.Fatalf("the repository before this re-key: %q", got)
+	}
+	if got := read(te.p, LegacyDir+"-"+te.rec.ID()); got != "kept by an earlier rotation" {
+		t.Fatalf("the repository of the earlier rotation: %q", got)
+	}
+	if _, err := os.Stat(te.p.Abs(LegacyDir)); !os.IsNotExist(err) {
+		t.Fatal("pg.legacy stays: the next rotation would see it")
+	}
+	if _, err := os.Stat(te.p.Abs(RekeyFile)); !os.IsNotExist(err) {
+		t.Fatalf("the record of the re-key stays: %v", err)
+	}
+
+	// A failed run of this re-key left its record, pg.legacy, and a new repository: the run resumes.
+	te2 := newTenv(t, jobs.KindRecoveryKeyRotate)
+	k2, _, _, err := te2.e.Keys().Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	te2.fake.On(infoCmd, host.Response{Out: info("20261030-010000F")})
+	write(te2.p, paths.BackupPG, "new, without a backup")
+	write(te2.p, LegacyDir, "live before the failed run")
+	if err := writeRekey(te2.p, Rekey{JobID: "20261030T010000.000Z-recovery-key-rotate", FromKeyID: k2.ID(), ToKeyID: k2.ID()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Rotate(context.Background(), te2.e, RotateRequest{Source: jobs.SourceCLI}, setPass); err != nil {
+		t.Fatal(err)
+	}
+	if got := read(te2.p, paths.BackupPG); got != "" {
+		t.Fatalf("the new repository of the failed run stays: %q", got)
+	}
+	if got := read(te2.p, LegacyDir+"-"+k2.ID()); got != "live before the failed run" {
+		t.Fatalf("the repository before the re-key: %q", got)
+	}
 }
 
 // TestRotateNewKeyFiles: a rotation to a new key sends a db and a files snapshot to the new repository of

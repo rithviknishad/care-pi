@@ -1227,7 +1227,8 @@ recovery key, no destination, and no backup timer. After the upgrade to the agen
    the job `recovery-key-rotate`. It moves the old repository to `/var/lib/care-pi/backup/pg.legacy`, writes the cipher pass
    that comes from the recovery key, restarts care-db (the maintenance page, about 1 minute), runs `stanza-create`, makes a
    full backup, and sends a snapshot to each destination. With `remove_old_repositories: true` (default) it then deletes
-   `pg.legacy`. The restore window starts at the new full backup. The destinations keep the old copies until their retention removes them.
+   `pg.legacy`; else it renames it `pg.legacy-<key id>`. The job records the re-key in `state/rekey.json` and resumes a failed
+   re-key only from that record (`docs/backups.md` section 2.4). The restore window starts at the new full backup. The destinations keep the old copies until their retention removes them.
 5. After the re-key, the local repository needs only the recovery key, also without the snapshot of `/etc/care-pi`. The banner goes away.
 
 A new Phase 3 host needs no migration: the recovery key exists before the finish job, so the first `stanza-create` uses the

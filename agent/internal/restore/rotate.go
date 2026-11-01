@@ -2,6 +2,7 @@ package restore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/rithviknishad/care-pi/agent/internal/backup"
 	"github.com/rithviknishad/care-pi/agent/internal/jobs"
+	"github.com/rithviknishad/care-pi/agent/internal/lock"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/problem"
 	"github.com/rithviknishad/care-pi/agent/internal/secrets"
@@ -27,6 +29,60 @@ type SetCipherPass func(ctx context.Context, pass string) error
 
 // LegacyDir is the old local repository of a re-key.
 const LegacyDir = paths.BackupPG + ".legacy"
+
+// RekeyFile records the re-key of the local repository that runs. A rotation resumes a re-key only
+// from this record, never from a pg.legacy directory alone: a kept pg.legacy is not a resumed run.
+const RekeyFile = paths.StateDir + "/rekey.json"
+
+// Rekey is the content of RekeyFile.
+type Rekey struct {
+	JobID     string `json:"job_id"`
+	FromKeyID string `json:"from_key_id"`
+	ToKeyID   string `json:"to_key_id"`
+}
+
+func readRekey(p paths.Paths) *Rekey {
+	data, err := os.ReadFile(p.Abs(RekeyFile))
+	if err != nil {
+		return nil
+	}
+	var r Rekey
+	if json.Unmarshal(data, &r) != nil || r.ToKeyID == "" {
+		return nil
+	}
+	return &r
+}
+
+func writeRekey(p paths.Paths, r Rekey) error {
+	data, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(p.Abs(paths.StateDir), 0o700); err != nil {
+		return err
+	}
+	return lock.WriteFileAtomic(p.Abs(RekeyFile), append(data, '\n'), 0o600)
+}
+
+func clearRekey(p paths.Paths) error {
+	if err := os.Remove(p.Abs(RekeyFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// keepLegacy renames pg.legacy to pg.legacy-<suffix> (with the job id when that name exists), so that
+// the next re-key finds no pg.legacy. It returns the new name, or "" when there is no pg.legacy.
+func keepLegacy(p paths.Paths, suffix, jobID string) (string, error) {
+	if _, err := os.Stat(p.Abs(LegacyDir)); err != nil {
+		return "", nil
+	}
+	dst := LegacyDir + "-" + suffix
+	if _, err := os.Stat(p.Abs(dst)); err == nil {
+		dst += "-" + jobID
+	}
+	return dst, os.Rename(p.Abs(LegacyDir), p.Abs(dst))
+}
 
 // Rotate runs the steps of recovery-key-rotate. Each step checks its result first, so a failed
 // rotation can run again and continues where it stopped.
@@ -91,13 +147,34 @@ func Rotate(ctx context.Context, e Env, req RotateRequest, setPass SetCipherPass
 	}
 	if err := e.Step("rekey-local: "+paths.BackupPG, "rekey-local", func() error {
 		cur, _ := secrets.Store{Paths: e.Paths}.Read(secrets.PGBackRestCipher)
-		_, legacyErr := os.Stat(e.Paths.Abs(LegacyDir))
-		if cur == target.CipherPass() && legacyErr == nil {
-			e.logf("the local repository already has the cipher pass of the key %s", target.ID())
+		rk := readRekey(e.Paths)
+		resume := rk != nil && rk.FromKeyID == old.ID() && rk.ToKeyID == target.ID()
+		if resume && cur == target.CipherPass() {
+			e.logf("the local repository already has the cipher pass of the key %s (job %s)", target.ID(), rk.JobID)
 			return nil
 		}
+		_, legacyErr := os.Stat(e.Paths.Abs(LegacyDir))
+		if !resume {
+			if legacyErr == nil {
+				// pg.legacy without the record of this re-key: an old repository that an earlier rotation kept.
+				// It stays (under another name), and so does the live repository.
+				suffix := e.Rec.ID()
+				if rk != nil {
+					suffix = rk.FromKeyID
+				}
+				moved, err := keepLegacy(e.Paths, suffix, e.Rec.ID())
+				if err != nil {
+					return err
+				}
+				e.logf("%s is not of this re-key: kept as %s", LegacyDir, moved)
+				legacyErr = os.ErrNotExist
+			}
+			if err := writeRekey(e.Paths, Rekey{JobID: e.Rec.ID(), FromKeyID: old.ID(), ToKeyID: target.ID()}); err != nil {
+				return err
+			}
+		}
 		if legacyErr == nil {
-			// An earlier run moved the old repository: the directory now is the new one.
+			// The record says that this re-key moved the old repository: the directory now is the new one.
 			if err := os.RemoveAll(e.Paths.Abs(paths.BackupPG)); err != nil {
 				return err
 			}
@@ -185,6 +262,18 @@ func Rotate(ctx context.Context, e Env, req RotateRequest, setPass SetCipherPass
 			return nil, err
 		}
 	}
+	if !req.RemoveOld {
+		moved, err := keepLegacy(e.Paths, old.ID(), e.Rec.ID())
+		if err != nil {
+			return nil, err
+		}
+		if moved != "" {
+			e.logf("the old local repository stays as %s", moved)
+		}
+		if err := clearRekey(e.Paths); err != nil {
+			return nil, err
+		}
+	}
 	if req.RemoveOld {
 		if err := e.Step("remove-old-repositories", "remove-old-repositories", func() error {
 			if _, err := os.Stat(e.Paths.Abs(LegacyDir)); err == nil {
@@ -192,6 +281,9 @@ func Rotate(ctx context.Context, e Env, req RotateRequest, setPass SetCipherPass
 					return err
 				}
 				res.RemovedRepositories = append(res.RemovedRepositories, LegacyDir)
+			}
+			if err := clearRekey(e.Paths); err != nil {
+				return err
 			}
 			if !req.NewKey {
 				return nil
