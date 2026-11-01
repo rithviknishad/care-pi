@@ -379,6 +379,34 @@ func TestUpdatePathIsTheCutover(t *testing.T) {
 	}
 }
 
+// TestLockFileIsNotARelease: a --lock-file lock goes into the cache, but with an index it is not the newest
+// version and not available (the Phase 4 exit test showed the TEST ONLY lock 2026.11.2 as "newest").
+func TestLockFileIsNotARelease(t *testing.T) {
+	e := newTEnv(t, "pinned", "2026.11.0")
+	e.install()
+	data := strings.Replace(string(e.fx.Locks["2026.11.1"]), "\nversion: 2026.11.1\n", "\nversion: 2026.11.2\n", 1)
+	if !strings.Contains(data, "\nversion: 2026.11.2\n") {
+		t.Fatal("the fixture lock has no version line")
+	}
+	file := filepath.Join(t.TempDir(), "candidate.lock.yaml")
+	if err := os.WriteFile(file, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.u.Stage(context.Background(), e.job(jobs.KindUpdateStage), StageOptions{LockFile: file}); err != nil {
+		t.Fatal(err)
+	}
+	e.writeConfig("stable", "")
+	ov := e.overview()
+	if ov.Latest == nil || ov.Latest.Version != "2026.11.1" {
+		t.Fatalf("latest %+v", ov.Latest)
+	}
+	for _, a := range ov.Available {
+		if a.Version == "2026.11.2" {
+			t.Fatalf("available %+v", ov.Available)
+		}
+	}
+}
+
 // TestCheckpointFailureStartsTheOldUnits: a failed checkpoint stops the update before any change.
 func TestCheckpointFailureStartsTheOldUnits(t *testing.T) {
 	e := newTEnv(t, "pinned", "2026.11.0")

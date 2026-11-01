@@ -28,21 +28,19 @@ func (u *Updater) solutionOf(cfg *config.Config, cur *lock.Lock) (*solution.Solu
 	return sol, nil
 }
 
-// entries returns the locks of the solution (index, else the cache and the agent), newest first.
+// entries returns the locks of the solution, newest first: the locks of the index when it lists the solution; else
+// (no index, or an index without the solution) the cached and the embedded locks (section 7.4). The cache also
+// holds the lock of a --lock-file of the CLI (a test of a candidate); with an index, such a lock is not a release.
 func (u *Updater) entries(ix *solution.Index, name string) []AvailableLock {
 	var out []AvailableLock
-	seen := map[string]bool{}
 	if s := ix.Find(name); s != nil {
 		for _, l := range s.Locks {
-			a := availableOf(l, u.agent())
-			seen[a.Version] = true
-			out = append(out, a)
+			out = append(out, availableOf(l, u.agent()))
 		}
+		sortAvailable(out)
+		return out
 	}
 	for _, v := range u.store().Versions(name) {
-		if seen[v] {
-			continue
-		}
 		l, _, err := u.store().Get(name, v)
 		if err != nil {
 			continue

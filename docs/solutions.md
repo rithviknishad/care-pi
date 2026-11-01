@@ -324,6 +324,9 @@ The schema is `solutions/schema/index.schema.json`. Its `examples` has the full 
 - The agent validates the file against `index.schema.json` and keeps it in `/var/lib/care-pi/state/update-cache/index.json`.
 - Failure (network, HTTP status, schema): the problem `index-unavailable`. The agent keeps the cached copy and uses it.
 - Each lock that the agent downloads is cached in `state/update-cache/locks/<solution>-<version>.lock.yaml`.
+- The versions of `GET /updates` (`latest`, `available`) are the locks of the index. Without an index (or without the
+  solution in it), they are the cached and the embedded locks. The cache also holds the lock of a `--lock-file`;
+  with an index, it is not a release.
 
 ## 5. The CI pipeline
 
