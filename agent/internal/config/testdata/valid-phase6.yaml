@@ -1,0 +1,15 @@
+version: 1
+tls:
+  local_ca: {enabled: true}
+  public:
+    enabled: true
+    clinic_id: sunrise-4f2a
+    acme_ca: https://acme-staging-v02.api.letsencrypt.org/directory
+  tailscale:
+    enabled: true
+    hostname: care.tail1234.ts.net
+network:
+  wifi:
+    ssid: Sunrise-Staff
+    failover: true
+    country: IN

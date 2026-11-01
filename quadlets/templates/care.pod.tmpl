@@ -9,6 +9,10 @@ PartOf=care.target
 # Quadlet adds these two lines by default too. care-start.service does not wait for the network.
 Wants=network-online.target
 After=network-online.target
+{{- if .TailscaleIP}}
+# Tailscale mode: the pod also publishes on the address of tailscale0 (docs/connectivity.md).
+After=tailscaled.service
+{{- end}}
 
 [Pod]
 PodName=care
@@ -18,6 +22,19 @@ PublishPort={{.}}:80:80
 PublishPort={{.}}:443:443
 PublishPort={{.}}:{{$.ConsolePort}}:{{$.ConsolePort}}
 {{- end}}
+{{- if .TailscaleIP}}
+# The same ports on the Tailscale address (P11). The LAN list above stays the list for default_sni and avahi.
+PublishPort={{.TailscaleIP}}:80:80
+PublishPort={{.TailscaleIP}}:443:443
+PublishPort={{.TailscaleIP}}:{{.ConsolePort}}:{{.ConsolePort}}
+{{- end}}
 # Debug ports on the host loopback only: API and object storage.
 PublishPort=127.0.0.1:19000:9000
 PublishPort=127.0.0.1:17070:7070
+{{- if .TailscaleIP}}
+
+[Service]
+# A publish on an address that does not exist stops the pod. At the boot, tailscaled sets the address of
+# tailscale0 some seconds after its start. Wait for it, at most {{.WaitAddressTimeout}}; then start in any case.
+ExecStartPre=-{{path "Binary"}} network wait-address --address {{.TailscaleIP}} --timeout {{.WaitAddressTimeout}}
+{{- end}}

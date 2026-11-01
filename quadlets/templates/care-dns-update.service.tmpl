@@ -1,0 +1,12 @@
+# {{.Header}}
+# Send the LAN address of {{.PublicHost}} to the DNS service when it changed (idempotent).
+
+[Unit]
+Description=care-pi DNS address update ({{.PublicHost}})
+After=network-online.target care-pi.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{path "Binary"}} tls public update-address --scheduled
+TimeoutStartSec=120

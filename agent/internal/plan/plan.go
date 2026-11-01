@@ -48,6 +48,15 @@ const (
 	Cutover Kind = "cutover"
 	// PlugConfig (Phase 4) writes the plug_config rows of Care (docs/solutions.md section 12.2).
 	PlugConfig Kind = "plug-config"
+	// EnsureCA (Phase 6) makes the name-constrained root of the agent when it does not exist (07 §4.1).
+	// On a host with the root of Caddy, this is the one-time switch: care-caddy then restarts.
+	EnsureCA Kind = "ensure-ca"
+	// DisableUnits (Phase 6) stops and disables a timer before apply deletes its file (care-dns-update.timer).
+	DisableUnits Kind = "disable-units"
+	// ReloadFirewall (Phase 6) reloads care-pi-firewall.service after a change of its drop-in (Tailscale port).
+	ReloadFirewall Kind = "reload-firewall"
+	// UpdateDNS (Phase 6) sends a new LAN address to the DNS service (public mode). A failure is a warning.
+	UpdateDNS Kind = "update-dns"
 )
 
 // Action is one step of a plan.
@@ -127,6 +136,14 @@ type Input struct {
 	Cutover bool
 	// PlugConfig is true when the plug_config rows of Care must change (Phase 4).
 	PlugConfig bool
+	// EnsureCA is true when the root of the agent does not exist yet (Phase 6).
+	EnsureCA bool
+	// PodLive is the care.pod of the running pod (state/pod-live.json), or nil. When the new care.pod only
+	// removes PublishPort lines of the running pod (for example the address of eth0 after a Wi-Fi failover),
+	// the running pod keeps its publishes and needs no full cycle (docs/connectivity.md).
+	PodLive []byte
+	// DNSStale is true when the DNS service has another LAN address than the primary address (public mode).
+	DNSStale bool
 }
 
 // Plan is the ordered list of actions and the file changes.
@@ -222,9 +239,15 @@ func Build(in Input) *Plan {
 		timers          []string
 		backupConf      bool
 		timersChanged   bool
+		firewall        bool
+		disable         []string
+		dnsTimer        bool
 		restart         = map[string]bool{}
 		cycle           []string
 	)
+	if _, ok := in.Desired[paths.SystemdDir+"/"+render.DNSUpdateTimer]; ok {
+		dnsTimer = true
+	}
 	for _, c := range pl.Changes {
 		if c.Kind == Delete {
 			deletes = append(deletes, c.Path)
@@ -238,7 +261,7 @@ func Build(in Input) *Plan {
 			u := unitOf(c.Path)
 			switch {
 			case u == "care-pod":
-				podChanged = true
+				podChanged = !podShrinkOnly(in.Desired[c.Path].Content, in.PodLive, in.TargetActive)
 			case u == "care-fe-build", u == "care-plug-build", strings.HasPrefix(u, "care-build-"):
 				// Transient unit: daemon-reload is enough.
 			case cycleUnits[u]:
@@ -261,9 +284,15 @@ func Build(in Input) *Plan {
 					backupConf = true
 				}
 			}
-			if strings.HasPrefix(b, "care-update-") && c.Kind != Delete {
+			if (strings.HasPrefix(b, "care-update-") || strings.HasPrefix(b, "care-dns-update.")) && c.Kind != Delete {
 				timersChanged = true
 			}
+			if b == render.DNSUpdateTimer && c.Kind == Delete {
+				disable = append(disable, b)
+			}
+		case c.Path == paths.FirewallDropIn:
+			unitFiles = true
+			firewall = true
 		case strings.HasPrefix(c.Path, paths.RenderedBackup+"/"):
 			backupConf = true
 		case c.Path == paths.RenderedCare+"/backend.env":
@@ -299,6 +328,10 @@ func Build(in Input) *Plan {
 			}
 		}
 	}
+	// A new root of the agent: Caddy must make a new intermediate, so it restarts (a reload keeps the old one).
+	if in.EnsureCA && in.TargetActive && !pl.First {
+		restart["care-caddy"] = true
+	}
 	// care-api and care-worker require care-beat, so a beat restart restarts them too.
 	if restart["care-beat"] {
 		restart["care-worker"] = true
@@ -310,11 +343,17 @@ func Build(in Input) *Plan {
 	if anything || pl.First || !in.TargetActive {
 		add(Action{Kind: EnsureDirs})
 	}
+	if in.EnsureCA {
+		add(Action{Kind: EnsureCA})
+	}
 	if len(in.SecretsChanged) > 0 {
 		add(Action{Kind: SetSecrets, Names: in.SecretsChanged})
 	}
 	if len(writes) > 0 {
 		add(Action{Kind: WriteFiles, Paths: writes})
+	}
+	if len(disable) > 0 {
+		add(Action{Kind: DisableUnits, Units: disable})
 	}
 	if len(deletes) > 0 {
 		add(Action{Kind: DeleteFiles, Paths: deletes})
@@ -322,10 +361,16 @@ func Build(in Input) *Plan {
 	if unitFiles {
 		add(Action{Kind: DaemonReload})
 	}
+	if firewall {
+		add(Action{Kind: ReloadFirewall, Units: []string{paths.FirewallUnit}})
+	}
 	if pl.First || targetChanged || timersChanged {
 		units := []string{render.StartUnit}
 		if timersChanged {
 			units = append(units, render.TimerUnits...)
+			if dnsTimer {
+				units = append(units, render.DNSUpdateTimer)
+			}
 		}
 		add(Action{Kind: EnableTarget, Units: units})
 	}
@@ -398,6 +443,9 @@ func Build(in Input) *Plan {
 	if in.PlugConfig && !in.Bootstrap {
 		add(Action{Kind: PlugConfig})
 	}
+	if in.DNSStale && !in.Bootstrap {
+		add(Action{Kind: UpdateDNS})
+	}
 	if in.LockChanged {
 		add(Action{Kind: WriteLock})
 	}
@@ -417,4 +465,33 @@ func dedupe(s []string) []string {
 		}
 	}
 	return out
+}
+
+// podShrinkOnly reports whether the new care.pod is the care.pod of the running pod without some of its
+// publishes: each line of the new file is in the running file in the same order, and each line that the new
+// file does not have is a PublishPort line, a comment, an empty line, or a line of the Tailscale wait.
+// The running pod then keeps the old publishes: an address that went away (eth0 after a Wi-Fi failover)
+// does no harm, and the pod needs no full cycle when the address comes back.
+func podShrinkOnly(desired, live []byte, active bool) bool {
+	if !active || live == nil || desired == nil {
+		return false
+	}
+	want := strings.Split(strings.TrimSpace(string(desired)), "\n")
+	have := strings.Split(strings.TrimSpace(string(live)), "\n")
+	i := 0
+	for _, l := range have {
+		if i < len(want) && l == want[i] {
+			i++
+			continue
+		}
+		t := strings.TrimSpace(l)
+		switch {
+		case t == "", strings.HasPrefix(t, "#"), strings.HasPrefix(t, "PublishPort="),
+			t == "[Service]", t == "After=tailscaled.service",
+			strings.HasPrefix(t, "ExecStartPre=-") && strings.Contains(t, " network wait-address "):
+		default:
+			return false
+		}
+	}
+	return i == len(want)
 }

@@ -93,7 +93,14 @@ var phase4Outputs = []dynOutput{
 	{output{"care-build.build.tmpl", "", 0o644, 0, careBuild}, func(m *Model) string { return quadlet("care-build-" + m.SolutionName + ".build") }},
 	{output{"care-plug-build.container.tmpl", quadlet("care-plug-build.container"), 0o644, 0, plugBuild}, nil},
 	{output{"plug-build.sh.tmpl", paths.RenderedPlugs + "/plug-build.sh", 0o700, 0, plugBuild}, nil},
+	// Phase 6 (docs/connectivity.md).
+	{output{"care-dns-update.timer.tmpl", systemd(DNSUpdateTimer), 0o644, 0, dnsUpdate}, nil},
+	{output{"care-dns-update.service.tmpl", systemd("care-dns-update.service"), 0o644, 0, dnsUpdate}, nil},
+	{output{"firewall-tailscale.conf.tmpl", paths.FirewallDropIn, 0o644, 0, firewallTailscale}, nil},
 }
+
+func dnsUpdate(m *Model) bool         { return m.DNSUpdate && !m.Bootstrap }
+func firewallTailscale(m *Model) bool { return m.FirewallTailscale }
 
 // TimerUnits are the update timers that apply enables (docs/solutions.md, section 10.2).
 var TimerUnits = []string{"care-update-check.timer", "care-update-apply.timer"}
@@ -264,9 +271,11 @@ func Owned(p string) bool {
 	case p == systemd("care-update-check.timer"), p == systemd("care-update-check.service"),
 		p == systemd("care-update-apply.timer"), p == systemd("care-update-apply.service"):
 		return true
+	case p == systemd(DNSUpdateTimer), p == systemd("care-dns-update.service"), p == paths.FirewallDropIn:
+		return true
 	}
 	return false
 }
 
 // OwnedDirs lists the directories that hold owned files. apply scans them for stale files.
-var OwnedDirs = []string{paths.QuadletDir, paths.SystemdDir, paths.RenderedDir}
+var OwnedDirs = []string{paths.QuadletDir, paths.SystemdDir, paths.RenderedDir, path.Dir(paths.FirewallDropIn)}

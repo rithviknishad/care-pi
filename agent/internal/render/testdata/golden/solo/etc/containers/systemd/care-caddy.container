@@ -23,6 +23,8 @@ Volume=/var/lib/care-pi/plugs:/srv/plugs:ro
 Volume=/var/lib/care-pi/state/mode:/srv/mode:ro
 # A directory, not the socket file: the agent makes a new socket at each start.
 Volume=/run/care-pi:/run/care-pi
+# The name-constrained root of the agent (docs/connectivity.md). Read only.
+Volume=/var/lib/care-pi/ca:/etc/care-pi-ca:ro
 
 [Service]
 # The bind mount needs the directory, also when the agent does not run.

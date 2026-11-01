@@ -78,7 +78,14 @@ func fixture(t *testing.T, name string) (Tree, *lock.Lock) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := NewModel(Input{Config: cfg, Solution: sol, Lock: lk, IPs: TestIPs, Bootstrap: boot, CareBuild: cb})
+	// Phase 6: each golden host has the root of the agent. The case public has the certificate of the public name;
+	// public-tailscale has none yet, and a Tailscale address.
+	in := Input{Config: cfg, Solution: sol, Lock: lk, IPs: TestIPs, Bootstrap: boot, CareBuild: cb, CARoot: true,
+		ACMEDNS: cfg.TLS.Public.Enabled, PublicIssued: cfgName == "public"}
+	if cfg.TLS.Tailscale.Enabled {
+		in.TailscaleIP = "100.101.102.103"
+	}
+	m, err := NewModel(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +102,8 @@ func fixture(t *testing.T, name string) (Tree, *lock.Lock) {
 }
 
 func TestGolden(t *testing.T) {
-	for _, name := range []string{"solo", "small-clinic", "busy-counter", "custom", "small-clinic-bootstrap", "backups", "custom-build"} {
+	for _, name := range []string{"solo", "small-clinic", "busy-counter", "custom", "small-clinic-bootstrap", "backups", "custom-build",
+		"public", "public-tailscale"} {
 		t.Run(name, func(t *testing.T) {
 			tree, lk := fixture(t, name)
 			lockData, err := lk.Marshal()

@@ -93,7 +93,7 @@ type SizeCustom struct {
 	PGSharedBuffersMB int `yaml:"pg_shared_buffers_mb,omitempty" json:"pg_shared_buffers_mb,omitempty"`
 }
 
-// TLS holds the TLS modes. Phase 1 renders only local_ca.
+// TLS holds the TLS modes (P10: any combination; docs/connectivity.md).
 type TLS struct {
 	LocalCA   TLSLocalCA   `yaml:"local_ca" json:"local_ca"`
 	Public    TLSPublic    `yaml:"public" json:"public"`
@@ -105,15 +105,21 @@ type TLSLocalCA struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
 }
 
-// TLSPublic is the public certificate mode (Phase 6).
+// TLSPublic is the public certificate mode (Phase 6): <clinic_id>.care-pi.rithviknishad.dev with a
+// Let's Encrypt certificate through DNS-01. The DNS/ACME service assigns clinic_id ("care-pi tls public enable").
 type TLSPublic struct {
 	Enabled  bool   `yaml:"enabled" json:"enabled"`
 	ClinicID string `yaml:"clinic_id,omitempty" json:"clinic_id,omitempty"`
+	// ACMECA is the directory URL of the ACME CA. Empty uses the default of Caddy (Let's Encrypt).
+	// The Phase 6 exit test uses the staging directory of Let's Encrypt first.
+	ACMECA string `yaml:"acme_ca,omitempty" json:"acme_ca,omitempty"`
 }
 
-// TLSTailscale is the Tailscale mode (Phase 6).
+// TLSTailscale is the Tailscale mode (Phase 6, P11, S37): the MagicDNS name with the certificate of tailscaled.
 type TLSTailscale struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Hostname is the MagicDNS name (<host>.<tailnet>.ts.net). The enrol job sets it from "tailscale status".
+	Hostname string `yaml:"hostname,omitempty" json:"hostname,omitempty"`
 }
 
 // Clock selects the clock gate policy.
@@ -233,10 +239,13 @@ type Network struct {
 	WiFi *WiFi `yaml:"wifi,omitempty" json:"wifi,omitempty"`
 }
 
-// WiFi is a Wi-Fi profile (Phase 6).
+// WiFi is a Wi-Fi profile (Phase 6, S35): a NetworkManager connection beside ethernet. The PSK is in
+// secrets/wifi.json, never here.
 type WiFi struct {
 	SSID     string `yaml:"ssid" json:"ssid"`
 	Failover bool   `yaml:"failover" json:"failover"`
+	// Country is the ISO 3166-1 alpha-2 regulatory domain, for example IN.
+	Country string `yaml:"country,omitempty" json:"country,omitempty"`
 }
 
 // Telemetry holds the opt-in telemetry settings (Phase 7).

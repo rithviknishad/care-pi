@@ -60,6 +60,13 @@ type env struct {
 	addressWait time.Duration
 	// rec, when it is set, is the journal of the run (a job of the agent); the output goes to it.
 	rec *jobs.Recorder
+	// dnsAddress is Options.DNSAddress (Phase 6).
+	dnsAddress func(ctx context.Context, ipv4 string) error
+}
+
+// gitRefs are the refs of the fake git. Tests can add a repository.
+var gitRefs = map[string]map[string]string{
+	"https://github.com/ohcnetwork/care_fe": {"refs/heads/develop": careFESHA},
 }
 
 func newEnv(t *testing.T, config string) *env {
@@ -113,9 +120,7 @@ const careFESHA = "573c5620573c5620573c5620573c5620573c5620"
 
 func (e *env) run(dry bool) (*Result, error) {
 	h := host.New(e.fake)
-	h.Git = &host.FakeGit{Refs: map[string]map[string]string{
-		"https://github.com/ohcnetwork/care_fe": {"refs/heads/develop": careFESHA},
-	}}
+	h.Git = &host.FakeGit{Refs: gitRefs}
 	var ips netinfo.Source = netinfo.Static{"192.168.1.10", "10.0.0.5"}
 	if e.ips != nil {
 		ips = e.ips
@@ -140,6 +145,7 @@ func (e *env) run(dry bool) (*Result, error) {
 		PollInterval:   time.Millisecond,
 		DBReadyTimeout: e.dbTimeout,
 		AddressWait:    e.addressWait,
+		DNSAddress:     e.dnsAddress,
 	})
 }
 
@@ -431,9 +437,9 @@ func TestDryRunWritesNothing(t *testing.T) {
 
 func TestNotImplementedIsBadInput(t *testing.T) {
 	for name, extra := range map[string]string{
-		"public tls": "tls:\n  public: {enabled: true, clinic_id: sunrise}\n",
-		"rtc clock":  "clock: {policy: rtc}\n",
-		"no pin":     "solution:\n  track: pinned\n",
+		"public tls without registration": "tls:\n  public: {enabled: true, clinic_id: sunrise}\n",
+		"rtc clock":                       "clock: {policy: rtc}\n",
+		"no pin":                          "solution:\n  track: pinned\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newEnv(t, smallClinic+extra)

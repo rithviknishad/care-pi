@@ -80,6 +80,9 @@ type Options struct {
 	JobID string
 	// JobKind is the kind of that job (default apply).
 	JobKind string
+	// DNSAddress sends a new LAN address to the DNS service (Phase 6, public mode; plan action update-dns).
+	// nil skips the action. The service and the CLI set it.
+	DNSAddress func(ctx context.Context, ipv4 string) error
 }
 
 // Journal records the steps of a run.
@@ -172,6 +175,9 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 		return nil, exitcode.With(exitcode.Failed, err)
 	}
 	secretValues[render.AdditionalPlugsSecret] = pr.Model.AdditionalPlugsJSON
+	if pr.ACMEDNS != "" {
+		secretValues[render.ACMEDNSSecret] = pr.ACMEDNS
+	}
 	secretsChanged, err := changedSecrets(ctx, o, secretValues)
 	if err != nil {
 		return nil, err
@@ -211,6 +217,9 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 		TimersStale:    prevEnsure.Timers != ensure.Timers,
 		Cutover:        careChanged(pr.PrevLock, pr.Lock),
 		PlugConfig:     pr.Phase != setup.PhaseBootstrap && plugcfg.NeedsSync(o.Paths, plugcfg.Desired(pr.Config, pr.Desire.Plugs, pr.Lock)),
+		EnsureCA:       pr.EnsureCA,
+		PodLive:        readPodLive(o.Paths),
+		DNSStale:       dnsStale(o.Paths, pr.Config, pr.IPs),
 	})
 	if o.NoStart {
 		p.Actions = noStart(p.Actions, stackImages)
@@ -302,6 +311,13 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 		}
 		if err != nil {
 			return res, finish(fmt.Errorf("apply failed at %s: %w", a.Kind, err))
+		}
+	}
+	// A host of an older version has no record of the running pod: after a run without a pod change, the
+	// running pod is the pod on disk.
+	if active && !p.Has(plan.FullCycle) && !p.Has(plan.Cutover) && readPodLive(o.Paths) == nil {
+		if f, ok := pr.Tree[podFile]; ok && !o.NoStart {
+			_ = writePodLive(o.Paths, f.Content)
 		}
 	}
 	if feErr != nil {
@@ -542,13 +558,13 @@ func changedSecrets(ctx context.Context, o Options, values map[string]string) ([
 }
 
 // secretNames returns the podman secrets of apply: the secrets of the secret files, then
-// care-additional-plugs (Phase 4).
+// care-additional-plugs (Phase 4), then care-pi-acme-dns (Phase 6, only with the public mode).
 func secretNames() []string {
 	var out []string
 	for _, s := range secrets.PodmanSecrets() {
 		out = append(out, s.Name)
 	}
-	return append(out, render.AdditionalPlugsSecret)
+	return append(out, render.AdditionalPlugsSecret, render.ACMEDNSSecret)
 }
 
 // secretUnits maps each podman secret to the units that read it.
@@ -558,6 +574,7 @@ func secretUnits() map[string][]string {
 		units[s.Name] = s.Units
 	}
 	units[render.AdditionalPlugsSecret] = []string{"care-beat", "care-worker", "care-api"}
+	units[render.ACMEDNSSecret] = []string{"care-caddy"}
 	return units
 }
 

@@ -13,15 +13,24 @@
 		# Port 443/udp is not published, so HTTP/3 is off.
 		protocols h1 h2
 	}
+{{- if .CARoot}}
+	# The local CA uses the name-constrained root of the agent (07 section 4.1, docs/connectivity.md).
+	# Caddy makes its intermediate and the leaf certificates below this root. The root permits
+	# only the names and the address ranges of its name constraints.
+	pki {
+		ca local {
+			name care-pi
+			root {
+				cert {{.CACert}}
+				key {{.CAKey}}
+			}
+		}
+	}
+{{- end}}
 }
 
-# Port 80 serves only this redirect.
-{{join (prefix "http://" .Sites) ", "}} {
-	redir https://{host}{uri} 308
-}
-
-{{join (prefix "https://" .Sites) ", "}} {
-	tls internal
+# The routes of Care on port 443. Each site of port 443 imports them.
+(care) {
 	encode zstd gzip
 	header -Server
 	log {
@@ -157,9 +166,8 @@
 }
 
 # The console origin (S48): the console SPA at /, the API at /api/v1/, and the public operations
-# at /_care-pi/. Each request goes to the agent. The same certificates as port 443, no HSTS.
-{{join (suffix (printf ":%d" .ConsolePort) (prefix "https://" .Sites)) ", "}} {
-	tls internal
+# at /_care-pi/. Each request goes to the agent. Each site of port {{.ConsolePort}} imports these routes.
+(console) {
 	header -Server
 	header {
 		X-Frame-Options SAMEORIGIN
@@ -194,3 +202,81 @@
 		respond `{"type":"https://care-pi.rithviknishad.dev/problems/unavailable","title":"The agent is not ready","status":503,"detail":"care-pi.service does not answer. Run: sudo systemctl status care-pi.service","instance":"/","retry_after_s":5}` 503
 	}
 }
+{{- if .PublicHost}}
+
+# The certificate of the public name (07 section 3.8): Let's Encrypt through DNS-01. The acmedns module sets
+# the TXT record through the DNS/ACME service (services/dns/API.md, section 6). The credentials are the podman
+# secret {{.ACMEDNSSecret}}. The public resolvers check the TXT record: a clinic router can block or rewrite DNS.
+(tls_public) {
+	tls {
+		dns acmedns {{.ACMEDNSFile}}
+		resolvers 1.1.1.1 8.8.8.8
+{{- if .PublicACMECA}}
+		ca {{.PublicACMECA}}
+{{- end}}
+	}
+}
+{{- end}}
+
+# Port 80 serves only redirects (P9).
+{{- if .Port80Public}}
+# The public name is primary (S36): the local names send the browser to it (07 section 6.1).
+{{join (prefix "http://" .Port80Public) ", "}} {
+	redir https://{{.PublicHost}}{uri} 301
+}
+{{- end}}
+{{- if .Port80Same}}
+{{join (prefix "http://" .Port80Same) ", "}} {
+	redir https://{host}{uri} 308
+}
+{{- end}}
+
+# The local CA mode: {{join .LocalHosts " "}} and the LAN addresses. No HSTS (07 F7).
+{{join (prefix "https://" .LocalSites) ", "}} {
+	tls internal
+	import care
+}
+{{- if .PublicHost}}
+
+# The public name (S36): a certificate of Let's Encrypt, so HSTS is safe.
+https://{{.PublicHost}} {
+	import tls_public
+	header Strict-Transport-Security "{{.HSTS}}"
+	import care
+}
+{{- end}}
+{{- if .TailscaleHost}}
+
+# The Tailscale name (P11): the certificate comes from tailscaled through its socket.
+https://{{.TailscaleHost}} {
+	tls {
+		get_certificate tailscale
+	}
+	header Strict-Transport-Security "{{.HSTS}}"
+	import care
+}
+{{- end}}
+
+# The console on port {{.ConsolePort}}: the same certificates as port 443.
+{{join (suffix (printf ":%d" .ConsolePort) (prefix "https://" .LocalSites)) ", "}} {
+	tls internal
+	import console
+}
+{{- if .PublicHost}}
+
+https://{{.PublicHost}}:{{.ConsolePort}} {
+	import tls_public
+	header Strict-Transport-Security "{{.HSTS}}"
+	import console
+}
+{{- end}}
+{{- if .TailscaleHost}}
+
+https://{{.TailscaleHost}}:{{.ConsolePort}} {
+	tls {
+		get_certificate tailscale
+	}
+	header Strict-Transport-Security "{{.HSTS}}"
+	import console
+}
+{{- end}}
