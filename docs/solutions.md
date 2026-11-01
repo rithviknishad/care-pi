@@ -797,9 +797,14 @@ The track does not change. On `stable`, the next window installs the newest lock
 | Step `action` | What it does |
 |---|---|
 | `os-refresh` | `apt-get update`. |
-| `os-unhold` | For each held package (`podman crun netavark aardvark-dns conmon skopeo`) with an entry in `index.json` `os.held_packages.<codename>` that differs from the installed version and that apt can install: `apt-mark unhold`. Without an entry, the package stays held. |
-| `os-upgrade` | `apt-get -y full-upgrade` and `apt-get -y install <package>=<tested version>` for the unheld packages. `DEBIAN_FRONTEND=noninteractive`, `-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold`. |
-| `os-hold` | `apt-mark hold` each package of the list again. This step runs also after a failure. |
+| `os-upgrade` | `apt-get -y full-upgrade` with the holds in place: a held package never moves to an untested candidate. `DEBIAN_FRONTEND=noninteractive`, `-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold`. |
+| `os-unhold` | Only after a full upgrade that succeeded. For each held package (`podman crun netavark aardvark-dns conmon skopeo`) with an entry in `index.json` `os.held_packages.<codename>` that is newer than the installed version and that apt can install: `apt-mark unhold`. Without an entry, the package stays held. |
+| `os-upgrade` (a second step) | Only when `os-unhold` released a package: `apt-get -y install <package>=<tested version>` for the released packages. |
+| `os-hold` | `apt-mark hold` each package of the list again. This step runs always, also after a failure. |
+
+A tested version that is older than the installed version (the order of the version table of `apt-cache policy`)
+stays held at the installed version, with a line in the job log: `index.json` has no way to allow a downgrade, so the
+agent never passes `--allow-downgrades`.
 | `cutover-maintenance-on`, `stop`, `start`, `verify`, `maintenance-off` | Only when a held package changed: a full cycle of `care.target` behind the maintenance page. |
 | `reboot` | Only with `reboot_if_required: true` and `/run/reboot-required`. |
 

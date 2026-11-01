@@ -204,7 +204,7 @@ func (u *Updater) held(ctx context.Context, codename string) ([]HeldPackage, err
 		if t, ok := tested[n]; ok && t != "" {
 			tt := t
 			hp.Tested = &tt
-			if t != v {
+			if t != v && !olderThan(hp.versions, t, v) {
 				for _, av := range hp.versions {
 					if av == t {
 						hp.Action = "upgrade"
@@ -215,6 +215,22 @@ func (u *Updater) held(ctx context.Context, codename string) ([]HeldPackage, err
 		res = append(res, hp)
 	}
 	return res, nil
+}
+
+// olderThan reports whether the version a comes after the version b in the version table of
+// "apt-cache policy" (newest first): a is older. The agent never downgrades a held package, because
+// index.json has no way to allow it (no --allow-downgrades).
+func olderThan(table []string, a, b string) bool {
+	ia, ib := -1, -1
+	for i, v := range table {
+		switch v {
+		case a:
+			ia = i
+		case b:
+			ib = i
+		}
+	}
+	return ia >= 0 && ib >= 0 && ia > ib
 }
 
 // OS returns GET /updates/os. It does not run apt-get update.
@@ -367,44 +383,47 @@ func (u *Updater) OSUpdate(ctx context.Context, rec *jobs.Recorder, o OSOptions)
 	}); err != nil {
 		return nil, failed(err)
 	}
-	var unhold []HeldPackage
-	if err := step(rec, "os-unhold", "", func() error {
-		held, err := u.held(ctx, readDistro(u.Paths).Codename)
-		if err != nil {
-			return err
-		}
-		for _, h := range held {
-			if h.Action == "upgrade" {
-				unhold = append(unhold, h)
-			}
-		}
-		if len(unhold) == 0 {
-			rec.SetDetail("no held package has a new tested version")
-			return nil
-		}
-		args := []string{"apt-mark", "unhold"}
-		for _, h := range unhold {
-			args = append(args, h.Name)
-		}
-		_, err = r.Run(ctx, AptRun("care-pi-apt-mark", args...))
-		return err
-	}); err != nil {
-		return nil, failed(err)
-	}
+	// The full upgrade runs with the holds in place: it never moves a held package to an untested
+	// candidate. Then each held package with a newer tested version goes to exactly that version.
 	upErr := step(rec, "os-upgrade", "apt-get -y full-upgrade", func() error {
-		if _, err := r.Run(ctx, aptGet("-y", "full-upgrade")); err != nil {
+		_, err := r.Run(ctx, aptGet("-y", "full-upgrade"))
+		return err
+	})
+	var unhold []HeldPackage
+	if upErr == nil {
+		upErr = step(rec, "os-unhold", "", func() error {
+			held, err := u.held(ctx, readDistro(u.Paths).Codename)
+			if err != nil {
+				return err
+			}
+			var names []string
+			for _, h := range held {
+				if h.Action == "upgrade" {
+					unhold = append(unhold, h)
+					names = append(names, h.Name)
+				} else if h.Tested != nil && *h.Tested != h.Installed {
+					rec.Logf("%s stays held at %s: the tested version %s is older or not in the apt sources", h.Name, h.Installed, *h.Tested)
+				}
+			}
+			if len(unhold) == 0 {
+				rec.SetDetail("no held package has a new tested version")
+				return nil
+			}
+			rec.SetDetail(strings.Join(names, " "))
+			_, err = r.Run(ctx, AptRun("care-pi-apt-mark", append([]string{"apt-mark", "unhold"}, names...)...))
 			return err
-		}
-		if len(unhold) == 0 {
-			return nil
-		}
+		})
+	}
+	if upErr == nil && len(unhold) > 0 {
 		args := []string{"-y", "install"}
 		for _, h := range unhold {
 			args = append(args, h.Name+"="+*h.Tested)
 		}
-		_, err := r.Run(ctx, aptGet(args...))
-		return err
-	})
+		upErr = step(rec, "os-upgrade", "apt-get "+strings.Join(args, " "), func() error {
+			_, err := r.Run(ctx, aptGet(args...))
+			return err
+		})
+	}
 	// os-hold runs also after a failure.
 	holdErr := step(rec, "os-hold", strings.Join(HoldPackages, " "), func() error {
 		_, err := r.Run(ctx, AptRun("care-pi-apt-mark", append([]string{"apt-mark", "hold"}, HoldPackages...)...))

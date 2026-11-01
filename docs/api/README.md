@@ -1333,7 +1333,7 @@ also accepts `file:///` (an update from a USB drive).
 | `update-stage` | yes | `POST /updates/stage`, a check with `updates.auto` | `fetch-lock`, `plan`, `stage-pull`, `stage-bundles`, `stage-build`, `render` | `UpdateStageResult` |
 | `update-apply` | yes | `POST /updates/apply`, `care-update-apply.timer`, a resume | the stage steps when not staged, then the cutover steps of section 14.3 | `UpdateApplyResult` |
 | `update-rollback` | yes | `POST /updates/rollback`, a recovery | `fetch-lock`, `stage-pull` (only missing images), then the cutover steps | `UpdateRollbackResult` |
-| `os-update` | yes | `POST /updates/os/apply`, the window run with `updates.os_full` | `os-refresh`, `os-unhold`, `os-upgrade`, `os-hold`, and a cycle of Care when a held package changed, then `reboot` | `OsUpdateResult` |
+| `os-update` | yes | `POST /updates/os/apply`, the window run with `updates.os_full` | `os-refresh`, `os-upgrade` (the full upgrade, with the holds in place), `os-unhold` and `os-upgrade` (the tested versions; only when a held package has a newer tested version), `os-hold` (always), and a cycle of Care when a held package changed, then `reboot` | `OsUpdateResult` |
 | `plug-change` | yes | `PUT /plugs/{plug_id}?apply=true` | by path: `stage-bundles` and `plug-config`; or a restart; or the cutover (section 14.7) | `PlugChangeJobResult` |
 
 - `source: timer` marks a job of a timer, and a resume or a recovery that the agent starts after an interrupted

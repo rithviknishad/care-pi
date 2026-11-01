@@ -10359,7 +10359,7 @@ components:
         action:
           type: string
           enum: [keep, upgrade]
-          description: What `care-pi update --os` does. `upgrade` only when `tested` differs from `installed` and apt has it.
+          description: What `care-pi update --os` does. `upgrade` only when `tested` is newer than `installed` and apt has it. The agent never downgrades a held package.
       examples:
         - {name: podman, installed: 5.4.2+ds1-2, candidate: 5.4.2+ds1-2+deb13u1, tested: 5.4.2+ds1-2, action: keep}
     OsApplyRequest:

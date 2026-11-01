@@ -282,29 +282,60 @@ func TestOSUpdateCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"os-refresh", "os-unhold", "os-upgrade", "os-hold", "cutover-maintenance-on", "stop", "start", "verify", "maintenance-off"}
+	// The full upgrade runs with the holds in place; then only the tested version of a held package installs.
+	want := []string{"os-refresh", "os-upgrade", "os-unhold", "os-upgrade", "os-hold", "cutover-maintenance-on", "stop", "start", "verify", "maintenance-off"}
 	if got := actions(rec); !reflect.DeepEqual(got, want) {
 		t.Fatalf("steps %v", got)
 	}
-	apt := e.fake.Filter("systemd-run")
-	if len(apt) != 6 || !strings.Contains(apt[0], "tee /etc/apt/apt.conf.d/52care-pi.conf") || !strings.HasSuffix(apt[1], "apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold update") ||
-		!strings.HasSuffix(apt[2], "apt-mark unhold podman") || !strings.HasSuffix(apt[3], "-y full-upgrade") ||
-		!strings.HasSuffix(apt[4], "-y install podman=5.4.2+ds1-2") || !strings.HasSuffix(apt[5], "apt-mark hold podman crun netavark aardvark-dns conmon skopeo") {
-		t.Fatalf("apt commands:\n%s", strings.Join(apt, "\n"))
+	const run = "systemd-run --wait --collect --pipe --quiet "
+	const aptGet = run + "--unit=care-pi-apt -p MemoryMax=512M --setenv=DEBIAN_FRONTEND=noninteractive -- apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "
+	const aptMark = run + "--unit=care-pi-apt-mark -p MemoryMax=512M --setenv=DEBIAN_FRONTEND=noninteractive -- apt-mark "
+	wantApt := []string{run + "--unit=care-pi-apt-conf -p MemoryMax=512M --setenv=DEBIAN_FRONTEND=noninteractive -- tee /etc/apt/apt.conf.d/52care-pi.conf",
+		aptGet + "update", aptGet + "-y full-upgrade", aptMark + "unhold podman", aptGet + "-y install podman=5.4.2+ds1-2",
+		aptMark + "hold podman crun netavark aardvark-dns conmon skopeo"}
+	if got := e.fake.Filter("systemd-run"); !reflect.DeepEqual(got, wantApt) {
+		t.Fatalf("apt commands:\n got  %q\n want %q", got, wantApt)
 	}
 	if !res.CareRestarted || len(res.HeldChanged) != 1 || len(res.Upgraded) != 2 {
 		t.Fatalf("result %+v", res)
 	}
-	// A failed upgrade holds the packages again.
-	e.fake.On("systemd-run --wait --collect --pipe --quiet --unit=care-pi-apt -p MemoryMax=512M --setenv=DEBIAN_FRONTEND=noninteractive -- apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -y full-upgrade",
-		host.Response{Code: 100})
+	// A failed upgrade unholds nothing and holds the packages again.
+	e.fake.On(aptGet+"-y full-upgrade", host.Response{Code: 100})
 	e.fake.Calls = nil
 	rec = e.job(jobs.KindOSUpdate)
 	if _, err := e.u.OSUpdate(context.Background(), rec, OSOptions{}); !problem.Is(err, problem.OSUpdateFailed) {
 		t.Fatalf("want os-update-failed, got %v", err)
 	}
-	if got := e.fake.Filter("systemd-run"); !strings.HasSuffix(got[len(got)-1], "apt-mark hold podman crun netavark aardvark-dns conmon skopeo") {
-		t.Fatalf("no hold after the failure: %q", got)
+	if got := e.fake.Filter("systemd-run"); !reflect.DeepEqual(got[1:], []string{aptGet + "update", aptGet + "-y full-upgrade", wantApt[5]}) {
+		t.Fatalf("apt commands after a failed full upgrade: %q", got)
+	}
+	if got := actions(rec); !reflect.DeepEqual(got, []string{"os-refresh", "os-upgrade", "os-hold"}) {
+		t.Fatalf("steps after a failed full upgrade %v", got)
+	}
+	// A failed install of the tested version holds the packages again.
+	e.fake.Script[aptGet+"-y full-upgrade"] = nil
+	e.fake.On(aptGet+"-y install podman=5.4.2+ds1-2", host.Response{Code: 100})
+	e.fake.Calls = nil
+	rec = e.job(jobs.KindOSUpdate)
+	if _, err := e.u.OSUpdate(context.Background(), rec, OSOptions{}); !problem.Is(err, problem.OSUpdateFailed) {
+		t.Fatalf("want os-update-failed, got %v", err)
+	}
+	if got := e.fake.Filter("systemd-run"); !reflect.DeepEqual(got[1:], wantApt[1:]) {
+		t.Fatalf("apt commands after a failed install: %q", got)
+	}
+	// A tested version that is older than the installed one stays held: no unhold, no downgrade.
+	e.fake.Script[aptGet+"-y install podman=5.4.2+ds1-2"] = nil
+	e.fake.Script["dpkg-query -W -f=${Package}\t${Version}\n podman crun netavark aardvark-dns conmon skopeo"] = nil
+	e.fake.On("dpkg-query -W -f=${Package}\t${Version}\n podman crun netavark aardvark-dns conmon skopeo", host.Response{Out: "podman\t5.4.2+ds1-3\ncrun\t1.21-1\n"})
+	e.fake.Script["apt-cache policy podman crun netavark aardvark-dns conmon skopeo"] = nil
+	e.fake.On("apt-cache policy podman crun netavark aardvark-dns conmon skopeo", host.Response{Out: "podman:\n  Installed: 5.4.2+ds1-3\n  Candidate: 5.4.2+ds1-3\n  Version table:\n *** 5.4.2+ds1-3 500\n        500 http://deb.debian.org/debian trixie/main arm64 Packages\n     5.4.2+ds1-2 500\n        500 http://deb.debian.org/debian trixie/main arm64 Packages\n"})
+	e.fake.Calls = nil
+	rec = e.job(jobs.KindOSUpdate)
+	if _, err := e.u.OSUpdate(context.Background(), rec, OSOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.fake.Filter("systemd-run"); !reflect.DeepEqual(got[1:], []string{aptGet + "update", aptGet + "-y full-upgrade", wantApt[5]}) {
+		t.Fatalf("apt commands with an older tested version: %q", got)
 	}
 }
 

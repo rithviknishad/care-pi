@@ -8464,7 +8464,7 @@ export interface components {
             /** @description The tested version of `index.json` (`os.held_packages`). `null` without an entry. */
             tested: string | null;
             /**
-             * @description What `care-pi update --os` does. `upgrade` only when `tested` differs from `installed` and apt has it.
+             * @description What `care-pi update --os` does. `upgrade` only when `tested` is newer than `installed` and apt has it. The agent never downgrades a held package.
              * @enum {string}
              */
             action: "keep" | "upgrade";
