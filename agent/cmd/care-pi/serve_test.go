@@ -99,7 +99,7 @@ func TestBootstrapClaimHint(t *testing.T) {
 	if got := a.ClaimMethods(); got[0] != auth.ClaimOSPassword {
 		t.Fatalf("before bootstrap: %v", got)
 	}
-	code, err := bootstrapClaimCode(a)
+	code, err := bootstrapClaimCode(a, true)
 	if err != nil || len(code) != 14 {
 		t.Fatalf("claim code %q: %v", code, err)
 	}
@@ -107,7 +107,7 @@ func TestBootstrapClaimHint(t *testing.T) {
 		t.Fatalf("after bootstrap: %v", got)
 	}
 	// A second bootstrap keeps the code.
-	if again, err := bootstrapClaimCode(a); err != nil || again != code {
+	if again, err := bootstrapClaimCode(a, true); err != nil || again != code {
 		t.Fatalf("second bootstrap: %q %v", again, err)
 	}
 	if _, err := os.Stat(p.Abs(auth.ClaimHintFile)); err != nil {

@@ -106,6 +106,18 @@ const (
 	RebootRequired   = "/run/reboot-required"
 	AptConfCarePi    = "/etc/apt/apt.conf.d/52care-pi.conf"
 	PlugSecretPrefix = "plug-"
+
+	// Phase 5: the Raspberry Pi image (docs/image.md).
+	// LocalDist is the dist snapshot of the image: index/index.json and the <tag>/<asset> files.
+	LocalDist = "/var/lib/care-pi-dist"
+	// ImageRelease describes the image (version, lock, build date, git sha). Only an image has it.
+	ImageRelease = "/etc/care-pi/image-release.json"
+	// PreseedConfig is a config.yaml that cloud-init write_files puts on the device at the first
+	// boot. "care-pi bootstrap --from-image" installs it and applies everything (no console setup).
+	PreseedConfig = "/etc/care-pi/preseed.yaml"
+	// FirstbootDone marks the end of a successful "care-pi bootstrap --from-image".
+	// care-firstboot.service does not run when it exists.
+	FirstbootDone = "/var/lib/care-pi/state/firstboot-done"
 )
 
 // UID and GID of the postgres user in the postgres image.

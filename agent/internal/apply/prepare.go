@@ -161,7 +161,13 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 			o.Resolved(nil)
 		}
 	} else {
-		seed := seedLock(sl, des.Wants, prev, cb, o.Update && cfg.Solution.Track == "custom")
+		seedSL := sl
+		if bootstrap && seedSL == nil {
+			// Setup mode resolves only the Caddy image. The solution lock of the track gives its digest,
+			// so a first boot without internet (the Raspberry Pi image) needs no registry.
+			seedSL, _ = trackLock(cfg, prev, store, false)
+		}
+		seed := seedLock(seedSL, des.Wants, prev, cb, o.Update && cfg.Solution.Track == "custom")
 		update := o.Update
 		if sl != nil {
 			// The locks of stable and pinned are pinned: apply --update resolves nothing (section 7.5).
