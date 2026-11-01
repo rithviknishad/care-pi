@@ -21,8 +21,8 @@ delivery (`06-roadmap.md`):
 3. **Installer** `install.sh` (`curl | sh`) for Pi OS / Debian-family hosts with quadlet-capable
    podman.
 4. **Pi image** (Raspberry Pi OS Lite trixie arm64, one image for Pi 4 and Pi 5, built with
-   `rpi-image-gen`, container images pre-pulled, published to Raspberry Pi Imager via a custom
-   `os_list.json`), fully offline-capable at first boot.
+   pi-gen `arm64` after SP10 (`rpi-image-gen` has no Imager customisation), container images pre-pulled,
+   published to Raspberry Pi Imager via a custom `os_list.json`), fully offline-capable at first boot (§8l).
 5. **Solutions**: curated plug sets + env defaults (`solutions/<name>/solution.yaml`), v1 =
    **CARE Clinic** only. CI resolves solution locks (fully pinned digests/shas), builds solution
    images and FE plug bundles.
@@ -91,7 +91,7 @@ Full detail per spike in `08-spike-log.md`; folded into `01` §4/§5/§8, `02`, 
 | SP7 | Custom Caddy build (acme-dns module, Tailscale cert getter, agent-supplied **name-constrained** root for `tls internal`); browser facts F5–F7 in `07` §2 per browser/OS (HTTPS-first fallback, service worker on bypassed origin, bypass persistence, name-constraint enforcement on Apple); root-CA install UX on iOS/Android/Windows/macOS | Local-CA mode UX and whether name constraints hold | Document caveats; push public-cert mode harder |
 | SP8 | mDNS `care.local` from Android (several versions), Windows 10/11, iOS, macOS | How often the IP/QR fallback is needed | Already planned |
 | SP9 | Pi 5 RTC passive battery verification; `fake-hwclock` interplay; `systemd-time-wait-sync` gating | `rtc` clock policy feasibility | `ntp` only in v1 |
-| SP10 | `rpi-image-gen` trixie Lite with chroot hook running `install.sh` + skopeo pre-pull; Imager customisation still reaches avahi/cloud-init | Phase 5 pipeline | `pi-gen` |
+| — | Boot of the Pi image (Phase 5, §8l) on a Pi 5 and a Pi 4: Imager host name → avahi, Imager-password claim (yescrypt), offline setup, then an update with internet. SP10 itself is done (`08` SP10: pi-gen) | Phase 5 exit | Claim code; `docs/image.md` §8 |
 | SP11 | NetworkManager eth+wlan failover (gist-style bond vs secondary connection) | Phase 6 | Secondary connection, no bond |
 | — | Pi 4 (2 GB/4 GB): everything above, especially FE build time/margins and throughput | O11 | `artifact` FE provider on Pi 4 |
 | — | Browser-driven file upload through Care's UI (SP5 used curl against the presigned URLs) | Confirms CORS/Content-Type path end to end | — |
@@ -590,3 +590,67 @@ The owner asked to keep these for the end. Do them on lumine before the project 
 
 The ghcr packages are public since 2026-11-01 (S43 done). lumine pulls `care`, `caddy`, `postgres-pgbackrest`
 without a token. The recovery key words of lumine are in `local/care-recovery-key` on the owner's Mac (S39).
+
+### 8l. Phase 5 wave 7: the Raspberry Pi image (2026-11-01)
+
+Branch `phase-5-image` (from `main` at `cbd34b0`). Not on lumine; not on a Pi yet. Records: `08-spike-log.md` "SP10" and
+"Phase 5 build"; the guide is `docs/image.md`.
+
+What exists:
+
+- **SP10.** `rpi-image-gen` builds in Docker and runs chroot hooks, but its image has no Imager customisation (no
+  cloud-init seed, no `rpi-cloud-init-mods`) and its `rpi5` layer is Pi-5-only (ext4 with 16 KB blocks). → pi-gen
+  `arm64`, pinned in `image/pi-gen.ref`.
+- **`image/`.** `build.sh` (host) → `builder/run.sh` (privileged linux/arm64 container, Docker volume
+  `care-pi-image-work`) → pi-gen stages 0–2 (Raspberry Pi OS Lite) + `stage-care`: `00-install` (`installer/install.sh
+  --image-build` in the chroot), `01-prepull` (skopeo into overlay `containers-storage`), `02-preseed` (`builder/preseed.py`:
+  the dist snapshot `/var/lib/care-pi-dist`, the FE build, the FE plug bundles, `/etc/care-pi/image-release.json`),
+  `03-firstboot` (`care-firstboot.service` + script, the ACT LED units). Outputs in `image/out/` (ignored): `.img.xz`,
+  `.sha256`, `os_list.json`, `.rpi-imager-manifest`, logs, `verify.txt`. `scripts/verify.sh` checks the file tree;
+  `scripts/boot-test.sh` boots the root file system with systemd-nspawn (no network); `scripts/fetch-dist.sh` gets a lock
+  and its bundles from the releases.
+- **Installer.** `--image-build` (`CARE_PI_IMAGE_BUILD`): each file written and each unit enabled offline, nothing
+  started; the skipped runtime actions are in `docs/install.md`, "The image build". Docker check: two runs, the second
+  "already configured" for each step.
+- **Agent.** `care-pi bootstrap --from-image` (pre-seed `/etc/care-pi/preseed.yaml` → `--unattended`; import of the dist
+  snapshot into the update cache; claim code without the claim hint `claim-code`; the marker
+  `/var/lib/care-pi/state/firstboot-done`). The index order: `updates.index_url` → the cache → the snapshot
+  (`update.Client.ImportLocalDist`, `Updater.index`, the check job). Setup mode takes the Caddy digest from the solution lock
+  of the track (no registry). In setup mode `care.target` does not require the clock gate. The Imager-password claim reads
+  `user:` (Imager 2.x) and checks yescrypt (`github.com/openwall/yescrypt-go`, new dependency).
+- **CI.** `.github/workflows/pi-image.yml` (`workflow_dispatch` {solution, lock_version, image_version, publish} and
+  `release: published` for `lock-*`; `ubuntu-24.04-arm`; release `image-<version>`; `os_list.json` of the release `imager`).
+  `ci.yml` runs shellcheck on `image/`. Not run on GitHub yet.
+
+Decisions of wave 7 (owner informed; override in `00` if wrong):
+
+- pi-gen `arm64` instead of `rpi-image-gen` (P18 fallback). The image keeps HTTPS apt sources (Docker Desktop proxies plain
+  HTTP at 22 KB/s).
+- `care-pi.service` is enabled in the image and starts at boot before `care-firstboot` ends, as after the installer.
+  `care-firstboot.service` runs after `cloud-final.service` with `DefaultDependencies=no` (`cloud-final` is
+  `After=multi-user.target`).
+- The pre-seed is cloud-init `write_files` → `/etc/care-pi/preseed.yaml` (a `config.yaml`); it means `--unattended`. An
+  invalid pre-seed stops the first boot. A partial pre-seed for setup mode is an open point.
+- No `fe/current` in the image: setup mode must show the setup page. The apply at the end of the setup points it.
+- The ACT LED blinks (`heartbeat`) from the end of the first boot until the claim (`care-pi-led.service`, `.path`,
+  `-off.service`; the agent cannot write `/sys`).
+- One image for Pi 4 and Pi 5; `os_list.json` `devices: [pi5-64bit, pi4-64bit]`, `init_format: cloudinit-rpi`. Image
+  version = the lock version unless `image_version` is set; an `image-<version>` release never changes.
+- `solution-lock.yml` does not start `pi-image.yml` (a `GITHUB_TOKEN` release starts no workflow): run it by hand.
+
+Verification: Go tests, `go vet`, golangci-lint (0 issues); shellcheck of the installer and `image/`; actionlint; the
+installer container checks (dry run, smoke twice, image build twice); the local image build (34 min on Docker Desktop, 17 of
+them a slow apt download; 1.05 GB `.img.xz`) with all file-tree checks passed; `os_list.json` valid against the schema of
+rpi-imager; the container boot (`image/scripts/boot-test.sh`, systemd-nspawn without a network): 18 of 18 checks, with
+cloud-init, the first boot, setup mode from the pre-pulled images, and the claim with the Imager password (yescrypt)
+(`08-spike-log.md`, "Phase 5 build"). It found two defects of the offline first boot, both fixed (setup mode waited for
+the clock gate; setup mode resolved the Caddy tag at the registry).
+
+**Blocking finding for the exit criterion "no internet":** the clock gate (`clock.policy: ntp`) waits for NTP before Care
+starts. The claim and the wizard work offline; the install waits for the clock. An owner decision is needed
+(`docs/image.md` §10 point 5): for example the time of the browser at the claim, an NTP server on the LAN, or `rtc` after SP9.
+
+Next steps: (1) the owner decides the clock policy without internet; (2) run `solution-lock.yml` (a released lock and the
+`index` release), then `pi-image.yml`; (3) the hardware checklist of `docs/image.md` §9 on a Pi 5 (USB and NVMe) and a
+Pi 4 (2 GB and 4 GB), with the Phase 5 exit test: flash with Imager and the repository, no internet, the wizard to a working
+Care, then internet and an update; (4) a QEMU boot test in CI.
