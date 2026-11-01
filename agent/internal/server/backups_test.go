@@ -303,8 +303,15 @@ func TestBackupsSetup(t *testing.T) {
 		t.Fatal(string(r.body))
 	}
 	rk := map[string]any{"words": words}
+	// Swap 2 words so that the checksum fails. One swap in 256 keeps a valid checksum, so try pairs.
 	sw := append([]string(nil), words...)
-	sw[0], sw[1] = sw[1], sw[0]
+	for i := 1; i < len(words); i++ {
+		sw[0], sw[i] = sw[i], sw[0]
+		if _, err := backup.ParseWords(sw); err != nil {
+			break
+		}
+		sw[0], sw[i] = sw[i], sw[0]
+	}
 	e.want(e.do("POST", "/api/v1/restore/dr/inspect", map[string]any{"recovery_key": map[string]any{"words": sw}, "destination": map[string]any{"type": "posix", "path": "/media/b"}}, invalid), 422, "invalid-request")
 	e.want(e.do("POST", "/api/v1/restore/dr/inspect", map[string]any{"recovery_key": rk, "destination": map[string]any{"type": "sftp", "host": "mac.lan", "user": "care", "path": "/b"}}), 422, "destination-untrusted-hostkey")
 	e.fake.On("restic snapshots --json", host.Response{Err: &host.ExitError{Code: 12, Stderr: "Fatal: wrong password or no key found"}}, host.Response{Out: `[
