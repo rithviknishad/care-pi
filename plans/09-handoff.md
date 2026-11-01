@@ -590,3 +590,69 @@ The owner asked to keep these for the end. Do them on lumine before the project 
 
 The ghcr packages are public since 2026-11-01 (S43 done). lumine pulls `care`, `caddy`, `postgres-pgbackrest`
 without a token. The recovery key words of lumine are in `local/care-recovery-key` on the owner's Mac (S39).
+
+### 8m. Phase 6 agent/console: connectivity (2026-11-01)
+
+Code complete on the branch `phase-6-connectivity`; not run on a Pi. The spec is `docs/connectivity.md`; the contract is
+`docs/api/openapi.yaml` 0.7.0 and `docs/api/README.md` §15. The DNS/ACME service (`services/dns/`, `docs/dns-service.md`)
+is a separate part of the same branch; the agent client follows `services/dns/API.md` (the test vectors of its §3.6 pass).
+
+What exists:
+
+- **Local CA (S36).** `internal/ca`: the root of the agent (ECDSA P-256, 10 years, path length 1) with critical name
+  constraints: `.local`, `.care-pi.rithviknishad.dev`, each other local name, and the `/24` of each LAN address. Not the
+  Tailscale name or address (the local CA never signs them). The Caddyfile gives the root to the `local` CA (`pki`).
+  Plan action `ensure-ca`: the one-time switch of an existing device (deletes the root, the intermediate, and the local
+  leaves of Caddy; restarts care-caddy; `state/ca.json` records the old fingerprint and the time). `GET /tls` shows the
+  constraints, `uncovered`, and the switch. Backups and DR keep the root (`ca.Adopt`). The update verifier trusts it.
+- **Public name.** `internal/dnsclient` (signed Ed25519 requests, register, address, status, rotate, delete, retries, a
+  fake service). Job `tls-public-enrol`: register, address, config, apply, wait for the certificate (5 min), apply again for
+  the redirect of port 80. The site has `tls { dns acmedns /run/secrets/care-pi-acme-dns; resolvers 1.1.1.1 8.8.8.8 }`
+  (the podman secret `care-pi-acme-dns`, `type=mount`), optional `ca` (`tls.public.acme_ca`, staging), and HSTS.
+  `care-dns-update.timer` (each 5 min; resend after 6 h), and the plan action `update-dns` (the NetworkManager hook apply).
+  Off: config, apply, delete the registration.
+- **Tailscale (S37).** `internal/tailscale`. Job `tls-tailscale-enrol`: install from `pkgs.tailscale.com` in the transient
+  unit `care-pi-tailscale-install` (only now; the installer never installs it), `up` with an auth key file or the login
+  link (shown only in `GET /tls`), MagicDNS name into `tls.tailscale.hostname`, apply. The site uses
+  `get_certificate tailscale` through `/run/tailscale`. The pod publishes on the Tailscale address and waits up to 30 s for
+  it (`ExecStartPre=-care-pi network wait-address`). The firewall drop-in adds 41641/udp. Off: `down`, `logout`; the
+  package stays.
+- **Wi-Fi (S35, SP11).** `internal/wifi`: the secondary connection `care-pi-wifi` (keyfile through a transient unit; with
+  the failover, metric 600 and priority -10); job `network-wifi` (radio, profile, connect, route check, config, apply);
+  scan; remove. The bond is rejected. The pod publishes on each LAN address; a failover only removes an address, so the
+  apply does not cycle the pod (`state/pod-live.json`).
+- **Names.** The order public, local, Tailscale; the first is the canonical host (`CURRENT_DOMAIN`,
+  `BUCKET_EXTERNAL_ENDPOINT`, `meta.url`). More than 1 name turns on `care_multihost_files_be` (a cutover). Port 80:
+  `301` to the public name when its certificate is issued, else `308` to the same host. The solution default
+  `ALLOWED_HOSTS` has `*.care-pi.rithviknishad.dev`.
+- **CLI.** `care-pi tls public enable|disable|status|update-address|rotate`, `tls tailscale enable|disable|status`,
+  `network wifi scan|set|remove|status`. `care-pi apply` sends a new address (update-dns). `CARE_PI_DNS_URL` changes the
+  service for a test.
+- **Console.** Settings > Connectivity (public name, Tailscale with the login link and QR code, Wi-Fi with the scan), the
+  Certificate page (the name constraints, the one-time "the certificate changed" warning, the QR code of
+  `https://care-pi.rithviknishad.dev/cert#<DER>` with the fingerprint QR code as the offline fallback), the dashboard names
+  with their modes. Mock scenarios (`connectivity: fresh|migrated|public|tailscale`, failures), Vitest, Playwright
+  `e2e/connectivity.spec.ts` (desktop, mobile, narrow), and `e2e/real/connectivity.spec.ts` (opt-in, not run).
+- **Checks.** `go test -race ./...`, golangci-lint 0, `make api-lint`, shellcheck; `caddy validate` (the image of
+  `images/caddy`) of each golden; quadlet `-dryrun` (podman 5.4.2) of `public` and `public-tailscale`; the console
+  checks and the full Playwright suite. A live Caddy test in Docker: the chain leaf ← `care-pi - ECC Intermediate` ← our
+  root verifies for `care.local` and an IP; HSTS only on the public and Tailscale sites; the port-80 redirects.
+
+Decisions (owner informed; override in `00` if wrong):
+
+- The IP constraint is the `/24` of each LAN address, not the `/32` (`07` §4.1 "generous"): a new DHCP address in the same
+  network keeps the root. A move to another network puts the address in `local_ca.uncovered`; the fix is
+  `POST /tls/local-ca/rotate` (Phase 7).
+- The constraints do not have the Tailscale name or address (deviation from Q-c of `07`): the Tailscale site never uses
+  the local CA, and the root then never changes when Tailscale turns on.
+- acme-dns is TXT-direct (no CNAME), the same as `services/dns/API.md`. The client tries 3 times (5 s, 10 s,
+  `Retry-After`); the timer tries again each 5 min (API.md asks for a 30 s to 15 min backoff for 5xx: the timer is the
+  long backoff).
+- Tailscale: `--accept-dns=false`, `--reset`; disable keeps the package. The login link is not in a job log.
+- The firewall: a rendered drop-in of `care-pi-firewall.service`, not a change of `firewall.nft` (the installer owns it).
+- Wi-Fi: secondary connection; the PSK is only in `secrets/wifi.json` and the keyfile of NetworkManager.
+- `care-pi tls public rotate` has no API operation. `x-phase: 6` stays on the new operations (an older agent gives `501`).
+
+Next step: the Phase 6 exit test on lumine after the merge: `08-spike-log.md`, "Phase 6 exit test — plan". It needs the
+deployed DNS service, a Tailscale auth key (or a login by the owner), the Wi-Fi SSID and passphrase, and the
+Let's Encrypt staging run first.

@@ -71,7 +71,7 @@ Each step is idempotent. If nothing changes, it prints `already configured`.
 5. avahi: `allow-interfaces`, `use-ipv4`, restart, print the announced name and the IPs.
 6. Time: `systemd-timesyncd`, `timedatectl set-ntp true`.
 7. Journal: `/etc/systemd/journald.conf.d/50-care-pi.conf` (`Storage=persistent`, `SystemMaxUse=200M`), `/var/log/journal` (root:systemd-journal 2755), `systemd-tmpfiles`, restart `systemd-journald`, `journalctl --flush` (S45).
-8. Firewall: table `inet care-pi` in `/etc/care-pi/firewall.nft`, loaded by `care-pi-firewall.service` (S44). It accepts 80/tcp, 443/tcp, 8443/tcp (the console, S48), and 5353/udp. No default-drop policy before Phase 7 (S42). The step also removes the setup of an older install.sh (see below).
+8. Firewall: table `inet care-pi` in `/etc/care-pi/firewall.nft`, loaded by `care-pi-firewall.service` (S44). It accepts 80/tcp, 443/tcp, 8443/tcp (the console, S48), and 5353/udp. No default-drop policy before Phase 7 (S42). The step also removes the setup of an older install.sh (see below). The installer never installs Tailscale (S37). When the operator turns the Tailscale mode on, the agent installs it (`docs/connectivity.md` section 4), and `apply` writes the drop-in `/etc/systemd/system/care-pi-firewall.service.d/50-care-pi-tailscale.conf`: it adds 41641/udp to the table after `nft -f`. The installer does not change `firewall.nft` for it.
 9. unattended-upgrades: `/etc/apt/apt.conf.d/52care-pi.conf`, timers.
 10. `apt-mark hold` for `podman crun netavark aardvark-dns conmon skopeo`.
 11. Directories under `/etc/care-pi` and `/var/lib/care-pi`.
@@ -154,6 +154,10 @@ It disables and stops `care-backup.target` and the `care-backup-*` units (a back
 It runs `systemctl disable --now care-pi-firewall.service` (the stop deletes the table `inet care-pi`).
 It removes the quadlets, the unit files (also `care-backup.target` and the mount units of the backup disks), the NetworkManager hook, `/etc/care-pi/firewall.nft`, the files of an older install.sh (`/etc/nftables.d/care-pi.nft` and the `include` line), and the agent binary.
 It keeps the avahi and journald settings.
+Phase 6: the firewall drop-in and `care-dns-update.timer` go with the units (`care-*.d`, `care-*.timer`). The package
+`tailscale` (with its node key), the NetworkManager profile `care-pi-wifi`, and the registration of the public name stay:
+the device can need the Wi-Fi to stay reachable. Before the uninstall, run `care-pi tls tailscale disable`,
+`care-pi network wifi remove`, and `care-pi tls public disable` to remove them.
 It keeps `/etc/care-pi` and `/var/lib/care-pi` unless you add `--purge-data`.
 `--purge-data` also removes the podman secrets `care-pi-*`. The container images stay.
 `--purge-data` uses `rm -rf --one-file-system`: a backup disk that is still mounted below `/var/lib/care-pi/disks` keeps its data.

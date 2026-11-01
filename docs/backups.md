@@ -14,6 +14,7 @@ care-db ── archive-push (WAL) ──► /var/lib/care-pi/backup/pg      loca
 /var/lib/care-pi/s3 (files) ───── care-backup-files@<id>.timer (daily) ─┘   <location>/care-pi-<key id>
 /etc/care-pi (config, secrets) ── in each snapshot (not recovery.key)
 the local CA of Caddy ─────────── in each snapshot (/var/lib/care-pi/caddy/caddy/pki/authorities/local)
+the root CA of the agent ──────── in each snapshot (/var/lib/care-pi/ca; Phase 6)
 ```
 
 - pgBackRest has exactly one repository: `/var/lib/care-pi/backup/pg`. `archive_command` writes only there.
@@ -22,7 +23,8 @@ the local CA of Caddy ─────────── in each snapshot (/var/l
   A failure of one destination has no effect on the other destinations.
 - A `db` snapshot holds the whole local repository and `/etc/care-pi`. A `files` snapshot holds
   `/var/lib/care-pi/s3` (with the xattrs of versitygw) and `/etc/care-pi`. Each snapshot also holds the local CA of
-  Caddy (root and intermediate, with their keys), so a restored device keeps the root CA that the clinic devices trust.
+  Caddy (root and intermediate, with their keys) and, from Phase 6, the name-constrained root CA of the agent
+  (`docs/connectivity.md` section 2), so a restored device keeps the root CA that the clinic devices trust.
 - The recovery key (24 words) opens everything. The agent keeps it on the device, so the timers and a
   restore on the same device never ask for it. A new device needs the key and one destination.
 
@@ -315,9 +317,11 @@ is useful, but the recovery codes of the old device or `sudo care-pi auth reset`
 8. Log in with the console password of the old device. The password of the claim is not valid any more.
 
 After the event `done`, the agent ends each session. The result has the clinic name (`display_name`) and the URLs.
-Then the agent puts back the local CA of Caddy of the old device and restarts care-caddy (a few seconds).
-The clinic devices that trust the old root CA need no change. A snapshot of an agent before wave 5a has no CA: then the
-device keeps its new CA, and each clinic device must install the new root CA (`docs/install.md`).
+Then the agent puts back the root CA of the old device and restarts care-caddy (a few seconds).
+The clinic devices that trust the old root CA need no change. A snapshot of Phase 6 has the root of the agent: the new device
+adopts it (`state/ca.json` keeps the time of the switch). A snapshot of Phase 3 to 5 has only the local CA of Caddy: the
+agent puts it back only on a device without a root of the agent; else the device keeps its root of Phase 6. A snapshot of
+an agent before wave 5a has no CA. In the last two cases, each clinic device must install the new root CA (`docs/install.md`).
 The destinations continue in the same repository `care-pi-<key id>`. When the job fails, the setup state is `setup`, the account
 of the claim stays, and you can start the restore again.
 

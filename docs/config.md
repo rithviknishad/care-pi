@@ -157,12 +157,17 @@ Postgres always gets `max_connections=40` and `work_mem=4MB`.
 
 | Key | Type | Default | Phase | Description |
 |---|---|---|---|---|
-| `tls.local_ca.enabled` | boolean | `true` | Phase 1 | Serve `<hostname>.local` and each LAN IPv4 address with the local CA of Caddy (`tls internal`). Phase 1 needs `true`. |
-| `tls.public.enabled` | boolean | `false` | validate (Phase 6) | Public certificate mode. `true` makes `apply` stop with exit code 2. |
-| `tls.public.clinic_id` | string, or `null` | `null` | validate (Phase 6) | Required when `tls.public.enabled` is `true`. |
-| `tls.tailscale.enabled` | boolean | `false` | validate (Phase 6) | Tailscale mode. `true` makes `apply` stop with exit code 2. |
+| `tls.local_ca.enabled` | boolean | `true` | Phase 1 | Serve `<hostname>.local` and each LAN IPv4 address with the local CA. Since Phase 6, the local CA is the name-constrained root of the agent (`/var/lib/care-pi/ca/`); Caddy makes its intermediate and the leaf certificates below it. `false` is not supported: the local CA is the offline fallback (S36). |
+| `tls.public.enabled` | boolean | `false` | Phase 6 | Public certificate mode: `<clinic_id>.care-pi.rithviknishad.dev` with a certificate of Let's Encrypt (DNS-01 through the DNS/ACME service). Use `care-pi tls public enable` or `PUT /tls/public`: the enrol job registers, gets `clinic_id`, and sets this key. A `config set` of `true` without a registration makes `apply` stop with exit code 2. |
+| `tls.public.clinic_id` | string, or `null` | `null` | Phase 6 | The id that the DNS service gives (for example `sunrise-k3x9`). Required when `tls.public.enabled` is `true`. Do not type it: the enrol job writes it. |
+| `tls.public.acme_ca` | `https://` URL, or `null` | `null` | Phase 6 | The ACME directory. `null` uses Let's Encrypt. For a test, use the staging directory `https://acme-staging-v02.api.letsencrypt.org/directory` (browsers do not trust its certificates). |
+| `tls.tailscale.enabled` | boolean | `false` | Phase 6 | Tailscale mode: the MagicDNS name with the certificate of `tailscaled`. Use `care-pi tls tailscale enable` or `PUT /tls/tailscale`: the enrol job installs Tailscale, connects, and sets `hostname`. |
+| `tls.tailscale.hostname` | `<host>.<tailnet>.ts.net`, or `null` | `null` | Phase 6 | The MagicDNS name. Required when `tls.tailscale.enabled` is `true`. The enrol job writes it from `tailscale status --json`. |
 
-Caddy never sends HSTS for the local CA names.
+The order of the names is: the public name, the local names, the Tailscale name. The first name is the canonical host
+(`CURRENT_DOMAIN`, `BUCKET_EXTERNAL_ENDPOINT`, the `meta.url` of the plugs). With more than 1 name, the plug
+`care_multihost_files_be` turns on (`auto: when_multihost`). Caddy sends HSTS only on the public name and on the
+Tailscale name. Caddy never sends HSTS for the local CA names. Read `docs/connectivity.md`.
 
 ## `clock`
 
@@ -323,12 +328,17 @@ for example `images.postgres: localhost/care-pi/postgres:17-pgbackrest`.
 
 | Key | Type | Default | Phase | Description |
 |---|---|---|---|---|
-| `network.wifi` | `null`, or `{ssid, failover}` | `null` | validate (Phase 6) | Wi-Fi profile. `ssid` is required, 1 to 32 characters. |
+| `network.wifi` | `null`, or `{ssid, failover, country}` | `null` | Phase 6 | The Wi-Fi network. Use `care-pi network wifi set` or `PUT /network/wifi`: the job writes the NetworkManager profile `care-pi-wifi` and this key. The passphrase is in `secrets/wifi.json` (0600) and in the keyfile of NetworkManager, never in this file. |
+| `network.wifi.ssid` | string, 1 to 32 characters | — | Phase 6 | The network name. |
+| `network.wifi.failover` | boolean | `false` | Phase 6 | `true`: Wi-Fi is the backup of ethernet (route metric 600, autoconnect priority -10). `false`: Wi-Fi is the main network (route metric 50). |
+| `network.wifi.country` | `[A-Z]{2}`, or `null` | `null` | Phase 6 | The regulatory domain of the radio, for example `IN`. `null` keeps the value of the host (the Imager settings set it). |
 
 The LAN addresses come from the interfaces, not from this file.
 care-pi uses the IPv4 addresses of the interfaces that are up.
 It ignores loopback, link-local addresses, and the interfaces `podman*`, `veth*`,
 `tailscale*`, `docker*`, `cni*`, `br-*`, `virbr*`, `wg*`, `tun*`, `utun*`, and `zt*`.
+With Wi-Fi up, the list has the ethernet address and the Wi-Fi address. The pod publishes 80, 443, and 8443 on each.
+The address of `tailscale0` is a separate source: the pod also publishes on it when the Tailscale mode is on.
 
 ## `telemetry`
 

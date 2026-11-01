@@ -281,6 +281,9 @@ The script prints the real name, so use the printed name or the IP address.
 The first visit shows a certificate warning.
 Care uses its own local certificate authority until you enable a public certificate.
 Accept the warning once, then install the certificate on each device.
+The root certificate can only sign `.local` names, the names below `care-pi.rithviknishad.dev`, and the addresses of the
+LAN (name constraints). To use Care with no certificate install, turn on the public name or Tailscale in the console
+(Settings > Connectivity; `docs/connectivity.md`).
 
 Create the first Care user:
 

@@ -122,8 +122,9 @@ The agent implements `docs/api/README.md` sections 2 to 4. Facts of the implemen
   The cookie is `__Host-care_pi_session=<id>; Path=/; Max-Age=86400; HttpOnly; Secure; SameSite=Strict`.
 - **CSRF.** Each unsafe request with a session needs `X-CSRF-Token` (from `GET /session`, claim, login, or recover).
   Each unsafe request, also claim, login, and recover, needs `Origin: https://<served host>:8443`.
-  A served host is a host name of `config.yaml`, a LAN address, an address of the rendered `care.pod`, or a
-  site name of the rendered Caddyfile. The last item keeps the console on the old name after the identity step
+  A served host is a host name of `config.yaml` (the local name, and in Phase 6 the public name and the Tailscale name),
+  a LAN address, an address of the rendered `care.pod` (also the Tailscale address), or a site name of the rendered
+  Caddyfile. So `https://<id>.care-pi.rithviknishad.dev:8443` and `https://<host>.<tailnet>.ts.net:8443` pass. The last item keeps the console on the old name after the identity step
   writes a new name and before the finish applies it.
   An unsafe request with a body needs `Content-Type: application/json` (`application/merge-patch+json` for
   `PATCH /config`). A request without a body needs no content type.
@@ -286,7 +287,11 @@ stopped with `missing steps: tls`).
 | `/etc/care-pi/secrets/backup/<id>.json` | The S3 keys of a destination | root 0600 |
 | `/var/lib/care-pi/state/backups/` | `key.json`, `local.json`, `destinations/<id>.json`, `drill.json`, `checkpoints.json` (`docs/backups.md`) | root 0700 |
 | `/run/care-pi/backup/` | The files of one restic run (password, SSH key, S3 keys); deleted after the run | root 0700 |
-| `/var/lib/care-pi/caddy/caddy/pki/authorities/local/root.crt` | The root CA of Caddy (the agent reads it for `/tls/root-ca`) | root |
+| `/var/lib/care-pi/ca/root.crt`, `root.key` | Phase 6: the name-constrained root CA of the agent (`/tls/root-ca`; `docs/connectivity.md`) | root 0644, 0600 |
+| `/var/lib/care-pi/caddy/caddy/pki/authorities/local/root.crt` | The root CA of Caddy. The agent reads it for `/tls/root-ca` only before the Phase 6 switch | root |
+| `/var/lib/care-pi/state/{ca.json,tls-public.json,tls-tailscale.json,wifi.json,pod-live.json}` | Phase 6: the CA switch, the registration with the DNS service, the last Tailscale and Wi-Fi state, the addresses of the pod that runs | root 0600 |
+| `/etc/care-pi/secrets/{dns_client.key,acme_dns.json,wifi.json}` | Phase 6: the Ed25519 key of the DNS client, the credentials of acme-dns, the Wi-Fi passphrase | root 0600 |
+| `/run/care-pi/tailscale-auth-key` | Phase 6: the auth key while `tailscale up` runs; deleted after the step | root 0600 |
 | `/var/lib/care-pi/state/{updates.json,update-history.jsonl,update-cache/,staging/,plug-config.json,images.json}` | Phase 4: the update state (`docs/solutions.md` section 6.4) | root 0600, directories 0700 |
 | `/etc/care-pi/secrets/plug-<id>.json` | Phase 4: the secret settings of one plug | root 0600 |
 
@@ -443,4 +448,27 @@ in units outside its sandbox: apt (`systemd-run --unit care-pi-apt`), the write 
 
 At start, `care-pi serve` marks interrupted jobs, then runs `RecoverUpdates`: a cutover that a power loss
 interrupted rolls back (`docs/solutions.md` section 8.6).
+
+## 12. Phase 6: connectivity
+
+The routes of `docs/api/README.md` §15 are implemented. `agent/internal/service/connectivity.go` holds the logic, and
+`agent/internal/server/handlers.go` the handlers. The packages are `agent/internal/ca` (the root CA),
+`agent/internal/dnsclient` (the client of the DNS/ACME service), `agent/internal/tailscale`, and `agent/internal/wifi`.
+`docs/connectivity.md` is the specification.
+
+| Operation | Job kind | Notes |
+|---|---|---|
+| `GET /tls` | — | Reads the root, `state/ca.json`, `state/tls-public.json`, the certificates in the data of Caddy, and `tailscale status --json` (only with Tailscale installed). No network. |
+| `PUT /tls/public` | `tls-public-enrol` | The DNS service is `https://care-pi.rithviknishad.dev`. For a test, the environment variable `CARE_PI_DNS_URL` (a drop-in of `care-pi.service` and of `care-dns-update.service`) changes it. The job waits up to 5 minutes for the certificate. |
+| `PUT /tls/tailscale` | `tls-tailscale-enrol` | Recent authentication. Cancellable while it waits for the login (15 minutes at most). |
+| `GET /network` | — | Also the default route, the Wi-Fi state (`nmcli`), the DHCP advice, and the Tailscale address. |
+| `GET /network/wifi/scan` | — | `nmcli --terse device wifi list --rescan yes`. About 5 s. |
+| `PUT /network/wifi`, `DELETE /network/wifi` | `network-wifi` | The PSK goes to `secrets/wifi.json` and to the keyfile of NetworkManager only. |
+
+The sandbox of `care-pi.service` does not change in Phase 6. The work that needs more rights runs in transient units:
+the install of Tailscale (`systemd-run --unit care-pi-tailscale-install`), the login of Tailscale
+(`care-pi-tailscale-up`), the write of the Wi-Fi keyfile (`care-pi-wifi-keyfile`), and the Wi-Fi country
+(`care-pi-wifi-country`). `nmcli` and `tailscale` talk to their daemons over D-Bus and unix sockets.
+`care-pi tls public update-address` (the timer) runs as root outside the agent; it takes the apply lock only when it
+applies.
 

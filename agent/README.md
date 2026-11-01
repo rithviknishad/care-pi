@@ -13,6 +13,7 @@ the same service layer (`internal/service`), so each operation has a CLI command
 - The API contract: `docs/api/openapi.yaml` and `docs/api/README.md`.
 - Every config key: `docs/config.md`.
 - The FE providers and the build id: `docs/fe.md`.
+- The local CA, the public name, Tailscale, and Wi-Fi (Phase 6): `docs/connectivity.md`.
 - The CLI, paths, and units contract: the Phase 1 contract of the orchestrator.
 
 ## Commands
@@ -39,6 +40,7 @@ the same service layer (`internal/service`), so each operation has a CLI command
 | `update status\|check\|stage\|apply\|rollback\|history`, `update --os [--check\|--now\|--reboot\|--reboot-if-required]` (Phase 4) | `cmd/care-pi/update.go` |
 | `plugs list\|set\|schema` (Phase 4) | `cmd/care-pi/plugs.go` |
 | `solution list\|show\|validate` (and `solution lock`, `solution index` for CI and `make-lock.sh`) (Phase 4) | `cmd/care-pi/solution.go` |
+| `tls public enable\|disable\|status\|update-address\|rotate`, `tls tailscale enable\|disable\|status`, `network wifi scan\|set\|remove\|status` (and the hidden `network wait-address` of the pod unit) (Phase 6) | `cmd/care-pi/connectivity.go` |
 
 Global flags: `--config` (default `/etc/care-pi/config.yaml`), `--root` (default `/`), `-v`.
 `apply`, `bootstrap`, `fe build`, `fe prune`, `restore pitr|files|dr`, `backup disk prepare`, and
@@ -60,7 +62,7 @@ To add a subcommand, add one file in `cmd/care-pi/`. Register the command on `ro
 | `internal/solution` | Load `solutions/<name>/solution.yaml` (embedded by `solutions/embed.go`), apply the custom plug overrides and the operator choices (`solution.plugs`), merge the env. Phase 4: the schemas (`solution`, `lock`, `index`), solution locks and `index.json` (parse, assemble for CI), the embedded locks and the lock cache (`LockStore`), lock versions and `min_agent_version`, the settings schema of a plug. |
 | `internal/secrets` | Generate and read the secret files. The JWKS generator. The map from secret files to podman secrets. |
 | `internal/lock` | Read and write `lock.yaml` (version 2; a version 1 file is migrated in memory), keep the history (`history.previous`), resolve refs with skopeo and git. Print one `resolve <ref> … <id>` line for each network resolution. |
-| `internal/netinfo` | The LAN IPv4 addresses from the interfaces. |
+| `internal/netinfo` | The LAN IPv4 addresses from the interfaces. Phase 6: the address of `tailscale0` (a separate source), and the wait for an address (`network wait-address`). |
 | `internal/render` | The template model and the renderer. The templates are in `quadlets/templates/`. |
 | `internal/plan` | Compare the rendered tree with the disk. Decide the actions (buckets and stanza before the FE build). Unified diff for `--dry-run`. |
 | `internal/apply` | Run the plan through the host clients. Write the job journal. |
@@ -83,9 +85,15 @@ To add a subcommand, add one file in `cmd/care-pi/`. Register the command on `ro
 | `internal/update` (Phase 4) | The update machine (`docs/solutions.md` sections 7 to 12): the index client, the tracks, the jobs `update-check`, `update-stage`, `update-apply`, `update-rollback` with the cutover and the automatic rollback, the recovery after an interruption, the `Checkpointer` interface and its pgBackRest stub, the verifier, OS updates, plug changes, image retention. `update/updatetest` makes a `file://` dist with two locks for tests. |
 | `internal/window` (Phase 4) | The update window in the time zone of the host: open or closed, the next opening, the timer calendars, daylight saving time. |
 | `internal/plugcfg` (Phase 4) | The `plug_config` rows of Care: the desired rows, the sync through `manage.py shell` in `care-api`, and the managed slugs (`state/plug-config.json`). |
+| `internal/ca` (Phase 6) | The name-constrained root CA (ECDSA P-256, 10 years): the constraint set, make, load, write, the one-time switch from the root of Caddy (`state/ca.json`), the adoption after a restore from backup, and the read of an issued ACME certificate in the data of Caddy. |
+| `internal/dnsclient` (Phase 6) | The client of the DNS/ACME service (`services/dns/API.md`): the Ed25519 signatures, register, address, status, rotate, delete, retries. `Fake` is an `httptest` server of the same protocol. |
+| `internal/tailscale` (Phase 6) | `tailscale status --json`, the install in the transient unit `care-pi-tailscale-install`, `up` with an auth key file or the login link (`care-pi-tailscale-up`), `down`, `logout`. |
+| `internal/wifi` (Phase 6) | The NetworkManager connection `care-pi-wifi`: the keyfile (through `care-pi-wifi-keyfile`), the scan, the country, the link state, the route check, remove. |
 
 The agent runs `systemctl`, `systemd-run`, `podman`, `skopeo`, `journalctl`, `timedatectl`, and `hostnamectl` as commands.
 Phase 4 adds `dpkg-query`, `apt-cache`, and, in the transient unit `care-pi-apt`, `apt-get` and `apt-mark`.
+Phase 6 adds `nmcli`, `ip route`, `tailscale`, and, in transient units, `apt-get install tailscale`, `raspi-config` (or `iw`),
+and the write of the Wi-Fi keyfile.
 It reads git refs over HTTPS, so the host needs no git.
 
 ## Tests
@@ -126,7 +134,8 @@ The reload makes Caddy check the certificates with the correct clock (`docs/appl
 `internal/render/testdata/golden/<case>/` holds the rendered tree of each case:
 `solo`, `small-clinic`, `busy-counter`, `custom`, `small-clinic-bootstrap` (setup mode: `apply --phase bootstrap`),
 `backups` (Phase 3: a USB disk, an SFTP, and an S3 destination; the timers, the mount units, the SSH files),
-and `custom-build` (Phase 4: a local backend build and a local FE plug build).
+`custom-build` (Phase 4: a local backend build and a local FE plug build), `public` (Phase 6: the public name), and
+`public-tailscale` (Phase 6: the public name, Tailscale, and 2 LAN addresses).
 The configs are `internal/render/testdata/config-<case>.yaml`.
 The cases use a test solution in `internal/render/testdata/solutions/`, the addresses
 `192.168.1.10` and `10.0.0.5`, and a lock from a fake resolver (digest = SHA-256 of the reference).
@@ -155,4 +164,17 @@ docker run --rm -v "$PWD/out/etc/containers/systemd:/etc/containers/systemd:ro" 
   quay.io/podman/stable /usr/libexec/podman/quadlet -dryrun
 docker run --rm -v "$PWD/out/etc/care-pi/rendered/caddy:/etc/caddy:ro" \
   docker.io/library/caddy:2 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+```
+
+From Phase 6, the Caddyfile names the root of the agent (`pki`), and the public and Tailscale sites need the modules
+of `images/caddy` (`acmedns`, `tailscale`). Build the image, and mount a test root and a credentials file:
+
+```sh
+docker build -f images/caddy/Containerfile -t care-pi-caddy:dev .
+mkdir -p ca && openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 -subj /CN=test \
+  -keyout ca/root.key -out ca/root.crt
+echo '{"username":"u","password":"p","subdomain":"s","server_url":"https://care-pi.rithviknishad.dev"}' > acme.json
+docker run --rm -v "$PWD/out/etc/care-pi/rendered/caddy:/etc/caddy:ro" -v "$PWD/ca:/etc/care-pi-ca:ro" \
+  -v "$PWD/acme.json:/run/secrets/care-pi-acme-dns:ro" \
+  care-pi-caddy:dev caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 ```

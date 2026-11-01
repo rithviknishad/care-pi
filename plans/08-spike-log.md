@@ -1224,3 +1224,205 @@ Leftovers on lumine (test only): `/var/lib/care-pi-dist/` (the dist of locks 202
 `ghcr.io/rithviknishad/care-pi/care:care-clinic-2026.11.0` and `…:care-clinic-test-broken-migrate`,
 `~/wave6/` (scripts, `p4-broken.lock.yaml`, `api.py`), and the cached TEST ONLY lock 2026.11.2 in
 `state/update-cache/locks/`. The leftovers of wave 5a stay (`w5-s3`, the loop device, `/srv/care-backups`).
+
+## Phase 6 exit test — plan (agent and console; run after the merge of `phase-6-connectivity`)
+
+Status: **planned, not run.** The Phase 6 code did not use lumine (rule of the wave). Keep the raw output in
+`local/p6-exit/` (S39). The specification is `docs/connectivity.md`; the contract is `docs/api/README.md` §15.
+
+Exit criteria (`06` Phase 6):
+
+1. A phone on mobile data (Tailscale) and a laptop on the clinic LAN (public name) both use the same Care without
+   warnings.
+2. File links work from both: a file that the laptop uploads opens on the phone, and the reverse.
+
+The plan also checks: the one-time CA switch of an existing device (S36, `07` §4.1), the name constraints in the
+browsers (SP7 fact F7), the first contact of a fresh device in public mode (`07` §6.1), the offline fallback to the
+local CA (S36.3), and the Wi-Fi failover (S35, SP11).
+
+### What the owner must provide (ask before the run)
+
+| Item | Why | Step |
+|---|---|---|
+| The DNS service deployed at `https://care-pi.rithviknishad.dev` (`curl -s https://care-pi.rithviknishad.dev/health` gives `{"status":"ok"}`) | Registration, the `A` record, the TXT records of DNS-01 | 2 |
+| Permission for 1 production certificate of Let's Encrypt (1 of the 50 a week for the domain), after the staging run | The exit criterion needs a trusted certificate | 2 |
+| A tailnet with MagicDNS and HTTPS Certificates on, and a one-off pre-approved auth key (`tskey-auth-…`), or the owner at the Mac to open the login link | The Tailscale mode | 4 |
+| A phone with the Tailscale app, logged in to the same tailnet, with mobile data | Criterion 1 | 4 |
+| The Wi-Fi SSID, the passphrase, and the country code (for example `IN`) of the LAN of lumine; a DHCP lease for a second address | The Wi-Fi step | 5 |
+| A person at lumine to pull and put back the ethernet cable | The failover | 5 |
+| A second Pi or SD card, or permission to purge lumine and restore it from backup | The fresh-device first contact | 7 |
+| A browser profile on the laptop that does not trust the care-pi root (for example a new Chrome profile) | "Without warnings" must not come from the installed root | 3, 7 |
+
+### 0. Preconditions (Mac)
+
+```sh
+cd ~/ohc.network/care-pi            # the merged tree
+go test -race ./... && golangci-lint run ./... && make build-linux   # with the console
+mkdir -p local/p6-exit
+curl -s https://care-pi.rithviknishad.dev/health | tee local/p6-exit/00-dns-health.json
+docker build -f images/caddy/Containerfile -t care-pi-caddy:p6 .   # only for a local caddy validate
+```
+
+The image of `care-caddy` must have the modules `acmedns` and `tailscale` (`images/caddy/Containerfile`). Check that
+the image on ghcr has them: `ssh lumine 'sudo podman run --rm <caddy image> caddy list-modules | grep -E "acmedns|tailscale"'`.
+If not, push a new caddy image first, and set it in the lock.
+
+### 1. The merged agent on lumine; the one-time CA switch
+
+```sh
+scp bin/care-pi_linux_arm64 lumine:care-pi
+ssh lumine 'sudo install -m 0755 care-pi /usr/local/bin/care-pi && sudo systemctl restart care-pi.service && care-pi version'
+ssh lumine 'sudo care-pi tls show --json' | tee local/p6-exit/10-tls-before.json        # the root of Caddy, name_constraints null
+ssh lumine 'sudo care-pi apply --dry-run' | tee local/p6-exit/11-dry-run.txt
+ssh lumine 'sudo care-pi apply' | tee local/p6-exit/12-apply.txt
+ssh lumine 'sudo care-pi tls show --json' | tee local/p6-exit/13-tls-after.json
+ssh lumine 'sudo cat /var/lib/care-pi/ca/root.crt' > local/p6-exit/root.crt
+openssl x509 -in local/p6-exit/root.crt -noout -text | grep -A6 'Name Constraints' | tee local/p6-exit/14-constraints.txt
+```
+
+Assert: the plan has `ensure-ca` after `ensure-dirs`, the Caddyfile (`pki`), the CA volume of `care-caddy`, and a
+restart of `care-caddy`; no full cycle. After the apply: `local_ca.root.name_constraints` has `.local`,
+`.care-pi.rithviknishad.dev`, and the `/24` of lumine; `ca_changed_at` and `previous_fingerprint_sha256` are set; the
+extension is critical.
+
+```sh
+openssl s_client -connect lumine.local:443 -servername lumine.local -CAfile local/p6-exit/root.crt </dev/null 2>&1 \
+  | grep -E 'Verify return|issuer=' | tee local/p6-exit/15-chain.txt                     # 0 (ok); issuer care-pi - ECC Intermediate
+curl -sS --cacert local/p6-exit/root.crt https://<LAN IP>/ping/                            # the IP is in the /24
+```
+
+Console: the Certificate page shows the warning "the certificate changed" with the new fingerprint, and the name
+constraints. Install the new root on the Mac and on the phone (the QR code opens `https://care-pi.rithviknishad.dev/cert#…`).
+Close the warning; reload: it stays closed. Screenshot each step.
+
+**F7 (name constraints in the browsers).** On lumine, sign a leaf for `evil.example` with the root, and serve it:
+
+```sh
+ssh lumine 'cd ~ && sudo openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj /CN=evil.example \
+  -addext subjectAltName=DNS:evil.example -keyout evil.key -out evil.csr && sudo openssl x509 -req -in evil.csr -days 1 \
+  -CA /var/lib/care-pi/ca/root.crt -CAkey /var/lib/care-pi/ca/root.key -copy_extensions copy -out evil.crt && \
+  sudo openssl s_server -accept 9443 -cert evil.crt -key evil.key -www'
+```
+
+On the Mac, add `<LAN IP> evil.example` to `/etc/hosts`, and open `https://evil.example:9443` in Safari, Chrome, and
+Firefox; on the phone too if possible. Assert: each browser refuses the certificate (a name-constraint error). Record the
+browser versions. Delete `evil.*` on lumine and the line in `/etc/hosts` after the check.
+
+### 2. The public name: staging first, then production
+
+```sh
+ssh lumine 'sudo care-pi tls public enable --hostname-hint lumine \
+  --acme-ca https://acme-staging-v02.api.letsencrypt.org/directory' | tee local/p6-exit/20-enrol-staging.txt
+ssh lumine 'sudo care-pi tls public status --json' | tee local/p6-exit/21-status.json
+N=$(jq -r .hostname local/p6-exit/21-status.json)
+dig +short "$N" @1.1.1.1                                          # the LAN address of lumine
+openssl s_client -connect "$N:443" -servername "$N" </dev/null 2>/dev/null | grep issuer   # (STAGING) …
+ssh lumine 'sudo care-pi plugs list --json | jq "{hostname_count, plug: (.items[] | select(.id==\"care_multihost_files_be\"))}"'
+ssh lumine 'sudo grep -E "CURRENT_DOMAIN|BUCKET_EXTERNAL_ENDPOINT" /etc/care-pi/rendered/care/backend.env'
+ssh lumine 'systemctl list-timers care-dns-update.timer --no-pager; nft list table inet care-pi'
+```
+
+Assert: the job has the steps `dns-register`, `dns-address`, `write-config`, the apply (with a `cutover`: the plug
+`care_multihost_files_be` turns on), `wait-certificate`, and a second apply. The time to the certificate (record it).
+The name resolves to the LAN address. `CURRENT_DOMAIN` and `BUCKET_EXTERNAL_ENDPOINT` have the public name. The timer is
+active. `curl -sI http://lumine.local/` gives `301` to `https://$N/` (the staging certificate counts as issued).
+
+Then production (the same name; Caddy gets a new certificate from the default issuer):
+
+```sh
+ssh lumine 'sudo care-pi config set tls.public.acme_ca=null --apply' | tee local/p6-exit/22-prod.txt
+sleep 120; openssl s_client -connect "$N:443" -servername "$N" </dev/null 2>/dev/null | grep -E 'issuer|Verify return'
+```
+
+Assert: the issuer is Let's Encrypt (`R1x`/`E…`), `Verify return code: 0`, and `GET /tls` shows `public.certificate.staging: false`.
+
+### 3. The laptop on the LAN (criterion 1, first half)
+
+In the browser profile without the care-pi root: open `http://lumine.local` → `301` → `https://$N/` with no warning.
+Log in to Care. Upload a file to a patient (File upload), then open it (the file link uses the public name). Also
+open Care at `https://lumine.local` in the main profile (local CA): the same file opens (the multihost plug signs the link
+for that host). Open the console at `https://$N:8443`: the login works (the Origin check accepts the public name).
+Settings > Connectivity: the public name card shows the name, `issued`, the HSTS note, and the result of the DNS rebinding
+check (record it: some routers block private answers).
+
+```sh
+curl -sI "https://$N/" | grep -i strict-transport-security                 # max-age=31536000
+curl -skI https://lumine.local/ | grep -ci strict-transport-security       # 0: no HSTS on the local CA names
+```
+
+Optional: `CONNECTIVITY_TEST=1 BASE_URL=https://$N:8443 CONSOLE_PASSWORD=… npx playwright test -c playwright.real.config.ts
+e2e/real/connectivity.spec.ts` (in `console/`; without `PUBLIC_HINT` it only reads the state).
+
+### 4. Tailscale and the phone on mobile data (criterion 1, second half; criterion 2)
+
+```sh
+ssh lumine 'sudo care-pi tls tailscale enable --auth-key-stdin' < local/tailscale-auth-key | tee local/p6-exit/40-ts.txt
+# Without a key: Settings > Connectivity > Tailscale > Turn on; open the login link (QR code) and log in.
+ssh lumine 'tailscale status --json | jq "{BackendState, Self: .Self.DNSName, IPs: .Self.TailscaleIPs}"' | tee local/p6-exit/41-ts.json
+ssh lumine 'sudo nft list table inet care-pi | grep 41641; sudo ss -ltn | grep -E "100\.[0-9.]+:(80|443|8443)"'
+```
+
+Assert: the job steps `tailscale-install` (apt from `pkgs.tailscale.com`), `tailscale-up` or `tailscale-login`,
+`write-config`, the apply (no new cutover: the plug is already on). The firewall drop-in is active. The pod publishes on
+the Tailscale address. The job log has no login link.
+
+On the phone: Wi-Fi off, mobile data on, Tailscale on. Open `https://<host>.<tailnet>.ts.net`: no warning. Log in.
+Open the file of step 3: it opens. Upload a photo to the same patient. On the laptop (public name): the photo opens.
+Record the time to the first byte on mobile data.
+
+Reboot lumine and check that the pod publishes on the Tailscale address after the boot:
+
+```sh
+ssh lumine 'sudo systemctl reboot'; sleep 120
+ssh lumine 'journalctl -b -u care-pod.service --no-pager | grep -i -E "wait-address|tailscale" ; sudo care-pi status'
+```
+
+### 5. Wi-Fi and the failover
+
+Console (desktop): Settings > Connectivity > Wi-Fi: Find networks, choose the SSID, the passphrase, the country, failover
+on, Connect. Or: `printf %s "$PSK" | ssh lumine "sudo care-pi network wifi set --ssid '$SSID' --psk-stdin --country IN --failover"`.
+
+```sh
+ssh lumine 'nmcli -f NAME,TYPE,DEVICE,AUTOCONNECT-PRIORITY connection show; ip route show default; sudo care-pi network wifi status --json' \
+  | tee local/p6-exit/50-wifi.txt
+ssh lumine 'sudo ls -l /etc/NetworkManager/system-connections/; sudo grep -c psk= /etc/care-pi/config.yaml'   # 0
+```
+
+Assert: `care-pi-wifi` is active on `wlan0`; the default route of `eth0` has metric 100 and `wlan0` metric 600; the pod
+publishes on both addresses (the first Wi-Fi apply is a full cycle: record the downtime); the PSK is not in
+`config.yaml`, not in a job log (`grep` the journal of the job), and the keyfile is 0600.
+
+**Cable pull.** Start `ping <Wi-Fi address>` and `while sleep 1; do curl -s -o /dev/null -w "%{http_code} " https://$N/ping/; done`
+on the Mac. Pull the ethernet cable. Record: the time until the default route is on `wlan0`, the apply of the
+NetworkManager hook (`journalctl -b | grep "care-pi address change"`, and `care-pi jobs list`: no full cycle, an
+`update-dns` action), the time
+until `dig +short $N @1.1.1.1` gives the Wi-Fi address (TTL 60), and the time until Care answers on the public name and on
+`lumine.local` (avahi announces the Wi-Fi address). Put the cable back: the route goes back to `eth0`; record the same
+values.
+
+### 6. Offline fallback (S36.3)
+
+Unplug the WAN of the router (or block DNS to the internet for the laptop). Open `https://lumine.local`: Care works with the
+local CA. The public name does not resolve (expected). After 5 minutes, `GET /tls` shows `public.dns.last_error`. Plug the
+WAN back: the timer sends the address again, and the error clears.
+
+### 7. A fresh device: first contact in public mode
+
+On a second Pi (or lumine after `uninstall.sh --purge-data` and an install; restore lumine from backup after the test,
+`docs/backups.md` "Disaster recovery"): claim, setup, then Settings > Connectivity > Public name > Turn on (staging is
+not necessary here; the limits allow it). Before the certificate: `http://<host>.local` gives `308` to
+`https://<host>.local`. After it: `301` to `https://<id>.care-pi.rithviknishad.dev/`. In the browser profile without the
+root: no warning at any step. Record the time from "Turn on" to the redirect.
+
+### 8. Turn off and clean up
+
+```sh
+ssh lumine 'sudo care-pi network wifi remove'            # unless the owner keeps it
+ssh lumine 'sudo care-pi tls tailscale disable'          # down and logout; the package stays; remove the node in the admin console
+ssh lumine 'sudo care-pi tls public disable'             # deletes the registration; the id never comes back
+ssh lumine 'sudo care-pi plugs list --json | jq ".items[] | select(.id==\"care_multihost_files_be\") | .enabled"'   # false (a cutover)
+ssh lumine 'sudo grep CURRENT_DOMAIN /etc/care-pi/rendered/care/backend.env; systemctl list-timers care-dns-update.timer --no-pager'
+```
+
+Assert: one name again (`lumine.local`); the plug is off; the timer and the firewall drop-in are gone. Ask the owner
+before the turn-off: the public name and Wi-Fi can stay on lumine for later phases.
