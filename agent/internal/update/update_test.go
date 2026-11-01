@@ -347,6 +347,38 @@ func TestMigrationFailureRollsBack(t *testing.T) {
 	}
 }
 
+// TestUpdatePathIsTheCutover: an update always runs the cutover (section 8.1), so a target whose plan alone only
+// writes a plug_config row (an FE plug turns on) shows the path cutover and its downtime, not "Care keeps running".
+func TestUpdatePathIsTheCutover(t *testing.T) {
+	e := newTEnv(t, "pinned", "2026.11.0")
+	e.install()
+	e.writeConfig("pinned", "2026.11.0")
+	data, err := os.ReadFile(e.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := strings.Replace(string(data), "  pin: \"2026.11.0\"\n",
+		"  pin: \"2026.11.0\"\n  plugs:\n    care_fasterappointments_fe:\n      enabled: true\n", 1)
+	if err := os.WriteFile(e.cfg, []byte(s), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec := e.job(jobs.KindUpdateCheck)
+	if _, err := e.u.Check(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	ov := e.overview()
+	if ov.Target == nil || ov.Target.Path != PathCutover || ov.Target.EstimatedDowntimeS == nil || *ov.Target.EstimatedDowntimeS != downtime(PathCutover) {
+		t.Fatalf("target %+v", ov.Target)
+	}
+	rec = e.job(jobs.KindUpdateApply)
+	if _, err := e.u.Apply(context.Background(), rec, ApplyOptions{Now: true, Source: jobs.SourceCLI}); err != nil {
+		t.Fatal(err)
+	}
+	if got := actions(rec); !reflect.DeepEqual(got, cutoverSteps) {
+		t.Fatalf("steps %v", got)
+	}
+}
+
 // TestCheckpointFailureStartsTheOldUnits: a failed checkpoint stops the update before any change.
 func TestCheckpointFailureStartsTheOldUnits(t *testing.T) {
 	e := newTEnv(t, "pinned", "2026.11.0")

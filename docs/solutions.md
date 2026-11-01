@@ -609,6 +609,8 @@ Each state maps to job steps (`JobStep.action`). The jobs are `update-check`, `u
 | RolledBack | `rollback` | Stop the app units; install `staging/<target id>/previous/`; `daemon-reload`; point `fe/current` at the previous build; start beat, then worker and api; wait until healthy; write the previous `plug_config` rows. Then `maintenance-off`. | starting | `rollback-failed`: the maintenance page stays |
 
 A job of kind `update-apply` runs the stage steps first when the target is not staged.
+An update always runs the cutover, also when the change alone needs less (for example an FE plug that turns on). So
+the path of an update target in `GET /updates` is `cutover` (or `build-and-cutover`), or `none` when nothing changes.
 The step `name` is `<action>` or `<action>: <detail>`, for example `migrate: care-beat.service`. The console keys on `action`.
 `update-stage` runs `fetch-lock`, `plan`, `stage-pull`, `stage-bundles`, `stage-build`, `render`.
 The lock (`write-lock`) is written only after `verify`. A failure before `write-lock` never changes `/etc/care-pi/lock.yaml`.

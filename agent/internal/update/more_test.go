@@ -489,6 +489,9 @@ func TestMakeLockDist(t *testing.T) {
 	if err != nil || !cr.UpdateAvailable || *cr.TargetVersion != "2026.11.1" {
 		t.Fatalf("check %+v %v", cr, err)
 	}
+	if ov := e.overview(); ov.Target == nil || ov.Target.Path != PathCutover {
+		t.Fatalf("N+1 changes only an FE plug, and the update still runs the cutover: target %+v", ov.Target)
+	}
 	rec = e.job(jobs.KindUpdateApply)
 	if _, err := e.u.Apply(context.Background(), rec, ApplyOptions{Now: true, Source: jobs.SourceTimer}); err != nil {
 		t.Fatal(err)

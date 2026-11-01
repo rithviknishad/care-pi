@@ -444,7 +444,9 @@ func changedComponents(cur, tgt *lock.Lock) []string {
 	return out
 }
 
-// pathOf returns the change path of a target: cutover when the plan stops or restarts Care.
+// pathOf returns the path of an update to a target. update-apply always runs the cutover of section 8.1 (the
+// maintenance page and the checkpoint), also when the plan alone needs only a restart or a plug_config row. The path
+// (and its downtime estimate) that GET /updates shows must be the one that runs, so each change is a cutover.
 func pathOf(ctx context.Context, o apply.Options, pr *apply.Prepared) (string, error) {
 	pl, err := apply.PlanFor(ctx, o, pr)
 	if err != nil {
@@ -455,12 +457,10 @@ func pathOf(ctx context.Context, o apply.Options, pr *apply.Prepared) (string, e
 	case pr.CareBuild != nil && careChanged:
 		return PathBuildAndCutover, nil
 	case careChanged, len(lock.ImagesChanged(pr.PrevLock, pr.Lock)) > 0 && !onlyNode(lock.ImagesChanged(pr.PrevLock, pr.Lock)),
-		hasAction(pl.Actions, "full-cycle"), hasAction(pl.Actions, "cutover"):
+		hasAction(pl.Actions, "full-cycle"), hasAction(pl.Actions, "cutover"), hasAction(pl.Actions, "restart"),
+		hasAction(pl.Actions, "plug-config"), hasAction(pl.Actions, "ensure-fe"), hasAction(pl.Actions, "write-lock"),
+		hasAction(pl.Actions, "write-files"):
 		return PathCutover, nil
-	case hasAction(pl.Actions, "restart"):
-		return PathRestart, nil
-	case hasAction(pl.Actions, "plug-config"), hasAction(pl.Actions, "ensure-fe"), hasAction(pl.Actions, "write-lock"), hasAction(pl.Actions, "write-files"):
-		return PathPlugConfig, nil
 	}
 	return PathNone, nil
 }
