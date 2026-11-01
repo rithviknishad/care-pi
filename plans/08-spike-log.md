@@ -879,6 +879,27 @@ Leftovers on lumine and the Mac (test only): the quadlet `w5-s3` and its data (`
 in `~/.ssh/authorized_keys` of the Mac (`local/wave5/42-mac-authorized_keys-line.txt`; the file before the change is
 `42-mac-authorized_keys.before`), and `~/care-pi-sftp-backups/care-pi-b7616345` on the Mac.
 
+### Review fixes after the merge (2026-11-01)
+
+A review of the merged tree (Phases 3 and 4, `78ecf96`) found 9 defects. Each fix is one signed commit with a test;
+nothing ran on lumine. The Phase 4 exit test below covers them on the device.
+
+| # | Defect | Fix | Commit |
+|---|---|---|---|
+| F1 | A rotation to a new key gave each new repository only a `db` snapshot, then deleted the old repositories with every `files` snapshot (no off-device files copy for up to 24 h) | a `files` snapshot per destination with the new key before `activate-key` and `remove-old-repositories` | `3ef3d3b` |
+| F2 | A `pause-backups` that timed out on a backup lock left `care-backup.target` stopped | `PauseBackups` starts the target again on any failure (not with `backups.paused`) | `fc041eb` |
+| F3 | An interruption inside `activate` looked like "before activate": the recovery started a half-written tree with the old `lock.yaml` | `activating` in `state/updates.json` before the first write; step `activate` or the marker → rollback | `213678a` |
+| F4 | The rollback of a failed plug-change cutover rendered `ADDITIONAL_PLUGS` from the new `config.yaml` (the plug on) → `rollback-failed` | the job gets a snapshot of `solution.plugs.<id>` and the secret file, writes both back before the rollback, and renders the plug set of the previous lock | `88d4462` |
+| F5 | `os-unhold` before `full-upgrade` moved podman and crun to the untested candidate; the pin install was a downgrade, and `os-hold` held the candidate | `full-upgrade` with the holds, then `unhold`, `install <pkg>=<tested>` (only newer; never a downgrade), `hold` always | `33d3d83` |
+| F6 | `TimeoutStartSec=` the window length could kill a cutover; a CLI job killed in a cutover waited for the next start of the agent | `TimeoutStartSec=infinity` (apply: `TimeoutStopSec=15min`); no cutover with less than 10 min of window; SIGTERM/SIGINT of a CLI update → rollback, of an OS update → hold; `serve` checks for a recovery each minute | `357cd9f` |
+| F7 | `disk-prepare` could wipe a disk below LVM, LUKS, or md RAID (only direct partitions were checked) | the lsblk tree at any depth; `LVM2_member`, `crypto_LUKS`, `linux_raid_member`, or a `crypt`/`lvm`/`raid*` device → `409 disk-in-use` with the reason | `83e4813` |
+| F8 | After `--keep-old-repositories`, the next rotation took the kept `pg.legacy` for its own resumed run and deleted the live local repository | `state/rekey.json` (job id, key ids) decides a resume; a kept old repository becomes `pg.legacy-<key id>` | `60eabf4` |
+| F9 | Each daily incremental backup of the timer was a checkpoint and filled `RestorePoints.checkpoints` (20) | no checkpoint for a run of the timer | `397e4ba` |
+
+To check on lumine with the Phase 4 exit test: a rotation with destinations (F1), the window units (`systemctl cat
+care-update-apply.service`), `systemctl stop care-update-apply.service` during a cutover (F6), and `apt-mark showhold`
+after `update --os` (F5).
+
 ## Phase 4 exit test — plan (wave 6a; run after the merge of Phase 3 and Phase 4)
 
 Status: **not run**. Wave 6a did not use lumine (wave 6a rule: a Phase 3 agent owned it). Run this plan after the
