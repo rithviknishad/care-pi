@@ -44,11 +44,21 @@ const STEP_ERRORS = {
 
 const PROBLEM_TITLES = {
   internal: "Internal error",
+  "dns-service-unreachable": "The DNS service does not answer",
+  "wifi-auth-failed": "The Wi-Fi network refused the passphrase",
+  "tailscale-login-required": "Tailscale needs a login",
   "destination-unreachable": "The backup destination does not answer",
   "verify-failed": "The verify failed",
   "insufficient-space": "Not enough free disk space",
 };
-const PROBLEM_STATUS = { "destination-unreachable": 422, "verify-failed": 500, "insufficient-space": 409 };
+const PROBLEM_STATUS = {
+  "destination-unreachable": 422,
+  "verify-failed": 500,
+  "insufficient-space": 409,
+  "dns-service-unreachable": 502,
+  "wifi-auth-failed": 422,
+  "tailscale-login-required": 409,
+};
 
 export function jobId(kind) {
   const d = new Date();
@@ -148,9 +158,11 @@ export function startJob(state, spec) {
     emit("step", { ...step });
     const lines = opts.lines ?? LOG_LINES[action] ?? [`${name}: start`];
     let tick = 0;
-    const ticks = Math.max(lines.length, opts.progress ? 4 : 1);
+    // opts.waitUntil: the step waits (at most opts.maxTicks ticks) until the function gives true (a login).
+    const ticks = opts.waitUntil ? (opts.maxTicks ?? 400) : Math.max(lines.length, opts.progress ? 4 : 1);
     const timer = setInterval(
       () => {
+        if (opts.waitUntil?.()) tick = ticks - 1;
         if (tick < lines.length) {
           emit("log", { time: now(), step_index: index, stream: opts.stream ?? "agent", line: lines[tick] });
         }

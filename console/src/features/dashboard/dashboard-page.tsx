@@ -27,8 +27,14 @@ import { maintenanceText } from "@/app/layout/maintenance";
 import { summaryText, trackBadge } from "@/features/updates/update-text";
 import { fmt, jobKindText, strings } from "@/lib/strings";
 import { cn } from "@/lib/utils";
+import { servedNames, type HostMode } from "@/features/connectivity/connectivity-logic";
 
 const d = strings.dashboard;
+const MODE_VARIANT: Record<HostMode, "success" | "neutral" | "info"> = {
+  public: "success",
+  local: "neutral",
+  tailscale: "info",
+};
 const unitKey = (u: UnitStatus) => u.unit;
 
 const STATE_VARIANT: Record<string, "success" | "warning" | "destructive" | "info" | "neutral"> = {
@@ -440,7 +446,33 @@ export default function DashboardPage() {
             <DataRow label={d.gate} loading={loading} value={s?.clock.gate} />
           </DataList>
         </Section>
-        <Section title={d.network}>
+        <Section title={d.network} testId="network-card">
+          {/* Each name has 2 lines at each width (the name, then its certificate), so the skeleton keeps the height. */}
+          <ul className="mb-2 flex flex-col gap-1.5" aria-label={d.names} data-testid="served-names">
+            {s ? (
+              servedNames(s).map((n) => (
+                <li key={n.host} className="flex min-w-0 items-start gap-2">
+                  <Badge variant={MODE_VARIANT[n.mode]} size="xs" className="mt-0.5 w-20 shrink-0 justify-center">
+                    {d.modes[n.mode]}
+                  </Badge>
+                  <div className="flex min-w-0 flex-col">
+                    <span className="truncate text-sm leading-5 font-medium" title={n.host}>
+                      {n.host}
+                    </span>
+                    <span className="truncate text-xs leading-4 text-soft-foreground">{d.certs[n.mode]}</span>
+                  </div>
+                </li>
+              ))
+            ) : (
+              <li className="flex items-start gap-2" aria-hidden>
+                <Skeleton className="mt-0.5 h-4 w-20 shrink-0" />
+                <div className="flex flex-col gap-0">
+                  <Skeleton className="my-0.5 h-4 w-32" />
+                  <Skeleton className="h-4 w-40" />
+                </div>
+              </li>
+            )}
+          </ul>
           <DataList>
             <DataRow label={d.configured} loading={loading} value={s?.network.mdns_configured} />
             <DataRow

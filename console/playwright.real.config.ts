@@ -32,8 +32,14 @@ export default defineConfig({
     {
       name: "desktop",
       // backups.spec.ts runs on both projects (its jobs only on the desktop). updates.spec.ts runs on the project of
-      // UPDATES_PROJECT (default desktop) and only with UPDATES_TEST=1.
-      testMatch: [/desktop\.[a-z0-9-]+\.spec\.ts$/, /\/backups\.spec\.ts$/, /\/updates\.spec\.ts$/],
+      // UPDATES_PROJECT (default desktop) and only with UPDATES_TEST=1. connectivity.spec.ts: the same rule with
+      // CONNECTIVITY_PROJECT and CONNECTIVITY_TEST=1.
+      testMatch: [
+        /desktop\.[a-z0-9-]+\.spec\.ts$/,
+        /\/backups\.spec\.ts$/,
+        /\/updates\.spec\.ts$/,
+        /\/connectivity\.spec\.ts$/,
+      ],
       use: {
         ...devices["Desktop Chrome"],
         viewport: { width: 1280, height: 800 },
@@ -43,7 +49,12 @@ export default defineConfig({
     },
     {
       name: "phone",
-      testMatch: [/phone\.[a-z0-9-]+\.spec\.ts$/, /\/backups\.spec\.ts$/, /\/updates\.spec\.ts$/],
+      testMatch: [
+        /phone\.[a-z0-9-]+\.spec\.ts$/,
+        /\/backups\.spec\.ts$/,
+        /\/updates\.spec\.ts$/,
+        /\/connectivity\.spec\.ts$/,
+      ],
       use: { ...devices["iPhone 13"], ignoreHTTPSErrors: true },
     },
   ],

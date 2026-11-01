@@ -3,6 +3,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { freshBackups } from "./backups-state.mjs";
 import { backupsConfig } from "./backups-view.mjs";
+import { networkExtras } from "./connectivity.mjs";
 
 export const CLAIM_CODE = "4F7K-Q2MX-9PDA";
 export const OS_PASSWORD = "imager-password";
@@ -254,7 +255,8 @@ export function network(state) {
     internet: { reachable: true, checked_at: now() },
     dhcp_hint: { interface: "eth0", mac: "d8:3a:dd:00:11:22", address: ADDRESS },
     urls: [`https://${advertised}/`, `https://${ADDRESS}/`],
-    wifi: null,
+    // Phase 6 (lib/connectivity.mjs).
+    ...networkExtras(state),
   };
 }
 

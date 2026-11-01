@@ -61,6 +61,16 @@ const TYPES = {
   "migration-failed": [500, "A migration failed"],
   "rollback-failed": [500, "The rollback failed"],
   "os-update-failed": [500, "The OS update failed"],
+  // Phase 6 (docs/api/README.md section 15).
+  "dns-service-unreachable": [502, "The DNS service does not answer"],
+  "dns-service-rejected": [502, "The DNS service refused the request"],
+  "acme-pending": [504, "The certificate is not issued yet"],
+  "tailscale-install-failed": [500, "Tailscale did not install"],
+  "tailscale-login-required": [409, "Tailscale needs a login"],
+  "tailscale-https-disabled": [409, "The tailnet gives no HTTPS certificates"],
+  "wifi-auth-failed": [422, "The Wi-Fi network refused the passphrase"],
+  "wifi-no-device": [409, "This device has no Wi-Fi"],
+  "wifi-failed": [500, "The Wi-Fi connection failed"],
 };
 
 // A problem object (for the error of a job).
