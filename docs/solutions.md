@@ -605,7 +605,7 @@ Each state maps to job steps (`JobStep.action`). The jobs are `update-check`, `u
 | Migrating | `migrate` | Start `care-beat`; wait until it is healthy (it runs `migrate`, `sync_permissions_roles`, `sync_valueset`). Limit 20 min (`update.DefaultMigrateTimeout`). The `log` events are the lines of its journal. | down | → `rollback` + PITR offer |
 | Starting | `start` | Start `care-worker` and `care-api`; wait until healthy. | starting | → `rollback` + PITR offer |
 | Starting | `plug-config` | Write the `plug_config` rows (section 12.2). | up behind the page | → `rollback` + PITR offer |
-| Verifying | `verify` | `/ping/` through Caddy gives 200; `fe/current/index.html` is the target build; `/api/v1/plug_config/` lists each FE plug that is on, with its `meta.url`; each `meta.url` gives 200. | up behind the page | → `rollback` + PITR offer |
+| Verifying | `verify` | `/ping/` through Caddy gives 200; `fe/current/index.html` is the target build; `/api/v1/plug_config/` lists each FE plug that is on, with its `meta.url`; each `meta.url` gives 200. The requests go to the canonical host. When it is the public name without a valid certificate (pending, expired, or staging), they go to the primary local name with the local CA (Phase 6). | up behind the page | → `rollback` + PITR offer |
 | Verifying | `write-lock` | Write the on-device lock (version 2); copy the previous lock to `state/locks/`; append the history entry. | up | (local file; the job fails) |
 | Verifying | `maintenance-off` | Delete the flag file. | up | — |
 | Idle | `prune-images` | Remove the care-pi images that neither the current lock nor the previous lock uses (section 8.7). | up | a warning only |

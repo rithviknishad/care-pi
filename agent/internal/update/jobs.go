@@ -715,7 +715,7 @@ func infraChanged(a, b *lock.Lock) bool {
 }
 
 func (u *Updater) verifyTarget(pr *apply.Prepared, rows []plugcfg.Row) VerifyTarget {
-	t := VerifyTarget{Canonical: pr.Model.Canonical, Address: pr.Model.PrimaryIP, Rows: rows}
+	t := VerifyTarget{Canonical: pr.Model.Canonical, Host: verifyHost(u.Paths, pr.Model, u.now()), Address: pr.Model.PrimaryIP, Rows: rows}
 	if pr.Config.FE.Provider != "none" && fe.Exists(u.Paths, pr.Model.FEBuildID) {
 		t.FEBuildID = pr.Model.FEBuildID
 	}

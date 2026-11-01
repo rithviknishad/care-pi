@@ -16,6 +16,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/fe"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/plugcfg"
+	"github.com/rithviknishad/care-pi/agent/internal/render"
 )
 
 // VerifyTarget is what the step verify checks.
@@ -23,6 +24,9 @@ type VerifyTarget struct {
 	// Canonical is the first host name; Address is the LAN address that Caddy publishes.
 	Canonical string
 	Address   string
+	// Host is the name that the verify connects to (SNI and Host header); "" is Canonical. It is a local name when
+	// the canonical host is the public name without a valid certificate (verifyHost).
+	Host string
 	// FEBuildID is the FE build that fe/current must point at ("" without an FE build).
 	FEBuildID string
 	// Rows are the plug_config rows of the FE plugs that are on.
@@ -40,6 +44,8 @@ type Verifier interface {
 type HTTPVerifier struct {
 	Paths   paths.Paths
 	Timeout time.Duration
+	// port is the port of Caddy ("" is the port of the URL, 443). Tests set it.
+	port string
 }
 
 // Verify implements Verifier.
@@ -50,12 +56,15 @@ func (v HTTPVerifier) Verify(ctx context.Context, t VerifyTarget) error {
 	if t.Canonical == "" || t.Address == "" {
 		return fmt.Errorf("no host name or LAN address to check")
 	}
+	if t.Host == "" {
+		t.Host = t.Canonical
+	}
 	client, err := v.client(t)
 	if err != nil {
 		return err
 	}
 	get := func(path string) (int, []byte, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+t.Canonical+path, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://"+t.Host+path, nil)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -98,6 +107,7 @@ func (v HTTPVerifier) Verify(ctx context.Context, t VerifyTarget) error {
 		if err != nil || u.Host != t.Canonical {
 			continue // an external bundle: the browser loads it, not the device
 		}
+		// The bundle has the canonical host in its URL; each name of the device serves the same path.
 		code, _, err := get(u.Path)
 		if err != nil || code != http.StatusOK {
 			return fmt.Errorf("GET %s gave HTTP %d: %v", u.Path, code, err)
@@ -107,8 +117,8 @@ func (v HTTPVerifier) Verify(ctx context.Context, t VerifyTarget) error {
 }
 
 func (v HTTPVerifier) client(t VerifyTarget) (*http.Client, error) {
-	// The canonical host has a certificate of the local CA, or (Phase 6, the public name) of Let's Encrypt:
-	// trust the system roots and the root of the local CA.
+	// The host has a certificate of the local CA, or (Phase 6, the public name with a valid certificate) of
+	// Let's Encrypt: trust the system roots and the root of the local CA.
 	pool, err := x509.SystemCertPool()
 	if err != nil || pool == nil {
 		pool = x509.NewCertPool()
@@ -124,15 +134,31 @@ func (v HTTPVerifier) client(t VerifyTarget) (*http.Client, error) {
 	}
 	dialer := &net.Dialer{Timeout: timeout}
 	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{RootCAs: pool, ServerName: t.Canonical, MinVersion: tls.VersionTLS12},
+		TLSClientConfig: &tls.Config{RootCAs: pool, ServerName: t.Host, MinVersion: tls.VersionTLS12},
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			_, port, _ := net.SplitHostPort(addr)
+			if v.port != "" {
+				port = v.port
+			}
 			return dialer.DialContext(ctx, network, net.JoinHostPort(t.Address, port))
 		},
 	}
 	return &http.Client{Transport: tr, Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}, nil
+}
+
+// verifyHost returns the name that the verify connects to. The canonical host is the public name as soon as
+// tls.public is on, but its certificate can be pending, expired, or of a staging directory (ca.ValidCert). Then the
+// verify uses the primary local name (the verifier trusts the local CA), or the primary LAN address.
+func verifyHost(p paths.Paths, m *render.Model, now time.Time) string {
+	if m.PublicHost == "" || m.Canonical != m.PublicHost || ca.ValidCert(p, m.PublicHost, now) != nil {
+		return m.Canonical
+	}
+	if len(m.LocalHosts) > 0 {
+		return m.LocalHosts[0]
+	}
+	return m.PrimaryIP
 }
 
 // FuncVerifier adapts a function (tests, the dev host).
