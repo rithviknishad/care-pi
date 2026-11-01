@@ -10,11 +10,18 @@ import { cardBoxes, env, note, pageWidth, shot } from "./real";
 // The specs log in with CONSOLE_PASSWORD.
 test.describe.configure({ mode: "serial" });
 
+// The first page of a test logs in through /login?next=…: a direct goto of a page without a session shows the page
+// URL first, and the SPA goes to /login only after its session check (a check of the URL at once misses it).
+const loggedIn = new WeakSet<import("@playwright/test").Page>();
+
 async function open(page: import("@playwright/test").Page, path: string, project: string) {
-  await page.goto(path);
-  if (/\/login/.test(page.url())) {
+  if (loggedIn.has(page)) {
+    await page.goto(path);
+  } else {
+    await page.goto(`/login?next=${encodeURIComponent(path)}`);
     await page.getByLabel("Console password").fill(env.consolePassword);
     await page.getByRole("button", { name: "Log in" }).click();
+    loggedIn.add(page);
   }
   await expect(page).toHaveURL(new RegExp(`${path.replace(/[?]/g, "\\?")}$`));
   note(test.info(), `${project}: ${path}`);
