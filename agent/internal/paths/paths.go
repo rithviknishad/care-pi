@@ -73,6 +73,29 @@ const (
 	CaddyCA = "/var/lib/care-pi/caddy/caddy/pki/authorities/local"
 	// CaddyLocalCerts holds the certificates that the local CA of Caddy issued.
 	CaddyLocalCerts = "/var/lib/care-pi/caddy/caddy/certificates/local"
+	// CaddyCertsDir holds the certificates of each issuer (Phase 6: the ACME certificates of the public name).
+	CaddyCertsDir = "/var/lib/care-pi/caddy/caddy/certificates"
+
+	// Phase 6 (docs/connectivity.md). CADir holds the name-constrained root of the agent (root.crt, root.key 0600).
+	// care-caddy mounts it read-only at CACaddyDir. Each snapshot has it (docs/backups.md).
+	CADir      = "/var/lib/care-pi/ca"
+	CACaddyDir = "/etc/care-pi-ca"
+	// CAState records the switch from the root of Caddy to the root of the agent.
+	CAState = "/var/lib/care-pi/state/ca.json"
+	// PublicState is the registration with the DNS/ACME service (no secret); TailscaleState and WiFiState
+	// are the last known state of the Tailscale and Wi-Fi jobs.
+	PublicState    = "/var/lib/care-pi/state/tls-public.json"
+	TailscaleState = "/var/lib/care-pi/state/tls-tailscale.json"
+	WiFiState      = "/var/lib/care-pi/state/wifi.json"
+	// Secret files of Phase 6 (below SecretsDir). The PSK is in NetworkManager's own keyfile too (0600 root).
+	DNSClientKeyFile = "/etc/care-pi/secrets/dns_client.key"
+	ACMEDNSFile      = "/etc/care-pi/secrets/acme_dns.json"
+	WiFiSecretFile   = "/etc/care-pi/secrets/wifi.json"
+	// TailscaleSocketDir is the directory of the socket of tailscaled. care-caddy mounts it when Tailscale is on.
+	TailscaleSocketDir = "/run/tailscale"
+	// FirewallDropIn adds the Tailscale port (41641/udp) to the table of care-pi-firewall.service (installer).
+	FirewallUnit   = "care-pi-firewall.service"
+	FirewallDropIn = "/etc/systemd/system/care-pi-firewall.service.d/50-care-pi-tailscale.conf"
 
 	// RunDir is on a tmpfs. ApplyLock serialises apply, bootstrap, fe build, and fe prune.
 	RunDir    = "/run/care-pi"
@@ -179,6 +202,7 @@ func Layout() []Dir {
 		{S3Data, 0o700, 0, 0},
 		{RedisData, 0o700, 0, 0},
 		{CaddyData, 0o700, 0, 0},
+		{CADir, 0o700, 0, 0},
 		{BackupDir, 0o700, 0, 0},
 		{BackupPG, 0o700, PostgresUID, PostgresGID},
 		{FEDir, 0o755, 0, 0},
