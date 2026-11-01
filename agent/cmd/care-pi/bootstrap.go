@@ -32,10 +32,11 @@ var bootstrapFlags struct {
 	feProvider  string
 	yes         bool
 	unattended  bool
+	fromImage   bool
 }
 
 var bootstrapCmd = &cobra.Command{
-	Use:   "bootstrap [--hostname NAME] [--preset NAME] [--fe-provider NAME] [--yes] [--unattended]",
+	Use:   "bootstrap [--hostname NAME] [--preset NAME] [--fe-provider NAME] [--yes] [--unattended] [--from-image]",
 	Short: "First run: check the host, create the directories and secrets, write config.yaml, then apply",
 	Long: `bootstrap prepares a new host. Steps:
 
@@ -56,6 +57,15 @@ var bootstrapCmd = &cobra.Command{
 
 Before the apply, bootstrap waits for a LAN IPv4 address, at most --address-wait
 (60 s), as apply does.
+
+--from-image is the first boot of the Raspberry Pi image (care-firstboot.service,
+docs/image.md). It also:
+- installs the pre-seed /etc/care-pi/preseed.yaml (cloud-init write_files) as
+  config.yaml and then applies everything, as --unattended does;
+- puts the dist snapshot of the image (/var/lib/care-pi-dist) into the update
+  cache, so that the solution lock of the image installs without internet;
+- makes the claim code, but the console shows the Imager password field first;
+- writes /var/lib/care-pi/state/firstboot-done after a successful run.
 
 bootstrap holds the lock /run/care-pi/apply.lock for its full run.
 bootstrap asks no questions. --yes exists for the installer.`,
@@ -104,6 +114,17 @@ bootstrap asks no questions. --yes exists for the installer.`,
 		}
 
 		cfgPath := configPath(cmd)
+		preseed := false
+		if f.fromImage {
+			imageInfo(w, p)
+			if preseed, err = installPreseed(w, p, cfgPath); err != nil {
+				return err
+			}
+			if preseed {
+				f.unattended = true
+			}
+			importLocalDist(w, p)
+		}
 		if _, err := os.Stat(cfgPath); errors.Is(err, fs.ErrNotExist) {
 			if hostname == "" {
 				hostname = osHostname()
@@ -124,7 +145,8 @@ bootstrap asks no questions. --yes exists for the installer.`,
 		if err != nil {
 			return err
 		}
-		code, err := bootstrapClaimCode(newAuth())
+		// The image has no terminal that shows the claim code: the console asks for the Imager password first.
+		code, err := bootstrapClaimCode(newAuth(), !f.fromImage)
 		if err != nil {
 			return err
 		}
@@ -165,6 +187,9 @@ bootstrap asks no questions. --yes exists for the installer.`,
 			ips, _ := netinfo.LANIPv4(netinfo.System{})
 			printClaimBox(w, code, names, ips)
 		}
+		if f.fromImage {
+			return finishFirstboot(w, p, phase, preseed)
+		}
 		return nil
 	},
 }
@@ -196,14 +221,14 @@ func bootstrapPhase(w io.Writer, p paths.Paths, unattended bool) (string, error)
 }
 
 // bootstrapClaimCode returns the claim code of an unclaimed device ("" after the claim).
-// When it makes the code, it records the claim hint claim-code: bootstrap prints the code,
-// so the console shows the claim code field first.
-func bootstrapClaimCode(a *auth.Manager) (string, error) {
+// When it makes the code and hint is true, it records the claim hint claim-code: bootstrap
+// prints the code, so the console shows the claim code field first.
+func bootstrapClaimCode(a *auth.Manager, hint bool) (string, error) {
 	if a.Claimed() {
 		return "", nil
 	}
 	code, made, err := a.EnsureClaimCode()
-	if err != nil || !made {
+	if err != nil || !made || !hint {
 		return code, err
 	}
 	if err := a.SetClaimHint(auth.ClaimCode); err != nil {
@@ -259,6 +284,7 @@ func init() {
 	f.StringVar(&bootstrapFlags.feProvider, "fe-provider", config.DefaultFEProvider, "fe.provider of the new config.yaml: none, artifact, or local")
 	f.BoolVar(&bootstrapFlags.yes, "yes", false, "do not ask questions (bootstrap asks none)")
 	f.BoolVar(&bootstrapFlags.unattended, "unattended", false, "apply everything now (Phase 1 behaviour); no console setup")
+	f.BoolVar(&bootstrapFlags.fromImage, "from-image", false, "first boot of the Raspberry Pi image (care-firstboot.service): pre-seed, dist snapshot, firstboot marker")
 	addLockFlag(bootstrapCmd)
 	addAddressWaitFlag(bootstrapCmd)
 	rootCmd.AddCommand(bootstrapCmd)

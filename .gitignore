@@ -30,3 +30,6 @@ console/dist/*
 !console/dist/.gitkeep
 console/test-results/
 console/playwright-report/
+
+# the Raspberry Pi image build (image/build.sh)
+image/out/

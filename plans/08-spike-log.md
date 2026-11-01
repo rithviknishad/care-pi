@@ -366,10 +366,94 @@ self-signed TLS on `10.88.0.1:7071`. Live Care kept serving throughout; API prob
     before starting again. Full cold restart of the whole stack from an already-migrated DB:
     **44 s**.
 
+## SP10 — `rpi-image-gen` vs Imager customisation, then pi-gen — **FAIL for `rpi-image-gen` (no Imager customisation); pi-gen chosen and PASS in Docker; boot on hardware pending**
+
+Date: 2026-11-01. Host: Mac with Apple silicon, Docker Desktop 29.7.2, native `linux/arm64` containers, 14 CPUs and
+8 GB RAM for Docker. Not on lumine. Scratch tree: `.scratch-rpi/` of the worktree (deleted after the wave).
+
+**Run 1 — `rpi-image-gen`** (`https://github.com/raspberrypi/rpi-image-gen`, master `d2d5705`, artefact version v2.9.0).
+A project directory `sp10/` with one config and one layer:
+
+```yaml
+# sp10/config/sp10.yaml
+include: {file: trixie-minbase.yaml}     # device rpi5, image-rpios
+image: {name: sp10-min}
+layer: {sp10: sp10-hook}
+# sp10/layer/sp10-hook.yaml (after the METABEGIN/METAEND header)
+mmdebstrap:
+  packages: [curl]
+  customize-hooks:
+    - install -D -m 0644 files/hello.txt $1/etc/sp10/hello.txt
+    - chroot $1 sh -c 'uname -m > /etc/sp10/chroot-uname; dpkg --print-architecture >> /etc/sp10/chroot-uname; command -v curl >> /etc/sp10/chroot-uname'
+```
+
+```sh
+docker run --privileged --platform linux/arm64 -v /dev:/dev -v care-pi-p5-sp10:/work -v "$PWD":/src:ro debian:trixie bash /src/sp10/run.sh
+# run.sh: cp the tree into the volume; apt-get install sudo git; ./install_deps.sh; useradd builder;
+#         su builder -c "./rpi-image-gen build -S /work/sp10 -c sp10.yaml"
+```
+
+- The build works in Docker with `--privileged` (it uses `podman unshare`, mmdebstrap, and genimage; no loop device).
+  The first try failed on a pip download time-out (network); the second passed: `install_deps.sh` 110 s, build 431 s,
+  **541 s** in total.
+- Output: `sp10-min.img` **1,736,441,856 bytes** (boot 104 MiB FAT, root 1544 MiB ext4), `sp10-min.img.zst` 220 MB,
+  and an IDP archive. The custom layer works: `/etc/sp10/hello.txt` exists; the chroot hook wrote `aarch64`, `arm64`,
+  `/usr/bin/curl`. **Arbitrary chroot steps: PASS.**
+- **Imager customisation: FAIL.** The image has no `cloud-init`, no `rpi-cloud-init-mods`, no `user-data`/`meta-data`/
+  `network-config` on the boot partition, no `userconf-pi`, no `raspberrypi-sys-mods`, no `rpi-resize`, and no
+  `raspi-config`. `cmdline.txt` is `... root=/dev/disk/by-slot/system`. The host name is random (`pi5-hmznag`).
+  The `rpi5` device layer sets `IGconf_linux_page_size=16384` and makes the root ext4 with **16 KB blocks**, and the boot
+  partition has only `kernel_2712.img`: a Pi 4 (4 KB pages) cannot boot it. The project says the same:
+  `contrib/cloud-init/README.md` — "For modifying a full official Raspberry Pi OS image, pi-gen is more suitable", and
+  its `image.json` "is not a Raspberry Pi Imager customisation manifest". To reach parity we would rebuild Raspberry Pi
+  OS Lite from layers. That is the work of pi-gen.
+
+**Decision: pi-gen, branch `arm64`** (the plan fallback, P18), pinned at `c851f00` (2026-10-26) in `image/pi-gen.ref`.
+Stages 0 to 2 are Raspberry Pi OS Lite trixie arm64 with `cloud-init` + `rpi-cloud-init-mods` and the NoCloud seed files
+(`stage2/04-cloud-init`), `rpi-resize`, `rpi-swap`, `kernel8.img` and `kernel_2712.img`. Our stage `image/stage-care`
+runs after stage2. We do not use `build-docker.sh`: `image/build.sh` runs pi-gen in its own privileged container with
+the work tree on a Docker volume, because the skopeo pre-pull writes overlay `containers-storage` (overlay on the
+overlayfs of a container fails) and pi-gen needs device nodes and extended attributes. The build and its measured
+numbers are in "Phase 5 build" below.
+
+**Imager findings** (rpi-imager master `1ae2398`, Imager 2.0.12 in the official list of 2026-10-06):
+
+- Raspberry Pi OS Lite trixie has `"init_format": "cloudinit-rpi"`. Imager 2.x writes `user-data` (`#cloud-config` +
+  the settings), `meta-data` (a new `instance-id` per write), and `network-config` to the boot partition, and appends the
+  NoCloud data source to `cmdline.txt`. Our `cmdline.txt` words stay.
+- The user is the **singular** key `user:` (`name`, `passwd`, `lock_passwd: false`): cloud-init renames the default user
+  of the image. The agent read only `users:` → **fixed** (`auth.Shadow` reads `user:` and `users:`).
+- The password hash is **yescrypt** (`$y$j9T$...`) for each OS whose `release_date` is 2023 or later
+  (`CustomisationGenerator::osUsesYescrypt`), else `$5$`. The agent checked only `$5$`/`$6$`, so the Imager-password
+  claim could not work on any trixie host → **fixed** with `github.com/openwall/yescrypt-go` (test vector from
+  `crypt(3)` of libxcrypt on trixie).
+- cloud-init writes the user and its hash in its init stage (module `users_groups`), before `cloud-config` and
+  `cloud-final`. `care-firstboot.service` runs after `cloud-final.service`, so the hash is in `/etc/shadow` before
+  `care-pi bootstrap --from-image`. **Imager-password claim: PASS in a container boot of the image** (cloud-init wrote
+  the yescrypt hash; the claim with the Imager password succeeded; "Phase 5 build" below). To confirm on hardware.
+- "Use custom" with a local `.img.xz` gives `init_format: none` in Imager 2.x: no customisation. A repository file is
+  necessary: `rpi-imager --repo <url>`, or **App Options > Content Repository > Edit** (a custom file), or a double-click
+  on a `.rpi-imager-manifest` file. Thus `05` §5 is wrong on one point: Imager 2.x has an in-app repository setting.
+- `cloud-final.service` has `After=multi-user.target` (cloud-init 25.1). A unit with `WantedBy=multi-user.target` and
+  `After=cloud-final.service` makes an ordering cycle, so `care-firstboot.service` has `DefaultDependencies=no`.
+
+**Pre-pull check.** `skopeo copy --override-arch arm64 docker://ghcr.io/rithviknishad/care-pi/caddy@<index digest>
+containers-storage:[overlay@<root>/var/lib/containers/storage+<runroot>]ghcr.io/rithviknishad/care-pi/caddy:2` into a
+Docker volume, then `podman --root <root>/var/lib/containers/storage image exists ghcr.io/rithviknishad/care-pi/caddy@<index digest>`:
+**found** (`RepoDigests` has the index digest and the arm64 manifest digest). The units use `<repo>@<digest of the lock>`,
+so the device pulls nothing.
+
+**Docker Desktop note.** Plain HTTP from a container goes through the HTTP proxy of Docker Desktop
+(`http.docker.internal:3128`): 22 KB/s for `deb.debian.org`, 4.4 MB/s with HTTPS. The build switches the Debian and
+Raspberry Pi archives of pi-gen to HTTPS; the image keeps HTTPS sources.
+
+**Still open for SP10:** the boot on a Pi 5 and a Pi 4, and the host name of Imager in avahi (`docs/image.md`, section 9).
+
 ## Still to run
 
 SP7 custom Caddy + name-constrained CA + per-device UX + browser facts F5–F7 · SP8 mDNS
-matrix · SP9 RTC battery verification · SP10 `rpi-image-gen` · SP11 NetworkManager failover.
+matrix · SP9 RTC battery verification · SP10 boot of the image on a Pi 5 and a Pi 4 (the build passed; see SP10) ·
+SP11 NetworkManager failover.
 Also not yet measured: anything on a Pi 4, and a browser-driven file upload through Care's
 UI (SP5 used curl against the presigned URLs only). See `09-handoff.md` §4.
 
@@ -1224,3 +1308,81 @@ Leftovers on lumine (test only): `/var/lib/care-pi-dist/` (the dist of locks 202
 `ghcr.io/rithviknishad/care-pi/care:care-clinic-2026.11.0` and `…:care-clinic-test-broken-migrate`,
 `~/wave6/` (scripts, `p4-broken.lock.yaml`, `api.py`), and the cached TEST ONLY lock 2026.11.2 in
 `state/update-cache/locks/`. The leftovers of wave 5a stay (`w5-s3`, the loop device, `/srv/care-backups`).
+
+## Phase 5 build — the Raspberry Pi image, 2026-11-01 — **PASS (build, file-tree check, container boot with the Imager-password claim); boot on hardware pending; the clock gate blocks Care without internet**
+
+Host: Mac with Apple silicon, Docker Desktop 29.7.2 (native `linux/arm64`, 14 CPUs, 8 GB). Tool: pi-gen `arm64` at
+`c851f00` in the container `care-pi-image-builder` (`image/build.sh`, `image/builder/run.sh`). Not on lumine.
+
+Inputs: the development lock `care-clinic 2026.11.0` from `solutions/scripts/make-lock.sh` (not released): the solution
+image `ghcr.io/rithviknishad/care-pi/care:care-clinic-latest` at `sha256:91bb4d90…`, care `latest` at
+`sha256:77fe743e…` (care git `2bae9334…`), care_fe `44f07eaa8573` with the published FE bundle
+`fe-care-clinic-44f07eaa8573-114c8add61551748` (3.3 MB; the build id that make-lock calculates is the same), the
+external FE plugs (`care_onboarding_fe`, `care_fasterappointments_fe`: no built bundle), and the base images of the lock.
+The agent: `make build-linux` of this branch (with the console).
+
+```sh
+make build-linux
+solutions/scripts/make-lock.sh --solution care-clinic --version 2026.11.0 --out image/out/dist --care-pi bin/care-pi_linux_arm64 \
+  --care-fe-sha 44f07eaa8573a0265cfae0cee4169e06fdde4b37 --fe-bundle care_fe-care-clinic-44f07eaa8573-114c8add61551748.tar.gz
+image/build.sh --dist image/out/dist --lock-version 2026.11.0 --version 2026.11.0-dev
+```
+
+| Step | Time |
+|---|---|
+| stage0 (debootstrap trixie over HTTPS) | 5 min 31 s |
+| stage1 | 45 s |
+| stage2 (Raspberry Pi OS Lite packages, cloud-init) | 3 min 24 s |
+| stage-care `00-install` (`install.sh --image-build`: apt `podman skopeo restic unattended-upgrades uidmap catatonit`, the files, the units) | 65 s |
+| stage-care `01-prepull` (skopeo, 6 images) | 3 min 10 s |
+| stage-care `02-preseed`, `03-firstboot` | < 1 s |
+| export: `prerun` (partitions, `mke2fs -d`) | 22 s |
+| export: `02-set-sources` (`apt-get update`, `dist-upgrade`: 0 upgraded) | **17 min 13 s** — 27.7 MB at 26.8 kB/s through Docker Desktop (see SP10, "Docker Desktop note"); seconds on a CI runner |
+| export: `05-finalise` (initramfs, fstrim, bmap, `xz -6 -T0`) | 2 min 5 s |
+| `verify.sh` | 15 s |
+| **Total** (`run.sh`) | **2033 s (33 min 53 s)**; without the slow apt step about 17 minutes |
+
+| Output | Size |
+|---|---|
+| `care-pi-2026.11.0-dev-care-clinic.img.xz` | **1,052,222,376 bytes (1.05 GB)**, sha256 `cat image/out/*.img.xz.sha256` |
+| Extracted image | 5,419,040,768 bytes (5.4 GB): boot 512 MiB (FAT32), root 4648 MiB (ext4, 3.7 GB used); `rpi-resize` grows it at the first boot |
+| `/var/lib/containers` | 1.5 GB on disk (`podman images`: care 515 MB, postgres-pgbackrest 486 MB, node 252 MB, caddy 126 MB, redis 120 MB, versitygw 74 MB) |
+| `/var/lib/care-pi` + `/var/lib/care-pi-dist` | 12 MB + 3.3 MB |
+
+The estimate of `05` §2 was 2.5–3.5 GB extracted and 1–1.3 GB `.img.xz`: the extracted image is larger (pi-gen adds a
+margin of 20 % + 200 MB to the root file system), the `.img.xz` is inside the range.
+
+**File-tree check** (`image/scripts/verify.sh`, `…verify.txt`): **all checks passed** — `cmdline.txt` (`… rootwait resize
+cgroup_enable=memory cgroup_memory=1`), the cloud-init seed and both kernels, `care-pi version`, the host name `care`,
+the enabled units (`care-firstboot`, `care-pi`, `care-pi-firewall`, `care-pi-led` and its path unit, avahi, timesyncd,
+the apt timers, NetworkManager, `cloud-init-main`, `cloud-final`), the packages (podman 5.4.2, cloud-init 25.2 rpt20,
+`rpi-cloud-init-mods`, `rpi-swap` 1.2.4) and the six apt holds, the drop-ins, no device secret, no SSH host key, the
+machine id `uninitialized`, the dist snapshot, the FE build `114c8add61551748` without `fe/current`, and each image by
+the digest of the lock (`podman --root … image exists <repo>@<digest>`, `arm64`). `os_list.json` and the manifest pass
+the JSON schema of rpi-imager (`doc/json-schema/os-list-schema.json`).
+
+A second build with the final agent (`--reuse-base`: stages 0–2 kept) took **384 s**; its apt step in the export took
+37 s (750 kB/s), so the slow network of the first build is not constant. The `.img.xz` is 1.05 GB again; all file-tree
+checks passed.
+
+**Container boot** (`image/scripts/boot-test.sh`: the root file system booted with `systemd-nspawn --boot
+--private-network` in the build container; `user-data` as Imager 2.x writes it, with `user: clinic`, a yescrypt hash,
+and `hostname: "clinic"`): **18 of 18 checks passed** — cloud-init `done`; the host name `clinic`; the yescrypt hash of
+the Imager user in `/etc/shadow` before `care-firstboot`; `care-firstboot.service` succeeded and wrote the marker;
+`config.yaml` with `hostname: clinic`; the lock of the image and the snapshot index in the update cache; `care-pi`,
+`care-caddy`, and `care.target` active in setup mode (no clock wait); **no image pulled** (no network: Caddy and the pod
+infra came from the pre-pulled storage; the pause image is built locally); `claim_methods` `["os-password",
+"claim-code"]`; the claim with the Imager password → HTTP 201 and the account; `care-pi-led-off.service` started by the
+path unit after the claim. Four iterations of the test found three limits of the container (seccomp of nspawn for
+`keyctl` and `bpf`, the cgroup delegation in the build container, no zram) and two defects of the image path, both fixed:
+
+1. **The setup-mode apply waited for the clock gate.** `care.target` required `care-clock.service`, so `systemctl start
+   care.target` in setup mode waited for NTP: without internet, the first boot never ended. Fix: in setup mode
+   `care.target` does not require the clock gate (only the pod and Caddy run, and they never waited for it).
+2. **Setup mode resolved the Caddy tag at the registry.** Without internet, bootstrap failed (`cannot resolve image
+   ghcr.io/rithviknishad/care-pi/caddy:2`). Fix: setup mode takes the Caddy digest from the solution lock of the track
+   (the cache, the dist snapshot, or the agent).
+
+**Finding for the owner (blocks the offline exit criterion):** after the setup, the full stack still waits for the clock
+gate (`clock.policy: ntp`). Without internet and without an NTP server on the LAN, Care does not start
+(`docs/image.md` §10 point 5). In the container boot, `timedatectl` reported `NTP=no`; `care-clock` waited.

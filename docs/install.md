@@ -10,7 +10,8 @@ With `--unattended`, bootstrap installs Care at once, without the console (the P
 Then bootstrap builds care_fe on the host (`--fe-provider local`). The first build takes about 3 minutes on a Pi 5
 and needs internet.
 
-Related pages: `installer/README.md` (developer notes), `plans/05-image-and-installer.md` (design).
+Related pages: `installer/README.md` (developer notes), `plans/05-image-and-installer.md` (design),
+`docs/image.md` (the Raspberry Pi image: the same script runs in its build with `--image-build`).
 
 ## Before you start
 
@@ -95,6 +96,7 @@ If there is no terminal, it stops and asks you to add `--yes`.
 | `--no-apt-hold` | `CARE_PI_NO_APT_HOLD` | off | Do not hold the container packages. |
 | `--skip-bootstrap` | `CARE_PI_SKIP_BOOTSTRAP` | off | Prepare the host. Do not run `care-pi bootstrap`. |
 | `--binary PATH` | `CARE_PI_BINARY` | none | Install the agent from a local file. Do not download it. |
+| `--image-build` | `CARE_PI_IMAGE_BUILD` | off | **Image build only.** Prepare the root file system of the Raspberry Pi image in a chroot. Write each file and enable each unit, but start nothing. Imply `--yes` and `--skip-bootstrap`. Not with `--unattended`. See [The image build](#the-image-build). |
 | `--dry-run` | `CARE_PI_DRY_RUN` | off | Print what the script would change. Change nothing. |
 | `--help` | none | none | Print the help text. |
 | none | `CARE_PI_DOWNLOAD_BASE` | GitHub releases | URL that holds `care-pi_linux_<arch>` and `SHA256SUMS`. |
@@ -205,6 +207,34 @@ For `latest`, the URL is `https://github.com/rithviknishad/care-pi/releases/late
 
 If the agent is already installed and you give no `--version`, the script keeps it.
 To change the agent, add `--version TAG`.
+
+### The image build
+
+The Raspberry Pi image (`docs/image.md`) runs this script in the chroot of its build:
+`sh install.sh --image-build --binary <agent>`. The chroot has no running systemd and no kernel of the Pi.
+Thus the script writes each file and enables each unit with `systemctl enable` (offline, in the chroot), but it
+skips each step that needs a running system:
+
+| Step | What `--image-build` does | What it skips |
+|---|---|---|
+| Detect the host | Needs `/boot/firmware/cmdline.txt`. Reads the host name from `/etc/hostname`. | The systemd check and the cgroup v2 check (they see the build host). |
+| 1. Packages | The same: `apt` installs the packages, and the podman check runs. | Nothing. |
+| 2. Memory cgroup | Edits `cmdline.txt`: removes `cgroup_disable=memory`, adds `cgroup_enable=memory cgroup_memory=1`. | The check of the active controller and the reboot message. `care-firstboot` checks the controller. |
+| 3. zram | Writes the `rpi-swap` drop-in (or the `zram-generator` drop-in). | The check of `/proc/swaps` and the start of the swap. |
+| 4. Host name | Writes `/etc/hostname` and `/etc/hosts` for `--hostname` or for `raspberrypi`. The image is `care` already. | `hostnamectl`. |
+| 5. avahi | Writes `allow-interfaces` and `use-ipv4`. Enables `avahi-daemon`. | The restart and the wait for the announced name. |
+| 6. Time | Enables `systemd-timesyncd`. | `timedatectl set-ntp true`. |
+| 7. Journal | Writes the drop-in and creates `/var/log/journal`. | `systemd-tmpfiles`, the restart of `systemd-journald`, and `journalctl --flush`. |
+| 8. Firewall | Writes `firewall.nft` and `care-pi-firewall.service`. Enables the unit. | `nft -c -f` and the live load with `nft -f`. The unit loads the table at the first boot. |
+| 9. unattended-upgrades | Writes `52care-pi.conf`. Enables the apt timers. | Nothing else. |
+| 10. Holds | `apt-mark hold` of the container packages. | Nothing. |
+| 11. Directories | The same. | Nothing. |
+| 12. Agent | Copies `--binary` and runs `care-pi version`. | Nothing. |
+| 13. Agent service | Writes `care-pi.service`. Enables it. | The start. It starts at the first boot. |
+| 14. NetworkManager hook | The same. | Nothing. |
+| 15. Host check and bootstrap | Nothing. | `care-pi host check` and `care-pi bootstrap`. At the first boot, `care-firstboot.service` runs `care-pi bootstrap --from-image`. |
+
+Run the script again with `--image-build`: each step prints `already configured`.
 
 ## When the script asks for a reboot
 

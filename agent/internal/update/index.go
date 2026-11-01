@@ -194,3 +194,40 @@ func (c Client) Accept(data []byte, name, version, wantSHA256 string) (*solution
 
 // errNoIndex tells that no index is cached.
 var errNoIndex = errors.New("no index.json is cached")
+
+// LocalIndexURL is the index of the dist snapshot of the Raspberry Pi image.
+const LocalIndexURL = "file://" + paths.LocalDist + "/index/index.json"
+
+// ImportLocalDist reads the dist snapshot in dir (the layout of the release assets: index/index.json
+// and <tag>/<asset>), puts each lock of its index into the lock cache, and makes its index the cached
+// index (docs/image.md, "The dist snapshot"). Each lock must have the SHA-256 of the index entry.
+// It returns nil and fs.ErrNotExist when dir has no index.
+func (c Client) ImportLocalDist(dir string) (*solution.Index, error) {
+	data, err := os.ReadFile(c.Paths.Abs(dir + "/index/index.json"))
+	if err != nil {
+		return nil, err
+	}
+	ix, err := solution.ParseIndex(data)
+	if err != nil {
+		return nil, problem.Newf(problem.ArtefactInvalid, "%s/index/index.json: %v", dir, err)
+	}
+	for _, s := range ix.Solutions {
+		for _, e := range s.Locks {
+			if strings.Contains(e.URL, "://") {
+				continue
+			}
+			lockData, err := os.ReadFile(c.Paths.Abs(dir + "/" + e.URL))
+			if err != nil {
+				return nil, problem.Newf(problem.ArtefactInvalid, "The snapshot index lists %s, but the file is missing: %v", e.URL, err)
+			}
+			if _, err := c.Accept(lockData, s.Name, e.Version, e.SHA256); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if err := lock.WriteFileAtomic(c.Paths.Abs(solution.IndexCacheFile), data, 0o600); err != nil {
+		return nil, err
+	}
+	_ = writeJSON(c.Paths.Abs(indexMetaFile), indexMeta{URL: "file://" + dir + "/index/index.json", FetchedAt: c.now()})
+	return ix, nil
+}

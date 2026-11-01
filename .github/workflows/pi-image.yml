@@ -1,0 +1,219 @@
+name: pi-image
+
+# Build the Raspberry Pi image of one solution lock (docs/image.md, plans/05-image-and-installer.md):
+# Raspberry Pi OS Lite trixie arm64 from pi-gen (branch arm64, pinned in image/pi-gen.ref), the same
+# installer/install.sh (--image-build) in the chroot, the skopeo pre-pull of each image of the lock,
+# and the pre-seeded FE build, FE plug bundles, and dist snapshot (image/build.sh).
+#
+# Publish the image as the release image-<version> (the .img.xz, its .sha256, os_list.json, the
+# .rpi-imager-manifest, image-release.json, and the check report), and replace os_list.json of the single
+# release "imager". Raspberry Pi Imager reads it:
+#   rpi-imager --repo https://github.com/rithviknishad/care-pi/releases/download/imager/os_list.json
+#
+# Triggers: a manual run, or a published release lock-<solution>-<version>. A release that a workflow
+# makes with GITHUB_TOKEN starts no other workflow (a GitHub rule), so solution-lock.yml does not
+# start this workflow: run it by hand after a lock, or publish the lock release as a person.
+#
+# Time and cost: about 40 to 60 minutes on ubuntu-24.04-arm (pi-gen stages 0 to 2 about 15 minutes, the
+# installer and the pre-pull of about 1.9 GB about 10 minutes, the export and xz about 15 minutes).
+# arm64 standard runners are free in public repositories; a private repository pays the per-minute
+# rate of the Linux arm64 runner.
+
+on:
+  workflow_dispatch:
+    inputs:
+      solution:
+        description: Name of the solution directory under solutions/
+        type: string
+        default: care-clinic
+      lock_version:
+        description: The solution lock YYYY.MM.N (the release lock-<solution>-<version> must exist)
+        type: string
+        required: true
+      image_version:
+        description: Image version. Empty gives the lock version. Use a suffix (for example 2026.11.0-2) to build again.
+        type: string
+        default: ""
+      publish:
+        description: Publish the release image-<version> and update the release imager
+        type: boolean
+        default: true
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pi-image
+  cancel-in-progress: false
+
+jobs:
+  image:
+    if: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'lock-') }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The agent version comes from "git describe --tags" (Makefile): min_agent_version of a lock compares it.
+          fetch-depth: 0
+
+      - name: Choose the solution and the versions
+        id: v
+        env:
+          EVENT: ${{ github.event_name }}
+          TAG: ${{ github.event.release.tag_name }}
+          IN_SOLUTION: ${{ inputs.solution }}
+          IN_LOCK: ${{ inputs.lock_version }}
+          IN_VERSION: ${{ inputs.image_version }}
+          IN_PUBLISH: ${{ inputs.publish }}
+        run: |
+          if [ "$EVENT" = release ]; then
+            rest="${TAG#lock-}"
+            lock="${rest##*-}"
+            solution="${rest%-*}"
+            version="$lock"
+            publish=true
+          else
+            solution="$IN_SOLUTION"
+            lock="$IN_LOCK"
+            version="${IN_VERSION:-$IN_LOCK}"
+            publish="$IN_PUBLISH"
+          fi
+          if [[ ! "$solution" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+            echo "::error::Invalid solution name: $solution"
+            exit 1
+          fi
+          if [[ ! "$lock" =~ ^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$ ]]; then
+            echo "::error::Invalid lock version: $lock"
+            exit 1
+          fi
+          if [[ ! "$version" =~ ^[0-9A-Za-z][0-9A-Za-z.+-]*$ ]]; then
+            echo "::error::Invalid image version: $version"
+            exit 1
+          fi
+          if [ "$publish" = true ] && gh release view "image-${version}" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::error::The release image-${version} exists. An image release never changes: choose another image_version."
+            exit 1
+          fi
+          {
+            echo "solution=$solution"
+            echo "lock=$lock"
+            echo "version=$version"
+            echo "publish=$publish"
+            echo "name=care-pi-${version}-${solution}"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+
+      - name: Build the agent with the console (linux/arm64)
+        run: make build-linux
+        env:
+          CGO_ENABLED: "0"
+
+      - name: Free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          docker system prune -af > /dev/null || true
+          df -h /
+
+      - name: Fetch the lock and its bundles
+        env:
+          SOLUTION: ${{ steps.v.outputs.solution }}
+          LOCK: ${{ steps.v.outputs.lock }}
+        run: image/scripts/fetch-dist.sh --solution "$SOLUTION" --lock-version "$LOCK" --out "${RUNNER_TEMP}/dist" --care-pi bin/care-pi_linux_arm64
+
+      - name: Build and check the image
+        env:
+          SOLUTION: ${{ steps.v.outputs.solution }}
+          LOCK: ${{ steps.v.outputs.lock }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          image/build.sh --dist "${RUNNER_TEMP}/dist" --solution "$SOLUTION" --lock-version "$LOCK" --version "$VERSION" \
+            --binary bin/care-pi_linux_arm64 --out image/out \
+            --image-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/image-${VERSION}/care-pi-${VERSION}-${SOLUTION}.img.xz"
+          ls -la image/out
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: ${{ steps.v.outputs.name }}-reports
+          path: |
+            image/out/os_list.json
+            image/out/*.sha256
+            image/out/*.image-release.json
+            image/out/*.verify.txt
+            image/out/*.install.log
+            image/out/*.pi-gen.log
+            image/out/*.info
+          if-no-files-found: warn
+
+      - name: Publish the release image-<version>
+        if: ${{ steps.v.outputs.publish == 'true' }}
+        env:
+          SOLUTION: ${{ steps.v.outputs.solution }}
+          LOCK: ${{ steps.v.outputs.lock }}
+          VERSION: ${{ steps.v.outputs.version }}
+          NAME: ${{ steps.v.outputs.name }}
+        run: |
+          {
+            echo "Raspberry Pi image of the solution lock \`${SOLUTION} ${LOCK}\` (release \`lock-${SOLUTION}-${LOCK}\`)."
+            echo
+            echo "Raspberry Pi OS Lite (64-bit, trixie) with Care. Pi 4 and Pi 5. A first boot without internet reaches the setup."
+            echo
+            echo "Flash it with Raspberry Pi Imager 2.x and this repository (customisation needs the repository file):"
+            echo
+            echo '```sh'
+            echo "rpi-imager --repo ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/image-${VERSION}/os_list.json"
+            echo '```'
+            echo
+            echo "SHA-256 of the extracted image: \`$(jq -r '.os_list[0].extract_sha256' image/out/os_list.json)\`. See docs/image.md."
+          } > release-notes.md
+          gh release create "image-${VERSION}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
+            --title "Raspberry Pi image ${VERSION} (${SOLUTION} ${LOCK})" --notes-file release-notes.md \
+            "image/out/${NAME}.img.xz" "image/out/${NAME}.img.xz.sha256" image/out/os_list.json \
+            "image/out/${NAME}.rpi-imager-manifest" "image/out/${NAME}.image-release.json" "image/out/${NAME}.verify.txt"
+
+      - name: Point the release imager at this image
+        if: ${{ steps.v.outputs.publish == 'true' }}
+        run: |
+          if gh release view imager --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload imager --repo "$GITHUB_REPOSITORY" --clobber image/out/os_list.json
+          else
+            gh release create imager --repo "$GITHUB_REPOSITORY" --latest=false --title "Raspberry Pi Imager repository" \
+              --notes "os_list.json of the newest Raspberry Pi image. Use: rpi-imager --repo ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/imager/os_list.json" \
+              image/out/os_list.json
+          fi
+
+      - name: Write the job summary
+        if: ${{ always() }}
+        env:
+          NAME: ${{ steps.v.outputs.name }}
+        run: |
+          {
+            echo "## Raspberry Pi image ${NAME}"
+            echo
+            if [ -f image/out/os_list.json ]; then
+              echo '```json'
+              cat image/out/os_list.json
+              echo '```'
+            fi
+            if [ -f "image/out/${NAME}.verify.txt" ]; then
+              echo
+              echo '```text'
+              cat "image/out/${NAME}.verify.txt"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

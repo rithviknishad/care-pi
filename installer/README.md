@@ -48,6 +48,7 @@ From a pipe, it cannot do this. It prints the correct command and stops.
 | `--no-apt-hold` | `CARE_PI_NO_APT_HOLD` | off | Do not hold the container packages. |
 | `--skip-bootstrap` | `CARE_PI_SKIP_BOOTSTRAP` | off | Prepare the host. Do not run `care-pi bootstrap`. |
 | `--binary PATH` | `CARE_PI_BINARY` | none | Install the agent from a local file. Do not download it. |
+| `--image-build` | `CARE_PI_IMAGE_BUILD` | off | Image build only (`image/`, `docs/image.md`): run in the chroot of the Raspberry Pi image. Write each file and enable each unit, but start nothing. Imply `--yes` and `--skip-bootstrap`. Not with `--unattended`. |
 | `--dry-run` | `CARE_PI_DRY_RUN` | off | Print what the script would change. Change nothing. |
 | `--help` | none | none | Print the help text. |
 | none | `CARE_PI_DOWNLOAD_BASE` | GitHub releases | URL that holds `care-pi_linux_<arch>` and `SHA256SUMS`. |
@@ -79,6 +80,12 @@ Each step is idempotent. If nothing changes, it prints `already configured`.
 13. Agent service: `/etc/systemd/system/care-pi.service` (`care-pi serve`, `Type=notify`, `Restart=always`, `MemoryMax=128M`, `MemorySwapMax=32M`, `ProtectSystem=strict` with `ReadWritePaths`; function `care_pi_unit`). Enable it and start it. Restart it when the unit or the binary changed. The installer owns this unit: `care-pi apply` never writes it. `docs/console-server.md`, section 2, explains each line. The backups (Phase 3) add no path and no capability to the sandbox: restic, the probe of a destination, and the commands of a disk preparation run in transient units (`systemd-run`), and systemd mounts the backup disks from their mount units (`docs/backups.md`, "The sandbox").
 14. NetworkManager dispatcher hook `90-care-pi`. The hook coalesces the events of 5 s into one apply (15 s in the first 3 minutes after the boot: function `debounce_s`, from `/proc/uptime`). The apply waits up to 60 s for a LAN IPv4 address (`--address-wait`). It holds its flock until the apply ends, so its applies never overlap. An event during an apply gives one more apply after it.
 15. `care-pi host check`, then `care-pi bootstrap --hostname NAME --preset NAME --fe-provider NAME --yes [--unattended]`. In setup mode (the default), bootstrap prints the claim code in a box, and the script prints the console URLs (`https://<name>:8443/`, `https://<ip>:8443/`). With `--unattended`, the script prints the Care URLs. The last message says `Care is ready` only when an FE build exists. Else it tells how to leave the setup page.
+
+With `--image-build`, the steps write their files and enable their units with `systemctl enable` (offline in the chroot).
+They skip each action that needs a running system: `systemctl start`/`restart`/`reload`, `hostnamectl`, `timedatectl`,
+`nft -c` and `nft -f`, the restart of journald and `journalctl --flush`, the checks of the active memory controller and of
+`/proc/swaps`, the avahi name wait, `care-pi host check`, and bootstrap. `docs/install.md`, "The image build", has the table.
+At the first boot of the image, `care-firstboot.service` runs `care-pi bootstrap --from-image`.
 
 The script writes a log to `/var/log/care-pi-install.log`.
 A reboot may be necessary after step 2 or step 3. Then the script prints `REBOOT REQUIRED` and does not run bootstrap.
@@ -133,6 +140,20 @@ Do not use it on a real host.
 
 To test the firewall step, add `--cap-add NET_ADMIN` to the container, install `nftables` first, and remove `--no-firewall`.
 Without systemd, the script loads the table with `nft -f` and warns that nothing loads it at boot.
+
+The image build (`--image-build`) has its own check. The chroot of the image has `/boot/firmware/cmdline.txt` and no
+running systemd. Run it twice:
+
+```sh
+docker run --rm -v "$PWD/installer:/src:ro" debian:trixie sh -c '
+  mkdir -p /boot/firmware && echo "console=tty1 rootwait cgroup_disable=memory" > /boot/firmware/cmdline.txt
+  for i in 1 2; do sh /src/install.sh --image-build --binary /bin/true || exit 1; done
+  cat /boot/firmware/cmdline.txt; systemctl is-enabled care-pi.service care-pi-firewall.service'
+```
+
+The second run must print `already configured` for each step. `cmdline.txt` must have
+`cgroup_enable=memory cgroup_memory=1` and no `cgroup_disable=memory`. `systemctl` must print `enabled` twice.
+The full image build (`image/build.sh`) also runs the script in the chroot of Raspberry Pi OS Lite.
 
 ### Choices to know
 

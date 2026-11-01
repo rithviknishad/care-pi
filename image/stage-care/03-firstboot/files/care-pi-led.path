@@ -1,0 +1,12 @@
+# care-pi image (image/stage-care): the console claim writes /etc/care-pi/secrets/agent.json.
+# Then care-pi-led-off.service stops care-pi-led.service (Conflicts=), and the LED gets its trigger back.
+[Unit]
+Description=Care: watch for the console claim (ACT LED)
+Documentation=https://github.com/rithviknishad/care-pi/blob/main/docs/image.md
+
+[Path]
+PathExists=/etc/care-pi/secrets/agent.json
+Unit=care-pi-led-off.service
+
+[Install]
+WantedBy=multi-user.target

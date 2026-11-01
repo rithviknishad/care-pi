@@ -108,15 +108,19 @@ The agent implements `docs/api/README.md` sections 2 to 4. Facts of the implemen
   `care-pi bootstrap` makes the code when the device is not claimed. The claim deletes the file.
   When bootstrap makes the code, it also writes the claim hint `/var/lib/care-pi/state/claim-hint` (`claim-code`):
   bootstrap prints the code, so the operator has it. The hint is not in `setup.json`, because a new setup record
-  changes the state machine of a Phase 1 host. The claim deletes the hint.
+  changes the state machine of a Phase 1 host. The claim deletes the hint. `care-pi bootstrap --from-image` (the first
+  boot of the Raspberry Pi image, `docs/image.md`) makes the code but writes no hint: no terminal shows the code there.
   `sudo care-pi auth claim-code` prints the code and the console URLs. `--rotate` makes a new code.
 - **Imager password** (`os-password`). The agent reads the user name from the cloud-init `user-data` of
-  Raspberry Pi Imager (`/boot/firmware/user-data`), then compares the password with the SHA-crypt hash of that
-  user in `/etc/shadow`. `claim_methods` lists `os-password` only when such a user exists.
+  Raspberry Pi Imager (`/boot/firmware/user-data`: the key `user:` of Imager 2.x, or the list `users:`), then compares
+  the password with the hash of that user in `/etc/shadow`: yescrypt (`$y$`, what Imager 2.x writes for each OS of 2023
+  or later) or SHA-crypt (`$5$`, `$6$`). `claim_methods` lists `os-password` only when such a user exists.
   `os-password` is the first method, except when the claim hint is `claim-code`. The console shows the field of the
   first method. When the operator types a claim code (`XXXX-XXXX-XXXX`) in the Imager password field, the console
   shows the claim code field.
-  This method needs a test on a Pi that Imager flashed (spike SP10). The code is behind the interface `auth.OSPassword`.
+  Spike SP10 read the user-data generator of rpi-imager and tested the method in a container boot of the image
+  (`image/scripts/boot-test.sh`); a test on a Pi that Imager flashed is still to do. The code is behind the interface
+  `auth.OSPassword`.
 - **Sessions.** `/var/lib/care-pi/state/sessions.json` (root 0600) has the SHA-256 of each session id. A restart
   of the agent keeps the sessions. Idle timeout 2 h, absolute timeout 24 h (S49), 10 sessions at most.
   The cookie is `__Host-care_pi_session=<id>; Path=/; Max-Age=86400; HttpOnly; Secure; SameSite=Strict`.

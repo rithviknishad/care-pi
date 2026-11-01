@@ -11,5 +11,6 @@ The planning documents are in `plans/`. Start with `plans/09-handoff.md`.
 | `fe.md` | The FE providers and the FE build. |
 | `backups.md` | Backups and restore (Phase 3): the recovery key and its test vectors, the destinations, the timers, PITR, files, the restore drill, a restore of a new device. |
 | `solutions.md` | Phase 4: the solution format, solution locks, `index.json`, the CI artefacts, tracks, updates, rollback, OS updates, and plugs. |
+| `image.md` | Phase 5: the Raspberry Pi image: the build (pi-gen), the check, Raspberry Pi Imager, the first boot, the `user-data` pre-seed, the hardware test. |
 | `console-server.md` | `care-pi serve`: the console API server, auth and claim, setup mode, jobs and SSE, the dev listener. |
 | `api/` | The contract between the agent and the console (OpenAPI 3.1 and its design note). |

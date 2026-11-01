@@ -1,0 +1,11 @@
+# The build container of the care-pi Raspberry Pi image (image/build.sh, docs/image.md).
+# Debian trixie arm64 with the dependencies of pi-gen (its "depends" file), skopeo for the pre-pull,
+# and the tools of the image check (image/scripts/verify.sh).
+FROM docker.io/library/debian:trixie
+
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      quilt parted coreutils qemu-user-binfmt debootstrap zerofree zip dosfstools e2fsprogs libcap2-bin \
+      grep rsync xz-utils curl xxd file git kmod bc gpg pigz arch-test ca-certificates \
+      fdisk util-linux mtools skopeo podman systemd python3 python3-jsonschema jq bmap-tools \
+ && rm -rf /var/lib/apt/lists/*

@@ -92,8 +92,11 @@ Run apply again: it is idempotent.
 
 On a new host, `care-pi bootstrap` starts setup mode (`docs/api/README.md`, section 5.1). apply then has the
 phase `bootstrap`: it renders and starts only `care.pod`, `care-caddy.container`, `care.target`,
-`care-clock.service`, `care-start.service`, the Caddyfile, and the status pages. It resolves only the Caddy image.
-It does not make an FE build. Caddy serves the setup page on port 443 and the console on port 8443.
+`care-clock.service`, `care-start.service`, the Caddyfile, and the status pages. It resolves only the Caddy image:
+the digest comes from the solution lock of the track (the cache, the dist snapshot of the Raspberry Pi image, or the
+agent), else from the registry. It does not make an FE build. Caddy serves the setup page on port 443 and the console
+on port 8443. In setup mode, `care.target` does not require the clock gate, so the start does not wait for a
+synchronized clock.
 The golden tree `agent/internal/render/testdata/golden/small-clinic-bootstrap` shows the output.
 
 The phase of the host is in the setup record `/var/lib/care-pi/state/setup.json` (`apply_phase`).
@@ -108,7 +111,7 @@ The setup finish (`POST /api/v1/setup/finish` or `care-pi setup finish`) runs th
 | `/etc/containers/systemd/care.pod` | root 0644 | The pod. It publishes 80, 443, and 8443 (the console, S48) on each LAN IPv4 address, and `127.0.0.1:19000` (API) and `127.0.0.1:17070` (S3) for debug. |
 | `/etc/containers/systemd/care-{caddy,db,redis,s3,beat,worker,api}.container` | root 0644 | The containers. |
 | `/etc/containers/systemd/care-fe-build.container` | root 0644 | Only with `fe.provider: local`. The FE builder (`docs/fe.md`). |
-| `/etc/systemd/system/care.target` | root 0644 | Wants every unit of the stack. Requires `care-clock.service`. No `[Install]` section. |
+| `/etc/systemd/system/care.target` | root 0644 | Wants every unit of the stack. Requires `care-clock.service`, except in setup mode: there it wants only the pod and Caddy, which do not wait for the clock, so the setup works before the clock is synchronized (a first boot without internet, `docs/image.md`). No `[Install]` section. |
 | `/etc/systemd/system/care-clock.service` | root 0644 | The clock gate: `care-pi clock wait`. |
 | `/etc/systemd/system/care-start.service` | root 0644 | Starts `care.target` at boot without a wait: `systemctl start --no-block care.target`. apply enables this unit, not `care.target`. |
 | `/etc/care-pi/rendered/caddy/Caddyfile` | root 0600 | Routing and TLS. |

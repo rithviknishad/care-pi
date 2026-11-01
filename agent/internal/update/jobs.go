@@ -72,7 +72,11 @@ func (u *Updater) Check(ctx context.Context, rec *jobs.Recorder) (*CheckResult, 
 		ix, err = u.client().FetchIndex(ctx, url)
 		return err
 	}); err != nil {
-		// Offline: the cache and the embedded locks stay usable, but the check fails.
+		// Offline: the cache and the embedded locks stay usable, but the check fails. Without a cache,
+		// the dist snapshot of the Raspberry Pi image becomes the cache (docs/image.md).
+		if cached, _ := solution.CachedIndex(u.Paths); cached == nil {
+			_, _ = u.client().ImportLocalDist(paths.LocalDist)
+		}
 		return fail(err)
 	}
 	if s := ix.Find(cfg.Solution.Name); s != nil && s.Latest != nil {

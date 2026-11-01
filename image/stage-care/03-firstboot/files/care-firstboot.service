@@ -1,0 +1,34 @@
+# care-pi image (image/stage-care): the first boot (docs/image.md, "First boot").
+# It runs once: "care-pi bootstrap --from-image" writes the marker of ConditionPathExists.
+#
+# Order: after the customisation of Raspberry Pi OS (cloud-init: host name, the Imager user and its
+# password hash, Wi-Fi, SSH), after the swap (zram), and after the network wait.
+# cloud-final.service has After=multi-user.target. DefaultDependencies=no keeps multi-user.target from
+# an After= on this unit (that is the rule of a target for its Wants=), so there is no ordering cycle.
+# The lines below give the usual dependencies of a service.
+[Unit]
+Description=Care first boot (care-pi bootstrap --from-image)
+Documentation=https://github.com/rithviknishad/care-pi/blob/main/docs/image.md
+DefaultDependencies=no
+Requires=sysinit.target
+Wants=network-online.target
+After=sysinit.target basic.target swap.target network-online.target cloud-final.service
+Conflicts=shutdown.target
+Before=shutdown.target
+ConditionPathExists=!/var/lib/care-pi/state/firstboot-done
+# A failure starts the unit again after 2 minutes, at most 3 times in one hour.
+StartLimitIntervalSec=1h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/care-pi/care-firstboot
+TimeoutStartSec=45min
+Restart=on-failure
+RestartSec=2min
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

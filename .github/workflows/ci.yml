@@ -69,3 +69,7 @@ jobs:
         run: find installer -name '*.sh' -type f -print0 | xargs -0 -r shellcheck
       - name: Run shellcheck on the solution scripts
         run: find solutions/scripts -name '*.sh' -type f -print0 | xargs -0 -r shellcheck
+      - name: Run shellcheck on the image scripts
+        run: |
+          find image -name '*.sh' -type f -print0 | xargs -0 -r shellcheck
+          shellcheck image/stage-care/03-firstboot/files/care-firstboot image/stage-care/03-firstboot/files/care-pi-led

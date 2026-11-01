@@ -24,7 +24,7 @@ After you clear k3s/tailscale/cloudflared from lumine and `apt install podman sk
 | SP7 | Caddy custom build (acme-dns module, Tailscale cert) with `tls internal` for `care.local` + raw IP, root supplied by the agent **with X.509 name constraints**; root CA install UX on iOS, Android, Windows, macOS; verify the browser facts F5–F7 in `07-first-contact-trust.md` (HTTPS-first fallback behaviour per browser, service-worker/API availability on a bypassed origin, bypass persistence, name-constraint enforcement on Apple) | each device reaches `https://care.local` without warnings after install; F5–F7 recorded per browser/version | document per-device caveats; recommend public-cert mode | pending |
 | SP8 | mDNS resolution of `care.local` from Android (several versions), Windows 10/11, iOS, macOS | works or documented | IP/QR fallback already planned | pending. **Input from the Phase 1 exit test (macOS 27, lumine):** avahi publishes the A record and an AAAA record (the IPv6 ULA). The Mac prefers the AAAA (its resolver lists it first). The pod publishes 80/443 on IPv4 only, so the Pi answers the IPv6 SYN to 443 with an RST (`Connection refused`), and the fallback to IPv4 is fast: `curl https://lumine.local/ping/` 0.03–0.12 s. (`getaddrinfo` puts the A first, because RFC 6724 ranks a ULA below IPv4; an IPv6-only connect is refused after ≈ 1 s.) Tried and reverted: `use-ipv6=no` and `publish-aaaa-on-ipv4=no` (no AAAA). avahi sends no negative AAAA answer (avahi issue 428), so each macOS lookup for both families waited 2.7–5.0 s. **Follow-up:** publish 80/443 on the LAN IPv6 addresses too (pod `PublishPort`, Caddy sites, `DJANGO_ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`), so that the AAAA record is valid. Measure browsers and the other OSes here. |
 | SP9 | Pi 5 RTC passive battery verification; `fake-hwclock` interplay; timesyncd gating with `systemd-time-wait-sync` | gate behaves as specified in `01` §7 | `ntp` policy only in v1 | pending |
-| SP10 | `rpi-image-gen` trixie Lite image with a chroot hook running `install.sh` and skopeo pre-pull; Imager customisation still works | image boots on Pi 5 and Pi 4; hostname customisation reaches avahi | `pi-gen` | pending |
+| SP10 | `rpi-image-gen` trixie Lite image with a chroot hook running `install.sh` and skopeo pre-pull; Imager customisation still works | image boots on Pi 5 and Pi 4; hostname customisation reaches avahi | `pi-gen` | **`rpi-image-gen` FAIL → pi-gen** — `08` SP10: `rpi-image-gen` builds in Docker and runs chroot hooks, but its image has no cloud-init seed (no Imager customisation) and its `rpi5` layer is Pi-5-only; pi-gen `arm64` builds the image in Docker (Phase 5 build); Imager 2.x writes `user:` + yescrypt (agent fixed); boot on a Pi 5 and a Pi 4 pending |
 | SP11 | NetworkManager bond eth+wlan (gist approach) on Pi | failover keeps IP | Wi-Fi as a secondary connection without bonding (later phase anyway) | pending |
 
 Exit: a written results table replacing the *inference* marks in `01` §4/§8.
@@ -138,7 +138,7 @@ Headscale option; documentation site for operators (per solution) and developers
 | Operator loses recovery key and device | data loss | low but severe | confirmation ceremony; persistent banner; printable sheet |
 | Let's Encrypt rate limits as clinic count grows | enrolment failures | low early | PSL application; rate-limit increase request |
 
-## Status (2026-11-01, after the Phase 4 exit test)
+## Status (2026-11-01, after the Phase 5 build)
 
 Phase 0: SP1–SP6 are done (results in `08-spike-log.md`, folded back into `01`/`02`/`03`/`05`);
 SP7–SP11 are pending. All proposals in `00` §B are accepted (S37, S40); S41–S43 were added
@@ -159,6 +159,15 @@ an update N → N+1 by the window timer with the maintenance page, 65 s; a force
 offer restored the database through the API; FE and backend plug switches; Phase 3 run, verify, and reboot after the merge;
 8 fixes; `08-spike-log.md` "Phase 4 exit test", `09-handoff.md` §8j). Open for Phase 4: public images and release assets
 (`docs/solutions.md` open point 1), a maintenance page for the path `restart`, `agent-too-old` with a tagged build,
-`update --os --now` on a device, and the follow-ups in `08`. Next: Phase 5 (the image).
+`update --os --now` on a device, and the follow-ups in `08`.
+**Phase 5 code is complete; the image builds and passes its checks, not yet on a Pi** (wave 7, 2026-11-01, branch
+`phase-5-image`; `08-spike-log.md` "SP10" and "Phase 5 build", `09-handoff.md` §8l, `docs/image.md`). SP10: `rpi-image-gen`
+has no Imager customisation → pi-gen `arm64`. `image/build.sh` makes `care-pi-<version>-<solution>.img.xz` (1.05 GB;
+5.4 GB extracted) with the same `install.sh --image-build`, the pre-pulled images of the lock, the dist snapshot, the FE
+build, and `care-firstboot.service`; `os_list.json` for Imager 2.x (`init_format: cloudinit-rpi`); CI
+`pi-image.yml` on `ubuntu-24.04-arm`. A container boot of the image (systemd-nspawn, no network) ran cloud-init, the first
+boot, and setup mode from the pre-pulled images. Open: the boot and the exit test on a Pi 5 and a Pi 4 (`docs/image.md`
+§9), the clock gate without internet (an owner decision, `docs/image.md` §10 point 5), a QEMU boot in CI, and the first
+run of `pi-image.yml` on GitHub.
 The remaining open questions (`00` §C: O4, O6 plug set, O7 upstream PR timing, O9, O11, O12,
 O13, O16, O17) each become blocking only in the phase noted there.

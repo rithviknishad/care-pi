@@ -1,0 +1,26 @@
+#!/bin/sh
+# care-pi-led on|off: the ACT LED of the Raspberry Pi blinks (trigger "heartbeat") while the console
+# is not claimed, so that a person at the device sees that it waits for the setup (docs/image.md).
+# "on" saves the current trigger; "off" restores it (mmc0 when nothing is saved).
+LED=/sys/class/leds/ACT/trigger
+SAVE=/run/care-pi-led.trigger
+
+[ -w "$LED" ] || exit 0
+case "${1:-}" in
+  on)
+    sed -n 's/.*\[\([^]]*\)\].*/\1/p' "$LED" >"$SAVE"
+    echo heartbeat >"$LED"
+    ;;
+  off)
+    trigger=$(cat "$SAVE" 2>/dev/null || true)
+    if [ -z "$trigger" ] || [ "$trigger" = heartbeat ]; then
+      trigger=mmc0
+    fi
+    echo "$trigger" >"$LED"
+    rm -f "$SAVE"
+    ;;
+  *)
+    echo "usage: care-pi-led on|off" >&2
+    exit 2
+    ;;
+esac

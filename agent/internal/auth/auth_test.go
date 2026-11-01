@@ -390,8 +390,69 @@ func TestShadowVerifier(t *testing.T) {
 	if !s.Available() || !s.Verify("Hello world!") || s.Verify("hello world!") {
 		t.Fatal("the Imager user must verify")
 	}
-	write("/etc/shadow", "clinic:$y$j9T$abc$def:20000::::::\n")
+	write("/etc/shadow", "clinic:$1$abc$def:20000::::::\n")
 	if s.Available() {
-		t.Fatal("yescrypt is not available")
+		t.Fatal("md5crypt is not available")
+	}
+	write("/etc/shadow", "clinic:!$y$j9T$abc$def:20000::::::\n")
+	if s.Available() {
+		t.Fatal("a locked account is not available")
+	}
+	// Imager 2.x writes yescrypt for an OS with a release date of 2023 or later. The hash is from
+	// crypt(3) of libxcrypt on Debian trixie (perl -e 'print crypt("Hello world!", q($y$j9T$F5Jx5fExrKuPp53xLKQ..1$))').
+	write("/etc/shadow", "clinic:$y$j9T$F5Jx5fExrKuPp53xLKQ..1$42RgPIrXdXSEEs77lDi/4IqKVqFBAVaHJkzw5uD1r57:20000::::::\n")
+	if !s.Available() || !s.Verify("Hello world!") || s.Verify("hello world!") {
+		t.Fatal("the yescrypt hash must verify")
+	}
+}
+
+// TestShadowVerifierImager2: Raspberry Pi Imager 2.x writes the singular key "user:" (spike SP10).
+func TestShadowVerifierImager2(t *testing.T) {
+	p := paths.New(t.TempDir())
+	s := Shadow{Paths: p}
+	write := func(path, data string) {
+		t.Helper()
+		abs := p.Abs(path)
+		mustNil(t, os.MkdirAll(abs[:strings.LastIndex(abs, "/")], 0o755))
+		mustNil(t, os.WriteFile(abs, []byte(data), 0o600))
+	}
+	// The shape of CustomisationGenerator::generateCloudInitUserData (rpi-imager 2.0.x).
+	write("/boot/firmware/user-data", `#cloud-config
+hostname: "care"
+manage_etc_hosts: true
+packages:
+- avahi-daemon
+
+apt:
+  preserve_sources_list: true
+  conf: |
+    Acquire {
+      Check-Date "false";
+    };
+
+timezone: "Asia/Kolkata"
+user:
+  name: "clinic"
+  shell: /bin/bash
+  lock_passwd: false
+  passwd: "$5$saltstring$5B8vYYiY.CVt1RlTTf8KbXBH3hsxY/GNooZaBBGWEc5"
+  sudo: null
+ssh_pwauth: true
+`)
+	write("/etc/shadow", "root:*:1::::::\npi:!:20000::::::\nclinic:$5$saltstring$5B8vYYiY.CVt1RlTTf8KbXBH3hsxY/GNooZaBBGWEc5:20000:0:99999:7:::\n")
+	if s.user() != "clinic" {
+		t.Fatalf("user %q, want clinic", s.user())
+	}
+	if !s.Available() || !s.Verify("Hello world!") || s.Verify("hello world!") {
+		t.Fatal("the Imager 2.x user must verify")
+	}
+	// A plain name is a user entry too; "default" is not.
+	write("/boot/firmware/user-data", "#cloud-config\nuser: clinic\n")
+	if s.user() != "clinic" {
+		t.Fatalf("user %q, want clinic", s.user())
+	}
+	write("/boot/firmware/user-data", "#cloud-config\nusers:\n- default\n")
+	if s.user() != "" || s.Available() {
+		t.Fatal("the default user is not the Imager user")
 	}
 }

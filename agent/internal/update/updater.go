@@ -268,16 +268,23 @@ func (t *Target) Version() string {
 	return solution.NormalizeLockVersion(t.Lock.Version)
 }
 
-// index returns the cached index, or, with network, the index of the URL.
+// index returns the cached index, or, with network, the index of the URL. Without both, it imports the
+// dist snapshot of the Raspberry Pi image, which then becomes the cache (docs/image.md).
 func (u *Updater) index(ctx context.Context, cfg *config.Config, network bool) (*solution.Index, error) {
 	ix, err := solution.CachedIndex(u.Paths)
 	if err == nil && ix != nil {
 		return ix, nil
 	}
-	if !network {
-		return nil, errNoIndex
+	fetchErr := errNoIndex
+	if network {
+		if ix, fetchErr = u.client().FetchIndex(ctx, IndexURL(cfg.Updates.IndexURL)); fetchErr == nil {
+			return ix, nil
+		}
 	}
-	return u.client().FetchIndex(ctx, IndexURL(cfg.Updates.IndexURL))
+	if local, err := u.client().ImportLocalDist(paths.LocalDist); err == nil {
+		return local, nil
+	}
+	return nil, fetchErr
 }
 
 // lockOf returns the solution lock of a version: the cache, the agent, or (with network) the index.
