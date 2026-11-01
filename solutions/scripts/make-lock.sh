@@ -5,13 +5,14 @@
 # The output is a dist directory with the layout of the release assets (<tag>/<asset>):
 #   OUT/lock-<solution>-<version>/<solution>-<version>.lock.yaml (+ .sha256)
 #   OUT/fe-<solution>-<sha12>-<build id>/care_fe-<solution>-<sha12>-<build id>.tar.gz (+ .sha256)
+#   OUT/plug-<slug>-<sha12>/plug-<slug>-<sha12>.tar.gz (+ .sha256): each --plug-bundle
 #   OUT/index/index.json (+ .sha256): each lock of OUT, with dist_base = --dist-base (default file://OUT/)
 # Copy OUT to a device (for example to /var/lib/care-pi-dist) and set updates.index_url to
 # file:///var/lib/care-pi-dist/index/index.json; make the locks with --dist-base file:///var/lib/care-pi-dist/.
 #
 # Each identity that a flag does not give is resolved: images with skopeo, git refs with git ls-remote.
-# --offline resolves nothing: each identity must come from a flag. The FE plugs of this script use
-# their url (external); the workflow solution-lock builds the plug bundles.
+# --offline resolves nothing: each identity must come from a flag. An FE plug uses its url (external),
+# or a bundle of --plug-bundle (built, as plug-bundle.yml makes it); the workflow solution-lock builds the plug bundles.
 # Needs: bash, python3, go (or --care-pi BIN), and (online) skopeo and git.
 set -euo pipefail
 
@@ -34,6 +35,7 @@ Options:
   --fe-sha256 HEX           the SHA-256 of --fe-url
   --fe-size BYTES           the size of --fe-url
   --plug ID=SHA             the backend sha of a plug (repeat; default: resolve the ref)
+  --plug-bundle ID=FILE     a built FE plug bundle (tar.gz of plug-bundle.yml, with care-pi-plug.json) (repeat)
   --image NAME=DIGEST       the digest of a base image: postgres, caddy, redis, s3, node (repeat; default: resolve)
   --min-agent vX.Y.Z        min_agent_version (default: solution.yaml, else v0.4.0)
   --offline                 resolve nothing
@@ -43,7 +45,7 @@ EOF
 
 SOLUTION="" VERSION="" SOLUTION_FILE="" NOTES="" OUT="./dist-local" DIST_BASE=""
 CARE_DIGEST="" CARE_GIT_SHA="" SOLUTION_IMAGE="" CARE_FE_SHA="" FE_BUNDLE="" FE_URL="" FE_SHA256="" FE_SIZE=""
-MIN_AGENT="" OFFLINE=0 CARE_PI="" PLUG_ARGS="" IMAGE_ARGS=""
+MIN_AGENT="" OFFLINE=0 CARE_PI="" PLUG_ARGS="" PLUG_BUNDLES="" IMAGE_ARGS=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -62,6 +64,7 @@ while [ $# -gt 0 ]; do
     --fe-sha256) FE_SHA256="$2"; shift 2 ;;
     --fe-size) FE_SIZE="$2"; shift 2 ;;
     --plug) PLUG_ARGS="$PLUG_ARGS $2"; shift 2 ;;
+    --plug-bundle) PLUG_BUNDLES="$PLUG_BUNDLES $2"; shift 2 ;;
     --image) IMAGE_ARGS="$IMAGE_ARGS $2"; shift 2 ;;
     --min-agent) MIN_AGENT="$2"; shift 2 ;;
     --offline) OFFLINE=1; shift ;;
@@ -184,6 +187,37 @@ if [ -z "$FE_URL" ] || [ -z "$FE_SHA256" ] || [ -z "$FE_SIZE" ]; then
   die "give --fe-bundle FILE, or --fe-url, --fe-sha256, and --fe-size (FE build id $BUILD_ID)"
 fi
 
+# Built FE plug bundles: the slug and the sha come from care-pi-plug.json in the bundle.
+: > "$WORK/plugfe.tsv"
+for kv in $PLUG_BUNDLES; do
+  id="${kv%%=*}"
+  file="${kv#*=}"
+  [ -f "$file" ] || die "--plug-bundle $id: no file $file"
+  meta="$(python3 - "$file" <<'PY'
+import json, sys, tarfile
+with tarfile.open(sys.argv[1]) as t:
+    for name in ("care-pi-plug.json", "./care-pi-plug.json"):
+        try:
+            m = json.load(t.extractfile(name))
+            break
+        except KeyError:
+            continue
+    else:
+        sys.exit("the bundle has no care-pi-plug.json")
+print(m["slug"], m["sha"])
+PY
+)" || die "--plug-bundle $id: $file is not a plug bundle"
+  slug="${meta% *}"
+  psha="${meta#* }"
+  [[ "$psha" =~ ^[0-9a-f]{40}$ ]] || die "--plug-bundle $id: the sha in care-pi-plug.json is not 40 hex digits"
+  tag="plug-$slug-${psha:0:12}"
+  mkdir -p "$OUT/$tag"
+  cp "$file" "$OUT/$tag/$tag.tar.gz"
+  psum="$(sha256_of "$OUT/$tag/$tag.tar.gz")"
+  echo "$psum  $tag.tar.gz" > "$OUT/$tag/$tag.tar.gz.sha256"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$psha" "$tag/$tag.tar.gz" "$psum" "$(size_of "$OUT/$tag/$tag.tar.gz")" >> "$WORK/plugfe.tsv"
+done
+
 export SOLUTION VERSION NOTES MIN_AGENT CARE_DIGEST CARE_GIT_SHA SI_REPO SI_DIGEST CARE_FE_SHA BUILD_ID FE_URL FE_SHA256 FE_SIZE WORK
 COMMIT="$(cd "$ROOT" && git rev-parse HEAD)"
 export COMMIT
@@ -199,6 +233,10 @@ plugs = {}
 for line in open(w + "/plugs.tsv"):
     pid, sha = (line.rstrip("\n").split("\t") + [""])[:2]
     plugs[pid] = {"backend_sha": sha} if sha else {}
+for line in open(w + "/plugfe.tsv"):
+    pid, sha, url, sum256, size = line.rstrip("\n").split("\t")
+    plugs.setdefault(pid, {}).update({"frontend_sha": sha, "frontend_url": url, "frontend_sha256": sum256,
+                                      "frontend_size_bytes": int(size)})
 keys = [l.split("=", 1)[0] for l in open(w + "/frontend.env") if l.strip() and not l.startswith("#")]
 data = {
     "solution_file": w + "/solutions/" + e["SOLUTION"] + "/solution.yaml",

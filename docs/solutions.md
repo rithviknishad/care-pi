@@ -1047,8 +1047,10 @@ Make a lock on a development machine, and test the update machine with it:
 ```sh
 make lock-local SOLUTION=care-clinic VERSION=2026.11.0 ARGS="--dist-base file:///var/lib/care-pi-dist/ --fe-bundle care_fe.tar.gz"
 # out: ./dist-local/ with lock-care-clinic-2026.11.0/…, fe-…/…, and index/index.json (each lock of the directory)
+# An FE plug is external (its url). --plug-bundle ID=FILE adds a built bundle (the tar.gz of plug-bundle.yml, with
+# care-pi-plug.json) as plug-<slug>-<sha12>/…, and the lock gets source: built.
 make e2e-local
-# solutions/scripts/e2e-local.sh: two offline locks (2026.11.0; 2026.11.1 with care_fasterappointments_fe on), then
+# solutions/scripts/e2e-local.sh: two offline locks (2026.11.0; 2026.11.1 with care_fasterappointments_fe on, a built bundle), then
 # TestMakeLockDist: check, apply N → N+1, rollback with a PITR offer, on the fake host. CI runs it too (ci.yml).
 ```
 

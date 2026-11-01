@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # e2e-local.sh: the local end-to-end test of Phase 4 (docs/solutions.md, section 17). It makes two solution locks
-# with make-lock.sh (offline, fake digests): 2026.11.0, and 2026.11.1 with care_fasterappointments_fe on. Then it
+# with make-lock.sh (offline, fake digests): 2026.11.0, and 2026.11.1 with care_fasterappointments_fe on (a built
+# bundle of --plug-bundle). Then it
 # runs the update machine against their index.json on the fake host: N → N+1 → rollback with a PITR offer
 # (agent/internal/update, TestMakeLockDist). It needs no root, no podman, and no network.
 # Usage: solutions/scripts/e2e-local.sh [WORKDIR]   (default ./e2e-local; the script deletes it first)
@@ -22,6 +23,11 @@ sha1="$(fake sha1 | cut -c1-40)"
 sha2="$(fake sha2 | cut -c1-40)"
 sed '/- id: care_fasterappointments_fe/,/enabled:/ s/enabled: false/enabled: true/' \
   solutions/care-clinic/solution.yaml > "$WORK/solution-n1.yaml"
+mkdir -p "$WORK/plug/assets"
+printf 'export {};\n' > "$WORK/plug/assets/remoteEntry.js"
+printf '{"slug": "care_fasterappointments_fe", "repo": "https://github.com/ohcnetwork/care_fasterappointments_fe", "sha": "%s", "entry": "assets/remoteEntry.js", "built_at": "2026-11-01T00:00:00Z"}\n' \
+  "$sha1" > "$WORK/plug/care-pi-plug.json"
+tar -czf "$WORK/plug.tar.gz" -C "$WORK/plug" .
 
 common=(--solution care-clinic --out "$WORK/dist" --offline --care-pi "$WORK/care-pi"
   --care-digest "$digest" --care-git-sha "$sha1" --solution-image "ghcr.io/rithviknishad/care-pi/care@$digest"
@@ -29,7 +35,10 @@ common=(--solution care-clinic --out "$WORK/dist" --offline --care-pi "$WORK/car
   --plug "care_multihost_files_be=$sha1" --plug "care_filly=$sha2"
   --image "postgres=$digest" --image "caddy=$digest" --image "redis=$digest" --image "s3=$digest" --image "node=$digest")
 solutions/scripts/make-lock.sh "${common[@]}" --version 2026.11.0 --notes "Lock N."
-solutions/scripts/make-lock.sh "${common[@]}" --solution-file "$WORK/solution-n1.yaml" --version 2026.11.1 --notes "Lock N+1."
+solutions/scripts/make-lock.sh "${common[@]}" --solution-file "$WORK/solution-n1.yaml" --version 2026.11.1 --notes "Lock N+1." \
+  --plug-bundle "care_fasterappointments_fe=$WORK/plug.tar.gz"
+grep -q 'source: built' "$WORK/dist/lock-care-clinic-2026.11.1/care-clinic-2026.11.1.lock.yaml"
+test -f "$WORK/dist/plug-care_fasterappointments_fe-${sha1:0:12}/plug-care_fasterappointments_fe-${sha1:0:12}.tar.gz"
 for f in "$WORK"/dist/lock-*/*.lock.yaml "$WORK/dist/index/index.json"; do
   "$WORK/care-pi" solution validate "$f"
 done
