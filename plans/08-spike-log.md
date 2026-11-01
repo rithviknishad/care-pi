@@ -1487,7 +1487,8 @@ ssh lumine 'systemctl list-timers care-dns-update.timer --no-pager; nft list tab
 Assert: the job has the steps `dns-register`, `dns-address`, `write-config`, the apply (with a `cutover`: the plug
 `care_multihost_files_be` turns on), `wait-certificate`, and a second apply. The time to the certificate (record it).
 The name resolves to the LAN address. `CURRENT_DOMAIN` and `BUCKET_EXTERNAL_ENDPOINT` have the public name. The timer is
-active. `curl -sI http://lumine.local/` gives `301` to `https://$N/` (the staging certificate counts as issued).
+active. `curl -sI http://lumine.local/` gives `308` to `https://lumine.local/`: a staging certificate does not move
+port 80 (`public.primary: false`, `public.certificate.staging: true`).
 
 Then production (the same name; Caddy gets a new certificate from the default issuer):
 
@@ -1497,10 +1498,12 @@ sleep 120; openssl s_client -connect "$N:443" -servername "$N" </dev/null 2>/dev
 ```
 
 Assert: the issuer is Let's Encrypt (`R1x`/`E…`), `Verify return code: 0`, and `GET /tls` shows `public.certificate.staging: false`.
+After the next timer run (or `sudo care-pi tls public update-address`), `curl -sI http://lumine.local/` gives `302` to
+`https://$N/` with `Cache-Control: no-store`.
 
 ### 3. The laptop on the LAN (criterion 1, first half)
 
-In the browser profile without the care-pi root: open `http://lumine.local` → `301` → `https://$N/` with no warning.
+In the browser profile without the care-pi root: open `http://lumine.local` → `302` → `https://$N/` with no warning.
 Log in to Care. Upload a file to a patient (File upload), then open it (the file link uses the public name). Also
 open Care at `https://lumine.local` in the main profile (local CA): the same file opens (the multihost plug signs the link
 for that host). Open the console at `https://$N:8443`: the login works (the Origin check accepts the public name).
@@ -1573,7 +1576,7 @@ WAN back: the timer sends the address again, and the error clears.
 On a second Pi (or lumine after `uninstall.sh --purge-data` and an install; restore lumine from backup after the test,
 `docs/backups.md` "Disaster recovery"): claim, setup, then Settings > Connectivity > Public name > Turn on (staging is
 not necessary here; the limits allow it). Before the certificate: `http://<host>.local` gives `308` to
-`https://<host>.local`. After it: `301` to `https://<id>.care-pi.rithviknishad.dev/`. In the browser profile without the
+`https://<host>.local`. After it: `302` to `https://<id>.care-pi.rithviknishad.dev/`. In the browser profile without the
 root: no warning at any step. Record the time from "Turn on" to the redirect.
 
 ### 8. Turn off and clean up

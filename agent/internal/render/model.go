@@ -191,7 +191,7 @@ type Model struct {
 	// ACMEDNSSecret is the podman secret with the credentials of the acmedns module; ACMEDNSFile is its path in care-caddy.
 	ACMEDNSSecret string
 	ACMEDNSFile   string
-	// Port80Public lists the http:// sites that send the browser to the public name (301, 07 §6.1).
+	// Port80Public lists the http:// sites that send the browser to the public name (302, not cached; 07 §6.1).
 	// Port80Same lists the http:// sites that send it to https:// on the same host (308).
 	Port80Public []string
 	Port80Same   []string

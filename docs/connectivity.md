@@ -123,7 +123,7 @@ API: `PUT /tls/public {"enabled": true, "hostname_hint": "sunrise"}`. The job is
 | `write-config` | Set `tls.public.enabled`, `tls.public.clinic_id`, and `tls.public.acme_ca`. |
 | apply steps | Render the public site, set the secret, enable `care-dns-update.timer`, cycle the pod. The plug `care_multihost_files_be` turns on (a cutover). |
 | `wait-certificate` | Wait up to 5 minutes for the certificate in the data of Caddy. |
-| apply steps | When the certificate is there: the redirect of port 80 goes to the public name. |
+| apply steps | When the certificate is there: the redirect of port 80 goes to the public name. A certificate of a staging directory (section 3.4) does not move the redirect. |
 
 When the certificate is not there after 5 minutes, the job succeeds with `certificate: pending`. Caddy tries again.
 The timer runs `care-pi tls public update-address`, and it applies again when the certificate comes. An expired
@@ -249,11 +249,17 @@ Caddy sends `Access-Control-Allow-Origin: *` on `/plugs/*`, so the plug bundles 
 | Mode | The operator opens | What happens |
 |---|---|---|
 | Local CA only | `http://care.local` | `308` to `https://care.local`. A warning until the device installs the root CA (Certificate page). |
-| Public name, certificate issued | `http://care.local` | `301` to `https://<id>.care-pi.rithviknishad.dev`. No warning. Bookmark this name. |
+| Public name, certificate issued | `http://care.local` | `302` to `https://<id>.care-pi.rithviknishad.dev` with `Cache-Control: no-store`. No warning. Bookmark this name. |
+| Public name, staging or expired certificate | `http://care.local` | `308` to `https://care.local`. |
 | Public name, certificate pending | `http://care.local` | `308` to `https://care.local` (`07` section 6.1). |
 | Public name, no internet | `https://care.local` | The local CA site. The public name does not resolve. |
 | Tailscale | `https://<host>.<tailnet>.ts.net` | From a device in the tailnet. No warning. |
 | Any | `http://192.168.1.10` | `308` to `https://192.168.1.10` (the same host). |
+
+The redirect to the public name is a `302` with `Cache-Control: no-store`, not a `301`. A browser keeps a `301`. When the
+public name stops working (the mode is off, the device gets a new id, the internet is down), a device that kept a `301`
+still goes to the public name and never to `care.local`. The `308` to the same host can stay in the cache: it is always
+correct.
 
 ## 7. Wi-Fi and the failover
 

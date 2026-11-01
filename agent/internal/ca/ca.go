@@ -482,12 +482,13 @@ func IssuedCert(p paths.Paths, name string) (*x509.Certificate, string) {
 	return best, issuer
 }
 
-// ValidCert returns the certificate of IssuedCert that a browser trusts at now: it is not expired. It returns nil
-// when there is none. Port 80 sends the browser to the public name only with such a certificate.
+// ValidCert returns the certificate of IssuedCert that a browser trusts at now: it is not expired, and it is not from
+// a staging directory (StagingIssuer). It returns nil when there is none. Port 80 sends the browser to the public name
+// only with such a certificate.
 func ValidCert(p paths.Paths, name string, now time.Time) *x509.Certificate {
 	var best *x509.Certificate
 	for _, c := range issuedCerts(p, name) {
-		if !now.Before(c.cert.NotAfter) {
+		if !now.Before(c.cert.NotAfter) || StagingIssuer(c.issuer) {
 			continue
 		}
 		if best == nil || c.cert.NotAfter.After(best.NotAfter) {
@@ -496,6 +497,10 @@ func ValidCert(p paths.Paths, name string, now time.Time) *x509.Certificate {
 	}
 	return best
 }
+
+// StagingIssuer reports whether a Caddy issuer directory is of a staging ACME directory (for example
+// acme-staging-v02.api.letsencrypt.org-directory). Browsers do not trust its certificates.
+func StagingIssuer(dir string) bool { return strings.Contains(dir, "staging") }
 
 type issued struct {
 	cert   *x509.Certificate

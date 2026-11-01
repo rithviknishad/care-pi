@@ -268,3 +268,21 @@ func TestValidCertNeedsNotAfter(t *testing.T) {
 		t.Fatal("before its NotAfter the certificate is valid")
 	}
 }
+
+// M2: browsers do not trust a certificate of a staging directory, so it is not valid. A production certificate next
+// to it is.
+func TestValidCertSkipsStaging(t *testing.T) {
+	p := paths.New(t.TempDir())
+	const name = "sunrise-k3x9.care-pi.rithviknishad.dev"
+	writeACMECert(t, p, "acme-staging-v02.api.letsencrypt.org-directory", name, now.Add(80*24*time.Hour))
+	if c, issuer := IssuedCert(p, name); c == nil || !StagingIssuer(issuer) {
+		t.Fatalf("IssuedCert must give the staging certificate: %q", issuer)
+	}
+	if ValidCert(p, name, now) != nil {
+		t.Fatal("a staging certificate is not valid")
+	}
+	writeACMECert(t, p, "acme-v02.api.letsencrypt.org-directory", name, now.Add(60*24*time.Hour))
+	if c := ValidCert(p, name, now); c == nil || !c.NotAfter.Equal(now.Add(60*24*time.Hour)) {
+		t.Fatalf("want the production certificate, got %v", c)
+	}
+}

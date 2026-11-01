@@ -1605,7 +1605,7 @@ A change of the name set is a cutover of the plug `care_multihost_files_be` (sec
 | `public.hostname`, `public.clinic_id`, `public.acme_ca` | The name, the id from the DNS service, the ACME directory (`null`: Let's Encrypt). |
 | `public.certificate` | `PublicCertificate`: `state` (`issued`, `pending`, `expired`, `error`), `not_after`, `issuer`, `staging`. The agent reads the certificate from the data directory of Caddy. |
 | `public.dns` | The last address that the agent sent, `updated_at`, `last_error`, `last_error_at`, and `revoked`. |
-| `public.primary` | `true` when port 80 sends the browser to the public name (the certificate is issued). |
+| `public.primary` | `true` when port 80 sends the browser to the public name: the certificate is issued and not of a staging directory. |
 | `public.health_url` | `https://<name>/_care-pi/health`. The console loads it from the browser (`no-cors`) to find a DNS rebinding block. |
 | `tailscale.installed`, `tailscale.backend_state` | The package, and `BackendState` of `tailscale status --json` (`NeedsLogin`, `Running`, …). |
 | `tailscale.login_url` | The login link while a login waits, else `null`. The link is secret: it is not in a job log. |
@@ -1655,7 +1655,7 @@ Each operation of Phase 6 also returns `setup-incomplete` before the setup is fi
 |---|---|
 | Name constraints | `.local`, `.care-pi.rithviknishad.dev`, each other local name, and the `/24` of each LAN address. Not the Tailscale name and address: the local CA never signs them (`docs/connectivity.md` section 2.2). |
 | Canonical host | The public name when it is on, else the local name. Tailscale is never the canonical host. |
-| Port 80 | `301` to the public name when its certificate is issued, else to the same host (`07` section 6.1). |
+| Port 80 | `302` with `Cache-Control: no-store` to the public name when it has a valid certificate (issued, not expired, not of a staging directory), else `308` to the same host (`07` section 6.1). Not a `301`: a browser keeps a `301`, and the public name can stop working. |
 | HSTS | On the public name and the Tailscale name only. |
 | Login link | Only in `GET /tls` and `care-pi tls tailscale status`. Never in a job log or an event. |
 | Wi-Fi | A secondary NetworkManager connection, not a bond (SP11). |

@@ -178,8 +178,8 @@ func TestPublicName(t *testing.T) {
 		t.Fatalf("update %+v", res)
 	}
 	caddy, _ = os.ReadFile(e.p.Abs(paths.RenderedCaddy + "/Caddyfile"))
-	if !strings.Contains(string(caddy), "redir https://"+host+"{uri} 301") {
-		t.Fatal("port 80 must send care.local to the public name")
+	if !strings.Contains(string(caddy), "\theader Cache-Control \"no-store\"\n\tredir https://"+host+"{uri} 302\n") {
+		t.Fatal("port 80 must send care.local to the public name with a 302 that the browser does not keep")
 	}
 	r = e.do("GET", "/api/v1/tls", nil)
 	if p := r.json(t)["public"].(map[string]any); p["primary"] != true || p["certificate"].(map[string]any)["state"] != "issued" {
@@ -207,6 +207,41 @@ func TestPublicName(t *testing.T) {
 	}
 	if _, err := os.Stat(e.p.Abs(paths.SystemdDir + "/care-dns-update.timer")); err == nil {
 		t.Fatal("the DNS timer is still there")
+	}
+}
+
+// M2: a certificate of the staging directory is issued (the enrol job tells it), but browsers do not trust it: port 80
+// stays on the same host, and the timer does not apply each 5 minutes.
+func TestPublicUpdateStagingCertificate(t *testing.T) {
+	e, f := readyConnEnv(t)
+	writeRootCA(t, e.p)
+	e.svc.CertWait = 10 * time.Second
+	r := e.do("PUT", "/api/v1/tls/public", map[string]any{"enabled": true, "hostname_hint": "sunrise",
+		"acme_ca": "https://acme-staging-v02.api.letsencrypt.org/directory"})
+	// Caddy gets the staging certificate while the job waits for it.
+	var clinic dnsclient.FakeClinic
+	for ok := false; !ok; clinic, ok = f.Clinic("") {
+		time.Sleep(5 * time.Millisecond)
+	}
+	host := clinic.ID + ".care-pi.rithviknishad.dev"
+	writeACME(t, e.p, "acme-staging-v02.api.letsencrypt.org-directory", host, e.clock.now().Add(90*24*time.Hour))
+	id := e.jobOK(r)
+	if j, _ := jobs.Load(e.p, id); !strings.Contains(strings.ReplaceAll(string(j.Result), " ", ""), `"certificate":"issued"`) {
+		t.Fatalf("the enrol job must tell that the staging certificate is issued: %s", j.Result)
+	}
+	res, err := e.svc.PublicUpdate(t.Context(), func(string) {})
+	must(t, err)
+	if res.Applied {
+		t.Fatal("a staging certificate made an apply")
+	}
+	caddy, _ := os.ReadFile(e.p.Abs(paths.RenderedCaddy + "/Caddyfile"))
+	if strings.Contains(string(caddy), "redir https://"+host) {
+		t.Fatal("port 80 must not go to a name with a staging certificate")
+	}
+	r = e.do("GET", "/api/v1/tls", nil)
+	p := r.json(t)["public"].(map[string]any)
+	if c := p["certificate"].(map[string]any); p["primary"] != false || c["state"] != "issued" || c["staging"] != true {
+		t.Fatalf("public %v", p)
 	}
 }
 

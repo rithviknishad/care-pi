@@ -211,8 +211,11 @@
 
 # Port 80 serves only redirects (P9).
 # The public name is primary (S36): the local names send the browser to it (07 section 6.1).
+# 302 and no-store, not a 301: a browser keeps a 301 for a long time. When the public name stops working (the mode
+# off, a new id, no internet), each device that kept it would still go to the public name, not to the local name.
 http://care.local, http://sunrise-4f2a.care-pi.rithviknishad.dev {
-	redir https://sunrise-4f2a.care-pi.rithviknishad.dev{uri} 301
+	header Cache-Control "no-store"
+	redir https://sunrise-4f2a.care-pi.rithviknishad.dev{uri} 302
 }
 http://192.168.1.10, http://10.0.0.5 {
 	redir https://{host}{uri} 308

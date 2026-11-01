@@ -339,7 +339,8 @@ Your call: **public-cert mode is primary**; the Pi must still work fully offline
 Resulting layered design:
 
 1. **Public-cert mode (H) is the default** whenever the Pi has internet at first contact. First
-   contact there is: `http://care.local` → `301` → `https://<id>.care-pi.rithviknishad.dev`
+   contact there is: `http://care.local` → `302` (not cached: `Cache-Control: no-store`) →
+   `https://<id>.care-pi.rithviknishad.dev`
    (green lock, no CA). The residual "is this my `<id>`?" risk is handled by the Imager-password
    claim (§4.2) and by showing the id prominently for bookmarking.
 2. **Offline = local-CA mode** (chosen automatically when no internet is detected, or pre-seeded

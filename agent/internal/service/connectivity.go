@@ -155,7 +155,7 @@ func (s *Service) certState(host string, enrolledAt *time.Time) *CertState {
 		return st
 	}
 	na := cert.NotAfter.UTC()
-	st := &CertState{State: "issued", NotAfter: &na, Issuer: strPtr(cert.Issuer.CommonName), Staging: strings.Contains(issuer, "staging")}
+	st := &CertState{State: "issued", NotAfter: &na, Issuer: strPtr(cert.Issuer.CommonName), Staging: ca.StagingIssuer(issuer)}
 	if !now.Before(cert.NotAfter) {
 		st.State = "expired"
 	}
@@ -179,7 +179,8 @@ func (s *Service) publicTLS(ctx context.Context, enabled bool, clinicID, acmeCA 
 	out.Hostname = &host
 	out.ACMECA = strPtr(acmeCA)
 	out.Certificate = s.certState(host, st.EnrolledAt)
-	out.Primary = out.Certificate.State == "issued"
+	// A staging certificate is issued, but browsers do not trust it: port 80 stays on the same host.
+	out.Primary = out.Certificate.State == "issued" && !out.Certificate.Staging
 	u := "https://" + host + "/_care-pi/health"
 	out.HealthURL = &u
 	_ = ctx
@@ -351,7 +352,8 @@ func (s *Service) publicEnable(ctx context.Context, rec *jobs.Recorder, req Publ
 	_ = step(rec, "wait-certificate: wait for the certificate of "+host, func() error {
 		deadline := time.Now().Add(wait)
 		for {
-			if ca.ValidCert(s.Paths, host, s.now()) != nil {
+			// A staging certificate counts here (a test of the issuance), but port 80 does not use it (ValidCert).
+			if c, _ := ca.IssuedCert(s.Paths, host); c != nil && s.now().Before(c.NotAfter) {
 				certificate = "issued"
 				return nil
 			}
@@ -507,7 +509,8 @@ func (s *Service) PublicUpdate(ctx context.Context, out func(string)) (*PublicUp
 			out("sent the address " + ips[0] + " to the DNS service")
 		}
 	}
-	// An expired certificate does not count: apply would render no redirect, and the timer would apply each 5 minutes.
+	// An expired or a staging certificate does not count: apply would render no redirect, and the timer would apply
+	// each 5 minutes.
 	if ca.ValidCert(s.Paths, host, s.now()) != nil && !s.port80Public(host) {
 		out("the certificate of " + host + " exists; apply sends port 80 to it")
 		release, err := s.Jobs.AcquireLock(ctx)
@@ -538,7 +541,7 @@ func (w writerFunc) Write(b []byte) (int, error) {
 // port80Public reports whether the rendered Caddyfile sends port 80 to the public name.
 func (s *Service) port80Public(host string) bool {
 	data, err := os.ReadFile(s.Paths.Abs(paths.RenderedCaddy + "/Caddyfile"))
-	return err == nil && strings.Contains(string(data), "redir https://"+host+"{uri} 301")
+	return err == nil && strings.Contains(string(data), "redir https://"+host+"{uri} 302")
 }
 
 // PublicRotate gets new acme-dns credentials from the DNS service (and, with newKey, a new signing key), writes

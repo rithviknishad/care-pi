@@ -389,7 +389,9 @@ fingerprint.
   (`pki { ca local { name care-pi; root { cert /etc/care-pi-ca/root.crt; key /etc/care-pi-ca/root.key } } }`).
   Caddy makes its intermediate below it. A host without the root of the agent (no LAN address yet) has no `pki` block.
 - Port 80: redirects only. `redir https://{host}{uri} 308` (the same host). Phase 6: when the certificate of the public
-  name is issued, the local names and the public name get `redir https://<public name>{uri} 301` (`07` section 6.1).
+  name is issued (not expired, not of a staging directory), the local names and the public name get
+  `header Cache-Control "no-store"` and `redir https://<public name>{uri} 302` (`07` section 6.1). Not a `301`: a browser
+  keeps a `301`, so a device would still go to the public name after it stops working.
 - Sites: `<hostname>.local` and each LAN IPv4 address, `tls internal`.
 - Phase 6, public mode: the site `<id>.care-pi.rithviknishad.dev` with `tls { dns acmedns /run/secrets/care-pi-acme-dns;
   resolvers 1.1.1.1 8.8.8.8 }` (and `ca <tls.public.acme_ca>` when it is set), and HSTS `max-age=31536000`.

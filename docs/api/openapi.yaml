@@ -8426,7 +8426,7 @@ components:
               description: The time of `last_error`.
         primary:
           type: boolean
-          description: Port 80 of the local names sends the browser to the public name (the certificate is issued, 07 §6.1).
+          description: Port 80 of the local names sends the browser to the public name (a `302` that the browser does not keep; the certificate is issued and not of a staging directory, 07 §6.1).
         health_url:
           type: [string, 'null']
           format: uri

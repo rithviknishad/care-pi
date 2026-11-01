@@ -6468,7 +6468,7 @@ export interface components {
                  */
                 last_error_at: string | null;
             };
-            /** @description Port 80 of the local names sends the browser to the public name (the certificate is issued, 07 §6.1). */
+            /** @description Port 80 of the local names sends the browser to the public name (a `302` that the browser does not keep; the certificate is issued and not of a staging directory, 07 §6.1). */
             primary: boolean;
             /**
              * Format: uri
