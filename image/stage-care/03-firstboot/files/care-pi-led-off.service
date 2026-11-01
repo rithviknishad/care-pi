@@ -1,0 +1,13 @@
+# care-pi image (image/stage-care): started by care-pi-led.path after the console claim.
+# Conflicts= stops care-pi-led.service; its ExecStop restores the LED trigger.
+# RemainAfterExit=yes keeps the unit active, so that the path unit does not start it again.
+[Unit]
+Description=Care: the console is claimed; stop the ACT LED heartbeat
+Documentation=https://github.com/rithviknishad/care-pi/blob/main/docs/image.md
+Conflicts=care-pi-led.service
+After=care-pi-led.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true

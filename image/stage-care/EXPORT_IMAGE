@@ -1,0 +1,2 @@
+# pi-gen exports this stage as the image. The name comes from IMG_NAME (image/builder/run.sh).
+IMG_SUFFIX=""

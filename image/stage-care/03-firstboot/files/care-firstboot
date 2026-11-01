@@ -1,0 +1,57 @@
+#!/bin/sh
+# care-firstboot: the first boot of the care-pi Raspberry Pi image (docs/image.md, "First boot").
+# care-firstboot.service runs this script once, after the first-boot customisation of Raspberry Pi
+# OS (cloud-init: host name, user, Wi-Fi, SSH). The marker /var/lib/care-pi/state/firstboot-done
+# stops later runs. "care-pi bootstrap --from-image" writes the marker after a successful run.
+#
+# Steps:
+# 1. Wait for cloud-init (at most 10 minutes).
+# 2. Read the host name that Imager set. Restart avahi, so that it announces that name.
+# 3. Check the memory cgroup controller and the zram swap (plans/09-handoff.md, section 3).
+# 4. Run "care-pi bootstrap --from-image": setup mode (the console claim), or a full apply when
+#    the user-data had a pre-seed (/etc/care-pi/preseed.yaml).
+set -eu
+
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export PATH
+
+log() {
+  printf 'care-firstboot: %s\n' "$*"
+}
+
+fail() {
+  printf 'care-firstboot: ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+# 1. cloud-init writes the Imager user (with its password hash) in its init stage, and the
+# host name. The unit is ordered after cloud-final.service; this is a second guard.
+if command -v cloud-init >/dev/null 2>&1; then
+  log "wait for cloud-init"
+  timeout 600 cloud-init status --wait >/dev/null 2>&1 || log "cloud-init status: $(cloud-init status 2>/dev/null | tr '\n' ' ')"
+fi
+
+# 2. Host name. Imager sets it with cloud-init (hostname:). The image default is "care" (care.local).
+name=$(hostname -s 2>/dev/null || cat /etc/hostname)
+log "host name: $name (mDNS name $name.local)"
+if systemctl is-active --quiet avahi-daemon.service; then
+  systemctl try-restart avahi-daemon.service || log "avahi-daemon did not restart"
+fi
+
+# 3. Kernel prerequisites. The image sets them in cmdline.txt and /etc/rpi/swap.conf.d.
+if ! grep -qw memory /sys/fs/cgroup/cgroup.controllers 2>/dev/null; then
+  fail "the memory cgroup controller is not active. /boot/firmware/cmdline.txt must have 'cgroup_enable=memory cgroup_memory=1' and no 'cgroup_disable=memory'. Correct the file and reboot."
+fi
+mem_kib=$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo)
+zram_kib=$(awk '$1 ~ /^\/dev\/zram/ { s += $3 } END { print s + 0 }' /proc/swaps)
+if [ "$((zram_kib * 100))" -lt "$((mem_kib * 90))" ]; then
+  log "WARNING: zram swap is $((zram_kib / 1024)) MiB, less than 90 % of the RAM ($((mem_kib / 1024)) MiB). The front-end build needs zram of 1x RAM. Check /etc/rpi/swap.conf.d/50-care-pi.conf."
+else
+  log "zram swap: $((zram_kib / 1024)) MiB, RAM: $((mem_kib / 1024)) MiB"
+fi
+
+# 4. Bootstrap. It holds the apply lock, generates the secrets, writes config.yaml (or installs the
+# pre-seed), imports the dist snapshot, makes the claim code, and starts Caddy and the console.
+log "run: care-pi bootstrap --from-image"
+care-pi bootstrap --from-image --yes || fail "care-pi bootstrap failed. Read: journalctl -u care-firstboot. After a fix, run: sudo care-pi bootstrap --from-image"
+log "done. Open https://$name.local:8443/ (or https://<IP>:8443/) and sign in with the password of the Imager user."

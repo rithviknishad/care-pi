@@ -1,0 +1,24 @@
+# care-pi image (image/stage-care): the ACT LED blinks while the console is not claimed.
+# care-pi-led.path stops this unit when the claim writes /etc/care-pi/secrets/agent.json.
+# It runs after care-firstboot.service, which runs after multi-user.target (see that unit):
+# DefaultDependencies=no avoids an ordering cycle with multi-user.target.
+[Unit]
+Description=Care: blink the ACT LED until the console is claimed
+Documentation=https://github.com/rithviknishad/care-pi/blob/main/docs/image.md
+DefaultDependencies=no
+Requires=sysinit.target
+After=sysinit.target basic.target care-firstboot.service
+Conflicts=shutdown.target
+Before=shutdown.target
+ConditionPathExists=/sys/class/leds/ACT/trigger
+ConditionPathExists=/var/lib/care-pi/state/firstboot-done
+ConditionPathExists=!/etc/care-pi/secrets/agent.json
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/care-pi/care-pi-led on
+ExecStop=/usr/local/lib/care-pi/care-pi-led off
+
+[Install]
+WantedBy=multi-user.target
