@@ -395,12 +395,22 @@ func SetKey(doc map[string]any, key, value string) error {
 		delete(m, last)
 		return nil
 	}
-	// A value that looks like a number stays a string for env variables.
+	// A value that looks like a number stays a string for env variables: the text of VALUE. A quoted YAML string
+	// ("1" or '1') gives the string without the quotes: the env file must not get them (Care would read "1").
 	if len(parts) >= 3 && parts[0] == "env" {
-		v = value
+		if s, ok := v.(string); !ok || !isQuoted(strings.TrimSpace(value)) {
+			v = value
+		} else {
+			v = s
+		}
 	}
 	m[last] = config.Normalize(v)
 	return nil
+}
+
+// isQuoted reports whether s is one YAML scalar in double or single quotes.
+func isQuoted(s string) bool {
+	return len(s) >= 2 && (s[0] == '"' && s[len(s)-1] == '"' || s[0] == '\'' && s[len(s)-1] == '\'')
 }
 
 // ApplyRequest holds the options of an apply (schema ApplyRequest).

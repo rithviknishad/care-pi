@@ -88,7 +88,8 @@ var configSetCmd = &cobra.Command{
 	Short: "Change keys of config.yaml, print the plan, and write the file",
 	Long: `set changes the keys of config.yaml. KEY is a dotted path, for example
 identity.hostname or env.backend.EMAIL_PORT. VALUE is YAML: a string, a number,
-true or false, or JSON for a list or a map. "null" deletes the key.
+true or false, or JSON for a list or a map. "null" deletes the key. An env value
+is the text of VALUE (1.10 stays "1.10"); a quoted value ("1") loses its quotes.
 set validates the result and prints the plan of an apply. --dry-run writes
 nothing. --apply also runs "care-pi apply" after the write.
 The file loses its comments and its key order.
