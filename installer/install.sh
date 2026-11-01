@@ -9,6 +9,10 @@
 #
 # Run "sh install.sh --help" for the options.
 #
+# --image-build runs the same steps in the chroot of the Raspberry Pi image build
+# (image/, docs/image.md): it writes every file and enables the units, but it starts
+# nothing. care-firstboot.service runs "care-pi bootstrap --from-image" at the first boot.
+#
 # Shell choice: POSIX sh. Debian and Raspberry Pi OS use dash as sh. The script
 # has no bash features and no arrays.
 # The script is one file so that "curl | sh" works. The shell parses the whole
@@ -72,6 +76,7 @@ NO_APT_HOLD=0
 SKIP_BOOTSTRAP=0
 BINARY=""
 DRY_RUN=0
+IMAGE_BUILD=0
 
 # Run state.
 LOG_READY=0
@@ -172,13 +177,17 @@ Options:
   --no-apt-hold      Do not hold the container packages.
   --skip-bootstrap   Prepare the host, but do not run "care-pi bootstrap".
   --binary PATH      Install the agent from a local file. Do not download it.
+  --image-build      Prepare the root file system of the Raspberry Pi image in a
+                     chroot: write the files and enable the units, but start
+                     nothing. Implies --yes and --skip-bootstrap. Image build only.
   --dry-run          Print what the script would change. Change nothing.
   --help             Print this text.
 
 Each option has an environment variable: CARE_PI_VERSION, CARE_PI_HOSTNAME,
 CARE_PI_PRESET, CARE_PI_FE_PROVIDER, CARE_PI_UNATTENDED, CARE_PI_YES,
 CARE_PI_NO_FIREWALL, CARE_PI_NO_AVAHI, CARE_PI_NO_APT_HOLD,
-CARE_PI_SKIP_BOOTSTRAP, CARE_PI_BINARY, CARE_PI_DRY_RUN. A flag overrides its
+CARE_PI_SKIP_BOOTSTRAP, CARE_PI_BINARY, CARE_PI_IMAGE_BUILD, CARE_PI_DRY_RUN.
+A flag overrides its
 variable. Switch variables accept 1, true, or yes.
 CARE_PI_DOWNLOAD_BASE sets the URL that holds the agent files. It replaces the
 GitHub release URL.
@@ -306,8 +315,21 @@ ensure_dir() {
   run install -d -m "$2" -o "${3%%:*}" -g "${3##*:}" "$1"
 }
 
-# ensure_service UNIT: enable the unit and start it.
+# enable_unit UNIT: enable the unit and do not start it (image build). In a chroot,
+# systemctl works offline: it creates the symlinks of the [Install] section.
+enable_unit() {
+  if ! systemctl is-enabled --quiet "$1" 2>/dev/null; then
+    STEP_CHANGED=1
+    run systemctl enable "$1" || die "Cannot enable $1."
+  fi
+}
+
+# ensure_service UNIT: enable the unit and start it. The image build only enables it.
 ensure_service() {
+  if [ "$IMAGE_BUILD" = 1 ]; then
+    enable_unit "$1"
+    return 0
+  fi
   if [ "$SYSTEMD" != 1 ]; then
     if [ "$DRY_RUN" = 1 ]; then
       STEP_CHANGED=1
@@ -452,6 +474,7 @@ load_env() {
   if is_true "${CARE_PI_NO_APT_HOLD:-}"; then NO_APT_HOLD=1; fi
   if is_true "${CARE_PI_SKIP_BOOTSTRAP:-}"; then SKIP_BOOTSTRAP=1; fi
   if is_true "${CARE_PI_DRY_RUN:-}"; then DRY_RUN=1; fi
+  if is_true "${CARE_PI_IMAGE_BUILD:-}"; then IMAGE_BUILD=1; fi
 }
 
 # take_value reads the value of an option. It uses the globals that parse_args
@@ -534,6 +557,10 @@ parse_args() {
         SKIP_BOOTSTRAP=1
         shift
         ;;
+      --image-build)
+        IMAGE_BUILD=1
+        shift
+        ;;
       --dry-run)
         DRY_RUN=1
         shift
@@ -550,6 +577,10 @@ parse_args() {
   done
   if [ "$UNATTENDED" = 1 ]; then
     ASSUME_YES=1
+  fi
+  if [ "$IMAGE_BUILD" = 1 ]; then
+    ASSUME_YES=1
+    SKIP_BOOTSTRAP=1
   fi
   validate_options
 }
@@ -584,6 +615,9 @@ validate_options() {
   fi
   if [ -n "$BINARY" ] && [ ! -f "$BINARY" ]; then
     usage_error "The file $BINARY does not exist."
+  fi
+  if [ "$IMAGE_BUILD" = 1 ] && [ "$UNATTENDED" = 1 ]; then
+    usage_error "Use either --image-build or --unattended. The image runs bootstrap at the first boot."
   fi
 }
 
@@ -625,6 +659,7 @@ ensure_root() {
   if [ "$NO_AVAHI" = 1 ]; then set -- "$@" --no-avahi; fi
   if [ "$NO_APT_HOLD" = 1 ]; then set -- "$@" --no-apt-hold; fi
   if [ "$SKIP_BOOTSTRAP" = 1 ]; then set -- "$@" --skip-bootstrap; fi
+  if [ "$IMAGE_BUILD" = 1 ]; then set -- "$@" --image-build; fi
   if [ "$DRY_RUN" = 1 ]; then set -- "$@" --dry-run; fi
   FINISHED=1
   exec sudo env \
@@ -711,6 +746,10 @@ detect_arch() {
 }
 
 detect_systemd() {
+  if [ "$IMAGE_BUILD" = 1 ]; then
+    log "Image build: systemd does not run in the chroot. The script enables the units and starts nothing."
+    return 0
+  fi
   if [ -d /run/systemd/system ]; then
     SYSTEMD=1
   elif [ "$DRY_RUN" = 1 ]; then
@@ -723,12 +762,23 @@ detect_systemd() {
 }
 
 detect_cgroup() {
+  # The image build checks the cgroups of the build host, not of the Pi. care-firstboot checks them.
+  if [ "$IMAGE_BUILD" = 1 ]; then
+    return 0
+  fi
   if [ ! -r "$CGROUP_CONTROLLERS" ]; then
     die_unless_dry "cgroup v2 is not active ($CGROUP_CONTROLLERS does not exist). Care needs cgroup v2."
   fi
 }
 
 detect_pi() {
+  if [ "$IMAGE_BUILD" = 1 ]; then
+    if [ ! -f "$CMDLINE_FILE" ]; then
+      die "Image build: $CMDLINE_FILE not found. Use --image-build only in the root file system of a Raspberry Pi OS image."
+    fi
+    IS_PI=1
+    return 0
+  fi
   if [ -r /proc/device-tree/model ] && grep -aq 'Raspberry Pi' /proc/device-tree/model; then
     IS_PI=1
   elif [ -f "$CMDLINE_FILE" ]; then
@@ -744,13 +794,17 @@ detect_host() {
   detect_systemd
   detect_cgroup
   detect_pi
-  EFFECTIVE_HOSTNAME=$(cat /proc/sys/kernel/hostname)
+  if [ "$IMAGE_BUILD" = 1 ] && [ -s /etc/hostname ]; then
+    EFFECTIVE_HOSTNAME=$(cat /etc/hostname)
+  else
+    EFFECTIVE_HOSTNAME=$(cat /proc/sys/kernel/hostname)
+  fi
   if [ "$IS_PI" = 1 ]; then
     pi_text="yes"
   else
     pi_text="no"
   fi
-  log "Host: $OS_PRETTY, $ARCH, Raspberry Pi: $pi_text, systemd: $SYSTEMD"
+  log "Host: $OS_PRETTY, $ARCH, Raspberry Pi: $pi_text, systemd: $SYSTEMD, image build: $IMAGE_BUILD"
 }
 
 other_ntp_installed() {
@@ -980,6 +1034,10 @@ step_memory_cgroup() {
       log "Updated $CMDLINE_FILE."
     fi
   fi
+  if [ "$IMAGE_BUILD" = 1 ]; then
+    log "Image build: the memory cgroup controller starts at the first boot."
+    return 0
+  fi
   if memory_cgroup_active; then
     log "The memory cgroup controller is active."
   elif [ "$DRY_RUN" = 1 ]; then
@@ -1049,7 +1107,7 @@ zram_with_generator() {
   # A drop-in overrides the main file. Ubuntu ships a main file with a default [zram0].
   ensure_dir "$ZRAM_GENERATOR_DROPIN_DIR" 755 0:0
   write_file "$ZRAM_GENERATOR_DROPIN_DIR/50-care-pi.conf" 644 "$(zram_generator_conf)"
-  if [ "$LAST_WRITE" = 1 ] && { [ "$SYSTEMD" = 1 ] || [ "$DRY_RUN" = 1 ]; }; then
+  if [ "$LAST_WRITE" = 1 ] && [ "$IMAGE_BUILD" != 1 ] && { [ "$SYSTEMD" = 1 ] || [ "$DRY_RUN" = 1 ]; }; then
     run systemctl daemon-reload
     if ! run systemctl start systemd-zram-setup@zram0.service; then
       warn "systemd-zram-setup@zram0.service did not start."
@@ -1061,6 +1119,15 @@ zram_with_generator() {
 }
 
 step_zram() {
+  if [ "$IMAGE_BUILD" = 1 ]; then
+    # /proc/swaps is the swap of the build host. Write the configuration; zram starts at the first boot.
+    if pkg_installed rpi-swap; then
+      zram_with_rpi_swap
+    else
+      zram_with_generator
+    fi
+    return 0
+  fi
   if zram_ok; then
     log "zram swap is active: $(($(zram_swap_kib) / 1024)) MiB."
     return 0
@@ -1107,14 +1174,18 @@ step_hostname() {
     log "Keep the host name '$sh_current'."
     return 0
   fi
-  if [ "$SYSTEMD" != 1 ] && [ "$DRY_RUN" != 1 ]; then
+  if [ "$SYSTEMD" != 1 ] && [ "$DRY_RUN" != 1 ] && [ "$IMAGE_BUILD" != 1 ]; then
     warn "systemd is not running. The script cannot change the host name."
     EFFECTIVE_HOSTNAME=$sh_current
     return 0
   fi
   STEP_CHANGED=1
   HOSTNAME_CHANGED=1
-  run hostnamectl set-hostname "$sh_target"
+  if [ "$IMAGE_BUILD" = 1 ]; then
+    write_file /etc/hostname 644 "$sh_target"
+  else
+    run hostnamectl set-hostname "$sh_target"
+  fi
   if [ -f /etc/hosts ]; then
     write_file /etc/hosts 644 "$(hosts_with_name "$sh_target")"
   fi
@@ -1172,6 +1243,10 @@ step_avahi() {
   sa_text=$(printf '%s\n' "$sa_text" | ini_render - server use-ipv4 yes)
   write_file "$AVAHI_CONF" "$sa_mode" "$sa_text"
   sa_changed=$LAST_WRITE
+  if [ "$IMAGE_BUILD" = 1 ]; then
+    ensure_service avahi-daemon.service
+    return 0
+  fi
   if [ "$DRY_RUN" = 1 ]; then
     plan "enable avahi-daemon, and restart it after a change"
     return 0
@@ -1258,6 +1333,10 @@ step_journal() {
     STEP_CHANGED=1
     sj_changed=1
     run install -d -m 2755 -o root -g systemd-journal /var/log/journal
+  fi
+  if [ "$IMAGE_BUILD" = 1 ]; then
+    # journald reads the drop-in at the first boot.
+    return 0
   fi
   if [ "$SYSTEMD" != 1 ]; then
     if [ "$DRY_RUN" = 1 ]; then
@@ -1579,9 +1658,12 @@ step_firewall() {
   fi
   sf_rules=$(nft_rules "$sf_ssh")
 
-  # Check the rules before the script writes any file.
+  # Check the rules before the script writes any file. The image build has no netlink
+  # access of the target kernel: care-pi-firewall.service loads the rules at the first boot.
   if [ "$DRY_RUN" = 1 ]; then
     plan "check the rules with: nft -c -f"
+  elif [ "$IMAGE_BUILD" = 1 ]; then
+    log "Image build: the rules load at the first boot ($FIREWALL_UNIT)."
   else
     sf_check="/run/care-pi-nft.$$.check"
     printf '%s\n' "$sf_rules" >"$sf_check"
@@ -1596,7 +1678,10 @@ step_firewall() {
   write_file "$FIREWALL_FILE" 644 "$sf_rules"
   sf_rules_written=$LAST_WRITE
 
-  if [ "$SYSTEMD" != 1 ]; then
+  if [ "$IMAGE_BUILD" = 1 ]; then
+    write_file "$FIREWALL_UNIT_FILE" 644 "$(firewall_unit)"
+    enable_unit "$FIREWALL_UNIT"
+  elif [ "$SYSTEMD" != 1 ]; then
     if [ "$DRY_RUN" = 1 ]; then
       plan "write $FIREWALL_UNIT_FILE, then enable and start $FIREWALL_UNIT"
     else
@@ -1840,6 +1925,12 @@ EOF
 }
 
 step_agent_service() {
+  if [ "$IMAGE_BUILD" = 1 ]; then
+    write_file "$AGENT_UNIT_FILE" 644 "$(care_pi_unit)"
+    enable_unit "$AGENT_UNIT"
+    log "$AGENT_UNIT starts at the first boot."
+    return 0
+  fi
   if [ "$SYSTEMD" != 1 ]; then
     if [ "$DRY_RUN" = 1 ]; then
       plan "write $AGENT_UNIT_FILE, then enable and start $AGENT_UNIT"
@@ -2017,6 +2108,10 @@ print_done() {
 }
 
 step_finish() {
+  if [ "$IMAGE_BUILD" = 1 ]; then
+    STEP_SKIP="image build: care-firstboot.service runs 'care-pi bootstrap --from-image' at the first boot"
+    return 0
+  fi
   if [ "$DRY_RUN" = 1 ]; then
     plan "run: $BIN_PATH host check"
   elif ! run "$BIN_PATH" host check; then
@@ -2106,6 +2201,8 @@ main() {
   FINISHED=1
   if [ "$DRY_RUN" = 1 ]; then
     log "Dry run complete. The script changed nothing."
+  elif [ "$IMAGE_BUILD" = 1 ]; then
+    log "Image build complete. At the first boot, care-firstboot.service runs 'care-pi bootstrap --from-image'. Log file: $LOG_FILE"
   elif [ "$REBOOT_NEEDED" = 1 ]; then
     log "Install script complete. REBOOT REQUIRED: run 'sudo reboot', then the bootstrap command above. Log file: $LOG_FILE"
   else
