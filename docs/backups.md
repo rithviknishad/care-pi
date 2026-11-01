@@ -229,6 +229,7 @@ daemon: each run has its own unit, its own memory cap (`MemoryMax=512M`, `Memory
 - A job of the console waits in the state `queued` for a run of the same target.
 - The restore jobs stop `care-backup.target` (step `pause-backups`) and wait 10 minutes at most for each backup lock.
   While a restore job runs, a backup job gives `409 job-running`. The step `resume-backups` starts the target again.
+  When `pause-backups` fails (a backup still holds its lock after 10 minutes), the job starts the target again and fails.
 
 ## 7. The sandbox
 

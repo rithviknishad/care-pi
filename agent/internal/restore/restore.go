@@ -73,9 +73,17 @@ func (e Env) Ops(source string) backup.Ops {
 		Logf: e.logf, Poll: e.Poll, DBWait: e.timeout()}
 }
 
-// PauseBackups stops the backup timers and waits for the backup locks (10 minutes at most).
+// PauseBackups stops the backup timers and waits for the backup locks (10 minutes at most). On a
+// failure it starts the timers again: the callers defer ResumeBackups only after a pause that succeeded.
 func (e Env) PauseBackups(ctx context.Context) error {
-	return e.Step("pause-backups: care-backup.target", "pause-backups", func() error {
+	return e.Step("pause-backups: care-backup.target", "pause-backups", func() (err error) {
+		defer func() {
+			if err != nil && !e.Config.Backups.Paused {
+				if serr := e.systemctl(context.WithoutCancel(ctx), "start", "care-backup.target"); serr != nil {
+					e.logf("cannot start care-backup.target again: %v", serr)
+				}
+			}
+		}()
 		if err := e.systemctl(ctx, "stop", "care-backup.target"); err != nil {
 			return err
 		}

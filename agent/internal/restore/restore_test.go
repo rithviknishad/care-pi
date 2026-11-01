@@ -188,6 +188,32 @@ func TestPITRNoCheckpoint(t *testing.T) {
 	}
 }
 
+// TestPauseBackupsTimeout: a backup that holds its lock longer than the wait fails pause-backups, and the
+// job starts the timers again (the caller registers resume-backups only after a pause that succeeded).
+func TestPauseBackupsTimeout(t *testing.T) {
+	for _, paused := range []bool{false, true} {
+		te := newTenv(t, jobs.KindRestorePITR)
+		te.e.LockWait = 50 * time.Millisecond
+		te.e.Config.Backups.Paused = paused
+		release, err := backup.Lock(context.Background(), te.p, backup.LocalTarget, 0, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		at := time.Now()
+		_, err = PITR(context.Background(), te.e, PITRRequest{Time: &at, Source: jobs.SourceConsole})
+		release()
+		if err == nil || !strings.Contains(err.Error(), "still runs") {
+			t.Fatalf("want the lock timeout, got %v", err)
+		}
+		want := []string{"systemctl stop care-backup.target", "systemctl start care-backup.target"}
+		if paused {
+			want = want[:1]
+		}
+		check(t, "commands", te.actions(), want)
+		check(t, "steps", te.steps(), []string{"pause-backups:failed"})
+	}
+}
+
 func TestDrill(t *testing.T) {
 	te := newTenv(t, jobs.KindRestoreDrill)
 	te.fake.On(infoCmd, host.Response{Out: info("20261030-010000F")})

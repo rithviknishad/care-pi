@@ -1018,6 +1018,7 @@ Locks:
   in the state `queued` for a run of the same target.
 - `restore-pitr`, `restore-files`, `restore-dr`, and `recovery-key-rotate` take the apply lock. Their step `pause-backups`
   stops the backup timers and waits (10 minutes at most) for each backup lock. Their step `resume-backups` starts the timers again.
+  A `pause-backups` that fails (a lock is still held after the wait) starts the timers again before the job fails.
   While one of them runs, a backup kind gives `409 job-running`.
 
 The steps, in order (the keys of `JobStep.action`):
