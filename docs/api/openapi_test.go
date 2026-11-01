@@ -24,6 +24,12 @@ const (
 	problemBase = "https://care-pi.rithviknishad.dev/problems/"
 )
 
+// solutionSchemas are the schemas of solutions/schema (Phase 4). lock.schema.json refers to
+// solution.schema.json by its $id, so the test also adds each file under its $id.
+var solutionSchemas = []string{"solution", "lock", "index"}
+
+const solutionSchemaDir = "../../solutions/schema/"
+
 // publicOperations are the operations without a session (docs/api/README.md, "Authentication").
 var publicOperations = []string{
 	"GET /_care-pi/status",
@@ -430,6 +436,17 @@ func TestExamples(t *testing.T) {
 	}
 	if err := c.AddResource(fileURL(t, configFile), specTree(t, configFile)); err != nil {
 		t.Fatal(err)
+	}
+	for _, name := range solutionSchemas {
+		file := solutionSchemaDir + name + ".schema.json"
+		tree := specTree(t, file)
+		if err := c.AddResource(fileURL(t, file), tree); err != nil {
+			t.Fatal(err)
+		}
+		id, _ := asMap(tree)["$id"].(string)
+		if err := c.AddResource(id, specTree(t, file)); err != nil {
+			t.Fatalf("%s: %v", file, err)
+		}
 	}
 
 	var cases []exampleCase

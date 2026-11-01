@@ -10,8 +10,13 @@ Version 1 of care-pi has one solution: `care-clinic`.
 solutions/
   README.md                      This file.
   schema/solution.schema.json    JSON Schema (draft 2020-12) of solution.yaml.
+  schema/lock.schema.json        JSON Schema of a solution lock (Phase 4).
+  schema/index.schema.json       JSON Schema of index.json (Phase 4).
   care-clinic/solution.yaml      The CARE Clinic solution.
+  care-clinic/locks/             The released locks, <YYYY.MM.N>.lock.yaml, and withdrawn.yaml (Phase 4; CI adds them).
 ```
+
+`docs/solutions.md` is the specification of Phase 4: the lock, `index.json`, the CI artefacts, the tracks, and the updates.
 
 One solution is one directory with one file, `solution.yaml`.
 The directory name must equal the `name` field in the file.
@@ -37,7 +42,7 @@ A plug has these fields:
 | Field | Meaning |
 |---|---|
 | `id`, `label`, `description` | The identifier and the text for the operator. The `id` is unique in the solution. |
-| `enabled` | The base state. CI builds the solution image from the enabled plugs that have a `backend` part. |
+| `enabled` | The default state. From Phase 4, CI installs the `backend` part of each plug into the solution image, on or off. |
 | `auto` | A rule that lets the agent enable the plug. The only rule is `when_multihost`. |
 | `requires_internet` | True when the plug needs internet access at run time. |
 | `backend` | A Python package: `name`, `package`, `ref`, and `configs`. It becomes one entry of `ADDITIONAL_PLUGS`. |
@@ -52,9 +57,11 @@ Rules to remember:
   `env.frontend.REACT_MFE_REGISTERED_COMPONENTS`.
   The override has no effect when the frontend build does not register the component.
   The renderer joins the values of all enabled plugs with commas.
-- A frontend plug with a `url` is loaded from that URL. CI does not build it.
-- A plug with `auto` is not in the prebuilt solution image.
-  The agent builds a local image when it enables the plug.
+- A frontend plug with only a `url` is loaded from that URL (an external bundle). CI does not build it.
+  With a `repo`, CI builds the bundle (Phase 4) and the device serves it.
+- From Phase 4, the solution image contains the `backend` part of each plug, also of the plugs with `auto`.
+  The operator can turn a plug on or off without an image build (`docs/solutions.md` section 1.5).
+- A setting of the type `secret` must have `part: backend`. CARE serves the `plug_config` rows without authentication.
 - Do not write secrets in `backend.configs`.
   Add an entry to `settings` with the type `secret`.
   The agent stores the value in `/etc/care-pi/secrets/`.
@@ -87,7 +94,16 @@ npx --yes ajv-cli@5 validate --spec=draft2020 --validate-formats=false \
   -s solutions/schema/solution.schema.json -d solutions/care-clinic/solution.yaml
 ```
 
-The agent will provide the same check as `care-pi solution validate` (planned).
+The agent will provide the same check as `care-pi solution validate FILE` (Phase 4).
+It also validates a lock or an `index.json` file, by its `kind`.
+A lock refers to the solution schema, so a validator needs both files:
+
+```sh
+npx --yes ajv-cli@5 validate --spec=draft2020 --validate-formats=false \
+  -s solutions/schema/lock.schema.json -r solutions/schema/solution.schema.json \
+  -d solutions/care-clinic/locks/2026.11.0.lock.yaml
+```
+
 A schema cannot check that plug ids are unique. The agent and CI check this rule in code.
 
 ## What CI does with a solution
@@ -108,10 +124,15 @@ A push build uses the version `0.0.0-dev` and the default solution `care-clinic`
 A manual run takes a `solution` and a `version`.
 The tag `<name>-latest` means the newest build on `main`.
 
-Phase 4 (planned): CI finds all `solutions/*/solution.yaml` files.
-CI resolves every ref to a digest or a sha and writes a lock file.
-CI builds the frontend plug bundles and the default frontend bundle.
-CI publishes an `index.json` that the devices read.
+Phase 4: the workflows `solution-lock`, `plug-bundle`, `fe-bundle`, `solution-image`, and `solution-index`
+(`docs/solutions.md` section 5).
+
+1. `solution-lock` resolves every ref to a digest or a sha.
+2. It builds the solution image, the frontend plug bundles, and the default frontend bundle.
+3. It writes the lock, makes the draft release `lock-<name>-<version>`, and opens a pull request with
+   `solutions/<name>/locks/<version>.lock.yaml`.
+4. The merge of the pull request runs `solution-index`. It publishes the release and writes `index.json`
+   (the release `index`). The devices read `index.json`.
 
 ## Calendar versions of locks
 
@@ -121,9 +142,10 @@ A lock has a calendar version in the form `YYYY.MM.N`.
 
 - `YYYY.MM` is the year and the month of the release.
 - `N` is the number of the release in that month. The first release has `N` = 0.
-- Example: `2026.11.0` is the first lock of November 2026.
-- The lock file name is `<name>-<version>.lock.yaml`, for example `care-clinic-2026.11.0.lock.yaml`.
-- The git tag of a release is `<name>/<version>`, for example `care-clinic/2026.11.0`.
+- Example: `2026.11.0` is the first lock of November 2026. The month always has two digits.
+- The lock file in git is `solutions/<name>/locks/<version>.lock.yaml`, for example `solutions/care-clinic/locks/2026.11.0.lock.yaml`.
+- The release is `lock-<name>-<version>`, for example `lock-care-clinic-2026.11.0`.
+  Its asset is `<name>-<version>.lock.yaml`, for example `care-clinic-2026.11.0.lock.yaml`.
 - A build that is not a release uses the version `0.0.0-dev`.
 
 The agent and the Pi image use semantic versions.

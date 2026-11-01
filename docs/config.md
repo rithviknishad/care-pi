@@ -77,11 +77,12 @@ On a LAN with a name collision, avahi can announce `care-2.local`.
 | Key | Type | Default | Phase | Description |
 |---|---|---|---|---|
 | `solution.name` | string | `care-clinic` | Phase 1 | A solution in `solutions/<name>/solution.yaml`. The agent embeds the solutions. |
-| `solution.track` | `stable`, `pinned`, `custom` | `stable` | Phase 1 (`stable`, `custom`); validate (`pinned`) | `stable` uses the refs of the solution. `custom` uses the overrides below. `pinned` needs the published solution locks of Phase 4. |
-| `solution.pin` | string `YYYY.MM.N`, or `null` | `null` | validate | The solution lock version for `track: pinned`. Required when `track` is `pinned`. |
+| `solution.track` | `stable`, `pinned`, `custom` | `stable` | Phase 1 (`stable`, `custom`); Phase 4 (`pinned`) | `stable` installs the newest solution lock (Phase 4), else uses the refs of the solution. `custom` uses the overrides below. `pinned` stays on the lock `solution.pin`. |
+| `solution.pin` | string `YYYY.MM.N`, or `null` | `null` | Phase 4 | The solution lock version for `track: pinned`. Required when `track` is `pinned`. Phase 4: for `track: custom`, the base lock (`null`: the newest lock). |
 | `solution.custom.care_ref` | image tag or `sha256:` digest, or `null` | `null` | Phase 1 | The ref of the care image for `track: custom`. |
 | `solution.custom.care_fe_ref` | branch, tag, or full git sha, or `null` | `null` | Phase 1 | The care_fe ref for `track: custom`. The lock resolves it when `fe.provider` is not `none`. |
 | `solution.custom.plugs` | list of plug overrides | `[]` | Phase 1 (validate for backend changes) | Add or change plugs for `track: custom`. |
+| `solution.plugs` | map of plug id to a plug choice | `{}` | Phase 4 | Turn a plug of the solution on or off, and set the values of its settings form. Each track accepts these choices. They do not make the track `custom`. |
 
 Each entry of `solution.custom.plugs`:
 
@@ -96,8 +97,29 @@ Each entry of `solution.custom.plugs`:
 | `frontend.repo`, `frontend.ref`, `frontend.url` | strings | The bundle source (Phase 2 and later). |
 
 A plug set with backend plugs that differ from the solution image needs a local image build.
-The local build comes in Phase 4. Until then `apply` stops with exit code 2.
-To use such a plug set now, build an image with the plugs and set `images.care`.
+From Phase 4, the agent builds it locally with the quadlet `care-build-<solution>.build` (`docs/solutions.md` section 13.1).
+The build needs internet access and takes minutes. `images.care` still replaces the image.
+
+Each entry of `solution.plugs` (Phase 4, `docs/solutions.md` section 1.3):
+
+| Key | Type | Description |
+|---|---|---|
+| `enabled` | boolean, or `null` | `true` or `false` turns the plug on or off. `null` or a missing key: the default of the solution and its `auto` rule apply. |
+| `settings.backend.<KEY>` | value of the field type | The value of a setting with `part: backend`. It goes into `configs` of the `ADDITIONAL_PLUGS` entry. |
+| `settings.frontend.<PATH>` | value of the field type | The value of a setting with `part: frontend`. `<PATH>` is the dotted path in `meta` of the `plug_config` row, for example `config.redirect_after_login`. |
+
+A setting of the type `secret` is never in `config.yaml`. The agent keeps it in `/etc/care-pi/secrets/plug-<id>.json` (root 0600).
+Set it with `PUT /api/v1/plugs/{plug_id}` or `care-pi plugs set ID --secret-stdin backend.KEY`.
+For an unknown plug id or setting key, `apply` stops with `invalid-config` (Phase 4).
+`solution.custom.plugs` (track `custom`) wins over `solution.plugs` for the same plug.
+
+Phase 4 changes the meaning of the tracks (`docs/solutions.md` section 7):
+
+| Track | Phase 1 to 3 | Phase 4 |
+|---|---|---|
+| `stable` | The agent resolves the refs of the embedded `solution.yaml`. | The agent installs the newest published solution lock of `index.json`. Without a published lock, it keeps the Phase 1 behaviour. |
+| `pinned` | `apply` stops with exit code 2. | The agent installs the lock `solution.pin` and stays on it. Without `pin`, `apply` stops with `invalid-config`. |
+| `custom` | The agent resolves the overrides of `solution.custom`. | The same, on top of the lock `solution.pin`, or of the newest lock when `pin` is `null`. The agent builds locally what CI did not build. |
 
 ## `size`
 
@@ -210,11 +232,16 @@ A new recovery key gives a new directory. docs/api/README.md section 13 tells th
 
 | Key | Type | Default | Phase | Description |
 |---|---|---|---|---|
-| `updates.auto` | boolean | `false` | validate (Phase 4) | Apply new solution locks inside the window. |
-| `updates.window.days` | list of `Mon` to `Sun` | `[Sun]` | validate (Phase 4) | Days of the update window. |
-| `updates.window.start` | `HH:MM` | `02:00` | validate (Phase 4) | Start of the window. |
-| `updates.window.end` | `HH:MM` | `05:00` | validate (Phase 4) | End of the window. |
-| `updates.os_security` | boolean | `true` | validate (Phase 4) | OS security updates. |
+| `updates.auto` | boolean | `false` | Phase 4 | Apply new solution locks inside the window. |
+| `updates.window.days` | list of `Mon` to `Sun` | `[Sun]` | Phase 4 | Days of the update window. A day is the day when the window opens. |
+| `updates.window.start` | `HH:MM` | `02:00` | Phase 4 | Start of the window, in the time zone of the host. |
+| `updates.window.end` | `HH:MM` | `05:00` | Phase 4 | End of the window. An `end` that is not after `start` ends on the next day. `end` equal to `start` gives a window of 24 hours. |
+| `updates.os_security` | boolean | `true` | Phase 4 | OS security updates (`unattended-upgrades`, security pocket only). |
+| `updates.os_reboot` | boolean | `true` | Phase 4 | Reboot inside the window when `/run/reboot-required` exists and no job runs. |
+| `updates.os_full` | boolean | `false` | Phase 4 | Run `care-pi update --os` (apt `full-upgrade`, and the tested versions of the held container packages) inside the window, after the Care update. |
+| `updates.index_url` | `https://` or `file:///` URL, or `null` | `null` | Phase 4 | The URL of `index.json`. `null`: the default of the agent release, `https://github.com/rithviknishad/care-pi/releases/download/index/index.json`. A `file:///` URL lets a device update from a USB drive. |
+
+`docs/solutions.md` describes the window, the timers, and the update steps (sections 8 to 11).
 
 ## `env`
 

@@ -44,9 +44,10 @@ export function createAppRouter(queryClient: QueryClient) {
             { path: "security", lazy: page(() => import("@/features/security/security-page")) },
             { path: "support", lazy: page(() => import("@/features/support/support-page")) },
             { path: "backups", lazy: page(() => import("@/features/backups/backups-page")) },
+            // The PITR offer of an update links to /restore?time=…: the page fills in the time.
             { path: "restore", lazy: page(() => import("@/features/backups/restore-page")) },
-            { path: "updates", lazy: page(() => import("@/features/unavailable/updates-page")) },
-            { path: "plugs", lazy: page(() => import("@/features/unavailable/plugs-page")) },
+            { path: "updates", lazy: page(() => import("@/features/updates/updates-page")) },
+            { path: "plugs", lazy: page(() => import("@/features/plugs/plugs-page")) },
           ],
         },
         { path: "*", element: <NotFoundPage /> },

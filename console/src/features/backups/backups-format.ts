@@ -123,6 +123,14 @@ export function fromLocalInput(value: string): number | null {
   return Number.isNaN(t) ? null : t;
 }
 
+// The time of /restore?time=<RFC 3339 time> (the PITR offer of an update, docs/console-ui.md section 11.4) in ms,
+// or null when the parameter is not there or is not an RFC 3339 time with a zone.
+export function restoreOffer(raw: string | null | undefined): number | null {
+  if (!raw || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/.test(raw)) return null;
+  const t = Date.parse(raw);
+  return Number.isNaN(t) ? null : t;
+}
+
 // An ISO time without milliseconds, for the API.
 export function isoSeconds(ms: number): string {
   return new Date(Math.floor(ms / 1000) * 1000).toISOString().replace(/\.\d{3}Z$/, "Z");

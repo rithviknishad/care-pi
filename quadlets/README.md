@@ -28,11 +28,16 @@ The templates use Go `text/template`. The data is `render.Model`.
 | `care-backup.timer.tmpl` | `/etc/systemd/system/care-backup-*.timer` (Phase 3). `PartOf=care-backup.target`. A calendar timer has `Persistent=true`; a destination timer has `OnActiveSec=1min` and `OnUnitActiveSec=<interval_min>min`. |
 | `care-backup-disk.mount.tmpl`, `care-backup-disk.automount.tmpl` | `/etc/systemd/system/var-lib-care\x2dpi-disks-<label>.{mount,automount}` (Phase 3). A backup disk with `nofail`; the automount unit unmounts it after 10 idle minutes. |
 | `backup-ssh_config.tmpl`, `backup-known_hosts.tmpl` | `/etc/care-pi/rendered/backup/{ssh_config,known_hosts}` (Phase 3). One `Host care-dest-<id>` for each SFTP destination with the pinned host key, `StrictHostKeyChecking yes`, and `BatchMode yes`. |
+| `additional-plugs.json.tmpl` (Phase 4) | `/etc/care-pi/rendered/care/additional-plugs.json`: `ADDITIONAL_PLUGS` with each secret replaced by `"<secret>"`. The podman secret `care-additional-plugs` has the real value. |
+| `care-update-check.timer.tmpl`, `care-update-check.service.tmpl` (Phase 4) | `/etc/systemd/system/care-update-check.{timer,service}`: each day at a random time, `care-pi update check --scheduled`. |
+| `care-update-apply.timer.tmpl`, `care-update-apply.service.tmpl` (Phase 4) | `/etc/systemd/system/care-update-apply.{timer,service}`: one `OnCalendar=` for each day of the window, `Persistent=true`, `care-pi update apply --scheduled`. |
+| `care-build.build.tmpl` (Phase 4) | `/etc/containers/systemd/care-build-<solution>.build`: the local backend build (`docs/solutions.md` section 13.1). Quadlet of podman 5.4 has no `BuildArg=`, so the template uses `PodmanArgs=--build-arg=BASE=…`. The service has `MemoryHigh=640M` and `MemoryMax=768M`. |
+| `care-plug-build.container.tmpl`, `plug-build.sh.tmpl` (Phase 4, experimental) | `/etc/containers/systemd/care-plug-build.container` and `/etc/care-pi/rendered/plugs/plug-build.sh`: the local FE plug build. |
 | `care-secrets.tmpl`, `status-style.tmpl` | Shared blocks (`{{define}}`). No output. |
 
 Setup mode (`apply --phase bootstrap`, `docs/apply.md`) renders only `care.pod`, `care-caddy.container`,
 `care.target`, `care-clock.service`, `care-start.service`, the Caddyfile, and the status pages
-(`render.Model.Bootstrap`). The golden tree is `small-clinic-bootstrap`.
+(`render.Model.Bootstrap`). It renders no update timers. The golden tree is `small-clinic-bootstrap`.
 `care-pi.service` is not a template: the installer writes it (`installer/install.sh`, `care_pi_unit`).
 
 Rules for the templates:
@@ -51,8 +56,13 @@ Rules for the templates:
   `care-api` (gunicorn), `care-worker`, and `care-beat` (celery). Else systemd records a failure at each stop.
 - Never put a secret into a template. Use `Secret=` with a podman secret name.
 
+- The maintenance page (`status-maintenance.html.tmpl`) reads `GET /_care-pi/status` each 5 s and shows the sentence of
+  the step of the update (`render.MaintenanceSteps`, the same sentences as the console: `docs/console-ui.md` section 9). It opens Care again when the site is `care`. It works without JavaScript too (a slow meta refresh).
+
 The backup units are plain systemd units, not quadlets. `docs/backups.md`, section 4, describes them.
 `systemd` does not accept the calendar text `daily HH:MM`; the renderer writes `*-*-* HH:MM` for it.
 
 After a change, update the goldens: `go test ./agent/internal/render -update`.
+Phase 4 files: `custom-build` holds the `.build` unit and the FE plug builder. Check them with quadlet of podman 5.4:
+`/usr/libexec/podman/quadlet -dryrun` (the `.build` unit becomes `care-build-<solution>-build.service`).
 `agent/README.md` describes how to check the output with the quadlet generator and Caddy.

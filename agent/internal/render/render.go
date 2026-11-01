@@ -11,6 +11,7 @@ import (
 	"text/template"
 
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
+	carebuild "github.com/rithviknishad/care-pi/images/care"
 	"github.com/rithviknishad/care-pi/quadlets"
 )
 
@@ -45,9 +46,17 @@ type output struct {
 	when func(*Model) bool
 }
 
+// dynOutput is an output whose path depends on the model (Phase 4).
+type dynOutput struct {
+	output
+	pathOf func(*Model) string
+}
+
 func always(*Model) bool         { return true }
 func full(m *Model) bool         { return !m.Bootstrap }
 func feBuild(m *Model) bool      { return m.FEBuild }
+func careBuild(m *Model) bool    { return m.CareBuild != nil && !m.Bootstrap }
+func plugBuild(m *Model) bool    { return m.PlugBuild && !m.Bootstrap }
 func quadlet(name string) string { return paths.QuadletDir + "/" + name }
 func systemd(name string) string { return paths.SystemdDir + "/" + name }
 
@@ -73,6 +82,21 @@ var outputs = []output{
 	{"frontend.env.tmpl", paths.RenderedFE + "/frontend.env", 0o600, 0, feBuild},
 	{"fe-build.sh.tmpl", paths.RenderedFE + "/" + FEBuildScriptName, 0o700, 0, feBuild},
 }
+
+// phase4Outputs are the outputs of Phase 4 (docs/solutions.md).
+var phase4Outputs = []dynOutput{
+	{output{"additional-plugs.json.tmpl", paths.RenderedCare + "/additional-plugs.json", 0o600, 0, full}, nil},
+	{output{"care-update-check.timer.tmpl", systemd("care-update-check.timer"), 0o644, 0, full}, nil},
+	{output{"care-update-check.service.tmpl", systemd("care-update-check.service"), 0o644, 0, full}, nil},
+	{output{"care-update-apply.timer.tmpl", systemd("care-update-apply.timer"), 0o644, 0, full}, nil},
+	{output{"care-update-apply.service.tmpl", systemd("care-update-apply.service"), 0o644, 0, full}, nil},
+	{output{"care-build.build.tmpl", "", 0o644, 0, careBuild}, func(m *Model) string { return quadlet("care-build-" + m.SolutionName + ".build") }},
+	{output{"care-plug-build.container.tmpl", quadlet("care-plug-build.container"), 0o644, 0, plugBuild}, nil},
+	{output{"plug-build.sh.tmpl", paths.RenderedPlugs + "/plug-build.sh", 0o700, 0, plugBuild}, nil},
+}
+
+// TimerUnits are the update timers that apply enables (docs/solutions.md, section 10.2).
+var TimerUnits = []string{"care-update-check.timer", "care-update-apply.timer"}
 
 var funcs = template.FuncMap{
 	"join": strings.Join,
@@ -157,7 +181,12 @@ func Render(m *Model) (Tree, error) {
 		return nil, fmt.Errorf("render: cannot parse the templates: %w", err)
 	}
 	tree := Tree{}
+	all := make([]dynOutput, 0, len(outputs)+len(phase4Outputs))
 	for _, o := range outputs {
+		all = append(all, dynOutput{output: o})
+	}
+	all = append(all, phase4Outputs...)
+	for _, o := range all {
 		if !o.when(m) {
 			continue
 		}
@@ -165,7 +194,17 @@ func Render(m *Model) (Tree, error) {
 		if err := t.ExecuteTemplate(&b, o.tmpl, m); err != nil {
 			return nil, fmt.Errorf("render: %s: %w", o.tmpl, err)
 		}
-		tree[o.path] = File{Path: o.path, Content: tidy(b.Bytes()), Mode: o.mode, GID: o.gid}
+		p := o.path
+		if o.pathOf != nil {
+			p = o.pathOf(m)
+		}
+		tree[p] = File{Path: p, Content: tidy(b.Bytes()), Mode: o.mode, GID: o.gid}
+	}
+	if careBuild(m) {
+		cf := paths.RenderedBuild + "/Containerfile"
+		tree[cf] = File{Path: cf, Content: carebuild.Containerfile, Mode: 0o644}
+		ip := paths.RenderedBuild + "/install-plugs.json"
+		tree[ip] = File{Path: ip, Content: []byte(m.CareBuild.PlugsJSON + "\n"), Mode: 0o644}
 	}
 	if !m.Bootstrap {
 		if err := renderBackup(t, m, tree); err != nil {
@@ -221,6 +260,9 @@ func Owned(p string) bool {
 	case p == systemd("care.target"), p == systemd("care-clock.service"), p == systemd(StartUnit):
 		return true
 	case BackupUnit(p):
+		return true
+	case p == systemd("care-update-check.timer"), p == systemd("care-update-check.service"),
+		p == systemd("care-update-apply.timer"), p == systemd("care-update-apply.service"):
 		return true
 	}
 	return false

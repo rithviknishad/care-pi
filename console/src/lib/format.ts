@@ -136,3 +136,11 @@ export function formatMbps(n: number | null | undefined): string {
 export function formatLoad(load: number[]): string {
   return load.map((n) => n.toFixed(2)).join(" ");
 }
+
+// shortIdOf gives the short form of an identity: "sha256:<12 hex>" for a digest, 12 hex digits for a git sha.
+export function shortIdOf(value: string | null | undefined, length = 12): string {
+  if (!value) return "—";
+  const digest = /sha256:([0-9a-f]{12,64})/.exec(value);
+  if (digest?.[1]) return `sha256:${digest[1].slice(0, length)}`;
+  return /^[0-9a-f]{13,}$/.test(value) ? value.slice(0, length) : value;
+}

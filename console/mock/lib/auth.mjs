@@ -76,7 +76,8 @@ function newSession(state, ctx, method) {
     method,
     csrf: randomBytes(32).toString("base64url"),
     created_at: now(),
-    authenticated_at: now(),
+    // Reset option stale_auth: the login is 10 minutes old, so each operation with x-reauth asks for the password.
+    authenticated_at: state.staleAuth ? new Date(Date.now() - 600_000).toISOString().replace(/\.\d{3}Z$/, "Z") : now(),
     last_seen_at: now(),
     address: ctx.address,
     user_agent: String(ctx.req.headers["user-agent"] ?? "").slice(0, 256),

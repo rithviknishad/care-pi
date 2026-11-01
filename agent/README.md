@@ -36,6 +36,9 @@ the same service layer (`internal/service`), so each operation has a CLI command
 | `fe build`, `fe status`, `fe prune` (and the hidden `fe build-id`, `fe env`, `fe script` for CI) | `cmd/care-pi/fe.go` |
 | `backup status\|health\|run\|verify\|drill\|ssh-key`, `backup recovery-key create\|show\|confirm\|status\|rotate`, `backup destination list\|test\|secrets`, `backup disk list\|prepare` (and the hidden `backup destination probe` of the transient unit) | `cmd/care-pi/backup.go` |
 | `restore points\|pitr\|files\|dr` | `cmd/care-pi/restore.go` |
+| `update status\|check\|stage\|apply\|rollback\|history`, `update --os [--check\|--now\|--reboot\|--reboot-if-required]` (Phase 4) | `cmd/care-pi/update.go` |
+| `plugs list\|set\|schema` (Phase 4) | `cmd/care-pi/plugs.go` |
+| `solution list\|show\|validate` (and `solution lock`, `solution index` for CI and `make-lock.sh`) (Phase 4) | `cmd/care-pi/solution.go` |
 
 Global flags: `--config` (default `/etc/care-pi/config.yaml`), `--root` (default `/`), `-v`.
 `apply`, `bootstrap`, `fe build`, `fe prune`, `restore pitr|files|dr`, `backup disk prepare`, and
@@ -54,9 +57,9 @@ To add a subcommand, add one file in `cmd/care-pi/`. Register the command on `ro
 | `internal/paths` | Every host path, and the directory layout with owners and modes. `Paths.Abs` adds the `--root` prefix. |
 | `internal/applock` | The apply lock: an exclusive `flock` on `/run/care-pi/apply.lock`, with a timeout. |
 | `internal/config` | The `config.yaml` types, defaults, presets, memory caps, and the JSON Schema (`schema/config.schema.json`). |
-| `internal/solution` | Load `solutions/<name>/solution.yaml` (embedded by `solutions/embed.go`), apply the custom plug overrides, merge the env. |
+| `internal/solution` | Load `solutions/<name>/solution.yaml` (embedded by `solutions/embed.go`), apply the custom plug overrides and the operator choices (`solution.plugs`), merge the env. Phase 4: the schemas (`solution`, `lock`, `index`), solution locks and `index.json` (parse, assemble for CI), the embedded locks and the lock cache (`LockStore`), lock versions and `min_agent_version`, the settings schema of a plug. |
 | `internal/secrets` | Generate and read the secret files. The JWKS generator. The map from secret files to podman secrets. |
-| `internal/lock` | Read and write `lock.yaml`, keep the history, resolve refs with skopeo and git. Print one `resolve <ref> … <id>` line for each network resolution. |
+| `internal/lock` | Read and write `lock.yaml` (version 2; a version 1 file is migrated in memory), keep the history (`history.previous`), resolve refs with skopeo and git. Print one `resolve <ref> … <id>` line for each network resolution. |
 | `internal/netinfo` | The LAN IPv4 addresses from the interfaces. |
 | `internal/render` | The template model and the renderer. The templates are in `quadlets/templates/`. |
 | `internal/plan` | Compare the rendered tree with the disk. Decide the actions (buckets and stanza before the FE build). Unified diff for `--dry-run`. |
@@ -77,8 +80,12 @@ To add a subcommand, add one file in `cmd/care-pi/`. Register the command on `ro
 | `internal/problem` | The RFC 9457 problem types of `docs/api/README.md` section 7. |
 | `internal/exitcode` | The exit codes of the contract. |
 | `internal/buildinfo` | Version, commit, and build date. |
+| `internal/update` (Phase 4) | The update machine (`docs/solutions.md` sections 7 to 12): the index client, the tracks, the jobs `update-check`, `update-stage`, `update-apply`, `update-rollback` with the cutover and the automatic rollback, the recovery after an interruption, the `Checkpointer` interface and its pgBackRest stub, the verifier, OS updates, plug changes, image retention. `update/updatetest` makes a `file://` dist with two locks for tests. |
+| `internal/window` (Phase 4) | The update window in the time zone of the host: open or closed, the next opening, the timer calendars, daylight saving time. |
+| `internal/plugcfg` (Phase 4) | The `plug_config` rows of Care: the desired rows, the sync through `manage.py shell` in `care-api`, and the managed slugs (`state/plug-config.json`). |
 
 The agent runs `systemctl`, `systemd-run`, `podman`, `skopeo`, `journalctl`, `timedatectl`, and `hostnamectl` as commands.
+Phase 4 adds `dpkg-query`, `apt-cache`, and, in the transient unit `care-pi-apt`, `apt-get` and `apt-mark`.
 It reads git refs over HTTPS, so the host needs no git.
 
 ## Tests
@@ -98,6 +105,12 @@ and its rollback, the files restore, the drill, the rotation, and the restore fr
 the key vectors of `docs/backups.md`, the restic arguments, the retention, and the health with a fake clock.
 `internal/disks` checks that a disk preparation refuses the disk of the system.
 
+The update tests (`internal/update/*_test.go`) run the update jobs end to end against `host.Fake` and a `file://`
+index with the locks `2026.11.0` and `2026.11.1` (`update/updatetest`). They check the steps and the commands of
+each job: an update from N to N+1, the rollback with the PITR offer, a migration failure with the automatic rollback,
+a checkpoint failure, a withdrawn lock, `agent-too-old`, a bad lock hash, the index over HTTPS (ETag, 404, size limit),
+OS updates, plug plans and a plug restart, the window run, and the recovery after an interruption.
+
 ## Clock gate
 
 `care-clock.service` runs `care-pi clock wait` before `care.target`. `care-start.service` starts
@@ -112,7 +125,8 @@ The reload makes Caddy check the certificates with the correct clock (`docs/appl
 
 `internal/render/testdata/golden/<case>/` holds the rendered tree of each case:
 `solo`, `small-clinic`, `busy-counter`, `custom`, `small-clinic-bootstrap` (setup mode: `apply --phase bootstrap`),
-and `backups` (Phase 3: a USB disk, an SFTP, and an S3 destination; the timers, the mount units, the SSH files).
+`backups` (Phase 3: a USB disk, an SFTP, and an S3 destination; the timers, the mount units, the SSH files),
+and `custom-build` (Phase 4: a local backend build and a local FE plug build).
 The configs are `internal/render/testdata/config-<case>.yaml`.
 The cases use a test solution in `internal/render/testdata/solutions/`, the addresses
 `192.168.1.10` and `10.0.0.5`, and a lock from a fake resolver (digest = SHA-256 of the reference).

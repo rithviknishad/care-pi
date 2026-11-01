@@ -412,12 +412,8 @@ func TestNotImplementedAndPublic(t *testing.T) {
 		{"PUT", "/api/v1/tls/public", map[string]any{"enabled": false, "clinic_id": nil}},
 		{"PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": false, "auth_key": nil}},
 		{"POST", "/api/v1/tls/local-ca/rotate", nil},
-		{"GET", "/api/v1/updates", nil},
-		{"POST", "/api/v1/updates/check", nil},
-		{"POST", "/api/v1/updates/apply", map[string]any{"version": nil}},
-		{"POST", "/api/v1/updates/rollback", nil},
-		{"GET", "/api/v1/plugs", nil},
-		{"PUT", "/api/v1/plugs/care_scribe", map[string]any{"enabled": false}},
+		// Phase 3 implements /backups and /restore (backups_test.go); Phase 4 (wave 6a) implements /updates,
+		// /plugs, and /solutions (updates_test.go).
 	} {
 		r := e.do(l.method, l.url, l.body)
 		e.want(r, 501, "not-implemented-in-this-version")

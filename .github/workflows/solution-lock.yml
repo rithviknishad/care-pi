@@ -1,0 +1,340 @@
+name: solution-lock
+
+# Make one solution lock (docs/solutions.md, sections 3 and 5): resolve the refs of solution.yaml,
+# build the solution image (each backend plug of the solution), the default FE bundle (the components of
+# each plug registered), and each FE plug bundle at its sha, assemble and validate the lock, publish it
+# as the release lock-<solution>-<version> (the lock and its .sha256), and write index.json again from
+# each lock release into the single release index (solution-index.yml).
+#
+# This wave does not commit the lock to main and opens no pull request: the lock is a release asset, a
+# workflow artifact, and the job summary prints it. The owner commits it to solutions/<solution>/locks/.
+
+on:
+  workflow_dispatch:
+    inputs:
+      solution:
+        description: Name of the solution directory under solutions/
+        type: string
+        default: care-clinic
+      version:
+        description: Calendar version YYYY.MM.N. Empty gives the next version of this month (UTC).
+        type: string
+        default: ""
+      notes:
+        description: Release notes (Markdown). The first line is the summary of the index.
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: solution-lock-${{ inputs.solution }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SOLUTION: ${{ inputs.solution }}
+      VERSION_INPUT: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      care_image: ${{ steps.resolve.outputs.care_image }}
+      care_digest: ${{ steps.resolve.outputs.care_digest }}
+      care_git_sha: ${{ steps.resolve.outputs.care_git_sha }}
+      care_fe_sha: ${{ steps.resolve.outputs.care_fe_sha }}
+      plugs: ${{ steps.resolve.outputs.plugs }}
+      fe_plugs: ${{ steps.resolve.outputs.fe_plugs }}
+      install: ${{ steps.resolve.outputs.install }}
+      additional: ${{ steps.resolve.outputs.additional }}
+      images: ${{ steps.resolve.outputs.images }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Install skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends skopeo
+
+      - name: Build the care-pi CLI
+        run: go build -trimpath -o bin/care-pi ./agent/cmd/care-pi
+
+      - name: Check the solution and choose the version
+        id: version
+        run: |
+          if [[ ! "$SOLUTION" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+            echo "::error::Invalid solution name: $SOLUTION"
+            exit 1
+          fi
+          bin/care-pi solution validate "solutions/${SOLUTION}/solution.yaml"
+          version="$VERSION_INPUT"
+          if [ -z "$version" ]; then
+            month="$(date -u +%Y.%m)"
+            n=-1
+            for v in $(find "solutions/${SOLUTION}/locks" -maxdepth 1 -name "${month}.*.lock.yaml" -printf '%f\n' 2>/dev/null | sed -n "s/^${month}\.\([0-9]*\)\.lock\.yaml$/\1/p") \
+                     $(gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName --jq '.[].tagName' | sed -n "s/^lock-${SOLUTION}-${month}\.\([0-9]*\)$/\1/p"); do
+              if [ "$v" -gt "$n" ]; then n="$v"; fi
+            done
+            version="${month}.$((n + 1))"
+          fi
+          if [[ ! "$version" =~ ^[0-9]{4}\.(0[1-9]|1[0-2])\.[0-9]+$ ]]; then
+            echo "::error::Invalid version: $version. Use YYYY.MM.N."
+            exit 1
+          fi
+          if gh release view "lock-${SOLUTION}-${version}" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::error::The release lock-${SOLUTION}-${version} exists. A lock never changes; choose another version."
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve the refs
+        id: resolve
+        run: |
+          bin/care-pi solution validate --json "solutions/${SOLUTION}/solution.yaml" > solution.json
+          ghslug() { local r="${1#git+}"; r="${r#https://github.com/}"; r="${r%/}"; echo "${r%.git}"; }
+          sha_of() { gh api "repos/$(ghslug "$1")/commits/$2" --jq .sha; }
+          digest_of() { skopeo inspect --raw "docker://$1" > manifest.json && skopeo manifest-digest manifest.json; }
+
+          care_image="$(jq -r '.care.image // "ghcr.io/ohcnetwork/care"' solution.json)"
+          care_ref="$(jq -r '.care.ref // "latest"' solution.json)"
+          if [[ "$care_ref" == sha256:* ]]; then care="${care_image}@${care_ref}"; else care="${care_image}:${care_ref}"; fi
+          care_digest="$(digest_of "$care")"
+          care_git_sha="$(skopeo inspect --override-os linux --override-arch arm64 --format '{{index .Labels "org.opencontainers.image.revision"}}' "docker://${care_image}@${care_digest}" || true)"
+          [[ "$care_git_sha" =~ ^[0-9a-f]{40}$ ]] || care_git_sha=""
+          care_fe_sha="$(sha_of "$(jq -r .care_fe.repo solution.json)" "$(jq -r .care_fe.ref solution.json)")"
+
+          plugs='{}'
+          fe_plugs='[]'
+          install='[]'
+          additional='[]'
+          for i in $(jq -r '(.plugs // []) | keys[]' solution.json); do
+            p="$(jq -c ".plugs[$i]" solution.json)"
+            id="$(jq -r .id <<< "$p")"
+            entry='{}'
+            if jq -e .backend <<< "$p" > /dev/null; then
+              bsha="$(sha_of "$(jq -r .backend.package <<< "$p")" "$(jq -r .backend.ref <<< "$p")")"
+              entry="$(jq -c --arg s "$bsha" '. + {backend_sha: $s}' <<< "$entry")"
+              plug="$(jq -c --arg s "$bsha" '{name: .backend.name, package_name: .backend.package, version: ("@" + $s), configs: (.backend.configs // {})}' <<< "$p")"
+              install="$(jq -c --argjson x "$plug" '. + [$x]' <<< "$install")"
+              if [ "$(jq -r .enabled <<< "$p")" = "true" ]; then
+                additional="$(jq -c --argjson x "$plug" '. + [$x]' <<< "$additional")"
+              fi
+            fi
+            if jq -e '.frontend.repo' <<< "$p" > /dev/null; then
+              fsha="$(sha_of "$(jq -r .frontend.repo <<< "$p")" "$(jq -r .frontend.ref <<< "$p")")"
+              entry="$(jq -c --arg s "$fsha" '. + {frontend_sha: $s}' <<< "$entry")"
+              m="$(jq -c --arg s "$fsha" --arg repo "$(ghslug "$(jq -r .frontend.repo <<< "$p")")" \
+                '{slug: .frontend.slug, repo: $repo, sha: $s, entry: (.frontend.entry // "assets/remoteEntry.js"), script: (.frontend.build.script // "build"), out: (.frontend.build.out // "dist")}' <<< "$p")"
+              fe_plugs="$(jq -c --argjson x "$m" '. + [$x]' <<< "$fe_plugs")"
+            fi
+            plugs="$(jq -c --arg id "$id" --argjson e "$entry" '. + {($id): $e}' <<< "$plugs")"
+          done
+
+          images='{}'
+          for pair in postgres=ghcr.io/rithviknishad/care-pi/postgres-pgbackrest:17 caddy=ghcr.io/rithviknishad/care-pi/caddy:2 \
+            redis=docker.io/library/redis:8-alpine s3=docker.io/versity/versitygw:latest node=docker.io/library/node:22-bookworm-slim; do
+            name="${pair%%=*}"
+            ref="${pair#*=}"
+            images="$(jq -c --arg n "$name" --arg r "$ref" --arg d "$(digest_of "$ref")" '. + {($n): {ref: $r, digest: $d}}' <<< "$images")"
+          done
+          {
+            echo "care_image=${care_image}"
+            echo "care_digest=${care_digest}"
+            echo "care_git_sha=${care_git_sha}"
+            echo "care_fe_sha=${care_fe_sha}"
+            echo "plugs=${plugs}"
+            echo "fe_plugs=${fe_plugs}"
+            echo "install=${install}"
+            echo "additional=${additional}"
+            echo "images=${images}"
+          } >> "$GITHUB_OUTPUT"
+
+  image:
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    env:
+      SOLUTION: ${{ inputs.solution }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # The superset rule (docs/solutions.md, section 1.5): each backend plug of the solution, on or off.
+      - name: Write the install list of the build context
+        env:
+          INSTALL: ${{ needs.resolve.outputs.install }}
+        run: printf '%s\n' "$INSTALL" > images/care/install-plugs.json
+
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push the solution image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: images/care
+          file: images/care/Containerfile
+          platforms: linux/arm64,linux/amd64
+          push: true
+          provenance: false
+          build-args: |
+            BASE=${{ needs.resolve.outputs.care_image }}@${{ needs.resolve.outputs.care_digest }}
+            ADDITIONAL_PLUGS=${{ needs.resolve.outputs.additional }}
+          tags: ghcr.io/rithviknishad/care-pi/care:${{ inputs.solution }}-${{ needs.resolve.outputs.version }}
+          labels: |
+            org.opencontainers.image.base.digest=${{ needs.resolve.outputs.care_digest }}
+          cache-from: type=gha,scope=care
+          cache-to: type=gha,scope=care,mode=max
+
+  fe:
+    needs: resolve
+    uses: ./.github/workflows/fe-bundle.yml
+    with:
+      solution: ${{ inputs.solution }}
+      care_fe_ref: ${{ needs.resolve.outputs.care_fe_sha }}
+
+  plugs:
+    needs: resolve
+    if: needs.resolve.outputs.fe_plugs != '[]'
+    strategy:
+      fail-fast: true
+      matrix:
+        plug: ${{ fromJSON(needs.resolve.outputs.fe_plugs) }}
+    uses: ./.github/workflows/plug-bundle.yml
+    with:
+      slug: ${{ matrix.plug.slug }}
+      repo: ${{ matrix.plug.repo }}
+      sha: ${{ matrix.plug.sha }}
+      entry: ${{ matrix.plug.entry }}
+      script: ${{ matrix.plug.script }}
+      out: ${{ matrix.plug.out }}
+
+  lock:
+    needs: [resolve, image, fe, plugs]
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && needs.image.result == 'success' && needs.fe.result == 'success' && (needs.plugs.result == 'success' || needs.plugs.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SOLUTION: ${{ inputs.solution }}
+      VERSION: ${{ needs.resolve.outputs.version }}
+      NOTES: ${{ inputs.notes }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build the care-pi CLI
+        run: go build -trimpath -o bin/care-pi ./agent/cmd/care-pi
+
+      - name: Assemble and validate the lock
+        env:
+          CARE_DIGEST: ${{ needs.resolve.outputs.care_digest }}
+          CARE_GIT_SHA: ${{ needs.resolve.outputs.care_git_sha }}
+          CARE_FE_SHA: ${{ needs.resolve.outputs.care_fe_sha }}
+          PLUGS: ${{ needs.resolve.outputs.plugs }}
+          FE_PLUGS: ${{ needs.resolve.outputs.fe_plugs }}
+          IMAGES: ${{ needs.resolve.outputs.images }}
+          IMAGE_DIGEST: ${{ needs.image.outputs.digest }}
+          FE_BUILD_ID: ${{ needs.fe.outputs.build_id }}
+          FE_URL: ${{ needs.fe.outputs.url }}
+          FE_SHA256: ${{ needs.fe.outputs.sha256 }}
+          FE_SIZE: ${{ needs.fe.outputs.size_bytes }}
+          FE_ENV_KEYS: ${{ needs.fe.outputs.env_keys }}
+        run: |
+          plugs="$PLUGS"
+          mkdir -p plug-bundles
+          for i in $(jq -r 'keys[]' <<< "$FE_PLUGS"); do
+            slug="$(jq -r ".[$i].slug" <<< "$FE_PLUGS")"
+            sha="$(jq -r ".[$i].sha" <<< "$FE_PLUGS")"
+            tag="plug-${slug}-${sha:0:12}"
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "${tag}.tar.gz" --dir plug-bundles --clobber
+            file="plug-bundles/${tag}.tar.gz"
+            id="$(jq -r --arg slug "$slug" '[.plugs[] | select(.frontend.slug == $slug)][0].id' <(bin/care-pi solution validate --json "solutions/${SOLUTION}/solution.yaml"))"
+            plugs="$(jq -c --arg id "$id" --arg url "${tag}/${tag}.tar.gz" --arg sum "$(sha256sum "$file" | cut -d' ' -f1)" \
+              --argjson size "$(stat -c %s "$file")" '.[$id] += {frontend_url: $url, frontend_sha256: $sum, frontend_size_bytes: $size}' <<< "$plugs")"
+          done
+          # min_agent_version: solution.yaml, else the version of the agent that this run builds (its last tag).
+          min_agent="$(bin/care-pi solution validate --json "solutions/${SOLUTION}/solution.yaml" | jq -r '.min_agent_version // empty')"
+          if [ -z "$min_agent" ]; then
+            min_agent="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' 2> /dev/null || echo v0.4.0)"
+          fi
+          jq -n \
+            --arg min_agent "$min_agent" \
+            --arg solution_file "solutions/${SOLUTION}/solution.yaml" \
+            --arg version "$VERSION" \
+            --arg created_by "${GITHUB_ACTOR} (workflow solution-lock, run ${GITHUB_RUN_ID})" \
+            --arg notes "$NOTES" \
+            --arg commit "$GITHUB_SHA" \
+            --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg care_digest "$CARE_DIGEST" --arg care_git_sha "$CARE_GIT_SHA" \
+            --arg si_tag "${SOLUTION}-${VERSION}" --arg si_digest "$IMAGE_DIGEST" \
+            --arg care_fe_sha "$CARE_FE_SHA" \
+            --arg fe_build_id "$FE_BUILD_ID" --arg fe_url "$FE_URL" --arg fe_sha256 "$FE_SHA256" --argjson fe_size "$FE_SIZE" \
+            --arg fe_env_keys "$FE_ENV_KEYS" \
+            --argjson plugs "$plugs" --argjson images "$IMAGES" \
+            '{solution_file: $solution_file, version: $version, min_agent_version: $min_agent, created_by: $created_by, notes: $notes, commit: $commit, run_url: $run_url,
+              care: {digest: $care_digest, git_sha: $care_git_sha},
+              solution_image: {image: "ghcr.io/rithviknishad/care-pi/care", tag: $si_tag, digest: $si_digest},
+              care_fe_sha: $care_fe_sha,
+              fe: {build_id: $fe_build_id, url: $fe_url, sha256: $fe_sha256, size_bytes: $fe_size, env_keys: ($fe_env_keys | split(","))},
+              plugs: $plugs, images: $images}' > lock-input.json
+          mkdir -p out
+          bin/care-pi solution lock --input lock-input.json > "out/${SOLUTION}-${VERSION}.lock.yaml"
+          bin/care-pi solution validate "out/${SOLUTION}-${VERSION}.lock.yaml"
+          (cd out && sha256sum "${SOLUTION}-${VERSION}.lock.yaml" > "${SOLUTION}-${VERSION}.lock.yaml.sha256")
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: lock-${{ inputs.solution }}-${{ needs.resolve.outputs.version }}
+          path: out/
+          if-no-files-found: error
+
+      - name: Publish the release lock-<solution>-<version>
+        run: |
+          tag="lock-${SOLUTION}-${VERSION}"
+          {
+            printf '%s\n\n' "${NOTES:-Solution lock ${SOLUTION} ${VERSION}.}"
+            echo "The owner commits the lock file to solutions/${SOLUTION}/locks/${VERSION}.lock.yaml."
+          } > release-notes.md
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
+            --title "Solution lock ${SOLUTION} ${VERSION}" --notes-file release-notes.md \
+            "out/${SOLUTION}-${VERSION}.lock.yaml" "out/${SOLUTION}-${VERSION}.lock.yaml.sha256"
+
+      - name: Write the job summary
+        run: |
+          {
+            echo "## Solution lock ${SOLUTION} ${VERSION}"
+            echo
+            echo "Release: \`lock-${SOLUTION}-${VERSION}\`. Commit the file below to \`solutions/${SOLUTION}/locks/${VERSION}.lock.yaml\`."
+            echo
+            echo '```yaml'
+            cat "out/${SOLUTION}-${VERSION}.lock.yaml"
+            echo '```'
+            echo
+            echo "SHA-256: \`$(cut -d' ' -f1 "out/${SOLUTION}-${VERSION}.lock.yaml.sha256")\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  index:
+    needs: [lock]
+    uses: ./.github/workflows/solution-index.yml

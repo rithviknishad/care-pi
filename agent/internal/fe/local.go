@@ -146,6 +146,23 @@ func (l *Local) checkUnit(buildID string) (image string, err error) {
 
 // build scales the stack down, runs the builder unit, and restores the stack.
 func (l *Local) build(ctx context.Context, image string) (err error) {
+	return l.scaled(ctx, image, BuildUnit, "the FE build")
+}
+
+// RunScaled pulls image (when it is not ""), scales Care down (care-api to 1 gunicorn worker, care-worker
+// stopped), starts unit, and restores Care, also after a failure (S8). Phase 4 uses it for the local
+// image build (care-build-<solution>-build.service) and the FE plug build (docs/solutions.md, section 13).
+// The caller holds the apply lock.
+func RunScaled(ctx context.Context, env Env, image, unit, what string, timeout time.Duration) error {
+	l := NewLocal(env)
+	if timeout > 0 {
+		l.BuildTimeout = timeout
+	}
+	return l.scaled(ctx, image, unit, what)
+}
+
+// scaled is the body of build and RunScaled.
+func (l *Local) scaled(ctx context.Context, image, unit, what string) (err error) {
 	h := l.env.Host
 	out := l.env.out()
 	// Pull the builder image before the scale-down, so the API keeps all workers during the pull.
@@ -187,12 +204,12 @@ func (l *Local) build(ctx context.Context, image string) (err error) {
 		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), restoreTimeout)
 		defer cancel()
 		if rerr := l.restore(rctx, droppedIn, workerStopped); rerr != nil {
-			err = errors.Join(err, fmt.Errorf("cannot restore care-api and care-worker after the FE build: %w", rerr))
+			err = errors.Join(err, fmt.Errorf("cannot restore care-api and care-worker after %s: %w", what, rerr))
 		}
 	}()
 
 	if scaleAPI {
-		_, _ = fmt.Fprintln(out, "    scale down for the FE build: care-api to 1 gunicorn worker")
+		_, _ = fmt.Fprintf(out, "    scale down for %s: care-api to 1 gunicorn worker\n", what)
 		droppedIn = true
 		if err := l.writeDropIn(); err != nil {
 			return err
@@ -205,7 +222,7 @@ func (l *Local) build(ctx context.Context, image string) (err error) {
 		}
 	}
 	if workerActive {
-		_, _ = fmt.Fprintln(out, "    stop care-worker for the FE build")
+		_, _ = fmt.Fprintf(out, "    stop care-worker for %s\n", what)
 		workerStopped = true
 		if err := h.Systemd.Stop(ctx, workerUnit); err != nil {
 			return fmt.Errorf("cannot stop care-worker: %w", err)
@@ -217,25 +234,29 @@ func (l *Local) build(ctx context.Context, image string) (err error) {
 		}
 	}
 
-	_, _ = fmt.Fprintf(out, "    start %s: about 1 minute warm, 3 minutes cold on a Pi 5\n", BuildUnit)
+	if unit == BuildUnit {
+		_, _ = fmt.Fprintf(out, "    start %s: about 1 minute warm, 3 minutes cold on a Pi 5\n", unit)
+	} else {
+		_, _ = fmt.Fprintf(out, "    start %s\n", unit)
+	}
 	bctx, cancel := context.WithTimeout(ctx, l.BuildTimeout)
 	defer cancel()
 	stop := l.follow(bctx)
-	err = h.Systemd.Start(bctx, BuildUnit)
+	err = h.Systemd.Start(bctx, unit)
 	stop()
 	if err != nil {
 		// systemctl can end before the unit ends (timeout, signal). Stop the unit before the restore.
 		// For a unit that failed, the stop does nothing.
 		sctx, scancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 		defer scancel()
-		_ = h.Systemd.Stop(sctx, BuildUnit)
+		_ = h.Systemd.Stop(sctx, unit)
 		switch {
 		case ctx.Err() != nil:
-			return fmt.Errorf("care-pi stopped the FE build: %w", ctx.Err())
+			return fmt.Errorf("care-pi stopped %s: %w", what, ctx.Err())
 		case bctx.Err() != nil:
-			return fmt.Errorf("the FE build did not complete within %s, so care-pi stopped it", l.BuildTimeout)
+			return fmt.Errorf("%s did not complete within %s, so care-pi stopped it", what, l.BuildTimeout)
 		}
-		return fmt.Errorf("the FE build failed: %w. Run: journalctl -u %s", err, BuildUnit)
+		return fmt.Errorf("%s failed: %w. Run: journalctl -u %s", what, err, unit)
 	}
 	return nil
 }

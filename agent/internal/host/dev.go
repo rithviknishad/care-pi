@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"sync"
@@ -15,7 +16,8 @@ import (
 // on a laptop without podman and systemd. Each unit is active and each container is healthy.
 // The backup commands (pgbackrest, psql, restic, lsblk, the timers, the probe of a posix
 // destination) also get plausible output: the local repository has one full and one incremental
-// backup, each restic run succeeds, and a USB disk is attached (devBackup).
+// backup, each restic run succeeds, and a USB disk is attached (devBackup). The plug_config script of
+// Phase 4 gets the rows that it writes (PlugConfigHook).
 // A Dev of NewDev also keeps the podman secrets that apply sets and the stop of care.target,
 // so a second apply finds no change and a full cycle ends.
 type Dev struct{ st *devState }
@@ -58,6 +60,12 @@ func (d Dev) Run(_ context.Context, c Cmd) ([]byte, error) {
 	a := c.Args
 	if out, ok := devBackup(c, time.Now()); ok {
 		return []byte(out), nil
+	}
+	if c.Stdin != nil {
+		in, _ := io.ReadAll(c.Stdin)
+		if r, ok := PlugConfigHook(c, in); ok {
+			return []byte(r.Out), nil
+		}
 	}
 	switch c.Name {
 	case "systemctl":

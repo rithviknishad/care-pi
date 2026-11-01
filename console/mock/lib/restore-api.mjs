@@ -285,10 +285,11 @@ export const restoreRoutes = [
           kind: "restore-pitr",
           reason: body.reason ?? null,
           steps: pitrSteps(target),
+          // onDone runs before result (lib/jobs.mjs): the new timeline is the timeline after the job.
           result: (st) => ({
             kind: "restore-pitr",
             restored_to: restoredTo,
-            timeline: st.backups.timeline + 1,
+            timeline: st.backups.timeline,
             checkpoint,
             full_backup_label: label(Date.now(), "full"),
             downtime_s: Math.round((Date.now() - started) / 100) / 10,

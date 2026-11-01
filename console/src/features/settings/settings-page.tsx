@@ -19,6 +19,9 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { FormField } from "@/components/app/form-field";
+import { Input } from "@/components/ui/input";
+import { describedBy } from "@/lib/form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -39,7 +42,7 @@ import { BackupsTab } from "./backups-tab";
 import { ConfigChange } from "./config-change";
 
 const st = strings.settings;
-const TABS = ["identity", "size", "env", "backups", "fe", "power"] as const;
+const TABS = ["identity", "size", "env", "backups", "fe", "solution", "power"] as const;
 type Tab = (typeof TABS)[number];
 
 function WithEffective({ render }: { render: (config: Config, etag: string) => React.ReactNode }) {
@@ -113,6 +116,62 @@ function EnvTab({ config }: { config: Config }) {
       valid={Object.keys(errors).length === 0}
     >
       <EnvForm model={model} onChange={setModel} errors={errors} />
+    </ConfigChange>
+  );
+}
+
+const REF = /^[A-Za-z0-9][A-Za-z0-9._/:@+-]{0,199}$/;
+
+// The custom refs (track custom; docs/solutions.md section 7.3): a config change with If-Match and a plan preview.
+// Saving sets the track to custom. The Updates page goes back to stable or pinned.
+function SolutionTab({ config }: { config: Config }) {
+  const custom = config.solution?.custom;
+  const [careRef, setCareRef] = useState(typeof custom?.care_ref === "string" ? custom.care_ref : "");
+  const [careFeRef, setCareFeRef] = useState(typeof custom?.care_fe_ref === "string" ? custom.care_fe_ref : "");
+  const errors = {
+    care: careRef && !REF.test(careRef) ? st.refInvalid : undefined,
+    fe: careFeRef && !REF.test(careFeRef) ? st.refInvalid : undefined,
+  };
+  return (
+    <ConfigChange
+      edit={(file) => ({
+        ...file,
+        solution: {
+          ...file.solution,
+          track: "custom",
+          custom: { ...file.solution?.custom, care_ref: careRef || null, care_fe_ref: careFeRef || null },
+        },
+      })}
+      valid={!errors.care && !errors.fe}
+    >
+      <div className="flex flex-col gap-2">
+        <p className="text-sm text-soft-foreground">{st.solutionIntro}</p>
+        <DataList>
+          <DataRow label={st.track} value={config.solution?.track ?? "stable"} testId="solution-track" />
+        </DataList>
+        <FormField id="custom-care-ref" label={st.careRef} help={st.careRefHelp} error={errors.care}>
+          <Input
+            id="custom-care-ref"
+            value={careRef}
+            spellCheck={false}
+            autoCapitalize="none"
+            onChange={(e) => setCareRef(e.target.value.trim())}
+            aria-invalid={errors.care ? true : undefined}
+            aria-describedby={describedBy("custom-care-ref", true, errors.care)}
+          />
+        </FormField>
+        <FormField id="custom-care-fe-ref" label={st.careFeRef} help={st.careFeRefHelp} error={errors.fe}>
+          <Input
+            id="custom-care-fe-ref"
+            value={careFeRef}
+            spellCheck={false}
+            autoCapitalize="none"
+            onChange={(e) => setCareFeRef(e.target.value.trim())}
+            aria-invalid={errors.fe ? true : undefined}
+            aria-describedby={describedBy("custom-care-fe-ref", true, errors.fe)}
+          />
+        </FormField>
+      </div>
     </ConfigChange>
   );
 }
@@ -267,6 +326,7 @@ const TAB_LABELS: Record<Tab, string> = {
   env: st.env,
   backups: st.backups,
   fe: st.fe,
+  solution: st.solution,
   power: st.power,
 };
 
@@ -304,6 +364,11 @@ export default function SettingsPage() {
               {tab === "backups" ? <WithEffective render={(c, etag) => <BackupsTab key={etag} config={c} />} /> : null}
             </TabsContent>
             <TabsContent value="fe">{tab === "fe" ? <FeTab /> : null}</TabsContent>
+            <TabsContent value="solution">
+              {tab === "solution" ? (
+                <WithEffective render={(c, etag) => <SolutionTab key={etag} config={c} />} />
+              ) : null}
+            </TabsContent>
             <TabsContent value="power">{tab === "power" ? <PowerTab /> : null}</TabsContent>
           </CardContent>
         </Card>

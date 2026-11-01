@@ -1,0 +1,118 @@
+name: plug-bundle
+
+# Build one FE plug bundle and publish it as the release plug-<slug>-<sha12> (docs/solutions.md, section 2.1).
+# The name is the identity: the job does nothing when the release exists.
+# The recipe is plug-build.sh of the agent (the FE plug builder of a Pi, section 13.2):
+# npm ci, npm run <script> -- --base /plugs/<slug>/<sha12>/, then <out> with care-pi-plug.json.
+
+on:
+  workflow_call:
+    inputs:
+      slug:
+        type: string
+        required: true
+      repo:
+        description: OWNER/NAME on github.com
+        type: string
+        required: true
+      sha:
+        type: string
+        required: true
+      entry:
+        type: string
+        default: assets/remoteEntry.js
+      script:
+        type: string
+        default: build
+      out:
+        type: string
+        default: dist
+  workflow_dispatch:
+    inputs:
+      slug:
+        type: string
+        required: true
+      repo:
+        description: OWNER/NAME on github.com
+        type: string
+        required: true
+      sha:
+        type: string
+        required: true
+      entry:
+        type: string
+        default: assets/remoteEntry.js
+      script:
+        type: string
+        default: build
+      out:
+        type: string
+        default: dist
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SLUG: ${{ inputs.slug }}
+      REPO: ${{ inputs.repo }}
+      SHA: ${{ inputs.sha }}
+      ENTRY: ${{ inputs.entry }}
+      SCRIPT: ${{ inputs.script }}
+      OUT_DIR: ${{ inputs.out }}
+    steps:
+      - name: Check the inputs
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ "$SLUG" =~ ^[a-z][a-z0-9_-]*$ ]] || { echo "::error::Invalid slug $SLUG"; exit 1; }
+          [[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::Invalid repo $REPO"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Invalid sha $SHA"; exit 1; }
+          tag="plug-${SLUG}-${SHA:0:12}"
+          exists=false
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then exists=true; fi
+          {
+            echo "tag=${tag}"
+            echo "exists=${exists}"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v7
+        if: steps.check.outputs.exists == 'false'
+        with:
+          repository: ${{ inputs.repo }}
+          ref: ${{ inputs.sha }}
+          path: plug
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        if: steps.check.outputs.exists == 'false'
+        with:
+          node-version: "22"
+
+      - name: Build the bundle
+        if: steps.check.outputs.exists == 'false'
+        working-directory: plug
+        run: |
+          npm ci --no-audit --no-fund
+          npm run "$SCRIPT" -- --base "/plugs/${SLUG}/${SHA:0:12}/"
+          test -f "${OUT_DIR}/${ENTRY}"
+          printf '{"slug": "%s", "repo": "https://github.com/%s", "sha": "%s", "entry": "%s", "built_at": "%s"}\n' \
+            "$SLUG" "$REPO" "$SHA" "$ENTRY" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${OUT_DIR}/care-pi-plug.json"
+
+      - name: Package and publish
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.check.outputs.tag }}
+        run: |
+          mkdir -p dist
+          tar --sort=name --owner=0 --group=0 --numeric-owner -czf "dist/${TAG}.tar.gz" -C "plug/${OUT_DIR}" .
+          (cd dist && sha256sum "${TAG}.tar.gz" > "${TAG}.tar.gz.sha256")
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
+            --title "FE plug ${SLUG} ${SHA:0:12}" --notes "FE plug bundle of ${REPO} at ${SHA}, built with --base /plugs/${SLUG}/${SHA:0:12}/."
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" dist/*
+          echo "Published ${TAG}" >> "$GITHUB_STEP_SUMMARY"

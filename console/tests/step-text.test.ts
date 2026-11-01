@@ -6,7 +6,7 @@ import { strings } from "@/lib/strings";
 import type { HostCheckItem } from "@/api/types";
 
 // The action keys of the contract (src/api/types.gen.ts, made from docs/api/openapi.yaml; npm run api:check):
-// the enum PlanActionKind, the "Other keys" and the "Phase 3 keys" of JobStep.action.
+// the enum PlanActionKind, the "Other keys", the "Phase 3 keys", and the "Phase 4 keys" of JobStep.action.
 function contractKeys(): string[] {
   const plan = /PlanActionKind: ([^;]+);/.exec(types)?.[1] ?? "";
   const other = /Other keys: ([\s\S]*?)`null` for a journal/.exec(types)?.[1] ?? "";
@@ -23,10 +23,22 @@ function contractKinds(): string[] {
 describe("step names", () => {
   it("has an operator sentence for each action key of the contract", () => {
     const keys = contractKeys();
-    expect(keys.length).toBeGreaterThanOrEqual(72);
+    expect(keys.length).toBeGreaterThanOrEqual(92);
     expect(keys).toContain("resolve-lock");
+    // Phase 3 (design note section 13.8).
     expect(keys).toContain("ensure-timers");
     expect(keys).toContain("drill-cleanup");
+    // Phase 4 (docs/solutions.md sections 8 and 11) and the plan actions cutover and plug-config.
+    for (const k of [
+      "stage-pull",
+      "cutover-maintenance-on",
+      "checkpoint",
+      "migrate",
+      "maintenance-off",
+      "reboot",
+      "cutover",
+    ])
+      expect(keys).toContain(k);
     for (const k of keys) {
       const t = stepTitle({ action: k, name: `${k}: x`, state: "succeeded" });
       expect(t.raw, k).toBe(false);
@@ -39,6 +51,16 @@ describe("step names", () => {
     const kinds = contractKinds();
     expect(kinds).toContain("restore-pitr");
     expect(kinds).toContain("recovery-key-rotate");
+    expect(kinds).toEqual(
+      expect.arrayContaining([
+        "update-check",
+        "update-stage",
+        "update-apply",
+        "update-rollback",
+        "os-update",
+        "plug-change",
+      ]),
+    );
     for (const k of kinds) expect(jobKindText(k), k).not.toBe(k);
     expect(Object.keys(strings.jobs.kinds).sort()).toEqual([...kinds].sort());
     expect(jobKindText("a-later-kind")).toBe("a-later-kind");
@@ -51,6 +73,35 @@ describe("step names", () => {
     expect(stepTitle({ action: "prune", name: "prune: keep 2", state: "succeeded" }, "fe-prune").text).toBe(
       "Delete the old builds of the web app",
     );
+  });
+
+  it("gives checkpoint the text of its job kind", () => {
+    expect(
+      stepTitle({ action: "checkpoint", name: "checkpoint: incremental backup", state: "succeeded" }, "restore-pitr")
+        .text,
+    ).toBe("Record an undo point");
+    expect(stepTitle({ action: "checkpoint", name: "checkpoint", state: "succeeded" }, "update-apply").text).toBe(
+      "Make a backup point of the database",
+    );
+    expect(
+      stepTitle({ action: "checkpoint", name: "checkpoint: incremental backup", state: "running" }, "restore-pitr")
+        .text,
+    ).toBe("Record an undo point");
+    expect(stepTitle({ action: "checkpoint", name: "checkpoint", state: "running" }, "update-apply").text).toBe(
+      "Make a backup point of the database (up to 1 min)",
+    );
+  });
+
+  it("gives the migration a running text with its duration", () => {
+    expect(stepTitle({ action: "migrate", name: "migrate: start care-beat.service", state: "running" }).text).toBe(
+      "Update the database (this can take some minutes)",
+    );
+    expect(stepTitle({ action: "migrate", name: "migrate: start care-beat.service", state: "succeeded" }).text).toBe(
+      "Update the database",
+    );
+    expect(
+      stepTitle({ action: "cutover-maintenance-on", name: "cutover-maintenance-on", state: "succeeded" }).text,
+    ).toBe("Show the maintenance page");
   });
 
   it("gives a short argument of the backup steps", () => {
@@ -101,6 +152,9 @@ describe("step names", () => {
     expect(arg("pull-images", "pull-images: 7 image(s)")).toBe("7 images");
     expect(arg("write-files", "write-files: 15 file(s)")).toBe("15 files");
     expect(arg("restart", "restart: care-beat.service care-api.service")).toBe("care-beat, care-api");
+    expect(arg("stop", "stop: care-beat.service care-worker.service care-api.service")).toBe(
+      "care-beat, care-worker, care-api",
+    );
     expect(arg("full-cycle", "full-cycle: care.target (care-db unit changed; pod changed)")).toBe(
       "care-db unit changed; pod changed",
     );

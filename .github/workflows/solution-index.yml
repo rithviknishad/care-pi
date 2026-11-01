@@ -1,0 +1,61 @@
+name: solution-index
+
+# Write index.json (docs/solutions.md, section 4) again from each release lock-<solution>-<version> and
+# solutions/*/locks/withdrawn.yaml, validate it, and replace the assets of the single release index.
+# solution-lock.yml calls this workflow after each new lock. A push to main that changes a withdrawn.yaml
+# withdraws a lock (section 5.4).
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - solutions/*/locks/withdrawn.yaml
+
+permissions:
+  contents: write
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: solution-index
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build the care-pi CLI
+        run: go build -trimpath -o bin/care-pi ./agent/cmd/care-pi
+
+      - name: Write index.json again from each lock release
+        run: |
+          mkdir -p all-locks out
+          args=()
+          for tag in $(gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName --jq '.[].tagName | select(startswith("lock-"))'); do
+            gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern '*.lock.yaml' --dir "all-locks/${tag}" --clobber
+            for f in "all-locks/${tag}"/*.lock.yaml; do args+=(--lock "$f"); done
+          done
+          for f in solutions/*/locks/withdrawn.yaml; do
+            [ -f "$f" ] && args+=(--withdrawn "$f")
+          done
+          agent="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName --jq '[.[].tagName | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))][0] // ""')"
+          if [ -n "$agent" ]; then
+            args+=(--agent-latest "$agent" --agent-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${agent}")
+          fi
+          bin/care-pi solution index --dist-base "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/" \
+            --changelog-base "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag" "${args[@]}" > out/index.json
+          bin/care-pi solution validate out/index.json
+          (cd out && sha256sum index.json > index.json.sha256)
+          if ! gh release view index --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create index --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
+              --title "Index of the solution locks" --notes "index.json of each solution lock (docs/solutions.md, section 4). CI replaces the assets."
+          fi
+          gh release upload index --repo "$GITHUB_REPOSITORY" out/index.json out/index.json.sha256 --clobber

@@ -5,6 +5,7 @@
 package render
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -18,6 +19,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/secrets"
 	"github.com/rithviknishad/care-pi/agent/internal/solution"
+	"github.com/rithviknishad/care-pi/agent/internal/window"
 )
 
 // Header is the first comment line of every rendered file.
@@ -156,6 +158,61 @@ type Model struct {
 
 	// Backup holds the backup units (full phase only, docs/backups.md).
 	Backup BackupModel
+
+	// Phase 4 (docs/solutions.md). AdditionalPlugsJSON is the value of the podman secret
+	// care-additional-plugs (with the secret settings). AdditionalPlugsRedacted is the same JSON
+	// with each secret value replaced by "<secret>" (rendered/care/additional-plugs.json).
+	AdditionalPlugsJSON     string
+	AdditionalPlugsRedacted string
+	// Timers holds the update timers (rendered when Bootstrap is false).
+	Timers Timers
+	// CareBuild is the local image build of care (track custom), or nil.
+	CareBuild *CareBuild
+	// PlugBuild renders the FE plug builder unit (experimental, track custom).
+	PlugBuild    bool
+	SolutionName string
+	// MaintenanceSteps maps a job step action to the text of the maintenance page.
+	MaintenanceSteps map[string]string
+}
+
+// AdditionalPlugsSecret is the podman secret that holds ADDITIONAL_PLUGS (docs/solutions.md, section 1.4).
+const AdditionalPlugsSecret = "care-additional-plugs"
+
+// Timers holds the values of the update timers (docs/solutions.md, section 10.2).
+type Timers struct {
+	CheckCalendar    string
+	CheckRandomDelay string
+	ApplyCalendars   []string
+	ApplyRandomDelay string
+	ApplyTimeout     string
+}
+
+// CareBuild is a local image build of care (docs/solutions.md, section 13.1).
+type CareBuild struct {
+	// ID is the build id: the first 16 hex digits of the SHA-256 of the base, the Containerfile, and the plugs.
+	ID string
+	// Base is <care image>@<digest>.
+	Base string
+	// Plugs is the install list (each backend plug of the solution and of solution.custom.plugs that is on).
+	Plugs []AdditionalPlug
+	// PlugsJSON is the canonical JSON of Plugs (install-plugs.json).
+	PlugsJSON string
+	// ContainerfileSHA256 is the SHA-256 of the Containerfile.
+	ContainerfileSHA256 string
+	// Refs holds the resolved ref of each plug of the install list.
+	Refs map[string]lock.GitRef
+	// BaseImage, BaseRef, and BaseDigest describe the upstream image (components.care of the lock).
+	BaseImage  string
+	BaseRef    string
+	BaseDigest string
+}
+
+// Image returns the image reference of the build.
+func (b *CareBuild) Image() string { return "localhost/care-pi/care:" + b.ID }
+
+// Unit returns the service unit that quadlet makes from the .build file.
+func (b *CareBuild) Unit(solutionName string) string {
+	return "care-build-" + solutionName + "-build.service"
 }
 
 // SecretNames holds the podman secret names for the templates.
@@ -183,6 +240,12 @@ type Input struct {
 	IPs []string
 	// Bootstrap renders setup mode: only the pod, Caddy, and the start units.
 	Bootstrap bool
+	// SolutionLock is the solution lock of the target, or nil (Phase 1 behaviour: the refs of solution.yaml).
+	SolutionLock *solution.Lock
+	// PlugSecrets holds the secret settings of each plug (secrets/plug-<id>.json), by plug id and key.
+	PlugSecrets map[string]map[string]any
+	// CareBuild is the local image build of care, or nil.
+	CareBuild *CareBuild
 }
 
 // Hostnames returns the DNS names that the config serves. Phase 1 has only the local CA name.
@@ -222,6 +285,12 @@ func joinImage(repo, ref string) string {
 
 // Desire computes the plugs, the refs to resolve, and the merged env.
 func Desire(cfg *config.Config, sol *solution.Solution) (*Plan, error) {
+	return DesireLock(cfg, sol, nil, nil)
+}
+
+// DesireLock is Desire for a solution lock (sl) and a local care build (cb). sol must be the solution
+// of the lock. The refs come from the lock; config.images and solution.custom override them.
+func DesireLock(cfg *config.Config, sol *solution.Solution, sl *solution.Lock, cb *CareBuild) (*Plan, error) {
 	hosts := Hostnames(cfg)
 	plugs, err := sol.Effective(cfg, len(hosts))
 	if err != nil {
@@ -233,6 +302,9 @@ func Desire(cfg *config.Config, sol *solution.Solution) (*Plan, error) {
 		Git:      map[string]lock.GitWant{},
 		Plugs:    map[string]lock.GitWant{},
 	}
+	if sl != nil {
+		w.Solution.Version, w.Solution.Source, w.Solution.LockSHA256 = sl.Version, lock.SourceLock, sl.SHA256
+	}
 	backendPlugs := 0
 	for _, p := range plugs {
 		if p.On && p.HasBackend() {
@@ -240,28 +312,43 @@ func Desire(cfg *config.Config, sol *solution.Solution) (*Plan, error) {
 			w.Plugs[p.ID] = lock.GitWant{Repo: trimGitPlus(p.Backend.Package), Ref: p.Backend.Ref}
 		}
 	}
-	care := cfg.Images.Care
-	if care == "" {
-		if backendPlugs == 0 {
-			care = joinImage(firstNonEmpty(sol.Care.Image, ImageCareUpstream), careRef(cfg, sol))
-		} else {
-			care = ImageCareSolution + ":" + cfg.Solution.Name + "-latest"
+	lockRef := func(name, def string) string {
+		if sl != nil {
+			if img, ok := sl.Images[name]; ok && img.Ref != "" {
+				return img.Ref
+			}
 		}
+		return def
+	}
+	care := cfg.Images.Care
+	switch {
+	case care != "":
+	case cb != nil:
+		care = cb.Image()
+	case sl != nil:
+		care = sl.SolutionImage.Ref()
+	case backendPlugs == 0:
+		care = joinImage(firstNonEmpty(sol.Care.Image, ImageCareUpstream), careRef(cfg, sol))
+	default:
+		care = ImageCareSolution + ":" + cfg.Solution.Name + "-latest"
 	}
 	w.Images["care"] = care
-	w.Images["postgres"] = firstNonEmpty(cfg.Images.Postgres, ImagePostgres)
-	w.Images["caddy"] = firstNonEmpty(cfg.Images.Caddy, ImageCaddy)
-	w.Images["redis"] = firstNonEmpty(cfg.Images.Redis, ImageRedis)
-	w.Images["s3"] = firstNonEmpty(cfg.Images.S3, ImageS3)
+	w.Images["postgres"] = firstNonEmpty(cfg.Images.Postgres, lockRef("postgres", ImagePostgres))
+	w.Images["caddy"] = firstNonEmpty(cfg.Images.Caddy, lockRef("caddy", ImageCaddy))
+	w.Images["redis"] = firstNonEmpty(cfg.Images.Redis, lockRef("redis", ImageRedis))
+	w.Images["s3"] = firstNonEmpty(cfg.Images.S3, lockRef("s3", ImageS3))
 	if cfg.FE.Provider != "none" {
-		ref := sol.CareFE.Ref
+		repo, ref := sol.CareFE.Repo, sol.CareFE.Ref
+		if sl != nil {
+			repo, ref = sl.CareFE.Repo, sl.CareFE.Ref
+		}
 		if cfg.Solution.Track == "custom" && cfg.Solution.Custom.CareFERef != "" {
 			ref = cfg.Solution.Custom.CareFERef
 		}
-		w.Git["care_fe"] = lock.GitWant{Repo: sol.CareFE.Repo, Ref: ref}
+		w.Git["care_fe"] = lock.GitWant{Repo: repo, Ref: ref}
 	}
 	if cfg.FE.Provider == "local" {
-		w.Images["node"] = firstNonEmpty(cfg.Images.Node, ImageNode)
+		w.Images["node"] = firstNonEmpty(cfg.Images.Node, lockRef("node", ImageNode))
 	}
 	plugEnv := solution.PlugEnv(plugs)
 	backend := solution.MergeEnv(nil, backendDefaults(cfg), sol.Env.Backend, plugEnv.Backend, cfg.Env.Backend)
@@ -320,21 +407,24 @@ func NewModel(in Input) (*Model, error) {
 	if cfg == nil || in.Solution == nil || in.Lock == nil {
 		return nil, fmt.Errorf("render: config, solution, and lock are required")
 	}
-	pl, err := Desire(cfg, in.Solution)
+	pl, err := DesireLock(cfg, in.Solution, in.SolutionLock, in.CareBuild)
 	if err != nil {
 		return nil, err
 	}
 	hosts := Hostnames(cfg)
 	m := &Model{
-		Header:      Header,
-		DisplayName: cfg.Identity.DisplayName,
-		Hostnames:   hosts,
-		IPs:         append([]string(nil), in.IPs...),
-		Sizing:      cfg.Sizing(),
-		Images:      map[string]string{},
-		UploadMaxMB: cfg.Uploads.MaxBodyMB,
-		FEProvider:  cfg.FE.Provider,
-		Stanza:      StanzaName,
+		SolutionName:     cfg.Solution.Name,
+		CareBuild:        in.CareBuild,
+		MaintenanceSteps: MaintenanceSteps,
+		Header:           Header,
+		DisplayName:      cfg.Identity.DisplayName,
+		Hostnames:        hosts,
+		IPs:              append([]string(nil), in.IPs...),
+		Sizing:           cfg.Sizing(),
+		Images:           map[string]string{},
+		UploadMaxMB:      cfg.Uploads.MaxBodyMB,
+		FEProvider:       cfg.FE.Provider,
+		Stanza:           StanzaName,
 		Secrets: SecretNames{
 			DjangoSecretKey:  secrets.PodmanDjangoSecretKey,
 			JWKSBase64:       secrets.PodmanJWKSBase64,
@@ -401,6 +491,7 @@ func NewModel(in Input) (*Model, error) {
 		return nil, err
 	}
 
+	var redacted []AdditionalPlug
 	for _, p := range pl.Plugs {
 		if !p.On || !p.HasBackend() {
 			continue
@@ -409,26 +500,36 @@ func NewModel(in Input) (*Model, error) {
 		if g, ok := in.Lock.Plugs[p.ID]; ok && g.SHA != "" {
 			version = "@" + g.SHA
 		}
-		cfgs := p.Backend.Configs
-		if cfgs == nil {
-			cfgs = map[string]any{}
-		}
+		full, red := PlugConfigs(cfg, p.Plug, in.PlugSecrets[p.ID])
 		m.Plugs = append(m.Plugs, AdditionalPlug{
-			Name: p.Backend.Name, PackageName: p.Backend.Package, Version: version, Configs: cfgs,
+			Name: p.Backend.Name, PackageName: p.Backend.Package, Version: version, Configs: full,
+		})
+		redacted = append(redacted, AdditionalPlug{
+			Name: p.Backend.Name, PackageName: p.Backend.Package, Version: version, Configs: red,
 		})
 	}
 	plugsJSON, err := json.Marshal(nonNil(m.Plugs))
 	if err != nil {
 		return nil, fmt.Errorf("render: cannot encode ADDITIONAL_PLUGS: %w", err)
 	}
+	m.AdditionalPlugsJSON = string(plugsJSON)
+	var red bytes.Buffer
+	enc := json.NewEncoder(&red)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(nonNil(redacted)); err != nil {
+		return nil, fmt.Errorf("render: cannot encode ADDITIONAL_PLUGS: %w", err)
+	}
+	m.AdditionalPlugsRedacted = strings.TrimSpace(red.String())
 
 	allowed := append(append([]string{}, m.Sites...), "localhost", "127.0.0.1")
 	origins := make([]string, 0, len(m.Sites))
 	for _, s := range m.Sites {
 		origins = append(origins, "https://"+s)
 	}
+	// ADDITIONAL_PLUGS can hold a secret from Phase 4, so it reaches the containers as the podman
+	// secret care-additional-plugs (docs/solutions.md, section 1.4), not in backend.env.
 	m.BackendFixed = []EnvVar{
-		{"ADDITIONAL_PLUGS", string(plugsJSON)},
 		{"BUCKET_ENDPOINT", fmt.Sprintf("http://localhost:%d", PortS3)},
 		{"BUCKET_EXTERNAL_ENDPOINT", "https://" + m.Canonical},
 		{"BUCKET_PROVIDER", "MINIO"},
@@ -459,7 +560,174 @@ func NewModel(in Input) (*Model, error) {
 	if m.FEBuild && m.FESHA != "" && m.FERepo == "" {
 		return nil, fmt.Errorf("render: fe.provider local fetches care_fe from codeload.github.com, but the care_fe repository %s is not on github.com", in.Lock.Git["care_fe"].Repo)
 	}
+	if !in.Bootstrap {
+		w := window.Window{Days: cfg.Updates.Window.Days, Start: cfg.Updates.Window.Start, End: cfg.Updates.Window.End}
+		m.Timers = Timers{CheckCalendar: "*-*-* 12:00:00", CheckRandomDelay: "4h",
+			ApplyCalendars: w.Calendars(), ApplyRandomDelay: window.Seconds(w.RandomDelay()), ApplyTimeout: window.Seconds(w.Length())}
+		m.PlugBuild = cfg.Solution.Track == "custom" && cfg.FE.Provider == "local" && customFrontendRefs(cfg)
+	}
 	return m, nil
+}
+
+func customFrontendRefs(cfg *config.Config) bool {
+	for _, c := range cfg.Solution.Custom.Plugs {
+		if c.Frontend != nil && c.Frontend.Ref != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// SecretMask replaces a secret value in rendered/care/additional-plugs.json.
+const SecretMask = "<secret>"
+
+// PlugConfigs returns the configs of the ADDITIONAL_PLUGS entry of a plug (docs/solutions.md, section 1.4):
+// backend.configs, then the default of each backend setting, then the operator values of
+// solution.plugs.<id>.settings.backend, then the secrets. red has each secret value replaced by SecretMask.
+func PlugConfigs(cfg *config.Config, p solution.Plug, secretValues map[string]any) (full, red map[string]any) {
+	full = map[string]any{}
+	if p.Backend != nil {
+		for k, v := range p.Backend.Configs {
+			full[k] = solution.DeepCopy(v)
+		}
+	}
+	var op map[string]any
+	if ch, ok := cfg.Solution.Plugs[p.ID]; ok && ch.Settings != nil {
+		op = ch.Settings.Backend
+	}
+	secretKeys := map[string]bool{}
+	for _, st := range p.TypedSettings() {
+		if st.Part != solution.PartBackend {
+			continue
+		}
+		if st.Type == solution.TypeSecret {
+			secretKeys[st.Key] = true
+			if v, ok := secretValues[st.Key]; ok && v != nil {
+				full[st.Key] = v
+			}
+			continue
+		}
+		if st.Default != nil {
+			full[st.Key] = solution.DeepCopy(st.Default)
+		}
+		if v, ok := op[st.Key]; ok && v != nil {
+			full[st.Key] = solution.DeepCopy(v)
+		}
+	}
+	red = map[string]any{}
+	for k, v := range full {
+		red[k] = v
+		if secretKeys[k] {
+			if _, set := secretValues[k]; set {
+				red[k] = SecretMask
+			}
+		}
+	}
+	return full, red
+}
+
+// MaintenanceSteps are the texts of the maintenance page for each JobStep.action: a verbatim copy of
+// strings.steps.actions of the console (console/src/lib/strings.ts, docs/console-ui.md section 9), so the page,
+// the banner of the console, and the job progress use the same sentence (docs/api/README.md section 14.3).
+// TestMaintenanceStepsMatchConsole compares the two tables.
+var MaintenanceSteps = map[string]string{
+	"validate":              "Check the settings",
+	"host-check":            "Check the device",
+	"resolve-lock":          "Resolve the versions of the images",
+	"render":                "Make the configuration files",
+	"plan":                  "Find the changes",
+	"ensure-dirs":           "Make the directories",
+	"set-secrets":           "Store the secret keys",
+	"write-files":           "Write the configuration files",
+	"delete-files":          "Delete the old configuration files",
+	"daemon-reload":         "Load the new service files",
+	"enable-target":         "Start Care at each boot",
+	"pull-images":           "Download the container images",
+	"full-cycle":            "Stop and start all the services of Care",
+	"start-target":          "Start all the services of Care",
+	"restart":               "Start the changed services again",
+	"reload-caddy":          "Load the new web server settings",
+	"ensure-buckets":        "Make the file storage",
+	"ensure-stanza":         "Prepare the database backups",
+	"ensure-fe":             "Build the Care web app",
+	"write-lock":            "Record the installed versions",
+	"wait-healthy":          "Wait until Care answers",
+	"set-hostname":          "Set the host name",
+	"create-care-superuser": "Make the Care administrator",
+	"collect":               "Collect the support data",
+	"archive":               "Make the support bundle file",
+	"prune":                 "Delete the old builds of the web app",
+	// Phase 3 (docs/api/README.md section 13.8). checkpoint is in the Phase 4 block (in restore-pitr the console
+	// says "Record an undo point", strings.steps.byKind).
+	"ensure-mounts":           "Prepare the backup disks",
+	"ensure-repositories":     "Prepare the backup destinations",
+	"ensure-timers":           "Set the backup schedule",
+	"pause-backups":           "Stop the scheduled backups",
+	"resume-backups":          "Start the scheduled backups again",
+	"maintenance-on":          "Show the maintenance page",
+	"maintenance-off":         "Remove the maintenance page",
+	"stop-app":                "Stop Care",
+	"start-app":               "Start Care",
+	"stop-db":                 "Stop the database",
+	"start-db":                "Start the database",
+	"wait-promote":            "Wait until the database accepts changes",
+	"backup-incr":             "Make an incremental backup",
+	"backup-full":             "Make a full backup",
+	"check-stanza":            "Check the database backups",
+	"snapshot":                "Copy the backup to the destination",
+	"forget":                  "Remove the old copies",
+	"verify-local":            "Verify the backups on this device",
+	"verify-destination":      "Verify the copy at the destination",
+	"check-space":             "Check the free disk space",
+	"check-key":               "Check the recovery key",
+	"check-destinations":      "Check the backup destinations",
+	"restore-db":              "Restore the database",
+	"restore-files":           "Restore the files",
+	"verify-files":            "Verify the restored files",
+	"stop-s3":                 "Stop the file storage",
+	"start-s3":                "Start the file storage",
+	"fetch-config":            "Get the settings from the backup",
+	"fetch-db-repo":           "Get the database backup from the destination",
+	"fetch-files":             "Get the files from the backup",
+	"restore-account":         "Restore the console account of the old device",
+	"finish":                  "Complete the restore",
+	"check-disk":              "Check the disk",
+	"wipe-disk":               "Erase the disk",
+	"partition":               "Make the partition",
+	"format":                  "Make the file system",
+	"write-mount-unit":        "Write the mount settings",
+	"mount":                   "Mount the disk",
+	"rekey-local":             "Make the local backups with the new key",
+	"init-destination":        "Prepare a new copy at the destination",
+	"activate-key":            "Use the new recovery key",
+	"remove-old-repositories": "Delete the old backups",
+	"drill-restore":           "Restore the latest backup into a test folder",
+	"drill-start":             "Start a test database",
+	"drill-check":             "Check the test database",
+	"drill-cleanup":           "Delete the test database",
+	// Phase 4 (docs/solutions.md sections 8 and 11).
+	"cutover":                "Install the new version behind the maintenance page",
+	"plug-config":            "Send the plug settings to Care",
+	"fetch-index":            "Download the list of versions",
+	"fetch-lock":             "Download the description of the version",
+	"resolve-refs":           "Resolve the custom versions",
+	"stage-pull":             "Download the new container images",
+	"stage-bundles":          "Download the web app and the plug files",
+	"stage-build":            "Build the custom parts on this device",
+	"cutover-maintenance-on": "Show the maintenance page",
+	"stop":                   "Stop Care",
+	"checkpoint":             "Make a backup point of the database",
+	"activate":               "Install the new version",
+	"migrate":                "Update the database",
+	"start":                  "Start Care",
+	"verify":                 "Make sure that Care works",
+	"rollback":               "Go back to the previous version",
+	"prune-images":           "Delete the old container images",
+	"os-refresh":             "Read the list of OS packages",
+	"os-unhold":              "Release the tested container packages",
+	"os-upgrade":             "Install the OS updates",
+	"os-hold":                "Hold the container packages again",
+	"reboot":                 "Restart the device",
 }
 
 // GitHubSlug returns OWNER/NAME for a https://github.com/OWNER/NAME URL, else "".
@@ -537,6 +805,9 @@ var HostPaths = map[string]string{
 	"PlugsDir":      paths.PlugsDir,
 	"BuildCareFE":   paths.BuildCareFE,
 	"ModeDir":       paths.ModeDir,
+	"RenderedBuild": paths.RenderedBuild,
+	"RenderedPlugs": paths.RenderedPlugs,
+	"BuildPlugs":    paths.BuildPlugs,
 	"Binary":        paths.Binary,
 	"RunDir":        paths.RunDir,
 }

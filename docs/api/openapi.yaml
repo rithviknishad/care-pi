@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: care-pi agent API
-  version: 0.4.0
+  version: 0.6.0
   summary: The HTTP API between the care-pi agent and the console.
   description: |
     This document is the contract between the care-pi agent (`care-pi serve`) and the console.
@@ -90,9 +90,13 @@ tags:
       Restore (Phase 3, `02` §6, design note section 13). The restore window, a point-in-time restore on this device,
       a files restore, and the restore of a new device from a backup (the setup wizard).
   - name: updates
-    description: Solution updates (Phase 4). The URLs and the shapes are reserved now.
+    description: |
+      Solution updates, rollback, and OS updates (Phase 4): the tracks, the update window, staging, the cutover with the
+      maintenance page and the checkpoint, and the history. `docs/solutions.md` and the design note, section 14.
   - name: plugs
-    description: Plugs (Phase 4). The URLs and the shapes are reserved now.
+    description: Plugs (Phase 4). On or off, the settings forms, the bundles, and the `plug_config` rows of Care.
+  - name: solutions
+    description: The solutions and their released locks (Phase 4). Read only; `PUT /config` owns `solution.*`.
 security:
   - session: []
 paths:
@@ -3045,7 +3049,11 @@ paths:
       tags: [updates]
       operationId: getUpdates
       summary: Get the update state
-      description: Phase 4. The track, the current lock, the locks that are available, and the update window (`03` §3–§4).
+      description: |
+        Phase 4. Everything that the Updates page shows, in one call: the track, the running lock, the newest lock,
+        the target, the components, the window, the staging, the maintenance state, the last result, the rollback,
+        and an OS summary (`docs/solutions.md` sections 7 to 11).
+        The agent reads its state files and the cached `index.json`. It does not use the network; `POST /updates/check` does.
       x-phase: 4
       x-cli: care-pi update status --json
       x-problems: [not-authenticated, not-implemented-in-this-version]
@@ -3067,12 +3075,17 @@ paths:
       tags: [updates]
       operationId: startUpdateCheck
       summary: Check for updates now
+      description: |
+        Phase 4. A job of kind `update-check`: fetch `index.json` and the target lock; on the `custom` track, resolve
+        the tracked overrides (`docs/solutions.md` section 7). The job does not hold the apply lock and changes nothing
+        that Care uses. Only one check runs at a time: while a check runs, the agent returns `202` with that job.
+        With `updates.auto`, a check that finds a target without a local build also starts a job `update-stage`.
       security:
         - session: []
           csrf: []
       x-phase: 4
       x-cli: care-pi update check
-      x-problems: [not-authenticated, csrf, job-running, not-implemented-in-this-version]
+      x-problems: [not-authenticated, csrf, not-implemented-in-this-version]
       responses:
         default:
           $ref: '#/components/responses/UnexpectedProblem'
@@ -3082,8 +3095,6 @@ paths:
           $ref: '#/components/responses/NotAuthenticated'
         '403':
           $ref: '#/components/responses/Forbidden'
-        '409':
-          $ref: '#/components/responses/Conflict'
         '501':
           $ref: '#/components/responses/NotImplemented'
   /updates/apply:
@@ -3091,19 +3102,33 @@ paths:
       tags: [updates]
       operationId: startUpdate
       summary: Update to a solution lock
-      description: Phase 4. A job of kind `update` with the state machine of `03` §4.
+      description: |
+        Phase 4. A job of kind `update-apply` with the state machine of `docs/solutions.md` section 8:
+        staging (when not staged), maintenance page, stop, checkpoint, migrate, start, verify, lock, and on a failure
+        the rollback to the previous lock with a PITR offer.
+
+        - Without `version`, the target is `target` of `GET /updates`. `409 no-update-available` when there is none.
+        - `version` on `stable`: only the newest lock (else `422 invalid-request`; pin the track to install another one).
+          On `pinned`: any lock of the solution; the agent writes `solution.pin`. On `custom`: the base lock.
+        - Outside the update window, `409 update-window-closed` with `next_window_at`, unless `now` is `true`.
+        - `409 agent-too-old` when the lock needs a newer agent. `404 lock-not-found` for an unknown version.
       security:
         - session: []
           csrf: []
       x-phase: 4
-      x-cli: care-pi update apply [--version VERSION]
-      x-problems: [not-authenticated, csrf, invalid-request, job-running, not-implemented-in-this-version]
+      x-cli: care-pi update apply [--version VERSION] [--now]
+      x-problems: [not-authenticated, csrf, invalid-request, job-running, setup-incomplete, update-window-closed, no-update-available, agent-too-old, lock-not-found, build-required-offline, not-implemented-in-this-version]
       requestBody:
         required: false
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/UpdateRequest'
+            examples:
+              newest:
+                value: {version: null, now: false, reason: null}
+              pinned-version-now:
+                value: {version: '2026.11.0', now: true, reason: test the November lock}
       responses:
         default:
           $ref: '#/components/responses/UnexpectedProblem'
@@ -3113,8 +3138,10 @@ paths:
           $ref: '#/components/responses/NotAuthenticated'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/UpdatesNotFound'
         '409':
-          $ref: '#/components/responses/Conflict'
+          $ref: '#/components/responses/UpdatesConflict'
         '422':
           $ref: '#/components/responses/UnprocessableContent'
         '501':
@@ -3124,13 +3151,24 @@ paths:
       tags: [updates]
       operationId: startRollback
       summary: Go back to the previous lock
+      description: |
+        Phase 4. A job of kind `update-rollback` (`docs/solutions.md` section 9). Without `to_lock`, the target is the lock
+        before the running one (`rollback.to_lock` of `GET /updates`). The rollback does not undo migrations:
+        the job result has the PITR offer of the update that installed the running lock. The track does not change.
+        It needs a recent authentication. `409 rollback-unavailable` when no previous lock exists.
       security:
         - session: []
           csrf: []
       x-phase: 4
       x-reauth: true
-      x-cli: care-pi update rollback
-      x-problems: [not-authenticated, csrf, reauth-required, job-running, not-implemented-in-this-version]
+      x-cli: care-pi update rollback [--to LOCK_ID]
+      x-problems: [not-authenticated, csrf, reauth-required, invalid-request, job-running, setup-incomplete, rollback-unavailable, lock-not-found, build-required-offline, not-implemented-in-this-version]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RollbackRequest'
       responses:
         default:
           $ref: '#/components/responses/UnexpectedProblem'
@@ -3140,8 +3178,12 @@ paths:
           $ref: '#/components/responses/NotAuthenticated'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/UpdatesNotFound'
         '409':
-          $ref: '#/components/responses/Conflict'
+          $ref: '#/components/responses/UpdatesConflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
         '501':
           $ref: '#/components/responses/NotImplemented'
   /plugs:
@@ -3149,7 +3191,10 @@ paths:
       tags: [plugs]
       operationId: listPlugs
       summary: List the plugs of the solution
-      description: Phase 4. Each plug with its source, ref, sha, state, and settings form (`03` §1).
+      description: |
+        Phase 4. Each plug of the effective plug set (the solution of the running lock, and the plugs of `solution.custom`):
+        its state, the source of the state, the refs and shas, the bundle and `plug_config` state, and the settings form
+        with the current values. Secret values are never in the response (`secret_set`). `docs/solutions.md` section 12.
       x-phase: 4
       x-cli: care-pi plugs list --json
       x-problems: [not-authenticated, not-implemented-in-this-version]
@@ -3171,45 +3216,417 @@ paths:
       tags: [plugs]
       operationId: setPlug
       summary: Turn a plug on or off, or change its settings
+      description: |
+        Phase 4. Writes `solution.plugs.<plug_id>` of `config.yaml` (and the secret file of the plug), then returns the plan:
+        the path of the change (`none`, `plug-config`, `restart`, `cutover`, `build-and-cutover`; `docs/solutions.md` section 12.1).
+        Members that the body does not have stay unchanged.
+
+        A setting (backend, frontend, or secret) of a plug that is off has the path `none`: it has no effect now. The agent
+        stores the value, and the value counts when the plug turns on.
+
+        - `dry_run=true`: the agent validates and makes the plan. It writes nothing. Status `200`.
+        - `apply=true`: after the write, the agent starts a job of kind `plug-change`. Status `202`, with the job in `job`.
+          With the path `none`, it starts no job: status `200`, `job: null`.
+        - Else: the agent writes. Status `200`. `GET /plugs` shows `pending: true` until an apply.
+
+        `If-Match` is optional here. When it is present, a different ETag of `config.yaml` gives `412 config-changed`.
+        A plug that is not in the solution gives `404 plug-unknown`: change `solution.custom.plugs` with `PUT /config`.
+        A value that fails the settings schema, or a plug that is on without a required value, gives `422 plug-settings-invalid`.
       security:
         - session: []
           csrf: []
       x-phase: 4
-      x-cli: care-pi plugs set PLUG_ID --enabled=true|false
-      x-problems: [not-authenticated, csrf, invalid-request, not-found, not-implemented-in-this-version]
+      x-cli: care-pi plugs set PLUG_ID [--enabled=true|false|default] [--setting PART.KEY=VALUE]... [--secret-stdin PART.KEY] [--dry-run] [--apply]
+      x-problems: [not-authenticated, csrf, invalid-request, plug-unknown, plug-settings-invalid, config-changed, job-running, setup-incomplete, build-required-offline, not-implemented-in-this-version]
       parameters:
         - name: plug_id
           in: path
           required: true
           description: The plug id of the solution.
           schema:
-            type: string
-            pattern: '^[a-z0-9][a-z0-9_-]{0,62}$'
+            $ref: '#/components/schemas/PlugId'
+        - name: If-Match
+          in: header
+          required: false
+          description: The `ETag` of `GET /config`. Optional. When it is present and differs, the agent returns `412` with `config-changed`.
+          schema:
+            $ref: '#/components/schemas/EntityTag'
+        - $ref: '#/components/parameters/DryRun'
+        - $ref: '#/components/parameters/ApplyAfterWrite'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/PlugChange'
+            examples:
+              turn-on-with-secret:
+                value:
+                  enabled: true
+                  settings:
+                    backend: {MEDISPEAK_API_KEY: msk_live_0123456789abcdef, MEDISPEAK_BASE_URL: 'https://medispeak.example.org/api/v2'}
+                  reason: front desk asked for the scribe
+              turn-off:
+                value: {enabled: false}
+              follow-the-solution:
+                value: {enabled: null}
       responses:
         default:
           $ref: '#/components/responses/UnexpectedProblem'
         '200':
-          description: The plug.
+          description: The plug and the plan. With `dry_run=false`, the file is written. Also `apply=true` with the path `none` (no job).
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Plug'
+                $ref: '#/components/schemas/PlugChangeResult'
+        '202':
+          description: The file is written and a `plug-change` job started (`apply=true`).
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlugChangeResult'
         '401':
           $ref: '#/components/responses/NotAuthenticated'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/UpdatesNotFound'
+        '409':
+          $ref: '#/components/responses/UpdatesConflict'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
+        '422':
+          $ref: '#/components/responses/PlugSettingsInvalid'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+  /plugs/{plug_id}/settings-schema:
+    get:
+      tags: [plugs]
+      operationId: getPlugSettingsSchema
+      summary: Get the JSON Schema of the settings of a plug
+      description: |
+        Phase 4. A JSON Schema (draft 2020-12) that the agent makes from `settings` of the plug in the solution of the
+        running lock (`docs/api/README.md` section 14.6). The body of `PUT /plugs/{plug_id}` member `settings` must match it.
+        The console can validate a form with it before the `PUT`. A secret field has `writeOnly: true`.
+      x-phase: 4
+      x-cli: care-pi plugs schema PLUG_ID
+      x-problems: [not-authenticated, plug-unknown, not-implemented-in-this-version]
+      parameters:
+        - name: plug_id
+          in: path
+          required: true
+          description: The plug id of the solution.
+          schema:
+            $ref: '#/components/schemas/PlugId'
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The JSON Schema of the settings.
+          content:
+            application/schema+json:
+              schema:
+                $ref: '#/components/schemas/JsonSchemaDocument'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '404':
+          $ref: '#/components/responses/UpdatesNotFound'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+  /updates/stage:
+    post:
+      tags: [updates]
+      operationId: startUpdateStage
+      summary: Prepare an update while Care runs
+      description: |
+        Phase 4. A job of kind `update-stage`: fetch the target lock, pull the images, download (or build) the bundles,
+        and render the target (`docs/solutions.md` section 8.2). Care stays up. A local build scales Care down to one
+        API worker for the build time (`docs/fe.md`). The window does not apply. The target is the one of
+        `POST /updates/apply` with the same `version`.
+      security:
+        - session: []
+          csrf: []
+      x-phase: 4
+      x-cli: care-pi update stage [--version VERSION]
+      x-problems: [not-authenticated, csrf, invalid-request, job-running, setup-incomplete, no-update-available, agent-too-old, lock-not-found, build-required-offline, not-implemented-in-this-version]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStageRequest'
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/UpdatesNotFound'
+        '409':
+          $ref: '#/components/responses/UpdatesConflict'
         '422':
           $ref: '#/components/responses/UnprocessableContent'
         '501':
           $ref: '#/components/responses/NotImplemented'
+  /updates/history:
+    get:
+      tags: [updates]
+      operationId: getUpdateHistory
+      summary: List the updates, rollbacks, plug changes, and OS updates
+      description: |
+        Phase 4. The entries of `/var/lib/care-pi/state/update-history.jsonl`, newest first: one entry for each job
+        that changed the lock (`update-apply`, `update-rollback`, `plug-change`, an `apply` with a new lock) and for each `os-update`.
+        Each entry has the checkpoint and the PITR offer when they exist.
+      x-phase: 4
+      x-cli: care-pi update history --json [--limit N] [--before JOB_ID]
+      x-problems: [not-authenticated, invalid-request, not-implemented-in-this-version]
+      parameters:
+        - name: limit
+          in: query
+          description: The largest number of entries in the page.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: before
+          in: query
+          description: Only entries of jobs before this job (the `next_before` of the previous page).
+          schema:
+            $ref: '#/components/schemas/JobId'
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: One page of the history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateHistory'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+  /updates/os:
+    get:
+      tags: [updates]
+      operationId: getOsUpdates
+      summary: Get the OS update state
+      description: |
+        Phase 4. The OS update state (`docs/solutions.md` section 11): the security updates, the upgradable packages
+        (`apt list --upgradable` of the last `apt-get update`), the held packages with their tested versions,
+        the reboot state, and the last full upgrade. It does not run `apt-get update`.
+      x-phase: 4
+      x-cli: care-pi update --os --check --json
+      x-problems: [not-authenticated, not-implemented-in-this-version]
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The OS update state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OsUpdates'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+  /updates/os/apply:
+    post:
+      tags: [updates]
+      operationId: startOsUpdate
+      summary: Upgrade the OS packages
+      description: |
+        Phase 4. A job of kind `os-update`: `apt-get full-upgrade`, and the tested versions of the held container packages
+        (`docs/solutions.md` section 11). When a held package changes, Care restarts behind the maintenance page.
+        Outside the window, `409 update-window-closed` unless `now` is `true`. It needs a recent authentication.
+      security:
+        - session: []
+          csrf: []
+      x-phase: 4
+      x-reauth: true
+      x-cli: care-pi update --os [--now] [--reboot-if-required]
+      x-problems: [not-authenticated, csrf, reauth-required, invalid-request, job-running, setup-incomplete, update-window-closed, not-implemented-in-this-version]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OsApplyRequest'
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/UpdatesConflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+  /updates/os/reboot:
+    post:
+      tags: [updates]
+      operationId: rebootForOsUpdate
+      summary: Reboot for the OS updates, now or in the next window
+      description: |
+        Phase 4. `now: true`: reboot after `delay_s`, as `POST /power/reboot` does; `409 job-running` while a job holds
+        the apply lock. `now: false` (default): the agent reboots at the next window opening, when no job runs
+        (`docs/solutions.md` section 10.2, step 5), also when `updates.os_reboot` is `false`. It needs a recent authentication.
+      security:
+        - session: []
+          csrf: []
+      x-phase: 4
+      x-reauth: true
+      x-cli: care-pi update --os --reboot [--now]
+      x-problems: [not-authenticated, csrf, reauth-required, invalid-request, job-running, not-implemented-in-this-version]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OsRebootRequest'
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '202':
+          description: The agent will reboot the host at `at`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OsReboot'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/UpdatesConflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+  /solutions:
+    get:
+      tags: [solutions]
+      operationId: listSolutions
+      summary: List the solutions
+      description: |
+        Phase 4. The solutions that the agent embeds and the solutions of the cached `index.json`, with their newest lock.
+        `PUT /config` and `PATCH /config` own `solution.*`: this resource only reads.
+      x-phase: 4
+      x-cli: care-pi solution list --json
+      x-problems: [not-authenticated, not-implemented-in-this-version]
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The solutions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolutionList'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+  /solutions/{name}:
+    get:
+      tags: [solutions]
+      operationId: getSolution
+      summary: Get a solution and its locks
+      description: |
+        Phase 4. The `solution.yaml` document of the solution (from the newest lock of the index, else the embedded copy)
+        and each lock of the index and of the agent.
+      x-phase: 4
+      x-cli: care-pi solution show NAME --json
+      x-problems: [not-authenticated, not-found, not-implemented-in-this-version]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The solution name.
+          schema:
+            type: string
+            pattern: '^[a-z0-9]+(-[a-z0-9]+)*$'
+            maxLength: 40
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The solution.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolutionDetail'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '404':
+          $ref: '#/components/responses/UpdatesNotFound'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+  /solutions/{name}/locks/{version}:
+    get:
+      tags: [solutions]
+      operationId: getSolutionLock
+      summary: Get one solution lock
+      description: |
+        Phase 4. The solution lock file as JSON (`solutions/schema/lock.schema.json`, `docs/solutions.md` section 3).
+        The agent reads it from its cache, its embedded locks, or `state/locks/`. Else it downloads it through the index
+        and checks its SHA-256 (`502 index-unavailable` or `502 artefact-invalid` on a failure).
+      x-phase: 4
+      x-cli: care-pi solution show NAME --lock VERSION --json
+      x-problems: [not-authenticated, not-found, lock-not-found, index-unavailable, artefact-invalid, not-implemented-in-this-version]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          description: The solution name.
+          schema:
+            type: string
+            pattern: '^[a-z0-9]+(-[a-z0-9]+)*$'
+            maxLength: 40
+        - name: version
+          in: path
+          required: true
+          description: The calendar version of the lock.
+          schema:
+            $ref: '#/components/schemas/LockVersion'
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The solution lock.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SolutionLockDocument'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '404':
+          $ref: '#/components/responses/UpdatesNotFound'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '502':
+          $ref: '#/components/responses/UpdatesBadGateway'
 components:
   securitySchemes:
     session:
@@ -3779,6 +4196,151 @@ components:
                   - pointer: /destinations/0/disk_label
                     message: 'must match the pattern ^care-[a-z0-9][a-z0-9-]{0,10}$'
                     code: pattern
+    UpdatesConflict:
+      description: |
+        Phase 4. A state conflict of an update, a rollback, an OS update, or a plug change: `update-window-closed`,
+        `no-update-available`, `agent-too-old`, `rollback-unavailable`, `build-required-offline`, `job-running`, or `setup-incomplete`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            update-window-closed:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/update-window-closed
+                title: The update window is closed
+                status: 409
+                detail: The window opens on Sun at 02:00 (Asia/Kolkata). Send now=true to update now.
+                instance: /api/v1/updates/apply
+                next_window_at: '2026-11-21T20:30:00Z'
+            no-update-available:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/no-update-available
+                title: No update is available
+                status: 409
+                detail: The device runs care-clinic 2026.11.1, the newest lock.
+                instance: /api/v1/updates/apply
+            agent-too-old:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/agent-too-old
+                title: The agent is too old for this lock
+                status: 409
+                detail: care-clinic 2026.12.0 needs agent v0.5.0 or newer. This agent is v0.4.1. Run the installer again.
+                instance: /api/v1/updates/apply
+                min_agent_version: v0.5.0
+            rollback-unavailable:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/rollback-unavailable
+                title: No previous lock exists
+                status: 409
+                detail: /var/lib/care-pi/state/locks has no lock before the running one.
+                instance: /api/v1/updates/rollback
+            build-required-offline:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/build-required-offline
+                title: The change needs the internet
+                status: 409
+                detail: The plug care_filly at 4cef80be6c13 needs a local image build, and the host has no internet.
+                instance: /api/v1/plugs/care_filly
+            job-running:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/job-running
+                title: A job runs now
+                status: 409
+                detail: Another job holds the apply lock. Wait until it ends.
+                instance: /api/v1/updates/apply
+                job_id: 20261122T020300.000Z-update-stage
+            setup-incomplete:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/setup-incomplete
+                title: Setup is not complete
+                status: 409
+                detail: Finish the setup first.
+                instance: /api/v1/updates/apply
+    UpdatesNotFound:
+      description: 'Phase 4. `lock-not-found`, `plug-unknown`, or `not-found`.'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            lock-not-found:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/lock-not-found
+                title: The lock does not exist
+                status: 404
+                detail: care-clinic has no lock 2026.10.3 in the index, the cache, or the agent.
+                instance: /api/v1/updates/apply
+            plug-unknown:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/plug-unknown
+                title: The plug is not in the solution
+                status: 404
+                detail: care-clinic has no plug care_scribe. Add a plug with solution.custom.plugs.
+                instance: /api/v1/plugs/care_scribe
+            not-found:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/not-found
+                title: The resource does not exist
+                status: 404
+                detail: No solution has the name care-pharmacy.
+                instance: /api/v1/solutions/care-pharmacy
+    PlugSettingsInvalid:
+      description: |
+        Phase 4. `plug-settings-invalid`: a value fails the settings schema of the plug, or a plug that is on has no value
+        for a required field. `errors` points into the request body (`/settings/backend/<KEY>`). Also `invalid-request`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            plug-settings-invalid:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/plug-settings-invalid
+                title: The plug settings are not valid
+                status: 422
+                detail: 2 settings are not valid.
+                instance: /api/v1/plugs/care_filly
+                errors:
+                  - pointer: /settings/backend/MEDISPEAK_API_KEY
+                    message: a value is required when the plug is on
+                    code: required
+                  - pointer: /settings/backend/MEDISPEAK_BASE_URL
+                    message: must be an https URL
+                    code: format
+            invalid-request:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/invalid-request
+                title: The request is not valid
+                status: 422
+                detail: apply=true and dry_run=true together are not possible.
+                instance: /api/v1/plugs/care_filly
+                errors:
+                  - pointer: ''
+                    message: apply and dry_run exclude each other
+                    code: dry-run-apply
+                    parameter: apply
+    UpdatesBadGateway:
+      description: 'Phase 4. `index-unavailable` or `artefact-invalid`: a download from the dist base failed.'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            index-unavailable:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/index-unavailable
+                title: The index is not available
+                status: 502
+                detail: GET https://github.com/rithviknishad/care-pi/releases/download/index/index.json gave HTTP 404.
+                instance: /api/v1/solutions/care-clinic/locks/2026.11.1
+            artefact-invalid:
+              value:
+                type: https://care-pi.rithviknishad.dev/problems/artefact-invalid
+                title: A downloaded file is not valid
+                status: 502
+                detail: The SHA-256 of care-clinic-2026.11.1.lock.yaml is not the value of the index.
+                instance: /api/v1/solutions/care-clinic/locks/2026.11.1
   schemas:
     Problem:
       type: object
@@ -3880,6 +4442,21 @@ components:
               type: integer
               minimum: 0
               description: The free space of the file system now.
+        min_agent_version:
+          type: string
+          pattern: '^v[0-9]+\.[0-9]+\.[0-9]+$'
+          description: Phase 4. For `agent-too-old`, the oldest agent that can install the lock.
+          examples: [v0.5.0]
+        next_window_at:
+          type: string
+          format: date-time
+          description: Phase 4. For `update-window-closed`, the next opening of the update window.
+          examples: ['2026-11-21T20:30:00Z']
+        pitr_offer:
+          $ref: '#/components/schemas/PitrOffer'
+          description: |
+            Phase 4. For the error of an update, a rollback, or a plug change that failed after the migrations started
+            (`migration-failed`, `verify-failed`, `rollback-failed`, ...): the PITR to the checkpoint (`docs/solutions.md` section 8.5).
       examples:
         - type: https://care-pi.rithviknishad.dev/problems/job-running
           title: A job runs now
@@ -3936,6 +4513,20 @@ components:
         - https://care-pi.rithviknishad.dev/problems/no-recovery-key
         - https://care-pi.rithviknishad.dev/problems/insufficient-space
         - https://care-pi.rithviknishad.dev/problems/verify-failed
+        - https://care-pi.rithviknishad.dev/problems/update-window-closed
+        - https://care-pi.rithviknishad.dev/problems/no-update-available
+        - https://care-pi.rithviknishad.dev/problems/lock-not-found
+        - https://care-pi.rithviknishad.dev/problems/agent-too-old
+        - https://care-pi.rithviknishad.dev/problems/plug-unknown
+        - https://care-pi.rithviknishad.dev/problems/plug-settings-invalid
+        - https://care-pi.rithviknishad.dev/problems/build-required-offline
+        - https://care-pi.rithviknishad.dev/problems/index-unavailable
+        - https://care-pi.rithviknishad.dev/problems/artefact-invalid
+        - https://care-pi.rithviknishad.dev/problems/rollback-unavailable
+        - https://care-pi.rithviknishad.dev/problems/checkpoint-failed
+        - https://care-pi.rithviknishad.dev/problems/migration-failed
+        - https://care-pi.rithviknishad.dev/problems/rollback-failed
+        - https://care-pi.rithviknishad.dev/problems/os-update-failed
       examples: [https://care-pi.rithviknishad.dev/problems/invalid-config]
     ValidationError:
       type: object
@@ -4010,7 +4601,7 @@ components:
       type: object
       additionalProperties: false
       description: The minimal public status. No address, no version, no unit detail.
-      required: [site, setup_state, claim_methods, display_name, console_port, clock, care_healthy, job, time]
+      required: [site, setup_state, claim_methods, display_name, console_port, clock, care_healthy, job, time, maintenance]
       properties:
         site:
           type: string
@@ -4058,6 +4649,8 @@ components:
           type: string
           format: date-time
           description: The clock of the host.
+        maintenance:
+          $ref: '#/components/schemas/MaintenanceState'
       examples:
         - site: setup
           setup_state: unclaimed
@@ -4070,6 +4663,19 @@ components:
           care_healthy: false
           job: null
           time: '2026-10-30T10:15:00Z'
+          maintenance: {active: false, kind: null, job_id: null, step: null, started_at: null}
+        - site: maintenance
+          setup_state: ready
+          claim_methods: []
+          display_name: Sunrise Clinic
+          console_port: 8443
+          clock:
+            policy: ntp
+            synchronized: true
+          care_healthy: false
+          job: {kind: update-apply, step: 'migrate: start care-beat.service', step_index: 9, step_count: 15, started_at: '2026-11-22T02:03:00Z'}
+          time: '2026-11-22T02:06:10Z'
+          maintenance: {active: true, kind: update-apply, job_id: 20261122T020300.000Z-update-apply, step: migrate, started_at: '2026-11-22T02:04:55Z'}
     PublicJobProgress:
       type: object
       additionalProperties: false
@@ -5275,7 +5881,7 @@ components:
         Everything that the dashboard shows. Append-only: a later version only adds members and flags.
         The first 11 members are the members of `care-pi status --json` of Phase 1, with the same names and types.
         Phase 1 omitted an empty member; the API always sends each member (`null` or an empty list).
-      required: [hostnames, addresses, published, units, images, care_fe_sha, fe_build_id, locked_at, degraded, problems, mode, generated_at, state, flags, agent, setup_state, host, disks, clock, network, tls, fe, lock, jobs, backups, updates]
+      required: [hostnames, addresses, published, units, images, care_fe_sha, fe_build_id, locked_at, degraded, problems, mode, generated_at, state, flags, agent, setup_state, host, disks, clock, network, tls, fe, lock, jobs, backups, updates, maintenance]
       properties:
         hostnames:
           type: array
@@ -5381,10 +5987,14 @@ components:
             - type: 'null'
         updates:
           x-phase: 4
-          description: The update summary (Phase 4). `null` before Phase 4.
+          description: |
+            The update summary for the banner of the dashboard (Phase 4): `update_available`, `staged_version`, the state,
+            and the last result. `GET /updates` has the detail. `null` before Phase 4.
           oneOf:
-            - $ref: '#/components/schemas/UpdatesOverview'
+            - $ref: '#/components/schemas/UpdatesSummary'
             - type: 'null'
+        maintenance:
+          $ref: '#/components/schemas/MaintenanceState'
       examples:
         - hostnames: [care.local]
           addresses: [192.168.1.10]
@@ -5477,6 +6087,7 @@ components:
               error_title: null
           backups: null
           updates: null
+          maintenance: {active: false, kind: null, job_id: null, step: null, started_at: null}
     StatusFlags:
       type: object
       additionalProperties: false
@@ -6134,12 +6745,14 @@ components:
           kind: modify
     PlanActionKind:
       type: string
-      enum: [ensure-dirs, set-secrets, write-files, delete-files, daemon-reload, enable-target, pull-images, full-cycle, start-target, restart, reload-caddy, ensure-buckets, ensure-stanza, ensure-mounts, ensure-repositories, ensure-timers, ensure-fe, write-lock]
+      enum: [ensure-dirs, set-secrets, write-files, delete-files, daemon-reload, enable-target, pull-images, full-cycle, start-target, restart, reload-caddy, ensure-buckets, ensure-stanza, ensure-mounts, ensure-repositories, ensure-timers, ensure-fe, cutover, plug-config, write-lock]
       description: |
         The action kinds of `agent/internal/plan`, in execution order. A later version can add kinds.
         Phase 3 adds `ensure-mounts` (the mount units of `disk_label` destinations), `ensure-repositories` (`restic init`
         of a new destination; a destination that does not answer does not fail the apply, design note section 13.5),
         and `ensure-timers` (turn the backup timers on or off, `backups.paused`).
+        Phase 4 adds `cutover` (the steps of `docs/solutions.md` section 8 in place of a restart, when the care image or the
+        set of backend plugs that are on changes) and `plug-config` (write the `plug_config` rows of Care); both come before `write-lock`.
       examples: [restart]
     PlanAction:
       type: object
@@ -6328,13 +6941,17 @@ components:
       examples: [20261030T101500.123Z-apply]
     JobKind:
       type: string
-      enum: [apply, setup, fe-build, fe-prune, support-bundle, update-check, update, rollback, tls, backup-run, backup-verify, restore-pitr, restore-files, restore-dr, disk-prepare, recovery-key-rotate, restore-drill]
+      enum: [apply, setup, fe-build, fe-prune, support-bundle, backup-run, backup-verify, restore-pitr, restore-files, restore-dr, disk-prepare, recovery-key-rotate, restore-drill, update-check, update-stage, update-apply, update-rollback, os-update, plug-change, tls]
       description: |
-        The kind of job. These kinds hold the apply lock: `apply`, `setup`, `fe-build`, `fe-prune`, `update`,
-        `rollback`, `tls`, and the Phase 3 kinds `restore-pitr`, `restore-files`, `restore-dr`, `disk-prepare`, `recovery-key-rotate`.
+        The kind of job. These kinds hold the apply lock: `apply`, `setup`, `fe-build`, `fe-prune`, the Phase 3 kinds
+        `restore-pitr`, `restore-files`, `restore-dr`, `disk-prepare`, `recovery-key-rotate`, the Phase 4 kinds `update-stage`,
+        `update-apply`, `update-rollback`, `os-update`, `plug-change`, and `tls`.
         Phase 2 makes `apply`, `setup`, `fe-build`, `fe-prune`, `support-bundle`.
         Phase 3 makes `backup-run`, `backup-verify`, `restore-pitr`, `restore-files`, `restore-dr`, `disk-prepare`,
-        `recovery-key-rotate`, `restore-drill` (design note section 13.8). Phase 4 adds `update-check`, `update`, `rollback`. Phase 6 adds `tls`.
+        `recovery-key-rotate`, `restore-drill` (design note section 13.8). Phase 4 makes `update-check` (no apply lock),
+        `update-stage`, `update-apply`, `update-rollback`, `os-update`, `plug-change` (design note section 14.2). Phase 6 adds `tls`.
+        Version 0.4.0 replaced the reserved kinds `backup`, `verify`, and `restore` with the kinds of Phase 3; version 0.5.0
+        replaced the reserved kinds `update` and `rollback`, which no agent made, with `update-apply` and `update-rollback`.
       examples: [apply]
     JobState:
       type: string
@@ -6379,6 +6996,10 @@ components:
             `fetch-db-repo`, `fetch-files`, `restore-account`, `finish`, `check-disk`, `wipe-disk`, `partition`, `format`,
             `write-mount-unit`, `mount`, `rekey-local`, `init-destination`, `activate-key`, `remove-old-repositories`,
             `drill-restore`, `drill-start`, `drill-check`, `drill-cleanup`.
+            Phase 4 keys (`docs/solutions.md` sections 8 and 11): `fetch-index`, `fetch-lock`, `resolve-refs`, `stage-pull`,
+            `stage-bundles`, `stage-build`, `cutover-maintenance-on`, `stop`, `checkpoint`, `activate`, `migrate`, `start`,
+            `plug-config`, `verify`, `write-lock`, `maintenance-off`, `rollback`, `prune-images`, `os-refresh`, `os-unhold`,
+            `os-upgrade`, `os-hold`, `reboot`.
             `null` for a journal of Phase 1 when the name does not start with a known key.
           examples: [restart]
         state:
@@ -6566,6 +7187,12 @@ components:
         - $ref: '#/components/schemas/DiskPrepareResult'
         - $ref: '#/components/schemas/RecoveryKeyRotateResult'
         - $ref: '#/components/schemas/RestoreDrillResult'
+        - $ref: '#/components/schemas/UpdateCheckResult'
+        - $ref: '#/components/schemas/UpdateStageResult'
+        - $ref: '#/components/schemas/UpdateApplyResult'
+        - $ref: '#/components/schemas/UpdateRollbackResult'
+        - $ref: '#/components/schemas/OsUpdateResult'
+        - $ref: '#/components/schemas/PlugChangeJobResult'
       discriminator:
         propertyName: kind
         mapping:
@@ -6582,6 +7209,12 @@ components:
           disk-prepare: '#/components/schemas/DiskPrepareResult'
           recovery-key-rotate: '#/components/schemas/RecoveryKeyRotateResult'
           restore-drill: '#/components/schemas/RestoreDrillResult'
+          update-check: '#/components/schemas/UpdateCheckResult'
+          update-stage: '#/components/schemas/UpdateStageResult'
+          update-apply: '#/components/schemas/UpdateApplyResult'
+          update-rollback: '#/components/schemas/UpdateRollbackResult'
+          os-update: '#/components/schemas/OsUpdateResult'
+          plug-change: '#/components/schemas/PlugChangeJobResult'
       examples:
         - kind: fe-prune
           removed: [1a2b3c4d5e6f]
@@ -8524,69 +9157,370 @@ components:
       x-phase: 4
       type: object
       additionalProperties: false
-      description: The update state (Phase 4, `03` §3–§4).
-      required: [track, current_version, available, auto, window, last_check_at]
+      description: |
+        Everything that the Updates page shows, in one call (Phase 4, `docs/solutions.md` sections 7 to 11).
+        The agent reads its state files and the cached `index.json`. It does not use the network.
+      required: [solution, track, pin, current, latest, target, update_available, available, components, state, blocked_by, auto, window, next_check_at, next_apply_at, last_check_at, last_check_error, index, staging, maintenance, last_result, rollback, os, job]
       properties:
+        solution:
+          type: object
+          additionalProperties: false
+          description: The solution of `config.yaml`.
+          required: [name, title]
+          properties:
+            name:
+              type: string
+              description: '`solution.name`.'
+              examples: [care-clinic]
+            title:
+              type: string
+              description: The title of the solution.
+              examples: [CARE Clinic]
         track:
-          type: string
-          enum: [stable, pinned, custom]
-          description: '`solution.track`.'
-        current_version:
-          type: [string, 'null']
-          description: The solution lock that runs now. `null` on the `custom` track.
-          examples: [2026.11.0]
+          $ref: '#/components/schemas/UpdateTrack'
+        pin:
+          description: '`solution.pin`. `null` when it is not set.'
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        current:
+          description: The on-device lock that runs now. `null` before the first apply.
+          oneOf:
+            - $ref: '#/components/schemas/InstalledLock'
+            - type: 'null'
+        latest:
+          description: The newest lock of the solution that is not withdrawn (cached index, or the embedded locks). `null` when none exists.
+          oneOf:
+            - $ref: '#/components/schemas/AvailableLock'
+            - type: 'null'
+        target:
+          description: What `POST /updates/apply` without `version` installs. `null` when nothing applies.
+          oneOf:
+            - $ref: '#/components/schemas/UpdateTarget'
+            - type: 'null'
+        update_available:
+          type: boolean
+          description: |
+            `target` differs from the running lock, and nothing blocks it. On `pinned`, only a change of `solution.pin` makes it `true`;
+            `available` still lists the newer locks.
         available:
           type: array
-          description: The newer solution locks.
+          description: Each lock of the solution that is newer than the running lock, newest first, also on `pinned`.
           items:
             $ref: '#/components/schemas/AvailableLock'
+        components:
+          type: array
+          description: Each component with its running identity and the identity of `target`. Empty when `target` is `null`.
+          items:
+            $ref: '#/components/schemas/UpdateComponent'
+        state:
+          $ref: '#/components/schemas/UpdateMachineState'
+        blocked_by:
+          description: Why the agent does not install `target`. `null` when nothing blocks it.
+          oneOf:
+            - $ref: '#/components/schemas/UpdateBlocker'
+            - type: 'null'
         auto:
           type: boolean
           description: '`updates.auto`.'
         window:
-          type: object
-          additionalProperties: false
-          description: '`updates.window`.'
-          required: [days, start, end]
-          properties:
-            days:
-              type: array
-              description: The days.
-              items:
-                type: string
-                enum: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
-            start:
-              type: string
-              pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
-              description: The start.
-            end:
-              type: string
-              pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
-              description: The end.
+          $ref: '#/components/schemas/UpdateWindowState'
+        next_check_at:
+          type: [string, 'null']
+          format: date-time
+          description: The next run of `care-update-check.timer` (without its random delay). `null` before the setup state `ready`.
+        next_apply_at:
+          type: [string, 'null']
+          format: date-time
+          description: The next opening of the window when the window has work (a Care update with `updates.auto`, an OS upgrade with `updates.os_full`, or a reboot). Else `null`.
         last_check_at:
           type: [string, 'null']
           format: date-time
-          description: The last update check.
+          description: The end of the last check that succeeded.
+        last_check_error:
+          description: The problem of the last check when it failed (for example `index-unavailable`). `null` after a success.
+          oneOf:
+            - $ref: '#/components/schemas/Problem'
+            - type: 'null'
+        index:
+          $ref: '#/components/schemas/IndexState'
+        staging:
+          $ref: '#/components/schemas/StagingState'
+        maintenance:
+          $ref: '#/components/schemas/MaintenanceState'
+        last_result:
+          description: The newest entry of `GET /updates/history`. `null` before the first one.
+          oneOf:
+            - $ref: '#/components/schemas/UpdateHistoryEntry'
+            - type: 'null'
+        rollback:
+          $ref: '#/components/schemas/RollbackState'
+        os:
+          $ref: '#/components/schemas/OsUpdatesSummary'
+        job:
+          description: The job of kind `update-check`, `update-stage`, `update-apply`, `update-rollback`, `os-update`, or `plug-change` that runs now. `null` when none runs.
+          oneOf:
+            - $ref: '#/components/schemas/JobSummary'
+            - type: 'null'
+      examples:
+        - solution: {name: care-clinic, title: CARE Clinic}
+          track: stable
+          pin: null
+          current:
+            version: '2026.11.0'
+            source: lock
+            track: stable
+            lock_sha256: 4df1613845b512b3d89c77298d30d34222a5ae7e9c22ef726f59f43eb4b3bd74
+            installed_at: '2026-11-15T02:07:41Z'
+            agent_version: v0.4.0
+            withdrawn: false
+            withdrawn_reason: null
+          latest:
+            version: '2026.11.1'
+            released_at: '2026-11-21T08:55:00Z'
+            changelog_url: 'https://github.com/rithviknishad/care-pi/releases/tag/lock-care-clinic-2026.11.1'
+            summary: care develop of 2026-11-20. Faster appointments plug 2026-11-18.
+            min_agent_version: v0.4.0
+            installable: true
+            withdrawn: false
+            withdrawn_reason: null
+          target:
+            kind: lock
+            version: '2026.11.1'
+            target_id: 4948ab3b7260deca
+            released_at: '2026-11-21T08:55:00Z'
+            changelog_url: 'https://github.com/rithviknishad/care-pi/releases/tag/lock-care-clinic-2026.11.1'
+            summary: care develop of 2026-11-20. Faster appointments plug 2026-11-18.
+            min_agent_version: v0.4.0
+            path: cutover
+            staged: true
+            needs_build: false
+            needs_internet: false
+            estimated_downtime_s: 180
+          update_available: true
+          available:
+            - version: '2026.11.1'
+              released_at: '2026-11-21T08:55:00Z'
+              changelog_url: 'https://github.com/rithviknishad/care-pi/releases/tag/lock-care-clinic-2026.11.1'
+              summary: care develop of 2026-11-20. Faster appointments plug 2026-11-18.
+              min_agent_version: v0.4.0
+              installable: true
+              withdrawn: false
+              withdrawn_reason: null
+          components:
+            - {id: care, label: CARE backend, kind: image, ref: latest, tracked: true, source: lock, current: 'sha256:03c0d3dcece83afa3b6105c876cf44bf3bc61d68ceb791d261c5906791f997a9', target: 'sha256:a626f7197cb8b77c940893a599ce00c723cac7a758d6d3fab0134b12e6de0a9f', changed: true}
+            - {id: care_fe, label: CARE frontend, kind: git, ref: develop, tracked: true, source: lock, current: 1f944e82caeee09d9cbfe55f299b7414d890033d, target: e4d292b313571fdb6916395fd8cebc655dcf24f7, changed: true}
+            - {id: images.postgres, label: PostgreSQL, kind: image, ref: '17', tracked: true, source: lock, current: 'sha256:d80dc0a202c84e8fa4dcb3023143dff30cb5d99dae8c4731d84dab05aab52efb', target: 'sha256:d80dc0a202c84e8fa4dcb3023143dff30cb5d99dae8c4731d84dab05aab52efb', changed: false}
+          state: staged
+          blocked_by: null
+          auto: true
+          window:
+            days: [Sun]
+            start: '02:00'
+            end: '05:00'
+            timezone: Asia/Kolkata
+            open: false
+            next_open_at: '2026-11-22T20:30:00Z'
+            closes_at: null
+          next_check_at: '2026-11-22T06:30:00Z'
+          next_apply_at: '2026-11-22T20:30:00Z'
+          last_check_at: '2026-11-21T09:12:00Z'
+          last_check_error: null
+          index:
+            url: 'https://github.com/rithviknishad/care-pi/releases/download/index/index.json'
+            dist_base: 'https://github.com/rithviknishad/care-pi/releases/download/'
+            fetched_at: '2026-11-21T09:11:58Z'
+            generated_at: '2026-11-21T09:00:00Z'
+          staging:
+            state: staged
+            version: '2026.11.1'
+            target_id: 4948ab3b7260deca
+            job_id: 20261121T091205.000Z-update-stage
+            staged_at: '2026-11-21T09:19:40Z'
+            download_bytes: 412316860
+            needs_build: false
+            error: null
+          maintenance: {active: false, kind: null, job_id: null, step: null, started_at: null}
+          last_result: null
+          rollback:
+            available: true
+            to_lock: 20261108T120000Z
+            to_version: null
+            reason: null
+            images_present: true
+            pitr_offer: null
+          os:
+            security_auto: true
+            reboot_required: false
+            reboot_scheduled_at: null
+            upgradable_count: 3
+            held_upgradable_count: 1
+            last_full_upgrade_at: null
+          job: null
+    UpdatesSummary:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The update summary in `GET /status` (Phase 4). The dashboard shows a banner from it. `GET /updates` has the detail.
+      required: [track, current_version, latest_version, update_available, target_version, staged_version, state, blocked_by, next_apply_at, last_check_at, last_result, rollback_available, os_reboot_required]
+      properties:
+        track:
+          $ref: '#/components/schemas/UpdateTrack'
+        current_version:
+          description: '`current.version` of `GET /updates`.'
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        latest_version:
+          description: '`latest.version` of `GET /updates`.'
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        update_available:
+          type: boolean
+          description: The same value as in `GET /updates`.
+        target_version:
+          description: '`target.version` of `GET /updates`.'
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        staged_version:
+          description: The version of a staged target. `null` when nothing is staged (also for a staged `custom` target without a base).
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        state:
+          $ref: '#/components/schemas/UpdateMachineState'
+        blocked_by:
+          type: [string, 'null']
+          enum: [agent-too-old, index-unavailable, lock-not-found, build-required-offline, plug-settings-invalid, null]
+          description: '`blocked_by.code` of `GET /updates`.'
+        next_apply_at:
+          type: [string, 'null']
+          format: date-time
+          description: The same value as in `GET /updates`.
+        last_check_at:
+          type: [string, 'null']
+          format: date-time
+          description: The same value as in `GET /updates`.
+        last_result:
+          type: [object, 'null']
+          additionalProperties: false
+          description: The short form of `last_result` of `GET /updates`.
+          required: [job_id, kind, outcome, finished_at, to_version]
+          properties:
+            job_id:
+              $ref: '#/components/schemas/JobId'
+            kind:
+              type: string
+              enum: [update, rollback, plug-change, apply, os-update]
+              description: The kind of entry.
+            outcome:
+              type: string
+              enum: [succeeded, failed, rolled-back, rollback-failed]
+              description: The outcome.
+            finished_at:
+              type: string
+              format: date-time
+              description: The end of the job.
+            to_version:
+              description: The version after the job.
+              oneOf:
+                - $ref: '#/components/schemas/LockVersion'
+                - type: 'null'
+        rollback_available:
+          type: boolean
+          description: '`rollback.available` of `GET /updates`.'
+        os_reboot_required:
+          type: boolean
+          description: '`/run/reboot-required` exists.'
       examples:
         - track: stable
-          current_version: 2026.11.0
-          available:
-            - {version: 2026.11.1, released_at: '2026-11-15T00:00:00Z', changelog_url: 'https://github.com/rithviknishad/care-pi/releases/tag/care-clinic/2026.11.1'}
-          auto: false
-          window: {days: [Sun], start: '02:00', end: '05:00'}
-          last_check_at: '2026-11-16T03:00:00Z'
+          current_version: '2026.11.0'
+          latest_version: '2026.11.1'
+          update_available: true
+          target_version: '2026.11.1'
+          staged_version: '2026.11.1'
+          state: staged
+          blocked_by: null
+          next_apply_at: '2026-11-22T20:30:00Z'
+          last_check_at: '2026-11-21T09:12:00Z'
+          last_result: {job_id: 20261115T020300.000Z-update-apply, kind: update, outcome: succeeded, finished_at: '2026-11-15T02:07:41Z', to_version: '2026.11.0'}
+          rollback_available: true
+          os_reboot_required: false
+    UpdateTrack:
+      x-phase: 4
+      type: string
+      enum: [stable, pinned, custom]
+      description: '`solution.track` (`docs/solutions.md` section 7).'
+      examples: [stable]
+    LockVersion:
+      x-phase: 4
+      type: string
+      pattern: '^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$'
+      description: The calendar version of a solution lock, `YYYY.MM.N`. The agent writes the month with two digits and compares the three numbers.
+      examples: ['2026.11.1']
+    LockId:
+      x-phase: 4
+      type: string
+      pattern: '^[0-9]{8}T[0-9]{6}Z$'
+      description: The name of a previous on-device lock in `/var/lib/care-pi/state/locks/`, without `.yaml` (the UTC time of the change).
+      examples: [20261115T020741Z]
+    InstalledLock:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The header of the on-device lock `/etc/care-pi/lock.yaml` (`docs/solutions.md` section 6).
+      required: [version, source, track, lock_sha256, installed_at, agent_version, withdrawn, withdrawn_reason]
+      properties:
+        version:
+          description: The solution lock that runs. `null` without one (`source` is `solution-refs`, or `custom` without a base).
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        source:
+          type: string
+          enum: [lock, solution-refs, custom]
+          description: '`lock`: a solution lock. `solution-refs`: the refs of the embedded `solution.yaml` (no lock published). `custom`: the `custom` track.'
+        track:
+          $ref: '#/components/schemas/UpdateTrack'
+        lock_sha256:
+          description: The SHA-256 of the solution lock file. `null` without one.
+          oneOf:
+            - $ref: '#/components/schemas/Sha256Hex'
+            - type: 'null'
+        installed_at:
+          type: string
+          format: date-time
+          description: '`generated_at` of the on-device lock.'
+        agent_version:
+          type: string
+          description: The agent that wrote the on-device lock.
+          examples: [v0.4.0]
+        withdrawn:
+          type: boolean
+          description: The index marks the running lock as withdrawn. The console shows `withdrawn_reason`.
+        withdrawn_reason:
+          type: [string, 'null']
+          description: Why the lock was withdrawn.
+      examples:
+        - version: '2026.11.0'
+          source: lock
+          track: stable
+          lock_sha256: 4df1613845b512b3d89c77298d30d34222a5ae7e9c22ef726f59f43eb4b3bd74
+          installed_at: '2026-11-15T02:07:41Z'
+          agent_version: v0.4.0
+          withdrawn: false
+          withdrawn_reason: null
     AvailableLock:
       x-phase: 4
       type: object
       additionalProperties: false
-      description: One solution lock that is newer than the current lock.
-      required: [version, released_at, changelog_url]
+      description: One released lock of the solution (an entry of `index.json`, or an embedded lock).
+      required: [version, released_at, changelog_url, summary, min_agent_version, installable, withdrawn, withdrawn_reason]
       properties:
         version:
-          type: string
-          pattern: '^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$'
-          description: The calendar version.
-          examples: [2026.11.1]
+          $ref: '#/components/schemas/LockVersion'
         released_at:
           type: string
           format: date-time
@@ -8594,100 +9528,1599 @@ components:
         changelog_url:
           type: [string, 'null']
           format: uri
-          description: The release notes.
+          description: The release notes for a person (the release page `lock-<solution>-<version>`).
+        summary:
+          type: string
+          description: One line for the console.
+          examples: [care develop of 2026-11-20. Faster appointments plug 2026-11-18.]
+        min_agent_version:
+          type: string
+          pattern: '^v[0-9]+\.[0-9]+\.[0-9]+$'
+          description: The oldest agent that can install the lock.
+          examples: [v0.4.0]
+        installable:
+          type: boolean
+          description: This agent can install the lock (`min_agent_version`), and the lock is not withdrawn.
+        withdrawn:
+          type: boolean
+          description: The maintainers withdrew the lock (`docs/solutions.md` section 5.4). The `stable` track skips it.
+        withdrawn_reason:
+          type: [string, 'null']
+          description: Why the lock was withdrawn.
       examples:
-        - version: 2026.11.1
-          released_at: '2026-11-15T00:00:00Z'
-          changelog_url: 'https://github.com/rithviknishad/care-pi/releases/tag/care-clinic/2026.11.1'
+        - version: '2026.11.1'
+          released_at: '2026-11-21T08:55:00Z'
+          changelog_url: 'https://github.com/rithviknishad/care-pi/releases/tag/lock-care-clinic-2026.11.1'
+          summary: care develop of 2026-11-20. Faster appointments plug 2026-11-18.
+          min_agent_version: v0.4.0
+          installable: true
+          withdrawn: false
+          withdrawn_reason: null
+    ChangePath:
+      x-phase: 4
+      type: string
+      enum: [none, plug-config, restart, cutover, build-and-cutover]
+      description: |
+        How the agent applies a change (`docs/solutions.md` section 12.1). `none`: nothing to do now, for example a setting of a
+        plug that is off (the value counts when the plug turns on). `plug-config`: bundles and
+        `plug_config` rows only, no restart. `restart`: api, worker, and beat restart, no maintenance page. `cutover`: the
+        update steps with the maintenance page and the checkpoint. `build-and-cutover`: a local build in staging, then the cutover.
+      examples: [cutover]
+    UpdateTarget:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: What the agent installs on the next update (`docs/solutions.md` section 7).
+      required: [kind, version, target_id, released_at, changelog_url, summary, min_agent_version, path, staged, needs_build, needs_internet, estimated_downtime_s]
+      properties:
+        kind:
+          type: string
+          enum: [lock, custom]
+          description: '`lock`: a solution lock. `custom`: the base lock with the overrides of `solution.custom`.'
+        version:
+          description: The lock version; for `custom`, the version of the base lock (`null` without one).
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        target_id:
+          type: string
+          pattern: '^[0-9a-f]{16}$'
+          description: The first 16 hex digits of the SHA-256 of the `components` of the target on-device lock. It changes with each component.
+          examples: [4948ab3b7260deca]
+        released_at:
+          type: [string, 'null']
+          format: date-time
+          description: The release time of the lock. `null` for `custom`.
+        changelog_url:
+          type: [string, 'null']
+          format: uri
+          description: The release notes. `null` for `custom`.
+        summary:
+          type: [string, 'null']
+          description: One line for the console.
+        min_agent_version:
+          type: [string, 'null']
+          description: The oldest agent that can install the target.
+        path:
+          $ref: '#/components/schemas/ChangePath'
+        staged:
+          type: boolean
+          description: Staging of this target is complete.
+        needs_build:
+          type: boolean
+          description: Staging needs a local build (`custom`; section 13). Care runs with one API worker during the build.
+        needs_internet:
+          type: boolean
+          description: Staging needs a download or a build that is not complete.
+        estimated_downtime_s:
+          type: [integer, 'null']
+          minimum: 0
+          description: An estimate of the time with the maintenance page. `null` when the agent cannot estimate it.
+      examples:
+        - kind: lock
+          version: '2026.11.1'
+          target_id: 4948ab3b7260deca
+          released_at: '2026-11-21T08:55:00Z'
+          changelog_url: 'https://github.com/rithviknishad/care-pi/releases/tag/lock-care-clinic-2026.11.1'
+          summary: care develop of 2026-11-20. Faster appointments plug 2026-11-18.
+          min_agent_version: v0.4.0
+          path: cutover
+          staged: false
+          needs_build: false
+          needs_internet: true
+          estimated_downtime_s: 180
+    UpdateComponent:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: One component of the running lock and of the target.
+      required: [id, label, kind, ref, tracked, source, current, target, changed]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9_.-]*$'
+          description: '`care`, `care_fe`, `images.<key>`, `plugs.<plug id>.backend`, or `plugs.<plug id>.frontend`.'
+          examples: [plugs.care_filly.backend]
+        label:
+          type: string
+          description: A name for the operator.
+          examples: [Filly (backend)]
+        kind:
+          type: string
+          enum: [image, git, plug-backend, plug-frontend]
+          description: The kind of component.
+        ref:
+          type: [string, 'null']
+          description: The tag, branch, or sha that the lock or the override asks for. `null` for an external bundle.
+          examples: [develop]
+        tracked:
+          type: boolean
+          description: The ref is a branch or a tag (S33).
+        source:
+          type: string
+          enum: [lock, operator, solution]
+          description: '`lock`: the solution lock. `operator`: an override of `solution.custom`. `solution`: `solution.yaml` without a lock.'
+        current:
+          type: [string, 'null']
+          description: The running identity (a digest or a 40-digit sha). `null` when the component does not run.
+        target:
+          type: [string, 'null']
+          description: The identity of the target. `null` when the target does not have the component.
+        changed:
+          type: boolean
+          description: '`current` differs from `target`.'
+      examples:
+        - id: care_fe
+          label: CARE frontend
+          kind: git
+          ref: develop
+          tracked: true
+          source: lock
+          current: 1f944e82caeee09d9cbfe55f299b7414d890033d
+          target: e4d292b313571fdb6916395fd8cebc655dcf24f7
+          changed: true
+    UpdateMachineState:
+      x-phase: 4
+      type: string
+      enum: [idle, checking, staging, staged, applying, rolling-back, failed]
+      description: |
+        The state of the update machine (`docs/solutions.md` section 8.1). `staged`: a staged target waits for the window or the operator.
+        `applying`: a cutover runs (maintenance page). `failed`: a rollback failed, or an interrupted update needs the operator;
+        the maintenance page can stay.
+      examples: [staged]
+    UpdateBlocker:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: Why the agent does not install the target.
+      required: [code, detail, min_agent_version]
+      properties:
+        code:
+          type: string
+          enum: [agent-too-old, index-unavailable, lock-not-found, build-required-offline, plug-settings-invalid]
+          description: The problem slug of the reason.
+        detail:
+          type: string
+          description: A text for this occurrence.
+          examples: [care-clinic 2026.12.0 needs agent v0.5.0 or newer. Run the installer again.]
+        min_agent_version:
+          type: [string, 'null']
+          description: For `agent-too-old`, the version that the lock needs.
+          examples: [v0.5.0]
+      examples:
+        - code: agent-too-old
+          detail: care-clinic 2026.12.0 needs agent v0.5.0 or newer. Run the installer again.
+          min_agent_version: v0.5.0
+    UpdateWindowState:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: '`updates.window` and its next times, in the time zone of the host (`docs/solutions.md` section 10.1).'
+      required: [days, start, end, timezone, open, next_open_at, closes_at]
+      properties:
+        days:
+          type: array
+          description: The days when a window opens.
+          items:
+            type: string
+            enum: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+        start:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          description: The opening time (local time).
+        end:
+          type: string
+          pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'
+          description: 'The closing time (local time). Not after `start`: the next day. Equal to `start`: 24 hours.'
+        timezone:
+          type: string
+          description: The IANA time zone of the host.
+          examples: [Asia/Kolkata]
+        open:
+          type: boolean
+          description: The window is open now.
+        next_open_at:
+          type: string
+          format: date-time
+          description: The next opening after now.
+        closes_at:
+          type: [string, 'null']
+          format: date-time
+          description: The end of the open window. `null` when the window is closed.
+      examples:
+        - days: [Sat, Sun]
+          start: '23:00'
+          end: '02:00'
+          timezone: Asia/Kolkata
+          open: true
+          next_open_at: '2026-11-22T17:30:00Z'
+          closes_at: '2026-11-21T20:30:00Z'
+    IndexState:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The cached `index.json` (`docs/solutions.md` section 4.3).
+      required: [url, dist_base, fetched_at, generated_at]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: '`updates.index_url`, or the default of the agent release.'
+        dist_base:
+          type: [string, 'null']
+          format: uri
+          description: '`dist_base` of the cached index. `null` without a cached index.'
+        fetched_at:
+          type: [string, 'null']
+          format: date-time
+          description: The last successful download (or a `304`). `null` without a cached index.
+        generated_at:
+          type: [string, 'null']
+          format: date-time
+          description: '`generated_at` of the cached index.'
+      examples:
+        - url: 'https://github.com/rithviknishad/care-pi/releases/download/index/index.json'
+          dist_base: 'https://github.com/rithviknishad/care-pi/releases/download/'
+          fetched_at: '2026-11-21T09:11:58Z'
+          generated_at: '2026-11-21T09:00:00Z'
+    StagingState:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The staging of a target (`docs/solutions.md` section 8.2).
+      required: [state, version, target_id, job_id, staged_at, download_bytes, needs_build, error]
+      properties:
+        state:
+          type: string
+          enum: [none, staging, staged, failed]
+          description: '`none`: nothing is staged. `failed`: the last staging failed; nothing changed.'
+        version:
+          description: The version of the staged target.
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        target_id:
+          type: [string, 'null']
+          pattern: '^[0-9a-f]{16}$'
+          description: '`target_id` of the staged target.'
+        job_id:
+          description: The last `update-stage` job (or the stage part of an `update-apply` job).
+          oneOf:
+            - $ref: '#/components/schemas/JobId'
+            - type: 'null'
+        staged_at:
+          type: [string, 'null']
+          format: date-time
+          description: The end of the staging.
+        download_bytes:
+          type: [integer, 'null']
+          minimum: 0
+          description: The bytes that the staging downloaded (images and bundles).
+        needs_build:
+          type: boolean
+          description: The staging needs a local build.
+        error:
+          description: The problem of a failed staging.
+          oneOf:
+            - $ref: '#/components/schemas/Problem'
+            - type: 'null'
+      examples:
+        - state: staged
+          version: '2026.11.1'
+          target_id: 4948ab3b7260deca
+          job_id: 20261121T091205.000Z-update-stage
+          staged_at: '2026-11-21T09:19:40Z'
+          download_bytes: 412316860
+          needs_build: false
+          error: null
+    MaintenanceState:
+      type: object
+      additionalProperties: false
+      description: |
+        The maintenance page (`state/mode/maintenance` and `maintenance.json`). In `GET /status` and in the public
+        `GET /_care-pi/status`: the maintenance page of Caddy polls it and shows `step` as text (`docs/api/README.md` section 14.3).
+        `active: false` sets the other members to `null`.
+      required: [active, kind, job_id, step, started_at]
+      properties:
+        active:
+          type: boolean
+          description: The flag file exists. Caddy serves the maintenance page at `/`.
+        kind:
+          description: The kind of the job that turned the page on.
+          oneOf:
+            - $ref: '#/components/schemas/JobKind'
+            - type: 'null'
+        job_id:
+          description: That job.
+          oneOf:
+            - $ref: '#/components/schemas/JobId'
+            - type: 'null'
+        step:
+          type: [string, 'null']
+          pattern: '^[a-z][a-z-]*$'
+          description: The `action` of the step that runs now, for example `migrate`.
+          examples: [migrate]
+        started_at:
+          type: [string, 'null']
+          format: date-time
+          description: When the page turned on.
+      examples:
+        - active: true
+          kind: update-apply
+          job_id: 20261122T020300.000Z-update-apply
+          step: migrate
+          started_at: '2026-11-22T02:04:55Z'
+    UpdateHistoryEntry:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: One line of `/var/lib/care-pi/state/update-history.jsonl`. One entry for each job that changed the lock, and for each OS update.
+      required: [job_id, kind, source, reason, started_at, finished_at, outcome, from_version, to_version, from_lock, to_lock, plug_id, checkpoint, pitr_offer, problem, downtime_s]
+      properties:
+        job_id:
+          $ref: '#/components/schemas/JobId'
+        kind:
+          type: string
+          enum: [update, rollback, plug-change, apply, os-update]
+          description: '`update` (`update-apply`), `rollback` (`update-rollback`), `plug-change`, `apply` (an apply with a new lock), `os-update`.'
+        source:
+          type: string
+          enum: [console, cli, timer]
+          description: What started the job. `timer` also marks a resume or a recovery that the agent started (`docs/solutions.md` section 8.6).
+        reason:
+          type: [string, 'null']
+          description: The reason of the job.
+        started_at:
+          type: string
+          format: date-time
+          description: The start of the job.
+        finished_at:
+          type: string
+          format: date-time
+          description: The end of the job.
+        outcome:
+          type: string
+          enum: [succeeded, failed, rolled-back, rollback-failed]
+          description: |
+            `succeeded`: the new lock runs. `failed`: the job stopped before the cutover; nothing changed.
+            `rolled-back`: the previous lock runs again. `rollback-failed`: the rollback failed; the maintenance page stays.
+        from_version:
+          description: The solution lock before the job.
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        to_version:
+          description: The solution lock after the job (the same as `from_version` after a rollback of the job).
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        from_lock:
+          description: The file in `state/locks/` that holds the lock before the job. `null` when the lock did not change.
+          oneOf:
+            - $ref: '#/components/schemas/LockId'
+            - type: 'null'
+        to_lock:
+          description: For a rollback, the file that it installed. Else `null`.
+          oneOf:
+            - $ref: '#/components/schemas/LockId'
+            - type: 'null'
+        plug_id:
+          description: For `plug-change`, the plug.
+          oneOf:
+            - $ref: '#/components/schemas/PlugId'
+            - type: 'null'
+        checkpoint:
+          description: The checkpoint of the job. `null` when the job took none.
+          oneOf:
+            - $ref: '#/components/schemas/UpdateCheckpoint'
+            - type: 'null'
+        pitr_offer:
+          description: |
+            The PITR offer. The console shows the restore card from it, also after a reload. It is set:
+
+            - when the migrations of the job started and the job did not succeed (`outcome` `rolled-back` or
+              `rollback-failed`): the checkpoint of this job. The job is `failed`, with the same offer in `error.pitr_offer`;
+            - for a `rollback` job that succeeded: the checkpoint of the update that installed the lock that the rollback
+              removed (`outcome: succeeded`), or of the interrupted update that a recovery undid (`source: timer`,
+              `outcome: rolled-back`, `problem: null`). It equals `UpdateRollbackResult.pitr_offer` of the job.
+
+            `null` else, and when the agent knows no checkpoint (for example the lock came from an apply without one).
+          oneOf:
+            - $ref: '#/components/schemas/PitrOffer'
+            - type: 'null'
+        problem:
+          description: The error of the job. `null` after a success.
+          oneOf:
+            - $ref: '#/components/schemas/Problem'
+            - type: 'null'
+        downtime_s:
+          type: [number, 'null']
+          minimum: 0
+          description: The time with the maintenance page (or of the restart). `null` without one.
+      examples:
+        - job_id: 20261122T020300.000Z-update-apply
+          kind: update
+          source: timer
+          reason: window Sun 02:00
+          started_at: '2026-11-22T02:03:00Z'
+          finished_at: '2026-11-22T02:09:31Z'
+          outcome: rolled-back
+          from_version: '2026.11.0'
+          to_version: '2026.11.0'
+          from_lock: null
+          to_lock: null
+          plug_id: null
+          checkpoint: {taken_at: '2026-11-22T02:05:12Z', target_time: '2026-11-22T02:05:40Z', restore_point: null, backup_label: 20261115-010000F_20261122-020512I, duration_s: 28.4}
+          pitr_offer:
+            available: true
+            reason: null
+            checkpoint_at: '2026-11-22T02:05:12Z'
+            target_time: '2026-11-22T02:05:40Z'
+            restore_point: null
+            restore: {kind: pitr, time: '2026-11-22T02:05:40Z'}
+          problem:
+            type: https://care-pi.rithviknishad.dev/problems/migration-failed
+            title: A migration failed
+            status: 500
+            detail: care-beat.service did not become healthy. emr.0187 raised IntegrityError. The previous lock runs again.
+            instance: /api/v1/jobs/20261122T020300.000Z-update-apply
+          downtime_s: 351.2
+        - job_id: 20261123T091500.000Z-update-rollback
+          kind: rollback
+          source: console
+          reason: slow
+          started_at: '2026-11-23T09:15:00Z'
+          finished_at: '2026-11-23T09:17:41Z'
+          outcome: succeeded
+          from_version: '2026.11.1'
+          to_version: '2026.11.0'
+          from_lock: 20261123T091741Z
+          to_lock: 20261122T020741Z
+          plug_id: null
+          checkpoint: null
+          pitr_offer:
+            available: true
+            reason: null
+            checkpoint_at: '2026-11-22T02:05:12Z'
+            target_time: '2026-11-22T02:05:40Z'
+            restore_point: null
+            restore: {kind: pitr, time: '2026-11-22T02:05:40Z'}
+          problem: null
+          downtime_s: 140.0
+    UpdateHistory:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: One page of the update history, newest first.
+      required: [items, next_before]
+      properties:
+        items:
+          type: array
+          description: The entries.
+          items:
+            $ref: '#/components/schemas/UpdateHistoryEntry'
+        next_before:
+          description: Send it as `before` for the next page. `null` on the last page.
+          oneOf:
+            - $ref: '#/components/schemas/JobId'
+            - type: 'null'
+      examples:
+        - items: []
+          next_before: null
+    UpdateCheckpoint:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: |
+        The checkpoint of an update, a rollback, or a plug change before the migrations (`docs/solutions.md` section 8.4):
+        the checkpoint of design note section 13.11 (an incremental backup of the local repository). The job also records
+        it in `RestorePoints.checkpoints` (schema `Checkpoint`). Version 0.5.0 named this schema `Checkpoint`.
+      required: [taken_at, target_time, restore_point, backup_label, duration_s]
+      properties:
+        taken_at:
+          type: string
+          format: date-time
+          description: The start of the checkpoint. Care was stopped.
+        target_time:
+          type: string
+          format: date-time
+          description: The PITR target, before the migrations. It is the `undo_point` of the backup (Care was stopped).
+        restore_point:
+          type: [string, 'null']
+          description: The name of a PostgreSQL restore point. `null`; the checkpoint of design note section 13.11 makes none.
+          examples: [null]
+        backup_label:
+          type: [string, 'null']
+          description: The pgBackRest label of the incremental backup (`Checkpoint.label`).
+          examples: [20261115-010000F_20261122-020512I]
+        duration_s:
+          type: number
+          minimum: 0
+          description: The time of the checkpoint.
+      examples:
+        - taken_at: '2026-11-22T02:05:12Z'
+          target_time: '2026-11-22T02:05:40Z'
+          restore_point: null
+          backup_label: 20261115-010000F_20261122-020512I
+          duration_s: 28.4
+    PitrOffer:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: |
+        The hand-off to the restore of Phase 3 (`docs/api/README.md` sections 13.9.1 and 14.5): send `restore` (a
+        `RestorePitrRequest` with `time` = `target_time`) as the body of `POST /restore`. The agent never starts it by itself.
+        Care was stopped at `target_time`, so the restore loses no data of the time before the update.
+      required: [available, reason, checkpoint_at, target_time, restore_point, restore]
+      properties:
+        available:
+          type: boolean
+          description: The local pgBackRest repository covers `target_time` now.
+        reason:
+          type: [string, 'null']
+          description: Why the offer is not available (for example the retention removed the backup).
+        checkpoint_at:
+          type: string
+          format: date-time
+          description: '`taken_at` of the checkpoint.'
+        target_time:
+          type: string
+          format: date-time
+          description: '`target_time` of the checkpoint.'
+        restore_point:
+          type: [string, 'null']
+          description: The name of the restore point (`UpdateCheckpoint.restore_point`; `null` from the checkpoint of section 13.11).
+        restore:
+          $ref: '#/components/schemas/RestorePitrRequest'
+      examples:
+        - available: true
+          reason: null
+          checkpoint_at: '2026-11-22T02:05:12Z'
+          target_time: '2026-11-22T02:05:40Z'
+          restore_point: null
+          restore: {kind: pitr, time: '2026-11-22T02:05:40Z'}
+    RollbackState:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: What `POST /updates/rollback` without `to_lock` does (`docs/solutions.md` section 9).
+      required: [available, to_lock, to_version, reason, images_present, pitr_offer]
+      properties:
+        available:
+          type: boolean
+          description: A previous lock exists.
+        to_lock:
+          description: '`history.previous` of the on-device lock.'
+          oneOf:
+            - $ref: '#/components/schemas/LockId'
+            - type: 'null'
+        to_version:
+          description: The solution lock version of that file. `null` for a lock without a version.
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        reason:
+          type: [string, 'null']
+          description: Why a rollback is not available.
+        images_present:
+          type: boolean
+          description: Each image of that lock is in the local storage. Else the rollback pulls them (internet).
+        pitr_offer:
+          description: The PITR offer of the update that installed the running lock. A rollback does not undo its migrations.
+          oneOf:
+            - $ref: '#/components/schemas/PitrOffer'
+            - type: 'null'
+      examples:
+        - available: true
+          to_lock: 20261108T120000Z
+          to_version: null
+          reason: null
+          images_present: true
+          pitr_offer: null
     UpdateRequest:
       x-phase: 4
       type: object
       additionalProperties: false
-      description: The lock to update to.
+      description: The options of `POST /updates/apply`.
       properties:
         version:
+          description: The lock to install. `null` is `target` of `GET /updates`. See the rules of the operation.
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        now:
+          type: boolean
+          default: false
+          description: Run the cutover now, also outside the update window.
+        reason:
           type: [string, 'null']
-          pattern: '^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$'
-          description: The calendar version. `null` is the newest lock.
-          examples: [2026.11.1]
+          maxLength: 200
+          description: A text for the job journal and the history.
       examples:
         - version: null
+          now: false
+          reason: null
+    UpdateStageRequest:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The options of `POST /updates/stage`.
+      properties:
+        version:
+          description: The lock to stage. `null` is `target` of `GET /updates`.
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+      examples:
+        - version: '2026.11.1'
+    RollbackRequest:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The options of `POST /updates/rollback`.
+      properties:
+        to_lock:
+          description: The previous lock to install. `null` is `rollback.to_lock` of `GET /updates`.
+          oneOf:
+            - $ref: '#/components/schemas/LockId'
+            - type: 'null'
+        reason:
+          type: [string, 'null']
+          maxLength: 200
+          description: A text for the job journal and the history.
+      examples:
+        - to_lock: null
+          reason: the appointment page is slow since the update
+    OsUpdatesSummary:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: A short OS update state for `GET /updates`. `GET /updates/os` has the detail.
+      required: [security_auto, reboot_required, reboot_scheduled_at, upgradable_count, held_upgradable_count, last_full_upgrade_at]
+      properties:
+        security_auto:
+          type: boolean
+          description: '`updates.os_security`.'
+        reboot_required:
+          type: boolean
+          description: '`/run/reboot-required` exists.'
+        reboot_scheduled_at:
+          type: [string, 'null']
+          format: date-time
+          description: The reboot that the agent will do in the next window. `null` without one.
+        upgradable_count:
+          type: integer
+          minimum: 0
+          description: The packages that `apt-get full-upgrade` would change (last `apt-get update`).
+        held_upgradable_count:
+          type: integer
+          minimum: 0
+          description: The held packages with a tested version that differs from the installed version.
+        last_full_upgrade_at:
+          type: [string, 'null']
+          format: date-time
+          description: The end of the last `os-update` job that succeeded.
+      examples:
+        - security_auto: true
+          reboot_required: false
+          reboot_scheduled_at: null
+          upgradable_count: 3
+          held_upgradable_count: 1
+          last_full_upgrade_at: null
+    OsUpdates:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The OS update state (`docs/solutions.md` section 11).
+      required: [distro, security_auto, reboot_on_window, full_on_window, unattended_last_run_at, reboot_required, reboot_required_packages, reboot_scheduled_at, checked_at, upgradable, held, last_full_upgrade]
+      properties:
+        distro:
+          type: object
+          additionalProperties: false
+          description: '`/etc/os-release`.'
+          required: [id, codename, pretty_name]
+          properties:
+            id:
+              type: string
+              description: '`ID`.'
+              examples: [debian]
+            codename:
+              type: string
+              description: '`VERSION_CODENAME`. The key of `os.held_packages` in `index.json`.'
+              examples: [trixie]
+            pretty_name:
+              type: string
+              description: '`PRETTY_NAME`.'
+              examples: [Debian GNU/Linux 13 (trixie)]
+        security_auto:
+          type: boolean
+          description: '`updates.os_security`: `unattended-upgrades` installs the security pocket.'
+        reboot_on_window:
+          type: boolean
+          description: '`updates.os_reboot`.'
+        full_on_window:
+          type: boolean
+          description: '`updates.os_full`.'
+        unattended_last_run_at:
+          type: [string, 'null']
+          format: date-time
+          description: The last run of `unattended-upgrades` (its log).
+        reboot_required:
+          type: boolean
+          description: '`/run/reboot-required` exists.'
+        reboot_required_packages:
+          type: array
+          description: The lines of `/run/reboot-required.pkgs`.
+          items:
+            type: string
+          examples: [[linux-image-rpi-2712]]
+        reboot_scheduled_at:
+          type: [string, 'null']
+          format: date-time
+          description: The reboot that the agent will do in the next window.
+        checked_at:
+          type: [string, 'null']
+          format: date-time
+          description: The time of the last `apt-get update`.
+        upgradable:
+          type: array
+          description: The packages that `apt-get full-upgrade` would change. The held packages are in `held`.
+          items:
+            $ref: '#/components/schemas/OsPackage'
+        held:
+          type: array
+          description: Each held container package (installer `HOLD_PACKAGES`).
+          items:
+            $ref: '#/components/schemas/HeldPackage'
+        last_full_upgrade:
+          description: The newest history entry of kind `os-update`.
+          oneOf:
+            - $ref: '#/components/schemas/UpdateHistoryEntry'
+            - type: 'null'
+      examples:
+        - distro: {id: debian, codename: trixie, pretty_name: Debian GNU/Linux 13 (trixie)}
+          security_auto: true
+          reboot_on_window: true
+          full_on_window: false
+          unattended_last_run_at: '2026-11-21T06:41:00Z'
+          reboot_required: true
+          reboot_required_packages: [linux-image-rpi-2712]
+          reboot_scheduled_at: '2026-11-22T20:30:00Z'
+          checked_at: '2026-11-21T06:40:00Z'
+          upgradable:
+            - {name: libc6, installed: 2.41-12, candidate: 2.41-12+deb13u1, security: true}
+          held:
+            - {name: podman, installed: 5.4.2+ds1-2, candidate: 5.4.2+ds1-2+deb13u1, tested: 5.4.2+ds1-2, action: keep}
+          last_full_upgrade: null
+    OsPackage:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: One package that apt can upgrade.
+      required: [name, installed, candidate, security]
+      properties:
+        name:
+          type: string
+          description: The package.
+          examples: [libc6]
+        installed:
+          type: string
+          description: The installed version.
+          examples: [2.41-12]
+        candidate:
+          type: string
+          description: The version that apt would install.
+          examples: [2.41-12+deb13u1]
+        security:
+          type: boolean
+          description: The candidate comes from the security pocket.
+      examples:
+        - {name: libc6, installed: 2.41-12, candidate: 2.41-12+deb13u1, security: true}
+    HeldPackage:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: One held container package.
+      required: [name, installed, candidate, tested, action]
+      properties:
+        name:
+          type: string
+          description: The package.
+          examples: [podman]
+        installed:
+          type: string
+          description: The installed version.
+        candidate:
+          type: [string, 'null']
+          description: The newest version of the apt sources. `null` when apt knows none.
+        tested:
+          type: [string, 'null']
+          description: The tested version of `index.json` (`os.held_packages`). `null` without an entry.
+        action:
+          type: string
+          enum: [keep, upgrade]
+          description: What `care-pi update --os` does. `upgrade` only when `tested` differs from `installed` and apt has it.
+      examples:
+        - {name: podman, installed: 5.4.2+ds1-2, candidate: 5.4.2+ds1-2+deb13u1, tested: 5.4.2+ds1-2, action: keep}
+    OsApplyRequest:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The options of `POST /updates/os/apply`.
+      properties:
+        now:
+          type: boolean
+          default: false
+          description: Run now, also outside the update window.
+        reboot_if_required:
+          type: boolean
+          default: false
+          description: Reboot at the end when `/run/reboot-required` exists.
+        reason:
+          type: [string, 'null']
+          maxLength: 200
+          description: A text for the job journal.
+      examples:
+        - now: true
+          reboot_if_required: false
+          reason: kernel update
+    OsRebootRequest:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The options of `POST /updates/os/reboot`.
+      properties:
+        now:
+          type: boolean
+          default: false
+          description: '`true`: reboot after `delay_s`. `false`: reboot at the next window opening.'
+        delay_s:
+          type: integer
+          minimum: 1
+          maximum: 300
+          default: 5
+          description: 'The delay for `now: true`, so that the response can reach the browser.'
+      examples:
+        - now: false
+    OsReboot:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The reboot that the agent will do.
+      required: [at, scheduled]
+      properties:
+        at:
+          type: string
+          format: date-time
+          description: The time of the reboot.
+        scheduled:
+          type: boolean
+          description: '`true`: at the next window opening (`reboot_scheduled_at`). `false`: now plus `delay_s`.'
+      examples:
+        - at: '2026-11-22T20:30:00Z'
+          scheduled: true
+    UpdateCheckResult:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The result of an `update-check` job.
+      required: [kind, checked_at, track, current_version, latest_version, target_version, target_id, update_available, blocked_by, changed_components, stage_job_id]
+      properties:
+        kind:
+          type: string
+          const: update-check
+          description: The job kind.
+        checked_at:
+          type: string
+          format: date-time
+          description: The end of the check.
+        track:
+          $ref: '#/components/schemas/UpdateTrack'
+        current_version:
+          description: The running solution lock.
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        latest_version:
+          description: The newest lock of the index.
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        target_version:
+          description: The version of the target.
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        target_id:
+          type: [string, 'null']
+          pattern: '^[0-9a-f]{16}$'
+          description: '`target_id` of the target. `null` without a target.'
+        update_available:
+          type: boolean
+          description: The same value as in `GET /updates` after the check.
+        blocked_by:
+          description: Why the agent does not install the target.
+          oneOf:
+            - $ref: '#/components/schemas/UpdateBlocker'
+            - type: 'null'
+        changed_components:
+          type: array
+          description: The `id` of each component that the target changes.
+          items:
+            type: string
+          examples: [[care, care_fe]]
+        stage_job_id:
+          description: The `update-stage` job that the check started (`updates.auto`). `null` without one.
+          oneOf:
+            - $ref: '#/components/schemas/JobId'
+            - type: 'null'
+      examples:
+        - kind: update-check
+          checked_at: '2026-11-21T09:12:00Z'
+          track: stable
+          current_version: '2026.11.0'
+          latest_version: '2026.11.1'
+          target_version: '2026.11.1'
+          target_id: 4948ab3b7260deca
+          update_available: true
+          blocked_by: null
+          changed_components: [care, care_fe, plugs.care_fasterappointments_fe.frontend]
+          stage_job_id: 20261121T091205.000Z-update-stage
+    UpdateStageResult:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The result of an `update-stage` job.
+      required: [kind, version, target_id, pulled_images, downloaded, built, download_bytes, duration_s]
+      properties:
+        kind:
+          type: string
+          const: update-stage
+          description: The job kind.
+        version:
+          description: The version of the staged target.
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        target_id:
+          type: string
+          pattern: '^[0-9a-f]{16}$'
+          description: '`target_id` of the staged target.'
+        pulled_images:
+          type: array
+          description: The image references that the job pulled.
+          items:
+            type: string
+        downloaded:
+          type: array
+          description: The bundles that the job downloaded (`fe/<build id>`, `plugs/<slug>/<sha12>`).
+          items:
+            type: string
+        built:
+          type: array
+          description: The local builds (`localhost/care-pi/care:<build id>`, `plugs/<slug>/<sha12>`, `fe/<build id>`).
+          items:
+            type: string
+        download_bytes:
+          type: integer
+          minimum: 0
+          description: The bytes of the downloads.
+        duration_s:
+          type: number
+          minimum: 0
+          description: The time of the job.
+      examples:
+        - kind: update-stage
+          version: '2026.11.1'
+          target_id: 4948ab3b7260deca
+          pulled_images: ['ghcr.io/rithviknishad/care-pi/care@sha256:7a7433792e7dde7145bd348ff07ec8507754350b53a5c11191069d9b4cf767f3']
+          downloaded: [fe/4948ab3b7260deca, plugs/care_fasterappointments_fe/4cef80be6c13]
+          built: []
+          download_bytes: 412316860
+          duration_s: 455.2
+    UpdateApplyResult:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The result of an `update-apply` job that succeeded. A failed job has `error` (with `pitr_offer`) instead.
+      required: [kind, from_version, to_version, target_id, from_lock, checkpoint, downtime_s, pruned_images, warnings]
+      properties:
+        kind:
+          type: string
+          const: update-apply
+          description: The job kind.
+        from_version:
+          description: The lock before the job.
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        to_version:
+          description: The lock that runs now.
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        target_id:
+          type: string
+          pattern: '^[0-9a-f]{16}$'
+          description: '`target_id` of the installed target.'
+        from_lock:
+          $ref: '#/components/schemas/LockId'
+        checkpoint:
+          $ref: '#/components/schemas/UpdateCheckpoint'
+        downtime_s:
+          type: number
+          minimum: 0
+          description: The time with the maintenance page.
+        pruned_images:
+          type: integer
+          minimum: 0
+          description: The images that `prune-images` removed.
+        warnings:
+          type: array
+          description: Warnings, for example a failed prune.
+          items:
+            type: string
+      examples:
+        - kind: update-apply
+          from_version: '2026.11.0'
+          to_version: '2026.11.1'
+          target_id: 4948ab3b7260deca
+          from_lock: 20261122T020741Z
+          checkpoint: {taken_at: '2026-11-22T02:05:12Z', target_time: '2026-11-22T02:05:40Z', restore_point: null, backup_label: 20261115-010000F_20261122-020512I, duration_s: 28.4}
+          downtime_s: 162.5
+          pruned_images: 2
+          warnings: []
+    UpdateRollbackResult:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The result of an `update-rollback` job that succeeded.
+      required: [kind, from_version, to_version, to_lock, checkpoint, pitr_offer, downtime_s]
+      properties:
+        kind:
+          type: string
+          const: update-rollback
+          description: The job kind.
+        from_version:
+          description: The lock before the rollback.
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        to_version:
+          description: The lock that runs now.
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        to_lock:
+          $ref: '#/components/schemas/LockId'
+        checkpoint:
+          description: The checkpoint of the rollback itself (best effort). `null` when it failed.
+          oneOf:
+            - $ref: '#/components/schemas/UpdateCheckpoint'
+            - type: 'null'
+        pitr_offer:
+          description: 'The PITR to the checkpoint of the update that installed `from_version`. Only it undoes the migrations of that update. The history entry of the job (`GET /updates/history`, `kind: rollback`) has the same offer. `null` when the agent knows no checkpoint.'
+          oneOf:
+            - $ref: '#/components/schemas/PitrOffer'
+            - type: 'null'
+        downtime_s:
+          type: number
+          minimum: 0
+          description: The time with the maintenance page.
+      examples:
+        - kind: update-rollback
+          from_version: '2026.11.1'
+          to_version: '2026.11.0'
+          to_lock: 20261122T020741Z
+          checkpoint: null
+          pitr_offer:
+            available: true
+            reason: null
+            checkpoint_at: '2026-11-22T02:05:12Z'
+            target_time: '2026-11-22T02:05:40Z'
+            restore_point: null
+            restore: {kind: pitr, time: '2026-11-22T02:05:40Z'}
+          downtime_s: 140.0
+    OsUpdateResult:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The result of an `os-update` job that succeeded.
+      required: [kind, upgraded, held_changed, care_restarted, reboot_required, rebooting, duration_s]
+      properties:
+        kind:
+          type: string
+          const: os-update
+          description: The job kind.
+        upgraded:
+          type: array
+          description: Each package that changed.
+          items:
+            type: object
+            additionalProperties: false
+            description: One package.
+            required: [name, from, to]
+            properties:
+              name:
+                type: string
+                description: The package.
+              from:
+                type: [string, 'null']
+                description: The version before. `null` for a new package.
+              to:
+                type: [string, 'null']
+                description: The version after. `null` for a removed package.
+        held_changed:
+          type: array
+          description: The held packages that changed to their tested version.
+          items:
+            type: string
+        care_restarted:
+          type: boolean
+          description: A held package changed, so Care restarted behind the maintenance page.
+        reboot_required:
+          type: boolean
+          description: '`/run/reboot-required` exists after the job.'
+        rebooting:
+          type: boolean
+          description: The job started a reboot (`reboot_if_required`).
+        duration_s:
+          type: number
+          minimum: 0
+          description: The time of the job.
+      examples:
+        - kind: os-update
+          upgraded:
+            - {name: libc6, from: 2.41-12, to: 2.41-12+deb13u1}
+          held_changed: []
+          care_restarted: false
+          reboot_required: true
+          rebooting: false
+          duration_s: 212.7
+    PlugChangeJobResult:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The result of a `plug-change` job that succeeded.
+      required: [kind, plug_id, enabled, path, lock_changed, checkpoint, downtime_s]
+      properties:
+        kind:
+          type: string
+          const: plug-change
+          description: The job kind.
+        plug_id:
+          $ref: '#/components/schemas/PlugId'
+        enabled:
+          type: boolean
+          description: The plug is on after the job.
+        path:
+          $ref: '#/components/schemas/ChangePath'
+        lock_changed:
+          type: boolean
+          description: The job wrote a new on-device lock.
+        checkpoint:
+          description: The checkpoint of a `cutover` path. `null` for the other paths.
+          oneOf:
+            - $ref: '#/components/schemas/UpdateCheckpoint'
+            - type: 'null'
+        downtime_s:
+          type: [number, 'null']
+          minimum: 0
+          description: The time of the restart or of the maintenance page. `null` for `plug-config`.
+      examples:
+        - kind: plug-change
+          plug_id: care_fasterappointments_fe
+          enabled: true
+          path: plug-config
+          lock_changed: true
+          checkpoint: null
+          downtime_s: null
+    PlugId:
+      x-phase: 4
+      type: string
+      pattern: '^[a-z0-9][a-z0-9_-]{0,62}$'
+      description: A plug id (`plugs[].id` of `solution.yaml`, or `solution.custom.plugs[].id`).
+      examples: [care_filly]
     Plug:
       x-phase: 4
       type: object
       additionalProperties: false
-      description: One plug of the solution (`03` §1).
-      required: [id, kind, enabled, auto, repo, ref, sha, custom, settings]
+      description: One plug of the effective plug set (`docs/solutions.md` sections 1.3 and 12).
+      required: [id, label, description, kind, enabled, on, pending, source, auto, auto_active, requires_internet, custom, backend, frontend, settings, settings_complete, setup_steps]
       properties:
         id:
+          $ref: '#/components/schemas/PlugId'
+        label:
           type: string
-          description: The plug id.
-          examples: [care_onboarding_fe]
+          description: The name for the operator.
+          examples: [Filly]
+        description:
+          type: string
+          description: What the plug does. Empty when the solution has no text.
         kind:
           type: string
-          enum: [backend, frontend]
-          description: The kind of plug.
+          enum: [backend, frontend, both]
+          description: The parts of the plug.
         enabled:
           type: boolean
-          description: The plug is on.
+          description: The plug is on in `config.yaml` after the rules of `docs/solutions.md` section 1.3.
+        on:
+          type: boolean
+          description: The plug is on in the running on-device lock.
+        pending:
+          type: boolean
+          description: '`enabled` differs from `on`, or a setting changed after the last apply. An apply or a `plug-change` job is necessary.'
+        source:
+          type: string
+          enum: [solution, auto, operator, custom]
+          description: 'The rule that gives `enabled`: the solution default, the `auto` rule, `solution.plugs.<id>.enabled`, or `solution.custom.plugs`.'
         auto:
           type: [string, 'null']
           enum: [when_multihost, null]
-          description: The agent turns the plug on by a rule.
-        repo:
+          description: The `auto` rule of the plug.
+        auto_active:
+          type: boolean
+          description: The `auto` rule turns the plug on now (more than one host name).
+        requires_internet:
+          type: boolean
+          description: The plug needs internet access at run time.
+        custom:
+          type: boolean
+          description: '`solution.custom.plugs` adds or changes the plug (unsupported).'
+        backend:
+          description: The backend part. `null` without one.
+          oneOf:
+            - $ref: '#/components/schemas/PlugBackendState'
+            - type: 'null'
+        frontend:
+          description: The frontend part. `null` without one.
+          oneOf:
+            - $ref: '#/components/schemas/PlugFrontendState'
+            - type: 'null'
+        settings:
+          type: array
+          description: The settings form, in the order of `solution.yaml`, with the current values.
+          items:
+            $ref: '#/components/schemas/PlugSetting'
+        settings_complete:
+          type: boolean
+          description: Each required setting has a value. A plug that is on needs it.
+        setup_steps:
+          type: array
+          description: Steps that the operator does by hand after the plug turns on.
+          items:
+            type: string
+      examples:
+        - id: care_filly
+          label: Filly
+          description: AI scribe. Medispeak dictation fills CARE forms. The clinic needs a Medispeak account.
+          kind: backend
+          enabled: false
+          on: false
+          pending: false
+          source: solution
+          auto: null
+          auto_active: false
+          requires_internet: true
+          custom: false
+          backend:
+            name: care_filly
+            package: git+https://github.com/ohcnetwork/care_filly.git
+            ref: develop
+            tracked: true
+            sha: c171e841d882640977ce5b340133fc374f509e58
+            target_sha: c171e841d882640977ce5b340133fc374f509e58
+            installed: true
+            image: solution-image
+          frontend: null
+          settings:
+            - {part: backend, key: MEDISPEAK_API_KEY, label: Medispeak API key, help: The key of the Medispeak account of the clinic. The key starts with msk_live_., type: secret, required: true, placeholder: msk_live_..., options: null, default: null, min: null, max: null, pattern: null, advanced: false, value: null, secret_set: false, source: default}
+            - {part: backend, key: MEDISPEAK_BASE_URL, label: Medispeak address, help: The address of the Medispeak v2 API that the account uses., type: url, required: true, placeholder: 'https://example.org/api/v2', options: null, default: null, min: null, max: null, pattern: null, advanced: false, value: '', secret_set: null, source: default}
+          settings_complete: false
+          setup_steps: [After the agent applies the change, turn on the Filly screens in the plugin marketplace of CARE.]
+    PlugBackendState:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The backend part of a plug.
+      required: [name, package, ref, tracked, sha, target_sha, installed, image]
+      properties:
+        name:
           type: string
-          format: uri
-          description: The source repository.
+          description: The Django app name (`ADDITIONAL_PLUGS` `name`).
+          examples: [care_filly]
+        package:
+          type: string
+          description: The pip requirement without a version.
+          examples: [git+https://github.com/ohcnetwork/care_filly.git]
         ref:
           type: string
-          description: The tracked or pinned ref.
-          examples: [main]
+          description: The ref of the lock or of the override.
+          examples: [develop]
+        tracked:
+          type: boolean
+          description: The ref is a branch or a tag.
         sha:
           type: [string, 'null']
           pattern: '^[0-9a-f]{40}$'
-          description: The sha of the lock.
-        custom:
+          description: The sha in the running on-device lock. `null` when the device has not resolved it.
+        target_sha:
+          type: [string, 'null']
+          pattern: '^[0-9a-f]{40}$'
+          description: The sha of the update target. `null` without a target.
+        installed:
           type: boolean
-          description: The operator changed the plug (unsupported).
-        settings:
-          type: object
-          description: The values of the settings form of the plug.
+          description: The running care image contains the package (section 1.5). A plug that is not installed needs a local build to turn on.
+        image:
+          type: string
+          enum: [solution-image, local-build, none]
+          description: Where the package comes from.
       examples:
-        - id: care_onboarding_fe
-          kind: frontend
-          enabled: true
-          auto: null
+        - name: care_multihost_files_be
+          package: git+https://github.com/ohcnetwork/care_multihost_files_be.git
+          ref: main
+          tracked: true
+          sha: 3edf06b127830e4fbf14823ac69568460eaed291
+          target_sha: null
+          installed: true
+          image: solution-image
+    PlugFrontendState:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The frontend part of a plug, its bundle, and its `plug_config` row.
+      required: [slug, repo, ref, tracked, sha, source, meta_url, bundle, plug_config]
+      properties:
+        slug:
+          type: string
+          description: The slug of the `plug_config` row.
+          examples: [care_onboarding_fe]
+        repo:
+          type: [string, 'null']
+          format: uri
+          description: The repository. `null` for an external bundle.
+        ref:
+          type: [string, 'null']
+          description: The ref. `null` for an external bundle.
+        tracked:
+          type: boolean
+          description: The ref is a branch or a tag.
+        sha:
+          type: [string, 'null']
+          pattern: '^[0-9a-f]{40}$'
+          description: The sha in the running on-device lock.
+        source:
+          type: string
+          enum: [built, external, local-build]
+          description: '`built`: a CI bundle that the device serves. `external`: the browser loads the URL of `solution.yaml` (not pinned). `local-build`: the device built the bundle.'
+        meta_url:
+          type: [string, 'null']
+          format: uri
+          description: '`meta.url` of the `plug_config` row: `https://<canonical host>/plugs/<slug>/<sha12>/<entry>`, or the external URL.'
+        bundle:
+          type: object
+          additionalProperties: false
+          description: The bundle on the device.
+          required: [state, path, sha256, size_bytes]
+          properties:
+            state:
+              type: string
+              enum: [present, missing, external, downloading, building, failed]
+              description: The state of the bundle.
+            path:
+              type: [string, 'null']
+              description: '`/var/lib/care-pi/plugs/<slug>/<sha12>`.'
+            sha256:
+              type: [string, 'null']
+              pattern: '^[0-9a-f]{64}$'
+              description: The SHA-256 of the bundle file that the agent installed.
+            size_bytes:
+              type: [integer, 'null']
+              minimum: 0
+              description: The size of the bundle file.
+        plug_config:
+          type: object
+          additionalProperties: false
+          description: The `plug_config` row in Care (`docs/solutions.md` section 12.2).
+          required: [state, meta_url, checked_at]
+          properties:
+            state:
+              type: string
+              enum: [synced, missing, differs, unknown]
+              description: '`synced`: the row equals what the agent wrote. `missing`: no row (normal for a plug that is off). `differs`: someone changed the row in Care. `unknown`: care-api does not answer.'
+            meta_url:
+              type: [string, 'null']
+              description: '`meta.url` of the row in Care.'
+            checked_at:
+              type: [string, 'null']
+              format: date-time
+              description: The time of the last read.
+      examples:
+        - slug: care_onboarding_fe
           repo: https://github.com/ohcnetwork/care_onboarding_fe
           ref: main
-          sha: 0123456789abcdef0123456789abcdef01234567
-          custom: false
-          settings: {}
+          tracked: true
+          sha: 0785ff3b4dc6f0c9fa3abb7ba4f01cc854cff8b6
+          source: built
+          meta_url: 'https://care.local/plugs/care_onboarding_fe/0785ff3b4dc6/assets/remoteEntry.js'
+          bundle: {state: present, path: /var/lib/care-pi/plugs/care_onboarding_fe/0785ff3b4dc6, sha256: 428151386eaa5c7e2c45193879f0c2244618520b99632a891f752c7dea7aa74c, size_bytes: 2097152}
+          plug_config: {state: synced, meta_url: 'https://care.local/plugs/care_onboarding_fe/0785ff3b4dc6/assets/remoteEntry.js', checked_at: '2026-11-21T09:12:03Z'}
+    PlugSettingValue:
+      x-phase: 4
+      type: [boolean, string, number, array, 'null']
+      items:
+        type: string
+      description: |
+        The value of one setting: `boolean`, `string` (also `url` and `secret`), `number`, or a list of strings (`list`, `choices`).
+        In a response, the value of a `secret` is always `null` (see `secret_set`).
+      examples: [true]
+    PlugSetting:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: |
+        One field of the settings form, from `plugs[].settings` of the solution of the running lock, with its value
+        (`docs/api/README.md` section 14.6 maps each `type` to a form control).
+      required: [part, key, label, help, type, required, placeholder, options, default, min, max, pattern, advanced, value, secret_set, source]
+      properties:
+        part:
+          type: string
+          enum: [backend, frontend]
+          description: '`backend`: a key of `configs` of `ADDITIONAL_PLUGS`. `frontend`: a dotted path in `meta` of the `plug_config` row.'
+        key:
+          type: string
+          description: The key or the dotted path.
+          examples: [config.redirect_after_login]
+        label:
+          type: string
+          description: The label of the field.
+        help:
+          type: [string, 'null']
+          description: The help text.
+        type:
+          type: string
+          enum: [boolean, string, number, url, secret, list, choices]
+          description: The field type.
+        required:
+          type: boolean
+          description: The plug does not work without a value.
+        placeholder:
+          type: [string, 'null']
+          description: An example value for an empty field.
+        options:
+          type: [array, 'null']
+          description: The options of `choices`. `null` for the other types.
+          items:
+            $ref: '#/components/schemas/PlugSettingOption'
+        default:
+          $ref: '#/components/schemas/PlugSettingValue'
+        min:
+          type: [number, 'null']
+          description: The smallest value of `number`.
+        max:
+          type: [number, 'null']
+          description: The largest value of `number`.
+        pattern:
+          type: [string, 'null']
+          description: The regular expression (ECMA-262) for `string`, `url`, `secret`, and each line of `list`.
+        advanced:
+          type: boolean
+          description: Show the field only in the advanced part of the form.
+        value:
+          $ref: '#/components/schemas/PlugSettingValue'
+        secret_set:
+          type: [boolean, 'null']
+          description: For `secret`, a value is stored. `null` for the other types.
+        source:
+          type: string
+          enum: [default, operator]
+          description: '`operator`: `solution.plugs.<id>.settings` (or the secret file) has the value. `default`: the default of the solution.'
+      examples:
+        - part: frontend
+          key: config.redirect_after_login
+          label: Open the clinic setup after sign-in
+          help: After sign-in, an administrator goes to the setup. This continues until the clinic has a facility.
+          type: boolean
+          required: false
+          placeholder: null
+          options: null
+          default: true
+          min: null
+          max: null
+          pattern: null
+          advanced: false
+          value: false
+          secret_set: null
+          source: operator
+    PlugSettingOption:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: One option of a `choices` field.
+      required: [value, label]
+      properties:
+        value:
+          type: string
+          description: The value that the agent stores.
+        label:
+          type: string
+          description: The text that the console shows.
+      examples:
+        - {value: cash, label: Cash}
     PlugList:
       x-phase: 4
       type: object
       additionalProperties: false
-      description: The plugs of the solution.
-      required: [items]
+      description: The plugs of the effective plug set, in the order of the solution, then the plugs of `solution.custom`.
+      required: [solution, version, track, hostname_count, pending, items]
       properties:
+        solution:
+          type: string
+          description: '`solution.name`.'
+          examples: [care-clinic]
+        version:
+          description: The solution lock that gives the plug list and the forms. `null` without one.
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        track:
+          $ref: '#/components/schemas/UpdateTrack'
+        hostname_count:
+          type: integer
+          minimum: 0
+          description: The host names that Caddy serves (IP addresses do not count). More than 1 turns the `when_multihost` plugs on.
+        pending:
+          type: boolean
+          description: 'A plug has `pending: true`.'
         items:
           type: array
           description: The plugs.
           items:
             $ref: '#/components/schemas/Plug'
       examples:
-        - items: []
+        - solution: care-clinic
+          version: '2026.11.0'
+          track: stable
+          hostname_count: 1
+          pending: false
+          items: []
     PlugChange:
       x-phase: 4
       type: object
       additionalProperties: false
-      description: A change of one plug.
+      description: |
+        A change of one plug. A member that is absent stays unchanged.
+        `enabled: null` removes the operator choice: the default of the solution and its `auto` rule apply again.
       properties:
         enabled:
-          type: boolean
-          description: Turn the plug on or off.
+          type: [boolean, 'null']
+          description: Turn the plug on (`true`) or off (`false`), or follow the solution (`null`).
         settings:
-          type: object
-          description: New values for the settings form.
+          $ref: '#/components/schemas/PlugSettingsValues'
+        reason:
+          type: [string, 'null']
+          maxLength: 200
+          description: A text for the job journal and the history.
       examples:
         - enabled: false
     BackupsHealth:
@@ -8873,7 +11306,7 @@ components:
             - $ref: '#/components/schemas/JobId'
             - type: 'null'
         job_kind:
-          description: The kind of that job (`restore-pitr`; in Phase 4 also `update`). `null` with `job_id` `null`.
+          description: The kind of that job (`restore-pitr`; Phase 4 also `update-apply`, `update-rollback`, `plug-change`, `apply`). `null` with `job_id` `null`.
           oneOf:
             - $ref: '#/components/schemas/JobKind'
             - type: 'null'
@@ -10471,3 +12904,502 @@ components:
             - {name: pg_controldata, level: required, ok: true, detail: 'cluster state: in production'}
             - {name: select 1, level: required, ok: true, detail: 1 row}
           skipped_reason: null
+    PlugSettingsValues:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: |
+        New values of the settings form, by part and by key. Only the keys in the body change.
+        For a field of type `secret`: a string sets the value; `null` deletes it. For another field: `null` removes the
+        operator value, so the default applies. The values must match `GET /plugs/{plug_id}/settings-schema`.
+      properties:
+        backend:
+          type: object
+          description: 'The values with `part: backend`, by key.'
+          additionalProperties:
+            $ref: '#/components/schemas/PlugSettingValue'
+        frontend:
+          type: object
+          description: 'The values with `part: frontend`, by dotted path.'
+          additionalProperties:
+            $ref: '#/components/schemas/PlugSettingValue'
+      examples:
+        - frontend: {config.payment_methods: [cash, debc], config.redirect_to_invoice: true}
+    PlugChangeResult:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The result of `PUT /plugs/{plug_id}`.
+      required: [written, etag, plug, plan, job]
+      properties:
+        written:
+          type: boolean
+          description: The agent wrote `config.yaml` (and the secret file). `false` for `dry_run=true`.
+        etag:
+          $ref: '#/components/schemas/EntityTag'
+        plug:
+          $ref: '#/components/schemas/Plug'
+        plan:
+          $ref: '#/components/schemas/PlugChangePlan'
+        job:
+          description: The `plug-change` job (`apply=true` and a path other than `none`). Else `null`.
+          oneOf:
+            - $ref: '#/components/schemas/Job'
+            - type: 'null'
+      examples:
+        - written: false
+          etag: '"9f2c1a7e0b3d4c55"'
+          plug:
+            id: care_fasterappointments_fe
+            label: Faster appointments
+            description: Speeds up the front desk.
+            kind: frontend
+            enabled: true
+            on: false
+            pending: true
+            source: operator
+            auto: null
+            auto_active: false
+            requires_internet: true
+            custom: false
+            backend: null
+            frontend:
+              slug: care_fasterappointments_fe
+              repo: https://github.com/ohcnetwork/care_fasterappointments_fe
+              ref: main
+              tracked: true
+              sha: 4cef80be6c1372876609851f7ad15bbdd7928e5f
+              source: built
+              meta_url: 'https://care.local/plugs/care_fasterappointments_fe/4cef80be6c13/assets/remoteEntry.js'
+              bundle: {state: missing, path: null, sha256: null, size_bytes: null}
+              plug_config: {state: missing, meta_url: null, checked_at: '2026-11-21T09:12:03Z'}
+            settings: []
+            settings_complete: true
+            setup_steps: []
+          plan:
+            changed: true
+            path: plug-config
+            lock_changed: true
+            maintenance: false
+            checkpoint: false
+            restarts: []
+            downloads: [plug-care_fasterappointments_fe-4cef80be6c13/plug-care_fasterappointments_fe-4cef80be6c13.tar.gz]
+            builds: []
+            needs_internet: true
+            estimated_downtime_s: 0
+            steps: [stage-bundles, plug-config, verify, write-lock]
+            warnings: []
+          job: null
+    PlugChangePlan:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: What a plug change does (`docs/solutions.md` section 12.1). The console shows it before the operator confirms.
+      required: [changed, path, lock_changed, maintenance, checkpoint, restarts, downloads, builds, needs_internet, estimated_downtime_s, steps, warnings]
+      properties:
+        changed:
+          type: boolean
+          description: The change has an effect.
+        path:
+          $ref: '#/components/schemas/ChangePath'
+        lock_changed:
+          type: boolean
+          description: The on-device lock changes.
+        maintenance:
+          type: boolean
+          description: Caddy shows the maintenance page during the change.
+        checkpoint:
+          type: boolean
+          description: The job takes a checkpoint (migrations can run).
+        restarts:
+          type: array
+          description: The units that restart.
+          items:
+            type: string
+          examples: [[care-beat.service, care-worker.service, care-api.service]]
+        downloads:
+          type: array
+          description: The artefacts to download (relative to the dist base, or absolute).
+          items:
+            type: string
+        builds:
+          type: array
+          description: The local builds (`localhost/care-pi/care:<build id>`, `plugs/<slug>/<sha12>`).
+          items:
+            type: string
+        needs_internet:
+          type: boolean
+          description: A download or a build needs the internet.
+        estimated_downtime_s:
+          type: [integer, 'null']
+          minimum: 0
+          description: An estimate of the API break or the maintenance time. `0` for `plug-config`.
+        steps:
+          type: array
+          description: The `action` of each job step, in order.
+          items:
+            type: string
+            pattern: '^[a-z][a-z-]*$'
+        warnings:
+          type: array
+          description: Warnings, for example a plug that needs internet at run time on an offline device.
+          items:
+            type: string
+      examples:
+        - changed: true
+          path: cutover
+          lock_changed: true
+          maintenance: true
+          checkpoint: true
+          restarts: [care-beat.service, care-worker.service, care-api.service]
+          downloads: []
+          builds: []
+          needs_internet: false
+          estimated_downtime_s: 120
+          steps: [render, cutover-maintenance-on, stop, checkpoint, activate, migrate, start, plug-config, verify, write-lock, maintenance-off]
+          warnings: [Filly needs internet access at run time.]
+    SolutionSummary:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: One solution in `GET /solutions`.
+      required: [name, title, description, source, selected, latest_version, lock_count, plug_count]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z0-9]+(-[a-z0-9]+)*$'
+          description: The solution name.
+          examples: [care-clinic]
+        title:
+          type: string
+          description: The name for the operator.
+          examples: [CARE Clinic]
+        description:
+          type: string
+          description: The short text of `solution.yaml`.
+        source:
+          type: string
+          enum: [embedded, index, both]
+          description: The agent embeds the solution, the cached index lists it, or both.
+        selected:
+          type: boolean
+          description: '`solution.name` of `config.yaml`.'
+        latest_version:
+          description: The newest lock that is not withdrawn. `null` without one.
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        lock_count:
+          type: integer
+          minimum: 0
+          description: The locks of the index and of the agent, without duplicates.
+        plug_count:
+          type: integer
+          minimum: 0
+          description: The plugs of the solution.
+      examples:
+        - name: care-clinic
+          title: CARE Clinic
+          description: Outpatient clinic. Appointments, encounters, prescriptions, and invoices.
+          source: both
+          selected: true
+          latest_version: '2026.11.1'
+          lock_count: 2
+          plug_count: 4
+    SolutionList:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: The solutions, sorted by name.
+      required: [items, index]
+      properties:
+        items:
+          type: array
+          description: The solutions.
+          items:
+            $ref: '#/components/schemas/SolutionSummary'
+        index:
+          $ref: '#/components/schemas/IndexState'
+      examples:
+        - items:
+            - name: care-clinic
+              title: CARE Clinic
+              description: Outpatient clinic. Appointments, encounters, prescriptions, and invoices.
+              source: both
+              selected: true
+              latest_version: '2026.11.1'
+              lock_count: 2
+              plug_count: 4
+          index:
+            url: 'https://github.com/rithviknishad/care-pi/releases/download/index/index.json'
+            dist_base: 'https://github.com/rithviknishad/care-pi/releases/download/'
+            fetched_at: '2026-11-21T09:11:58Z'
+            generated_at: '2026-11-21T09:00:00Z'
+    SolutionDetail:
+      x-phase: 4
+      type: object
+      additionalProperties: false
+      description: One solution, its `solution.yaml`, and its locks.
+      required: [name, title, description, source, selected, document, document_version, locks, embedded_locks]
+      properties:
+        name:
+          type: string
+          description: The solution name.
+          examples: [care-clinic]
+        title:
+          type: string
+          description: The name for the operator.
+        description:
+          type: string
+          description: The short text of `solution.yaml`.
+        source:
+          type: string
+          enum: [embedded, index, both]
+          description: Where the agent knows the solution from.
+        selected:
+          type: boolean
+          description: '`solution.name` of `config.yaml`.'
+        document:
+          $ref: '#/components/schemas/SolutionDocument'
+        document_version:
+          description: The lock that `document` comes from (`solution` of the lock). `null` for the embedded `solution.yaml`.
+          oneOf:
+            - $ref: '#/components/schemas/LockVersion'
+            - type: 'null'
+        locks:
+          type: array
+          description: Each lock of the index and of the agent, newest first.
+          items:
+            $ref: '#/components/schemas/AvailableLock'
+        embedded_locks:
+          type: array
+          description: The lock versions that the agent binary embeds (the floor without internet).
+          items:
+            $ref: '#/components/schemas/LockVersion'
+      examples:
+        - name: demo
+          title: Demo
+          description: A solution with one plug.
+          source: embedded
+          selected: false
+          document:
+            apiVersion: care-pi/v1
+            kind: Solution
+            name: demo
+            title: Demo
+            description: A solution with one plug.
+            care: {image: ghcr.io/ohcnetwork/care, ref: latest}
+            care_fe: {repo: https://github.com/ohcnetwork/care_fe, ref: develop}
+          document_version: null
+          locks: []
+          embedded_locks: []
+    SolutionDocument:
+      $ref: '../../solutions/schema/solution.schema.json'
+      description: |
+        Phase 4. A `solution.yaml` document as JSON. The schema is `solutions/schema/solution.schema.json` (JSON Schema 2020-12).
+        `docs/solutions.md` section 1 and `solutions/README.md` describe each field.
+      examples:
+        - apiVersion: care-pi/v1
+          kind: Solution
+          name: demo
+          title: Demo
+          description: A solution with one plug.
+          care: {image: ghcr.io/ohcnetwork/care, ref: latest}
+          care_fe: {repo: https://github.com/ohcnetwork/care_fe, ref: develop}
+          plugs:
+            - id: demo_fe
+              label: Demo
+              enabled: true
+              frontend: {slug: demo_fe, repo: https://github.com/example/demo_fe, ref: main}
+              settings:
+                - {part: frontend, key: config.limit, label: Limit, type: number, min: 1, max: 10}
+    SolutionLockDocument:
+      $ref: '../../solutions/schema/lock.schema.json'
+      description: |
+        Phase 4. A solution lock as JSON. The schema is `solutions/schema/lock.schema.json` (JSON Schema 2020-12).
+        `docs/solutions.md` section 3 describes each field.
+      examples:
+        - {
+            "apiVersion": "care-pi/v1",
+            "kind": "SolutionLock",
+            "name": "care-clinic",
+            "version": "2026.11.0",
+            "created_at": "2026-11-14T10:00:00Z",
+            "created_by": "rithviknishad (workflow solution-lock, run 11650001)",
+            "notes": "First lock of CARE Clinic. care develop of 2026-11-13, care_fe develop of 2026-11-13.\n",
+            "min_agent_version": "v0.4.0",
+            "source": {
+              "commit": "9505cacb7c710ed17125fcc6cb3669e8ddca6c8c",
+              "solution_sha256": "c9e9420c990680921a6caf90891119c1267797f3025c68d6cc58a4ac1a53f193",
+              "run_url": "https://github.com/rithviknishad/care-pi/actions/runs/11650001"
+            },
+            "solution": {
+              "apiVersion": "care-pi/v1",
+              "kind": "Solution",
+              "name": "care-clinic",
+              "title": "CARE Clinic",
+              "description": "Outpatient clinic. Appointments, encounters, prescriptions, and invoices.",
+              "care": {
+                "image": "ghcr.io/ohcnetwork/care",
+                "ref": "latest"
+              },
+              "care_fe": {
+                "repo": "https://github.com/ohcnetwork/care_fe",
+                "ref": "develop"
+              },
+              "plugs": [
+                {
+                  "id": "care_onboarding_fe",
+                  "label": "CARE Onboarding",
+                  "enabled": true,
+                  "requires_internet": true,
+                  "frontend": {
+                    "slug": "care_onboarding_fe",
+                    "repo": "https://github.com/ohcnetwork/care_onboarding_fe",
+                    "ref": "main",
+                    "meta": {
+                      "config": {
+                        "redirect_after_login": true
+                      }
+                    }
+                  },
+                  "env": {
+                    "frontend": {
+                      "REACT_MFE_REGISTERED_COMPONENTS": "UserDashboard"
+                    }
+                  },
+                  "settings": [
+                    {
+                      "part": "frontend",
+                      "key": "config.redirect_after_login",
+                      "label": "Open the clinic setup after sign-in",
+                      "type": "boolean",
+                      "default": true
+                    }
+                  ]
+                },
+                {
+                  "id": "care_multihost_files_be",
+                  "label": "Files on every address",
+                  "enabled": false,
+                  "auto": "when_multihost",
+                  "backend": {
+                    "name": "care_multihost_files_be",
+                    "package": "git+https://github.com/ohcnetwork/care_multihost_files_be.git",
+                    "ref": "main",
+                    "configs": {
+                      "ALLOWED_HOSTS": [
+                        "*.local",
+                        "*.ts.net"
+                      ]
+                    }
+                  },
+                  "settings": [
+                    {
+                      "part": "backend",
+                      "key": "ALLOWED_HOSTS",
+                      "label": "Addresses that can open files",
+                      "type": "list"
+                    }
+                  ]
+                }
+              ],
+              "env": {
+                "backend": {
+                  "RATE_LIMIT": "5/10m"
+                },
+                "frontend": {
+                  "REACT_ALLOWED_LOCALES": "en,hi,ml",
+                  "REACT_ALLOWED_ENCOUNTER_CLASSES": "amb"
+                }
+              },
+              "defaults": {
+                "size_preset": "small-clinic",
+                "clock_policy": "ntp"
+              }
+            },
+            "care": {
+              "image": "ghcr.io/ohcnetwork/care",
+              "ref": "latest",
+              "digest": "sha256:03c0d3dcece83afa3b6105c876cf44bf3bc61d68ceb791d261c5906791f997a9",
+              "git_sha": "456c9ed13b3344caaa3110c6a5263a24a3a8746b"
+            },
+            "solution_image": {
+              "image": "ghcr.io/rithviknishad/care-pi/care",
+              "tag": "care-clinic-2026.11.0",
+              "digest": "sha256:ca655b51ea069a139ccb070fa1fd1258a3142b661916fdb554b928e5a93d40b5",
+              "installed_plugs": [
+                "care_multihost_files_be"
+              ]
+            },
+            "care_fe": {
+              "repo": "https://github.com/ohcnetwork/care_fe",
+              "ref": "develop",
+              "sha": "1f944e82caeee09d9cbfe55f299b7414d890033d"
+            },
+            "fe": {
+              "build_id": "c7cb2784c87242c1",
+              "url": "fe-care-clinic-1f944e82caee-c7cb2784c87242c1/care_fe-care-clinic-1f944e82caee-c7cb2784c87242c1.tar.gz",
+              "sha256": "e5e6cd2910acdba3c12c06f33c81d41e47c3089224bded2b6f5f9bfe37cd1d72",
+              "size_bytes": 13421772,
+              "env_keys": [
+                "REACT_ALLOWED_ENCOUNTER_CLASSES",
+                "REACT_ALLOWED_LOCALES",
+                "REACT_CARE_API_URL",
+                "REACT_MFE_REGISTERED_COMPONENTS"
+              ]
+            },
+            "plugs": {
+              "care_onboarding_fe": {
+                "frontend": {
+                  "slug": "care_onboarding_fe",
+                  "source": "built",
+                  "ref": "main",
+                  "sha": "0785ff3b4dc6f0c9fa3abb7ba4f01cc854cff8b6",
+                  "url": "plug-care_onboarding_fe-0785ff3b4dc6/plug-care_onboarding_fe-0785ff3b4dc6.tar.gz",
+                  "sha256": "428151386eaa5c7e2c45193879f0c2244618520b99632a891f752c7dea7aa74c",
+                  "entry": "assets/remoteEntry.js",
+                  "size_bytes": 2097152
+                }
+              },
+              "care_multihost_files_be": {
+                "backend": {
+                  "ref": "main",
+                  "sha": "3edf06b127830e4fbf14823ac69568460eaed291",
+                  "additional_plug": {
+                    "name": "care_multihost_files_be",
+                    "package_name": "git+https://github.com/ohcnetwork/care_multihost_files_be.git",
+                    "version": "@3edf06b127830e4fbf14823ac69568460eaed291",
+                    "configs": {
+                      "ALLOWED_HOSTS": [
+                        "*.local",
+                        "*.ts.net"
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "images": {
+              "postgres": {
+                "ref": "ghcr.io/rithviknishad/care-pi/postgres-pgbackrest:17",
+                "digest": "sha256:d80dc0a202c84e8fa4dcb3023143dff30cb5d99dae8c4731d84dab05aab52efb"
+              },
+              "caddy": {
+                "ref": "ghcr.io/rithviknishad/care-pi/caddy:2",
+                "digest": "sha256:d6e0ff2b7a534a9750d13545971476557164f72cb92ad74be7f145491ec4acf4"
+              },
+              "redis": {
+                "ref": "docker.io/library/redis:8-alpine",
+                "digest": "sha256:34fb46c847bb9df96e5205a39d382f648a6e8dce1e014cd85b4ca6a88d88ed03"
+              },
+              "s3": {
+                "ref": "docker.io/versity/versitygw:latest",
+                "digest": "sha256:41242b9fae56fad4e6e77dfe33cb18d1c3fc583f988cf25ef9f2d9be0d440bbb"
+              },
+              "node": {
+                "ref": "docker.io/library/node:22-bookworm-slim",
+                "digest": "sha256:545ea538461003efdc8c81c244531b003f6f26cfccf6c0073b3239fdedf49446"
+              }
+            }
+          }

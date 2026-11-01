@@ -1,0 +1,13 @@
+# {{.Header}}
+# The work of the update window: the Care update (updates.auto), the OS upgrade (updates.os_full),
+# and the reboot (updates.os_reboot). The command stops at once when the window is closed.
+
+[Unit]
+Description=care-pi update window work
+After=network-online.target care-pi.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{path "Binary"}} update apply --scheduled
+TimeoutStartSec={{.Timers.ApplyTimeout}}

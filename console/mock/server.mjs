@@ -6,6 +6,7 @@
 //
 //   node mock/server.mjs                 port 4011 (MOCK_PORT)
 //   MOCK_SCENARIO=ready node mock/server.mjs
+//   MOCK_SCENARIO=ready MOCK_UPDATES=available node mock/server.mjs   (lib/updates.mjs lists the options)
 //   curl -X POST localhost:4011/__mock/reset -d '{"scenario":"ready","step_ms":200}'
 //   curl -X POST localhost:4011/__mock/reset -d '{"scenario":"ready","backups":"degraded"}'
 //   MOCK_SCENARIO=restore node mock/server.mjs   (a claimed device with the backup disk of an old device)
@@ -23,10 +24,21 @@ import { backupsRoutes } from "./lib/backups-api.mjs";
 import { restoreRoutes } from "./lib/restore-api.mjs";
 import { DR_KEY } from "./lib/backups-state.mjs";
 import { freshState, now } from "./lib/state.mjs";
+import { freshUpdates, updatesRoutes } from "./lib/updates.mjs";
 
 const PORT = Number(process.env.MOCK_PORT ?? 4011);
 const PRISM_URL = process.env.PRISM_URL ?? null;
-let state = freshState({ scenario: process.env.MOCK_SCENARIO ?? "unclaimed" });
+// The state of Phase 4 (updates, plugs) is state.u (lib/updates.mjs).
+function fresh(options) {
+  const s = freshState(options);
+  s.u = freshUpdates(options);
+  return s;
+}
+
+let state = fresh({
+  scenario: process.env.MOCK_SCENARIO ?? "unclaimed",
+  ...(process.env.MOCK_UPDATES ? { updates: process.env.MOCK_UPDATES } : {}),
+});
 
 const PHASE_TEXT = {
   3: "Backups and restore come in Phase 3.",
@@ -55,6 +67,7 @@ const ROUTES = [
   ...opsRoutes,
   ...backupsRoutes,
   ...restoreRoutes,
+  ...updatesRoutes,
   ...phaseRoutes,
 ].map(compile);
 const UNSAFE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
@@ -95,8 +108,13 @@ async function control(req, res, pathname) {
   if (pathname === "/__mock/reset" && req.method === "POST") {
     const raw = await readBody(req);
     const opts = raw ? JSON.parse(raw) : {};
-    state = freshState(opts);
-    sendJson(res, 200, { scenario: state.scenario, step_ms: state.stepMs, backups: state.backups.scenario });
+    state = fresh(opts);
+    sendJson(res, 200, {
+      scenario: state.scenario,
+      step_ms: state.stepMs,
+      backups: state.backups.scenario,
+      updates: state.u.scenario,
+    });
     return true;
   }
   if (pathname === "/__mock/state" && req.method === "GET") {
@@ -111,6 +129,12 @@ async function control(req, res, pathname) {
       dr_words: DR_KEY.words,
       key_words: state.backups.key?.words ?? null,
       pending_words: state.backups.pending?.words ?? null,
+      updates: {
+        scenario: state.u.scenario,
+        installed: state.u.installed.lock.version,
+        maintenance: state.u.maintenance,
+        history: state.u.history.length,
+      },
     });
     return true;
   }

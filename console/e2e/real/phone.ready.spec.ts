@@ -41,7 +41,7 @@ test("log in on a phone and use the console", async ({ page }, info) => {
   );
   note(info, `units: ${(await unitCards.allTextContents()).join(" | ")}`);
   await shot(page, info, "02-dashboard");
-  expect(cards.length).toBe(8);
+  expect(cards.length).toBe(9);
   expect(width.scroll).toBeLessThanOrEqual(width.client);
   expect(unitsCard.scroll).toBeLessThanOrEqual(unitsCard.client);
   expect(cut, "cut labels or values").toEqual([]);

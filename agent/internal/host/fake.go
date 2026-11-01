@@ -2,6 +2,8 @@ package host
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -26,7 +28,10 @@ type Fake struct {
 	// Stdin holds the length of the stdin of each call, so tests can check that secrets
 	// went through stdin and not through arguments.
 	StdinLen []int
-	pos      map[string]int
+	// Hook, when it is set, answers a command before Script. handled false falls through to Script.
+	// It gets the stdin of the command. Tests of Phase 4 use it for the plug_config script.
+	Hook func(c Cmd, stdin []byte) (r Response, handled bool)
+	pos  map[string]int
 }
 
 // NewFake returns an empty Fake.
@@ -48,12 +53,19 @@ func (f *Fake) Run(_ context.Context, c Cmd) ([]byte, error) {
 	defer f.mu.Unlock()
 	line := c.String()
 	f.Calls = append(f.Calls, line)
-	n := 0
+	var in []byte
 	if c.Stdin != nil {
-		b, _ := io.ReadAll(c.Stdin)
-		n = len(b)
+		in, _ = io.ReadAll(c.Stdin)
 	}
-	f.StdinLen = append(f.StdinLen, n)
+	f.StdinLen = append(f.StdinLen, len(in))
+	if f.Hook != nil {
+		if r, ok := f.Hook(c, in); ok {
+			if r.Code != 0 {
+				return []byte(r.Out), &ExitError{Cmd: line, Code: r.Code, Stderr: r.Out}
+			}
+			return []byte(r.Out), r.Err
+		}
+	}
 	rs := f.Script[line]
 	if len(rs) == 0 {
 		return nil, nil
@@ -128,4 +140,44 @@ func (f *Fake) Stream(ctx context.Context, c Cmd, fn func(line []byte) error) er
 		}
 	}
 	return nil
+}
+
+// PlugConfigMarker starts the line of the plug_config script (package plugcfg) with the rows in Care.
+const PlugConfigMarker = "CARE_PI_ROWS="
+
+// PlugConfigHook answers the plug_config script of package plugcfg ("podman exec -i care-api python
+// manage.py shell"): it prints the rows that the script writes, as Care would after the write.
+// Tests and the dev host use it as the Hook of a Fake.
+func PlugConfigHook(c Cmd, stdin []byte) (Response, bool) {
+	if c.String() != "podman exec -i care-api python manage.py shell" {
+		return Response{}, false
+	}
+	return Response{Out: PlugConfigEcho(stdin)}, true
+}
+
+// PlugConfigEcho decodes the payload of the plug_config script and returns the output line of the
+// script for the rows that it writes.
+func PlugConfigEcho(script []byte) string {
+	s := string(script)
+	const open = `b64decode("`
+	i := strings.Index(s, open)
+	if i < 0 {
+		return PlugConfigMarker + "[]\n"
+	}
+	rest := s[i+len(open):]
+	j := strings.Index(rest, `"`)
+	if j < 0 {
+		return PlugConfigMarker + "[]\n"
+	}
+	raw, err := base64.StdEncoding.DecodeString(rest[:j])
+	if err != nil {
+		return PlugConfigMarker + "[]\n"
+	}
+	var payload struct {
+		Upsert json.RawMessage `json:"upsert"`
+	}
+	if json.Unmarshal(raw, &payload) != nil || len(payload.Upsert) == 0 {
+		return PlugConfigMarker + "[]\n"
+	}
+	return PlugConfigMarker + string(payload.Upsert) + "\n"
 }

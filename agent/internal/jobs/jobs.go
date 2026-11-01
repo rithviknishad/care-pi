@@ -43,9 +43,20 @@ const (
 	KindRestoreDrill      = "restore-drill"
 )
 
+// Kinds that Phase 4 makes (docs/api/README.md, section 14.2).
+const (
+	KindUpdateCheck    = "update-check"
+	KindUpdateStage    = "update-stage"
+	KindUpdateApply    = "update-apply"
+	KindUpdateRollback = "update-rollback"
+	KindOSUpdate       = "os-update"
+	KindPlugChange     = "plug-change"
+)
+
 // Kinds lists each job kind of the schema JobKind.
-var Kinds = []string{KindApply, KindSetup, KindFEBuild, KindFEPrune, KindSupportBundle, "update-check", "update", "rollback", "tls",
-	KindBackupRun, KindBackupVerify, KindRestorePITR, KindRestoreFiles, KindRestoreDR, KindDiskPrepare, KindRecoveryKeyRotate, KindRestoreDrill}
+var Kinds = []string{KindApply, KindSetup, KindFEBuild, KindFEPrune, KindSupportBundle,
+	KindBackupRun, KindBackupVerify, KindRestorePITR, KindRestoreFiles, KindRestoreDR, KindDiskPrepare, KindRecoveryKeyRotate, KindRestoreDrill,
+	KindUpdateCheck, KindUpdateStage, KindUpdateApply, KindUpdateRollback, KindOSUpdate, KindPlugChange, "tls"}
 
 // RestoreKinds stop the backups while they run: a backup kind gives job-running then.
 var RestoreKinds = map[string]bool{KindRestorePITR: true, KindRestoreFiles: true, KindRestoreDR: true, KindRecoveryKeyRotate: true}
@@ -88,7 +99,8 @@ const (
 // LockKinds hold the apply lock.
 var LockKinds = map[string]bool{KindApply: true, KindSetup: true, KindFEBuild: true, KindFEPrune: true,
 	"update": true, "rollback": true, "tls": true, KindRestorePITR: true, KindRestoreFiles: true, KindRestoreDR: true,
-	KindDiskPrepare: true, KindRecoveryKeyRotate: true}
+	KindDiskPrepare: true, KindRecoveryKeyRotate: true,
+	KindUpdateStage: true, KindUpdateApply: true, KindUpdateRollback: true, KindOSUpdate: true, KindPlugChange: true}
 
 // IDPattern is the pattern of a job id.
 var IDPattern = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}\.[0-9]{3}Z-[a-z][a-z-]*$`)
@@ -111,6 +123,12 @@ var actionKeys = map[string]bool{
 	"wipe-disk": true, "partition": true, "format": true, "write-mount-unit": true, "mount": true, "rekey-local": true,
 	"init-destination": true, "activate-key": true, "remove-old-repositories": true, "drill-restore": true,
 	"drill-start": true, "drill-check": true, "drill-cleanup": true,
+	// Phase 4 (docs/solutions.md, sections 8 and 11).
+	"cutover": true, "plug-config": true, "fetch-index": true, "fetch-lock": true, "resolve-refs": true,
+	"stage-pull": true, "stage-bundles": true, "stage-build": true, "cutover-maintenance-on": true, "stop": true,
+	"activate": true, "migrate": true, "start": true, "verify": true,
+	"rollback": true, "prune-images": true, "os-refresh": true, "os-unhold": true, "os-upgrade": true, "os-hold": true,
+	"reboot": true,
 }
 
 // ActionOf returns the action key of a step name ("restart: care-api.service" gives "restart"), or "".

@@ -1,0 +1,12 @@
+# {{.Header}}
+# Check for a new solution lock. After the check, the agent stages a target that needs no local build.
+
+[Unit]
+Description=care-pi update check
+After=network-online.target care-pi.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{path "Binary"}} update check --scheduled
+TimeoutStartSec=1h

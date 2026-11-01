@@ -18,10 +18,17 @@ import {
   now,
   presetMemory,
 } from "./state.mjs";
+import { agentVersion, maintenanceOf, runningIdentity, updatesSummary } from "./updates.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 const SCHEMA_FILE = path.join(ROOT, "agent/internal/config/schema/config.schema.json");
 const MIB = 1024 * 1024;
+// The jobs of Phase 4 show the maintenance page only in their cutover (state.u.maintenance), not for the whole job.
+const PHASE4_KINDS = ["update-stage", "update-apply", "update-rollback", "os-update", "plug-change"];
+
+function pageOn(state, running) {
+  return Boolean(running && !PHASE4_KINDS.includes(running.kind)) || maintenanceOf(state).active;
+}
 
 function jitter(base, spread) {
   return Math.round(base + (Math.random() - 0.5) * spread);
@@ -63,11 +70,13 @@ export function status(state) {
   const net = network(state);
   const lastId = state.jobOrder[0];
   const running = runningHostJob(state);
+  const maintenance = maintenanceOf(state);
+  const identity = runningIdentity(state);
   const flags = {
     degraded: false,
     address_changed: false,
     clock_wait: false,
-    maintenance: Boolean(running),
+    maintenance: maintenance.active,
     fe_missing: !ready,
     fe_scale_down_left: false,
     low_disk: false,
@@ -90,7 +99,7 @@ export function status(state) {
       {
         name: "care",
         ref: "ghcr.io/ohcnetwork/care:latest",
-        pull: "ghcr.io/ohcnetwork/care@sha256:5e0c3b2a1f9d8e7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c",
+        pull: identity.care,
       },
       {
         name: "postgres",
@@ -98,17 +107,17 @@ export function status(state) {
         pull: "ghcr.io/rithviknishad/care-pi-postgres@sha256:9a8b7c6d5e4f30211a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7081",
       },
     ],
-    care_fe_sha: ready ? "83b007b72cd0e5b1f2a3c4d5e6f708192a3b4c5d" : null,
+    care_fe_sha: ready ? identity.care_fe : null,
     fe_build_id: ready ? "8d2f0c1a9b7e" : null,
     locked_at: ready ? "2026-10-30T10:15:00Z" : null,
     degraded: false,
     problems,
-    mode: running ? ["maintenance"] : [],
+    mode: pageOn(state, running) ? ["maintenance"] : [],
     generated_at: now(),
-    state: !ready ? "setup" : running ? "maintenance" : "ok",
+    state: !ready ? "setup" : pageOn(state, running) ? "maintenance" : "ok",
     flags,
     agent: {
-      version: "v0.2.0-12-g1f2e3d4",
+      version: agentVersion(state),
       commit: "1f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c",
       date: "2026-10-30T08:00:00Z",
       dev_build: state.devBuild,
@@ -169,7 +178,8 @@ export function status(state) {
       : null,
     jobs: { running: running ? summary(running) : null, last: lastId ? summary(state.jobs.get(lastId).job) : null },
     backups: state.claimed ? backupsOverview(state) : null,
-    updates: null,
+    updates: updatesSummary(state),
+    maintenance,
   };
 }
 
@@ -264,6 +274,30 @@ function plan(state, before, after) {
       },
     );
   }
+  if (changed(before.updates, after.updates)) {
+    // The window and the automatic updates are in the timers (docs/solutions.md section 10.2).
+    changes.push(
+      { path: "systemd/care-update-apply.timer", kind: "modify" },
+      { path: "apt/52care-pi.conf", kind: "modify" },
+    );
+    actions.push(
+      {
+        kind: "write-files",
+        text: "write 2 file(s)",
+        units: [],
+        paths: ["systemd/care-update-apply.timer", "apt/52care-pi.conf"],
+        names: [],
+        reason: "updates changed",
+      },
+      { kind: "daemon-reload", text: "daemon-reload", units: [], paths: [], names: [], reason: "timer changed" },
+    );
+  }
+  if (
+    changed(before.solution?.custom, after.solution?.custom) ||
+    changed(before.solution?.track, after.solution?.track)
+  ) {
+    changes.push({ path: "lock.yaml (target)", kind: "modify" });
+  }
   const uniq = [...new Set(restarts)];
   if (uniq.length > 0) {
     actions.unshift({
@@ -287,7 +321,7 @@ function plan(state, before, after) {
     changed: changes.length > 0,
     summary: {
       solution: "care-clinic",
-      track: "stable",
+      track: after.solution?.track ?? "stable",
       preset: after.size?.preset ?? "small-clinic",
       hostnames: [`${after.identity?.hostname ?? "care"}.local`],
       addresses: [ADDRESS],
@@ -437,8 +471,9 @@ export const systemRoutes = [
     handler: ({ res, state }) => {
       const running = runningHostJob(state);
       const step = running?.steps.findLast((s) => s.state === "running");
+      const maintenance = maintenanceOf(state);
       sendJson(res, 200, {
-        site: state.setup.state === "ready" ? (running ? "maintenance" : "care") : "setup",
+        site: state.setup.state === "ready" ? (pageOn(state, running) ? "maintenance" : "care") : "setup",
         setup_state: state.setup.state,
         claim_methods: state.claimMethods,
         display_name: state.file.identity.display_name,
@@ -455,6 +490,7 @@ export const systemRoutes = [
             }
           : null,
         time: now(),
+        maintenance,
       });
     },
   },
@@ -564,7 +600,7 @@ export const systemRoutes = [
       sendJson(res, 200, {
         provider: state.file.fe.provider,
         build_id: ready ? "8d2f0c1a9b7e" : null,
-        care_fe_sha: ready ? "83b007b72cd0e5b1f2a3c4d5e6f708192a3b4c5d" : null,
+        care_fe_sha: ready ? runningIdentity(state).care_fe : null,
         current: ready ? "8d2f0c1a9b7e" : null,
         last_build: ready
           ? { provider: "local", built_at: "2026-10-30T10:19:00Z", duration: "3m12s", url: null, sha256: null }

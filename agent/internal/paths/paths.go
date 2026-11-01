@@ -90,6 +90,22 @@ const (
 	// Flag files in ModeDir. Caddy checks them on each request.
 	ModeClockWait   = "clock-wait"
 	ModeMaintenance = "maintenance"
+
+	// Phase 4 (docs/solutions.md, sections 6.4 and 14).
+	UpdateCache      = "/var/lib/care-pi/state/update-cache"
+	UpdateLockCache  = "/var/lib/care-pi/state/update-cache/locks"
+	UpdateState      = "/var/lib/care-pi/state/updates.json"
+	UpdateHistory    = "/var/lib/care-pi/state/update-history.jsonl"
+	StagingDir       = "/var/lib/care-pi/state/staging"
+	PlugConfigState  = "/var/lib/care-pi/state/plug-config.json"
+	ImagesState      = "/var/lib/care-pi/state/images.json"
+	MaintenanceJSON  = "/var/lib/care-pi/state/mode/maintenance.json"
+	RenderedBuild    = "/etc/care-pi/rendered/build/care"
+	RenderedPlugs    = "/etc/care-pi/rendered/plugs"
+	BuildPlugs       = "/var/lib/care-pi/build/plugs"
+	RebootRequired   = "/run/reboot-required"
+	AptConfCarePi    = "/etc/apt/apt.conf.d/52care-pi.conf"
+	PlugSecretPrefix = "plug-"
 )
 
 // UID and GID of the postgres user in the postgres image.
@@ -176,5 +192,8 @@ func Layout() []Dir {
 		{BackupStateDir, 0o700, 0, 0},
 		{DisksDir, 0o755, 0, 0},
 		{RestoreDir, 0o700, 0, 0},
+		{UpdateCache, 0o700, 0, 0},
+		{UpdateLockCache, 0o700, 0, 0},
+		{StagingDir, 0o700, 0, 0},
 	}
 }

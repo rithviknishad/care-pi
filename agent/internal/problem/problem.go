@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Base is the prefix of each problem type URI.
@@ -61,6 +62,21 @@ const (
 	NoRecoveryKey          = "no-recovery-key"
 	InsufficientSpace      = "insufficient-space"
 	VerifyFailed           = "verify-failed"
+	// Phase 4 (docs/api/README.md, section 14.8).
+	UpdateWindowClosed   = "update-window-closed"
+	NoUpdateAvailable    = "no-update-available"
+	LockNotFound         = "lock-not-found"
+	AgentTooOld          = "agent-too-old"
+	PlugUnknown          = "plug-unknown"
+	PlugSettingsInvalid  = "plug-settings-invalid"
+	BuildRequiredOffline = "build-required-offline"
+	IndexUnavailable     = "index-unavailable"
+	ArtefactInvalid      = "artefact-invalid"
+	RollbackUnavailable  = "rollback-unavailable"
+	CheckpointFailed     = "checkpoint-failed"
+	MigrationFailed      = "migration-failed"
+	RollbackFailed       = "rollback-failed"
+	OSUpdateFailed       = "os-update-failed"
 )
 
 type entry struct {
@@ -112,7 +128,22 @@ var catalogue = map[string]entry{
 	NoDestination:          {409, "No backup destination"},
 	NoRecoveryKey:          {409, "No recovery key"},
 	InsufficientSpace:      {409, "Not enough free disk space"},
-	VerifyFailed:           {500, "The verify found damage"},
+	VerifyFailed:           {500, "The verify failed"},
+
+	UpdateWindowClosed:   {409, "The update window is closed"},
+	NoUpdateAvailable:    {409, "No update is available"},
+	LockNotFound:         {404, "The lock does not exist"},
+	AgentTooOld:          {409, "The agent is too old for this lock"},
+	PlugUnknown:          {404, "The plug is not in the solution"},
+	PlugSettingsInvalid:  {422, "The plug settings are not valid"},
+	BuildRequiredOffline: {409, "The change needs the internet"},
+	IndexUnavailable:     {502, "The index is not available"},
+	ArtefactInvalid:      {502, "A downloaded file is not valid"},
+	RollbackUnavailable:  {409, "No previous lock exists"},
+	CheckpointFailed:     {500, "The checkpoint failed"},
+	MigrationFailed:      {500, "A migration failed"},
+	RollbackFailed:       {500, "The rollback failed"},
+	OSUpdateFailed:       {500, "The OS update failed"},
 }
 
 // Known reports whether slug is in the catalogue.
@@ -150,6 +181,11 @@ type Problem struct {
 	HostKey       *HostKey
 	Window        *Window
 	Space         *Space
+	// Phase 4 extension members (docs/api/README.md, section 14.8).
+	MinAgentVersion string
+	NextWindowAt    *time.Time
+	// PitrOffer is the PITR offer (schema PitrOffer) of a failed update, rollback, or plug change.
+	PitrOffer any
 }
 
 // HostKey is the host key that an SFTP server presents (schema HostKey).
@@ -294,6 +330,9 @@ type wire struct {
 	HostKey      *HostKey        `json:"host_key,omitempty"`
 	Window       *Window         `json:"restore_window,omitempty"`
 	Space        *Space          `json:"space,omitempty"`
+	MinAgent     string          `json:"min_agent_version,omitempty"`
+	NextWindowAt *time.Time      `json:"next_window_at,omitempty"`
+	PitrOffer    json.RawMessage `json:"pitr_offer,omitempty"`
 }
 
 // MarshalJSON writes the RFC 9457 form.
@@ -302,7 +341,16 @@ func (p *Problem) MarshalJSON() ([]byte, error) {
 		Type: p.Type(), Title: p.Title, Status: p.Status, Detail: p.Detail, Instance: p.Instance,
 		Errors: p.Errors, RetryAfter: p.RetryAfter, MissingSteps: p.MissingSteps,
 		FailedChecks: p.FailedChecks, Phase: p.Phase, DestID: p.DestinationID, HostKey: p.HostKey,
-		Window: p.Window, Space: p.Space,
+		Window: p.Window, Space: p.Space, MinAgent: p.MinAgentVersion, NextWindowAt: p.NextWindowAt,
+	}
+	if p.PitrOffer != nil {
+		raw, err := json.Marshal(p.PitrOffer)
+		if err != nil {
+			return nil, err
+		}
+		if string(raw) != "null" {
+			w.PitrOffer = raw
+		}
 	}
 	if w.Instance == "" {
 		w.Instance = "/"
@@ -327,7 +375,13 @@ func (p *Problem) UnmarshalJSON(b []byte) error {
 		Slug: strings.TrimPrefix(w.Type, Base), Status: w.Status, Title: w.Title, Detail: w.Detail,
 		Instance: w.Instance, Errors: w.Errors, RetryAfter: w.RetryAfter, MissingSteps: w.MissingSteps,
 		FailedChecks: w.FailedChecks, Phase: w.Phase, DestinationID: w.DestID, HostKey: w.HostKey,
-		Window: w.Window, Space: w.Space,
+		Window: w.Window, Space: w.Space, MinAgentVersion: w.MinAgent, NextWindowAt: w.NextWindowAt,
+	}
+	if len(w.PitrOffer) > 0 {
+		var v any
+		if json.Unmarshal(w.PitrOffer, &v) == nil {
+			p.PitrOffer = v
+		}
 	}
 	if len(w.JobID) > 0 {
 		p.HasJobID = true

@@ -36,7 +36,38 @@ const TYPES = {
   "not-implemented-in-this-version": [501, "This version does not have the feature"],
   "care-not-running": [503, "Care does not run"],
   unavailable: [503, "The agent is not ready"],
+  // Phase 3 (docs/api/README.md section 13.13).
+  "destination-unreachable": [422, "The backup destination does not answer"],
+  "destination-untrusted-hostkey": [422, "The SFTP host key is not trusted"],
+  "recovery-key-mismatch": [422, "The recovery key does not match"],
+  "restore-window-exceeded": [422, "The time is outside the restore window"],
+  "disk-in-use": [409, "The disk is in use"],
+  "no-destination": [409, "No backup destination"],
+  "no-recovery-key": [409, "No recovery key"],
+  "insufficient-space": [409, "Not enough free disk space"],
+  "verify-failed": [500, "The verify failed"],
+  // Phase 4 (docs/api/README.md section 14.8).
+  "update-window-closed": [409, "The update window is closed"],
+  "no-update-available": [409, "No update is available"],
+  "lock-not-found": [404, "The lock does not exist"],
+  "agent-too-old": [409, "The agent is too old for this lock"],
+  "plug-unknown": [404, "The plug is not in the solution"],
+  "plug-settings-invalid": [422, "The plug settings are not valid"],
+  "build-required-offline": [409, "The change needs the internet"],
+  "index-unavailable": [502, "The index is not available"],
+  "artefact-invalid": [502, "A downloaded file is not valid"],
+  "rollback-unavailable": [409, "No previous lock exists"],
+  "checkpoint-failed": [500, "The checkpoint failed"],
+  "migration-failed": [500, "A migration failed"],
+  "rollback-failed": [500, "The rollback failed"],
+  "os-update-failed": [500, "The OS update failed"],
 };
+
+// A problem object (for the error of a job).
+export function problemOf(slug, detail, instance, extra = {}) {
+  const [status, title] = TYPES[slug] ?? [500, "Internal error"];
+  return { type: PROBLEM_BASE + slug, title, status, detail, instance, ...extra };
+}
 
 export class Problem extends Error {
   constructor(slug, detail, extra = {}) {
@@ -60,6 +91,11 @@ export function sendProblem(res, req, slug, detail, extra = {}) {
   const headers = { "Content-Type": "application/problem+json", "Cache-Control": "no-store" };
   if (extra.retry_after_s) headers["Retry-After"] = String(extra.retry_after_s);
   res.writeHead(status, headers);
+  res.end(JSON.stringify(body));
+}
+
+export function sendSchema(res, body) {
+  res.writeHead(200, { "Content-Type": "application/schema+json", "Cache-Control": "no-store" });
   res.end(JSON.stringify(body));
 }
 

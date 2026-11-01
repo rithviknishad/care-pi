@@ -58,7 +58,10 @@ The mock (`mock/`) is a small Node HTTP server. It implements the contract for t
   through `PATCH /config` and the secrets, the destination test with the SFTP host key (TOFU) and the key of the device, the
   disks and their prepare, the health and the banners, the restore points, and the jobs `backup-run`, `backup-verify`,
   `restore-drill`, `disk-prepare`, `recovery-key-rotate`, `restore-pitr`, `restore-files`, and `restore-dr` with their steps;
-- logs with SSE follow, `If-Match` on `/config`, and `501` for each operation with `x-phase` greater than 3.
+- logs with SSE follow, `If-Match` on `/config`, and `501` for each operation of Phase 6 and 7;
+- Phase 4 (`mock/lib/updates.mjs`): the update machine (check, stage, apply with the cutover steps and the maintenance
+  flag of `GET /status` and `GET /_care-pi/status`, rollback with the PITR offer), the window, the history, OS updates,
+  the plugs (plan preview, `If-Match`, the settings with their checks, the `plug-change` job), and the solutions.
 
 It sends each other operation to Prism when Prism runs (`npm run mock`).
 
@@ -105,7 +108,27 @@ curl -X POST http://127.0.0.1:4011/__mock/reset -d '{"scenario":"ready","step_ms
 
 The console password of the scenarios `setup`, `review`, and `ready` is `correct horse battery staple`.
 Other reset options: `fail_step` (the action key of a step that fails one time, for example `ensure-stanza` or `fetch-db-repo`),
-`ram_gib`, `disk`, `dev_build`, and `force_reauth` (the next operation with a recent authentication asks for the password). The setup job of the mock has the steps of the agent on lumine (wave 4d).
+`ram_gib`, `disk`, `dev_build`, `force_reauth` (the next operation with a recent authentication asks for the password), and
+`stale_auth` (the login is 10 minutes old, so each operation with `x-reauth` asks for the password). The setup job of the mock
+has the steps of the agent on lumine (wave 4d).
+
+The Phase 4 options (also `MOCK_UPDATES=<updates>` for `npm run mock:state`):
+
+| Option        | Values                                                                           | What it gives                                                                                                                                                                                                                                                                                                                         |
+| ------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `updates`     | `idle` (default), `available`, `staged`, `updated`, `agent-too-old`, `withdrawn` | `idle`: the device runs 2026.11.0 and a check finds 2026.11.1. `available`: the check is done. `staged`: 2026.11.1 is downloaded. `updated`: the device runs 2026.11.1, and a rollback to 2026.11.0 offers the PITR. `agent-too-old`: 2026.11.1 needs agent v0.5.0 (the agent is v0.4.1). `withdrawn`: the running lock is withdrawn. |
+| `window_open` | `false` (default), `true`, `"real"`                                              | The update window: closed (`POST /updates/apply` without `now` gives `409 update-window-closed`), open, or computed from the clock (Sun 02:00 to 05:00, Asia/Kolkata).                                                                                                                                                                |
+| `update_fail` | `checkpoint`, `migrate`, `verify`, `rollback`                                    | The next update fails at this step and rolls back (`migration-failed` and the others, with `pitr_offer`). `rollback`: the rollback fails too; the maintenance page stays (`state: failed`).                                                                                                                                           |
+| `phase4`      | `true` (default), `false`                                                        | `false`: each Phase 4 operation answers `501`, as an agent of Phase 2 or 3.                                                                                                                                                                                                                                                           |
+| `no_plugs`    | `true`                                                                           | A solution without plugs (the empty state of the Plugs page).                                                                                                                                                                                                                                                                         |
+
+```sh
+curl -X POST http://127.0.0.1:4011/__mock/reset -d '{"scenario":"ready","updates":"staged","window_open":true,"step_ms":400}'
+```
+
+The plugs are the plugs of `solutions/care-clinic/solution.yaml` and one external FE plug of the mock
+(`care_token_display_fe`: a number with limits, a string with a pattern, and 2 advanced settings).
+The cutover steps take longer (`migrate` 8 times `step_ms`), so the maintenance banner stays in view.
 
 ## 4. Work with the Go dev server
 
@@ -135,21 +158,21 @@ and build the agent again to change that copy.
 
 ## 5. Layout of the source
 
-| Path                     | Content                                                                                                                                                                                   |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `src/api/`               | The typed API client (`client.ts`), the problem types (`problem.ts`), the queries (`queries.ts`), and the generated types (`types.gen.ts`).                                               |
-| `src/app/`               | The router, the session guards, and the shell (top bar, navigation, theme toggle).                                                                                                        |
-| `src/features/<page>/`   | 1 directory for each page: claim, login, setup, dashboard, certificate, logs, settings, security, support, backups (Backups and Restore), and the pages of later phases (`unavailable/`). |
-| `src/components/ui/`     | careui components. Do not edit these files (section 6).                                                                                                                                   |
-| `src/components/app/`    | Console components that use careui components.                                                                                                                                            |
-| `src/lib/strings.ts`     | Each text of the console, in ASD-STE100 Simplified Technical English.                                                                                                                     |
-| `src/styles/careui.css`  | The careui design tokens. Do not edit this file.                                                                                                                                          |
-| `src/styles/console.css` | The few rules that the console adds.                                                                                                                                                      |
-| `public/`                | `favicon.svg` and `theme.js` (the theme before the first paint).                                                                                                                          |
-| `mock/`                  | The stateful mock of the agent.                                                                                                                                                           |
-| `tests/`                 | Unit tests.                                                                                                                                                                               |
-| `e2e/`                   | Playwright tests: desktop (Chromium, 1280 px), iPhone 13 (WebKit, 390 px), and 360 px (Chromium).                                                                                         |
-| `scripts/`               | `api-types.mjs`, `careui-add.mjs`, `clean-dist.mjs`.                                                                                                                                      |
+| Path                     | Content                                                                                                                                                                                                                  |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/api/`               | The typed API client (`client.ts`), the problem types (`problem.ts`), the queries (`queries.ts`), and the generated types (`types.gen.ts`).                                                                              |
+| `src/app/`               | The router, the session guards, and the shell (top bar, navigation, theme toggle).                                                                                                                                       |
+| `src/features/<page>/`   | 1 directory for each page: claim, login, setup, dashboard, certificate, logs, settings, security, support, backups (Backups and Restore), updates, plugs, and the not-available state of a later phase (`unavailable/`). |
+| `src/components/ui/`     | careui components. Do not edit these files (section 6).                                                                                                                                                                  |
+| `src/components/app/`    | Console components that use careui components.                                                                                                                                                                           |
+| `src/lib/strings.ts`     | Each text of the console, in ASD-STE100 Simplified Technical English.                                                                                                                                                    |
+| `src/styles/careui.css`  | The careui design tokens. Do not edit this file.                                                                                                                                                                         |
+| `src/styles/console.css` | The few rules that the console adds.                                                                                                                                                                                     |
+| `public/`                | `favicon.svg` and `theme.js` (the theme before the first paint).                                                                                                                                                         |
+| `mock/`                  | The stateful mock of the agent.                                                                                                                                                                                          |
+| `tests/`                 | Unit tests.                                                                                                                                                                                                              |
+| `e2e/`                   | Playwright tests: desktop (Chromium, 1280 px), iPhone 13 (WebKit, 390 px), and 360 px (Chromium).                                                                                                                        |
+| `scripts/`               | `api-types.mjs`, `careui-add.mjs`, `clean-dist.mjs`.                                                                                                                                                                     |
 
 ## 6. Add a careui component
 
@@ -167,19 +190,22 @@ The build has no request to the registry: the source is in the repository.
 ## 7. The e2e tests
 
 `npm run test:e2e` builds the console and starts 2 servers: the mock (port 4711) and `vite preview` (port 4773).
+`E2E_MOCK_PORT` and `E2E_PREVIEW_PORT` change the ports (for example when another worktree runs its tests).
 The tests run one after the other, because each test resets the mock.
 
-| File                          | What it checks                                                                                        |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `e2e/setup.spec.ts`           | Claim, recovery codes, each step of the easy path, finish, SSE progress, hand-off, dashboard.         |
-| `e2e/login-dashboard.spec.ts` | Login with a deep link, the dashboard, layout stability (CLS and card boxes), theme, logout, lockout. |
-| `e2e/logs.spec.ts`            | Follow over SSE, the sticky bottom, pause, and resume.                                                |
-| `e2e/certificate.spec.ts`     | The public certificate page: fingerprint, OS detection, tabs, downloads, QR code.                     |
-| `e2e/settings.spec.ts`        | A config change with `If-Match`, the plan preview, the apply job, and a `501` page.                   |
-| `e2e/backups-setup.spec.ts`   | The step backups: the key ceremony, SFTP with the host key (TOFU), a USB disk with the typed label.   |
-| `e2e/backups.spec.ts`         | The Backups page, its jobs, the banners (also on the dashboard), add S3, confirm a key, the layout.   |
-| `e2e/restore.spec.ts`         | A point in time with the password check and its undo, files into a side directory.                    |
-| `e2e/restore-dr.spec.ts`      | "Restore from backup" on a new device: key, destination, inspect, job, login as the old device.       |
+| File                          | What it checks                                                                                                                                                                                      |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `e2e/setup.spec.ts`           | Claim, recovery codes, each step of the easy path, finish, SSE progress, hand-off, dashboard.                                                                                                       |
+| `e2e/login-dashboard.spec.ts` | Login with a deep link, the dashboard, layout stability (CLS and card boxes), theme, logout, lockout.                                                                                               |
+| `e2e/logs.spec.ts`            | Follow over SSE, the sticky bottom, pause, and resume.                                                                                                                                              |
+| `e2e/certificate.spec.ts`     | The public certificate page: fingerprint, OS detection, tabs, downloads, QR code.                                                                                                                   |
+| `e2e/settings.spec.ts`        | A config change with `If-Match`, the plan preview, and the apply job.                                                                                                                               |
+| `e2e/backups-setup.spec.ts`   | The step backups: the key ceremony, SFTP with the host key (TOFU), a USB disk with the typed label.                                                                                                 |
+| `e2e/backups.spec.ts`         | The Backups page, its jobs, the banners (also on the dashboard), add S3, confirm a key, the layout.                                                                                                 |
+| `e2e/restore.spec.ts`         | A point in time with the password check and its undo, files into a side directory.                                                                                                                  |
+| `e2e/restore-dr.spec.ts`      | "Restore from backup" on a new device: key, destination, inspect, job, login as the old device.                                                                                                     |
+| `e2e/updates.spec.ts`         | Check, download, install (window closed: "Install anyway"), the maintenance banner, the history, rollback and the PITR offer, a failed update, `agent-too-old`, the window editor, pin, the layout. |
+| `e2e/plugs.spec.ts`           | A plug on with the plan preview and the job, the settings form with the errors of the agent, a cutover with the banner, the external bundle, the automatic plug, no plugs.                          |
 
 Each test also checks that each request of the page goes to the origin of the console.
 

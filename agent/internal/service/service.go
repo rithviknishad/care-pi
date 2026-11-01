@@ -30,6 +30,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/s3admin"
 	"github.com/rithviknishad/care-pi/agent/internal/setup"
 	"github.com/rithviknishad/care-pi/agent/internal/status"
+	"github.com/rithviknishad/care-pi/agent/internal/update"
 )
 
 // Service holds the dependencies of each operation.
@@ -61,6 +62,8 @@ type Service struct {
 	AfterPower func(delay time.Duration, fn func())
 	// BackupTester replaces the destination test (tests). nil: the real SSH and S3 clients.
 	BackupTester *backup.Tester
+	// UpdateHook changes the update machine of each call (Phase 4). Tests set the verifier and the checkpoint.
+	UpdateHook func(*update.Updater)
 
 	mu           sync.Mutex
 	carePassword string
@@ -165,9 +168,6 @@ func unsupported(cfg *config.Config, base string) *problem.Problem {
 		items = append(items, item{tls + "/local_ca/enabled", "this version serves only the local CA mode; another mode comes in Phase 6", 6})
 	}
 	if base == "" {
-		if cfg.Solution.Track == "pinned" {
-			items = append(items, item{"/solution/track", "the track pinned comes in Phase 4", 4})
-		}
 		if cfg.Clock.Policy == "rtc" {
 			items = append(items, item{"/clock/policy", "the clock policy rtc comes in Phase 7 (spike SP9)", 7})
 		}
@@ -341,10 +341,24 @@ func (s *Service) applyOptions(o apply.Options) apply.Options {
 	if s.Now != nil {
 		o.Now = s.Now
 	}
+	// Phase 4: the plan action cutover takes the checkpoint of Phase 3 (docs/api/README.md section 13.11).
+	if o.Checkpoint == nil {
+		o.Checkpoint = s.Checkpoint
+	}
 	if s.ApplyHook != nil {
 		s.ApplyHook(&o)
 	}
 	return o
+}
+
+// Checkpoint takes the checkpoint of Phase 3 (docs/api/README.md section 13.11) for the plan action cutover of an
+// apply (apply.Options.Checkpoint). jobID labels it; "" gives the label apply-<time> and no job in RestorePoints.
+func (s *Service) Checkpoint(ctx context.Context, jobID string) error {
+	if jobID == "" {
+		jobID = "apply-" + s.now().Format("20060102T150405Z")
+	}
+	_, err := s.Updater().Checkpointer(jobID).Checkpoint(ctx)
+	return err
 }
 
 func strPtr(s string) *string {

@@ -1,6 +1,7 @@
 import { expect, test as base, type Page, type TestInfo } from "@playwright/test";
 
-export const MOCK_URL = "http://127.0.0.1:4711";
+// playwright.config.ts sets E2E_MOCK_URL from E2E_MOCK_PORT (default 4711).
+export const MOCK_URL = process.env.E2E_MOCK_URL ?? "http://127.0.0.1:4711";
 export const READY_PASSWORD = "correct horse battery staple";
 export const CLAIM_CODE = "4F7K-Q2MX-9PDA";
 

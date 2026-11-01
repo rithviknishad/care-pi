@@ -111,6 +111,8 @@ interface JobProgressProps {
   title?: string;
   intro?: string;
   onDone?: (job: Job) => void;
+  // Called when a step starts or ends (for example to read the maintenance state again).
+  onStepChange?: () => void;
   children?: React.ReactNode;
 }
 
@@ -119,7 +121,7 @@ export function JobProgress(props: JobProgressProps) {
   return <JobProgressView key={props.jobId} {...props} />;
 }
 
-function JobProgressView({ jobId, initial = null, title, intro, onDone, children }: JobProgressProps) {
+function JobProgressView({ jobId, initial = null, title, intro, onDone, onStepChange, children }: JobProgressProps) {
   const { view, state, problem } = useJobStream(jobId, initial);
   const [showLogs, setShowLogs] = useState(false);
   const job = view.job;
@@ -127,6 +129,16 @@ function JobProgressView({ jobId, initial = null, title, intro, onDone, children
   const total = useElapsed(jobStartedAt(view), view.done ? job?.finished_at : null, !view.done);
   const doneRef = useRef(false);
   const logBox = useRef<HTMLDivElement>(null);
+  const stepChange = useRef(onStepChange);
+  const stepKey = view.steps.map((s) => `${s.index}:${s.state}`).join(",");
+
+  useEffect(() => {
+    stepChange.current = onStepChange;
+  });
+
+  useEffect(() => {
+    if (stepKey) stepChange.current?.();
+  }, [stepKey]);
 
   useEffect(() => {
     if (view.done && job && !doneRef.current) {

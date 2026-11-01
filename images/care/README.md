@@ -10,9 +10,13 @@ Image name: `ghcr.io/rithviknishad/care-pi/care`
 | Build argument | Required | Meaning |
 |---|---|---|
 | `BASE` | yes (CI and the agent always set it) | The upstream image. Use a digest reference, for example `ghcr.io/ohcnetwork/care@sha256:...`. The default is `ghcr.io/ohcnetwork/care:latest`. |
-| `ADDITIONAL_PLUGS` | no | A JSON list of backend plugs. The default is `[]`. An empty list installs nothing. |
+| `INSTALL_PLUGS` | no | A JSON list of the backend plugs to install. When it is empty, the build reads `install-plugs.json` of the build context (the committed file is `[]`). CI installs each backend plug of the solution, on or off (the superset rule, `docs/solutions.md` section 1.5). |
+| `ADDITIONAL_PLUGS` | no | A JSON list of the plugs that are on by default: the `ENV` of the image. The default is `[]`. The device always sets `ADDITIONAL_PLUGS` at run time (the podman secret `care-additional-plugs`). |
 
-Each entry of `ADDITIONAL_PLUGS` has the fields of the upstream `Plug` class (`plugs/plug.py`):
+The agent renders this Containerfile and `install-plugs.json` for a local build (`/etc/care-pi/rendered/build/care/`,
+`docs/solutions.md` section 13.1); `images/care/embed.go` embeds the file.
+
+Each entry of `INSTALL_PLUGS` and `ADDITIONAL_PLUGS` has the fields of the upstream `Plug` class (`plugs/plug.py`):
 
 ```json
 [
@@ -34,7 +38,7 @@ Each entry of `ADDITIONAL_PLUGS` has the fields of the upstream `Plug` class (`p
 
 1. The builder stage starts from `BASE` and switches to `root`.
    It installs `build-essential`, `libpq-dev`, `libffi-dev`, and `git`.
-   It runs `python install_plugins.py`.
+   It runs `python install_plugins.py` with `ADDITIONAL_PLUGS` set to `INSTALL_PLUGS` (or `install-plugs.json`).
    The script reads `ADDITIONAL_PLUGS` and runs `pip install` into `/app/.venv`.
 2. The runtime stage starts from `BASE`.
    It copies `/app/.venv` from the builder with `--chown=django:django`.

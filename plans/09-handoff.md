@@ -471,3 +471,73 @@ start, a USB disk that is not connected, the local CA of Caddy in the snapshots 
 backup, the CLI that exited before the end of its job). Detail, timings, and memory: `08-spike-log.md`, "Phase 3 exit test".
 Follow-ups there: the Phase 3 console on the device, a real USB disk, an internet S3 provider, DR on a second Pi, the
 checkpoint of two restores in one day, the drill `max_connections` from the model.
+
+### 8h. Phase 4 wave 6a: solutions, locks, plugs, updates — server side and CI (2026-10-31)
+
+Code complete on the branch `phase-4-solutions`; not run on a Pi. The spec is `docs/solutions.md` (section 17 has the
+status of each part); the contract is `docs/api/openapi.yaml` 0.5.0 and `docs/api/README.md` §14.
+
+What exists:
+
+- **CI.** `solution-lock.yml` (dispatch: resolve, the solution image with each backend plug, the default FE bundle
+  through `fe-bundle.yml`, each FE plug bundle through `plug-bundle.yml`, the lock, the release `lock-<s>-<v>`, the job
+  summary), `solution-index.yml` (`index.json` from each lock release and `withdrawn.yaml` into the release `index`),
+  `plug-bundle.yml`. No pull request and no push: the owner commits each lock to `solutions/<s>/locks/`.
+  `solutions/scripts/make-lock.sh` (`make lock-local`) makes the same lock on a dev machine. Not run on GitHub yet.
+- **Agent.** Lock version 2 with the migration from version 1 (`internal/lock`); solution locks, `index.json`, schemas,
+  settings schemas (`internal/solution`); the window (`internal/window`); the update machine (`internal/update`):
+  index client, tracks `stable`/`pinned`/`custom`, jobs `update-check`/`-stage`/`-apply`/`-rollback` with the cutover,
+  automatic rollback, PITR offer, recovery after an interruption, OS updates, plug changes, image retention;
+  `plug_config` rows through `manage.py shell` (`internal/plugcfg`); plan actions `cutover` and `plug-config`; the
+  podman secret `care-additional-plugs`; the timers `care-update-{check,apply}`; the local backend build
+  (`care-build-<solution>.build`, 768M); the local FE plug build (experimental). Each §14 route; CLI `update`,
+  `plugs`, `solution`.
+- **Tests.** Fake host end-to-end of N → N+1 → rollback, migration failure → automatic rollback with the offer,
+  checkpoint failure, withdrawn lock, `agent-too-old`, bad hash, HTTPS index, OS update commands, plug plans and the
+  restart path, the window run, recovery; DST table tests; lock migration; contract tests of each §14 operation;
+  goldens (`custom-build` is new); quadlet `-dryrun` (podman 5.4.2) of the `.build` and the plug builder.
+
+Decisions (owner informed; details in `docs/solutions.md` section 17):
+
+- The checkpoint is the interface `update.Checkpointer` with the stub `update.PGBackRestStub` (incremental backup,
+  restore point, `pgbackrest check`, stanza `main`). At the merge with Phase 3, set `Updater.NewCheckpointer` to the
+  backup package in `service.Updater()`.
+- apt runs in the transient unit `care-pi-apt`; the sandbox of `care-pi.service` does not change.
+- The `.build` quadlet uses `PodmanArgs=--build-arg=…` (podman 5.4 has no `BuildArg=`).
+- The default index URL is the release asset `index/index.json` of this repository: HTTP 404 while it is private
+  (open point 1 of `docs/solutions.md`). Tests use `updates.index_url: file:///…`.
+- `prune-images` keeps the images of the current lock and of `history.previous`.
+- Migrate limit 20 min. An interrupted cutover after `activate` rolls back (no resume after `migrate`).
+
+Merge notes for Phase 3: the shared files got only additions (`paths`, `config`, `render.Model`, `plan` kinds, server
+routes, `jobs` kinds, `problem` slugs). `service.applyOptions` sets `apply.Options.Checkpoint`. The problem members
+`pitr_offer`, `next_window_at`, and `min_agent_version` are in `internal/problem`.
+
+Next step: the Phase 4 exit test on lumine after the merge: `08-spike-log.md`, "Phase 4 exit test — plan".
+It needs a superset solution image (dispatch `solution-image.yml` on the merge branch) and the test image
+`images/care-test/Containerfile.broken-migrate` (pushed to a test tag).
+
+### 8i. Merge of Phases 3 and 4 (2026-11-01)
+
+`main` (Phase 3, `3cc2277`) and `phase-4-solutions` came from the same base (`2e706b3`); the merge kept both sides of each
+shared list, table, switch, and section (Phase 3 first). The semantic changes beyond the conflicts:
+
+- **The checkpoint.** `update.BackupCheckpointer` is the checkpoint of Phase 3 (`docs/api/README.md` section 13.11):
+  `backup.Ops.LocalBackup(incr)` under the local backup lock, recorded in `RestorePoints.checkpoints` with the job and its
+  kind (`update-apply`, `update-rollback`, `plug-change`, or `apply` for the plan action `cutover`). `service.Updater` sets
+  `update.NewCheckpointer` to it; `apply.Options.Checkpoint` (now with the job id) is `service.Checkpoint`, also for
+  `care-pi apply`. `PGBackRestStub` is gone; tests keep their fake checkpointers. The PITR target of an update is just
+  after the end of that backup (at least 1 s after its `undo_point`); `pitr_offer.restore` is a `RestorePitrRequest`
+  (`{kind: pitr, time}`), and `restore_point` is `null` (no named restore point).
+- **The restore link.** The PITR offer card links to the Restore page of Phase 3 (`/restore?time=…`); the page opens
+  "Undo a mistake" with that time and a note (`docs/console-ui.md` sections 10.4 and 11.4). The fallback page of Phase 4
+  (`src/features/restore/`) and the `501` probe of the console are gone.
+- **The contract is v0.6.0.** `JobKind` has the kinds of both phases (the reserved `backup`, `verify`, `restore`, `update`,
+  and `rollback` are gone). The update checkpoint schema is `UpdateCheckpoint` (Phase 3 owns `Checkpoint`). The problem
+  `verify-failed` has one title for both phases ("The verify failed"). `docs/console-ui.md` section 10 is Phase 3; the
+  Phase 4 section is 11. The step `checkpoint` reads "Make a backup point of the database"; in `restore-pitr` it keeps
+  "Record an undo point" (`strings.steps.byKind`, which now also wins over the text while a step runs).
+- Goldens: each `maintenance.html` has the Phase 3 step sentences (`render.MaintenanceSteps`); `backups` has the Phase 4
+  files (lock v2, `care-additional-plugs`, the update timers); `custom-build` has the Phase 3 backup units.
+
+Next step: unchanged — the Phase 4 exit test on lumine (`08-spike-log.md`, "Phase 4 exit test — plan"), now on the merged binary.

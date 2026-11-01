@@ -175,6 +175,19 @@
         }
       ]
     },
+    "item": {
+      "source": "https://careui.ohc.network/registry/care-ui/item/item.json",
+      "dependencies": [
+        "@base-ui/react",
+        "class-variance-authority"
+      ],
+      "files": [
+        {
+          "path": "src/components/ui/item.tsx",
+          "sha256": "5fca21e34c2739faa62e7da14079b87b3433ad2dada3f7dc39cad59637c571bc"
+        }
+      ]
+    },
     "kbd": {
       "source": "https://careui.ohc.network/registry/care-ui/kbd/kbd.json",
       "dependencies": [

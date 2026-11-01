@@ -1,0 +1,10 @@
+[
+  {
+    "name": "care_filly",
+    "package_name": "git+https://github.com/ohcnetwork/care_filly.git",
+    "version": "@0123456789abcdef0123456789abcdef01234567",
+    "configs": {
+      "MEDISPEAK_BASE_URL": ""
+    }
+  }
+]

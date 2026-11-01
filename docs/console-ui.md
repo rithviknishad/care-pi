@@ -20,15 +20,17 @@ It has these pages:
 | `/setup/restore` | "Restore from backup": a new or replaced device from the recovery key and 1 destination (section 10.5) | yes, state `claimed` or `setup` |
 | `/dashboard` | `GET /status` each 10 s, with the backup banner row (section 10.6) | yes, state `ready` |
 | `/backups` | `GET /backups` and `GET /backups/health` each 30 s: the local backups, the destinations, the recovery key, the schedule, verify and the drill (section 10.3) | yes, state `ready` |
-| `/restore` | `GET /restore/points`: undo a mistake (point in time), files only, new device (section 10.4) | yes, state `ready` |
+| `/restore` | `GET /restore/points`: undo a mistake (point in time), files only, new device (section 10.4). `/restore?time=<RFC 3339 time>` (the PITR offer of an update, section 11.4) opens "Undo a mistake" with that time | yes, state `ready` |
 | `/logs` | The journal of a unit, Follow over SSE | yes |
-| `/settings` | Identity, size, environment, backups (`PUT /config`), FE build, power | yes, state `ready` |
+| `/settings` | Identity, size, environment, backups (`PUT /config`), FE build, solution (the custom refs, section 11.3), power | yes, state `ready` |
 | `/security` | Password, recovery codes, TOTP, sessions | yes |
 | `/support` | Support bundle, versions | yes |
-| `/updates`, `/plugs` | Features of later phases: "Not available in this version" | yes, state `ready` |
+| `/updates` | Phase 4: the running version, the new version, check, download, install, the track, the window, rollback, OS updates, the history (section 11) | yes, state `ready` |
+| `/plugs` | Phase 4: the solution and its plugs: on or off with a plan preview, the settings form of each plug (section 11) | yes, state `ready` |
 
 Phase 2 exit (`plans/06-roadmap.md`): a non-technical tester completes setup from a phone and a laptop.
-Each decision below serves this goal.
+Phase 4 exit: the console shows a visible maintenance flow, and a plug switch in the console gives a working Care.
+Each decision below serves these goals.
 
 ## 2. Design decisions
 
@@ -71,6 +73,12 @@ Each decision below serves this goal.
     the unit in the error (`care-<unit>`, else the agent). The raw error is in a collapsed "Technical details" block.
 18. **The hardware step shows the problems first.** The failed checks come first. The passed checks are one
     collapsed row ("All 43 checks passed"), and in it the directory checks are one row ("Directories: 24 OK").
+19. **Each change shows its effect before it runs (Phase 4).** An update says that Care stops and for how long; a plug
+    switch shows the plan (`PUT /plugs/{id}?dry_run=true`) before the apply. Section 11.
+20. **The maintenance state is always in view (Phase 4).** The top bar has a slot for the banner
+    "Maintenance in progress: <step>". The slot is always there, so the banner moves nothing (section 11.6).
+21. **Times of the update window are in the time zone of the device**, not of the browser (`UpdateWindowState.timezone`).
+    The Updates page shows each time in that zone and names the zone with its offset (section 11.2).
 
 ## 3. careui
 
@@ -87,10 +95,10 @@ careui (`https://careui.ohc.network`) is the component registry of Care. It uses
 - careui components import `clsx` and `tailwind-merge`. `vite.config.ts` points both names to the package `cn`,
   which does the same work with a smaller build.
 
-The items in the lock (35): alert, alert-dialog, badge, button, card, checkbox, collapsible, dialog, dropdown-menu,
-empty, field, input, input-group, input-otp, kbd, label, native-select, progress, radio-group, scroll-area, separator,
+The items in the lock (36): alert, alert-dialog, badge, button, card, checkbox, collapsible, dialog, dropdown-menu,
+empty, field, input, input-group, input-otp, item, kbd, label, native-select, progress, radio-group, scroll-area, separator,
 sheet, skeleton, slider, sonner, spinner, switch, table, tabs, textarea, toggle, toggle-group, tooltip, use-auto-space,
-use-mobile. Phase 3 added `slider` (the time of a restore).
+use-mobile. Phase 3 added `slider` (the time of a restore). Wave 6b added `item` (the rows of the update history).
 
 ### 3.1 Add a component
 
@@ -154,6 +162,18 @@ The e2e test `e2e/login-dashboard.spec.ts` checks rules 1 to 3 in 2 ways:
 - In Chromium, it adds the `layout-shift` entries of a `PerformanceObserver` over the load and 1 refresh.
   The sum (CLS) must be less than 0.01. The last run gave 0.0000 at 1280 px and 360 px.
 
+`e2e/updates.spec.ts` checks the same for the Updates page: it holds `GET /updates`, `/updates/history`, `/updates/os`,
+`/status`, and `/solutions/{name}`, records the 7 cards, releases, and compares (1280 px, 390 px, 360 px; CLS 0.0000).
+The rules that make it pass:
+
+- Each card has fixed rows (`DataList`), and a row that can wrap on a phone reserves its lines (the summary of the new
+  version: 3 lines below 640 px).
+- A line that only some states have keeps its place: the release notes link, the PITR note of the rollback card,
+  the note about daylight saving time. The action of a card header (a badge) has a skeleton of the same size.
+- The history list reserves 3 rows. More rows make it taller; it is the last card of the page.
+- The copy button of a digest (`ShortId`) is 24 px with a negative margin, so a row keeps its height.
+- The job card and the PITR offer card show only after an action of the operator, below the cards that the operator used.
+
 ## 6. API usage
 
 | Topic | Rule |
@@ -169,6 +189,11 @@ The e2e test `e2e/login-dashboard.spec.ts` checks rules 1 to 3 in 2 ways:
 | Backups | `GET /backups` and `GET /backups/health` each 30 s on the Backups page. The dashboard reads `Status.backups` (the same object): no second request. A job of the page (`POST /backups/run`, `/verify`, `/drill`, `/restore`, `/backups/disks/{id}/prepare`, `/backups/recovery-key/rotate`) shows in a dialog or in its panel, and its end reads the backup queries again. |
 | Destinations | `PATCH /config` (`application/merge-patch+json`) with `If-Match` and the full list `backups.destinations` (RFC 7396 replaces an array): first `dry_run=true` (the plan), then `apply=true`. An S3 destination: `PATCH` without apply, `PUT /backups/destinations/{id}/secrets`, then `POST /apply`. The keys are never in `config.yaml`. |
 | Reauthentication of a read | `GET /backups/recovery-key` and `GET /backups/recovery-key/download` can also give `403 reauth-required`: the same password dialog, then the console reads again. |
+| Updates (Phase 4) | `GET /updates` gives the whole Updates page; the page reads it each 30 s and at each step of its job. `GET /updates/history` (pages with `before`), `GET /updates/os`. Check, stage, apply: `POST` without reauthentication; rollback, OS install, OS reboot: `x-reauth` (the password dialog). |
+| Track (Phase 4) | `PATCH /config` (`application/merge-patch+json`) with `solution.track` and `solution.pin` and `If-Match`, then `POST /updates/check`. The custom refs use `PUT /config` with `If-Match` in Settings, tab "Solution (advanced)". |
+| Window (Phase 4) | `PUT /config?dry_run=true` with `If-Match` (the timers in the plan), then `PUT /config?apply=true`. |
+| Plugs (Phase 4) | `PUT /plugs/{id}?dry_run=true` gives the plan and the ETag of `config.yaml`; `PUT /plugs/{id}?apply=true` with the same body and `If-Match` on that ETag starts the `plug-change` job. `412 config-changed` asks the operator to read the plugs again. |
+| Maintenance (Phase 4) | The top bar reads `GET /_care-pi/status` (`maintenance`, `job`) each 15 s, and each 3 s while a job holds the apply lock or the page shows (12 to 20 public reads each minute; the limit is 60). |
 
 ## 7. What the server must do for the SPA
 
@@ -217,6 +242,9 @@ Other rules for the server:
 | e2e (wave 4d) | Playwright against the mock | `e2e/progress-hardware.spec.ts`: the step text and the indeterminate bar of the lock resolution, a failed setup (mock `fail_step`) and its retry, the grouped host checks and the button in the window. `e2e/login-dashboard.spec.ts`: no side scroll, unit cards, and no cut label or value below 640 px. |
 | e2e (Phase 3) | Playwright against the mock | `e2e/backups-setup.spec.ts`: the key ceremony (a wrong word, then 4 letters), SFTP with the host key and the key of the device, a USB disk with the typed label and the password check. `e2e/backups.spec.ts`: the Backups page and its jobs, a destination that does not answer (here and on the dashboard), an S3 bucket from "Add a destination" (the keys never in `config.yaml`), the confirmation of a key from the page, the card boxes before and after the data, Settings > Backups. `e2e/restore.spec.ts`: a point in time with the password check, the 14 steps and their text, the undo; files into a side directory. `e2e/restore-dr.spec.ts`: claim, the entry of the wizard, the key as QR text and as the `.txt` file, inspect, the job, the login as the old device; a wrong key; SFTP host key; a failed job. |
 | e2e on a device | Playwright against a real device (`e2e/real`, `playwright.real.config.ts`) | Desktop (Chromium, 1280 × 800) and iPhone 13 (WebKit). Claim to ready on a new install, the phone journey (dashboard, certificate, logs, TOTP), a resume after a reboot. The Phase 2 exit test on lumine used them. |
+| Unit (wave 6b) | Vitest | `tests/updates-window.test.ts` (window text, length, time zone, offset, daylight saving time), `tests/settings-form.test.ts` and `tests/plug-settings-form.test.tsx` (form from the schema, validation, the body with only the changes, `errors[]` to fields), `tests/updates-text.test.ts` (track, version, result, state badges; PITR link), `tests/step-text.test.ts` (a sentence for each `JobStep.action` key and each `JobKind` of the contract). |
+| e2e (wave 6b) | Playwright against the mock | `e2e/updates.spec.ts`: check → download → install (window closed → "Install anyway"), the banner shows the step and clears, the history row; rollback with the password and the PITR offer → `/restore?time=…`; a failed update that rolls back; `agent-too-old`; the dashboard summary and maintenance; the window editor; pin a version; the layout of the Updates page; a device without Phase 4; a withdrawn version. `e2e/plugs.spec.ts`: a frontend plug on (cancel, then plan → apply), Filly with the errors of the agent at the fields and the cutover with the banner, the external bundle, the automatic plug, the advanced settings, no plugs. |
+| e2e on a device (Phase 4) | `e2e/real/updates.spec.ts` | Opt-in (`UPDATES_TEST=1`; `e2e/real/README.md`): the Updates page in place, a check, an update with the banner and the public status, a rollback with the PITR offer, a plug on and off. |
 
 The mock implements the contract for the console (`console/README.md` section 3). When the contract changes,
 change the mock, run `npm run api:types`, and run the tests.
@@ -267,7 +295,7 @@ Phase 3 keys (`docs/api/README.md` section 13.8). The second line is the argumen
 | `maintenance-off` | Remove the maintenance page | `stop-app` | Stop Care |
 | `start-app` | Start Care | `stop-db` | Stop the database |
 | `start-db` | Start the database | `wait-promote` | Wait until the database accepts changes |
-| `checkpoint` | Record an undo point | `backup-incr` | Make an incremental backup |
+| `checkpoint` (in `restore-pitr`) | Record an undo point | `backup-incr` | Make an incremental backup |
 | `backup-full` | Make a full backup | `check-stanza` | Check the database backups |
 | `snapshot` | Copy the backup to the destination (`usb: database`, `usb: files`) | `forget` | Remove the old copies |
 | `verify-local` | Verify the backups on this device | `verify-destination` | Verify the copy at the destination |
@@ -294,9 +322,43 @@ The expected times of the backup steps come from spike SP6 on a Pi 5 with a 46 M
 `drill-restore` 8 s, `drill-start` 5 s, `stop-app` and `start-app` 10 s, and `wait-healthy` 35 s after a restore
 (a cold start of the stack took 44 s). They grow with the size of the database.
 
+The keys of Phase 4 (`docs/solutions.md` sections 8 and 11). The maintenance page of Caddy shows the same sentence
+for `maintenance.step` (`docs/api/README.md` section 14.3), and so does the banner of the top bar:
+
+| Key | Sentence | Second line (when the step does not run) |
+|---|---|---|
+| `cutover` (plan action) | Install the new version behind the maintenance page | the argument |
+| `plug-config` (plan action and step) | Send the plug settings to Care | `care_onboarding_fe` |
+| `fetch-index` | Download the list of versions | the URL of `index.json` |
+| `fetch-lock` | Download the description of the version | `care-clinic 2026.11.1` |
+| `resolve-refs` | Resolve the custom versions | the argument |
+| `stage-pull` | Download the new container images | `2 image(s)` |
+| `stage-bundles` | Download the web app and the plug files | the argument |
+| `stage-build` | Build the custom parts on this device | the argument |
+| `cutover-maintenance-on` | Show the maintenance page | — |
+| `stop` | Stop Care | the units |
+| `checkpoint` | Make a backup point of the database (while it runs: "… (up to 1 min)"; in `restore-pitr`: "Record an undo point", `strings.steps.byKind`) | the backup label |
+| `activate` | Install the new version | the argument |
+| `migrate` | Update the database (while it runs: "… (this can take some minutes)") | the argument |
+| `start` | Start Care | the units |
+| `verify` | Make sure that Care works | the checks |
+| `maintenance-off` | Remove the maintenance page | — |
+| `rollback` | Go back to the previous version | the previous lock |
+| `prune-images` | Delete the old container images | the argument |
+| `os-refresh` | Read the list of OS packages | — |
+| `os-unhold` | Release the tested container packages | the packages |
+| `os-upgrade` | Install the OS updates | the packages |
+| `os-hold` | Hold the container packages again | the packages |
+| `reboot` | Restart the device | — |
+
 The second line of a step is, in this order: its `detail` (a result or an error); while it runs, the message of its
 progress, the expected time ("Expected: about 3 min 40 s", `job-state.ts`), or its last output line; else the short
 argument above.
+
+Each `JobKind` has a name for the operator (`strings.jobs.kinds`; the dashboard and the job card of the Updates page use it):
+`update-check` "Check for updates", `update-stage` "Download an update", `update-apply` "Install an update",
+`update-rollback` "Go back to the previous version", `os-update` "Install the OS updates", `plug-change` "Change a plug",
+and the kinds of Phases 1 to 3. `tests/step-text.test.ts` fails when the contract has a kind without a name.
 
 ## 10. Backups and restore (Phase 3)
 
@@ -383,6 +445,7 @@ full backups to keep, the daily and weekly copies, the hours before a problem, a
   `max` (local time of the browser; its time zone shows). The nearest files snapshot shows ("Nearest file backup: 02:30. The files
   can differ by up to 7 h 10 min."), then a red alert: "Records after HH:MM will be lost.", "Care stops for about 1 minute", the
   SP6 times, and the undo point. "Restore to HH:MM" → a confirm dialog → the password → the job in the panel with the 14 steps.
+  `?time=<RFC 3339 time>` (the PITR offer of an update, section 11.4) selects this kind and fills in that time.
 - **Undo the last restore**: the newest checkpoint of a `restore-pitr` job of the last 24 hours (`RestorePoints.checkpoints`)
   shows as a card above the panel, with "Undo this restore" (`checkpoint: <label>`).
 - **Files only** (`kind: files`): a files snapshot of a destination (newest first), into a separate folder (the default) or into
@@ -435,3 +498,114 @@ click only), and each banner links to its fix (`/backups?add=1`, `#recovery-key`
 | `local-repository-legacy-key` | The backups on this device use an old random key. Change it to the recovery key. |
 
 A code of a later version shows the `message` of the agent.
+## 11. Updates, solution, and plugs (Phase 4)
+
+The contract is `docs/api/README.md` section 14; the model is `docs/solutions.md`. The code is in
+`src/features/updates/` and `src/features/plugs/`. The PITR offer links to the Restore page of section 10.4.
+
+### 11.1 The Updates page
+
+One read, `GET /updates`, each 30 s and at each step of the job of the page; `GET /status` adds the care image,
+the care_fe sha, and the agent (`GET /updates` has the components only with a target). The cards, in this order:
+
+| Card | Content |
+|---|---|
+| Running version | Solution, version with the track badge (stable green, pinned blue, custom orange "Not supported"), installed time, care image and care_fe (short, monospace, copy), agent, release state. A withdrawn running lock gives a warning with the reason. |
+| New version | Newest version, release date, summary, state ("Up to date", "Available. Not downloaded.", "Downloaded. Ready to install.", "Blocked: …", the running states), downtime, last check, the release notes link, "What changes" (components), the problem of the last check. `blocked_by: agent-too-old` gives the alert "Update the agent first" with the versions and "run the installer again". Buttons: Check now, Download the update (stage; "The downloads happen while Care keeps running."), Install now. |
+| Job | The job that the page started, else `job` of `GET /updates` (a timer, the CLI, another tab): the steps over SSE, the error of a failed job, "Stop the job" for `update-stage`, "Close". |
+| PITR offer | Section 11.4. |
+| Update track | Section 11.3. |
+| Update window | Section 11.2. |
+| Previous version | `rollback.to_version` (or the time of the lock file), the images on disk, the note that a rollback does not undo the migrations, "Roll back" (confirmation, then the password dialog). |
+| OS updates | `GET /updates/os`: the OS, security updates, the packages to install, the held packages (a table), reboot needed, scheduled reboot, last full upgrade. "Install now" (`now: true`) and "Reboot now" (both with the password dialog). The reboot confirmation names the window and offers "Reboot in the window" (`now: false`). |
+| History | `GET /updates/history`, newest first: kind and versions (from → to, or the plug), the time, the length, the downtime, the source, the result badge, a rollback mark, "Restore offered". "Show older entries" adds the next page at the end. |
+
+"Install now" opens a confirmation ("Care stops for a few minutes. Staff see a maintenance page. …") and sends
+`now: false`. Outside the window the agent answers `409 update-window-closed` with `next_window_at`; the same dialog then
+says when the window opens and offers "Install anyway" (`now: true`).
+
+### 11.2 The window editor
+
+- The card shows the window in words ("Sun, 02:00 to 05:00 (3 h)", "Sat, Sun, 23:00 to 02:00 the next day (3 h)",
+  "Wed, from 01:00 for 24 h"), open or closed, the time zone of the device with its offset ("Asia/Kolkata (UTC+05:30)"),
+  the next opening (or the closing time), the next check, the next automatic install, and automatic updates on or off.
+- The note about daylight saving time comes from the zone: "Asia/Kolkata has no daylight saving time.", or the rule of
+  `docs/api/README.md` section 14.4 (the window is 1 hour shorter or longer; a time in the skipped hour moves 1 hour later).
+  The console finds it with `Intl` (the offset in January and in July).
+- "Change the window" opens the editor: the days (a toggle group), the opening and the closing time (`type=time`),
+  a preview of the new window in words, and "Install updates automatically". The change goes through the config flow
+  of Settings (plan preview, then the apply job), because the timers change.
+- `src/features/updates/window.ts` has the logic; `tests/updates-window.test.ts` tests it.
+
+### 11.3 The track, and the custom versions
+
+The card has the 3 tracks with a sentence each. "Pinned" shows the versions of `GET /solutions/{name}` (a withdrawn
+version or a version for a newer agent is disabled). "Save and check for updates" sends `PATCH /config` with
+`If-Match`, then `POST /updates/check`. "Custom" is not supported (03 section 3.2): the card does not edit the refs. It
+links to Settings, tab "Solution (advanced)", which edits `solution.custom.care_ref` and `care_fe_ref` with the config
+flow (`PUT /config` with `If-Match`, plan preview, apply) and sets the track to custom.
+
+### 11.4 The PITR offer and the link to the Restore page
+
+A rollback does not undo migrations (`docs/api/README.md` section 14.5). The page shows the card
+"Restore the database to HH:MM (before the update)?" when the job that it followed has a `pitr_offer` (the result of
+`update-rollback`, or `error.pitr_offer` of a failed update), else when `last_result.pitr_offer` of `GET /updates` has one.
+The time is `target_time` in the time zone of the device. "Not now" hides the offer for the session (`sessionStorage`).
+
+The link contract with the Restore page (section 10.4):
+
+- The link is `/restore?time=<target_time>`: an RFC 3339 time in UTC, URL-encoded (`/restore?time=2026-11-22T02%3A05%3A40Z`).
+- The Restore page opens "Undo a mistake" (`?kind=pitr`) with that time in the time field and the slider, shows the
+  note "An update offered a restore of the database to … (in UTC: …)" (`data-testid="restore-offered"`) and a link back to
+  the Updates page, and shows what is lost. The start asks for the password (reauthentication) and sends `POST /restore`
+  with `{kind: pitr, time: <target_time>}` (the body `pitr_offer.restore`). The console never starts a restore by itself.
+- A time outside the restore window shows the error of the field ("The time is outside the restore window") and no start.
+- `restoreOffer()` of `src/features/backups/backups-format.ts` reads the parameter; `tests/backups-logic.test.ts` tests it.
+
+### 11.5 The Solution and plugs page
+
+`GET /plugs` and `GET /solutions/{name}`. The solution card: name, title, description, version, track, the number of plugs,
+and "Some changes are not applied." Each plug: label and id, kind (Backend, Frontend, Backend and frontend), source
+("Solution default", "Your choice", "Automatic", "Custom"), "Not applied", "Needs internet", the parts (package, ref with
+"Tracked" or "Pinned", commit (short, copy), in the Care image; bundle state with its size, the `plug_config` row), and
+for an external bundle "The browser loads the bundle from <url>. It is not pinned."
+
+- **The switch.** It moves at once (optimistic) and sends `PUT /plugs/{id}?dry_run=true`. The plan dialog says what the
+  change does: `plug-config` "This changes the frontend plug list. Care keeps running. …"; `restart` "This restarts the
+  Care services (api, worker, beat). The API stops for about 20 s."; `cutover` "This restarts Care behind the maintenance
+  page. The device makes a backup point of the database first. Care stops for about 2 min."; `build-and-cutover` the build
+  first. It lists the downloads, the restarts, the steps (operator sentences), and the warnings. Cancel puts the switch
+  back. Apply sends `?apply=true` with `If-Match` on the ETag of the dry run, then the card shows the job.
+- **Automatic plugs.** `auto: when_multihost` shows "Automatic" and no switch, with the reason and the number of host names.
+- **The settings form.** `src/features/plugs/settings-form.ts` makes the fields from `GET /plugs/{id}/settings-schema`
+  and `Plug.settings` (the order, the values, `advanced`, the placeholders):
+
+  | `type` | Control | Checks before the request |
+  |---|---|---|
+  | `boolean` | switch | — |
+  | `string` | text field | `pattern` |
+  | `number` | number field with `min` and `max` | a number, `minimum`, `maximum` |
+  | `url` | text field, `type=url` | `http://` or `https://` |
+  | `secret` | "A value is set" with "Change" and "Remove", else a password field. Never a value. | `pattern` |
+  | `list` | text area, one entry for each line | `pattern` for each line |
+  | `choices` | check boxes | — |
+
+  A required field needs a value only when the plug is on. The advanced fields are under "Advanced settings". A field
+  with an operator value has "Changed" and "Use the default" (sends `null`). "Show the effect" sends only the changed
+  keys. `422 plug-settings-invalid` puts each `errors[]` item at its field (`/settings/<part>/<key>`, RFC 6901), with the
+  text of the console for the `code`. A plug that is turned on without its required settings gets this `422`: the switch
+  goes back, the form opens with the errors, and its button becomes "Turn on with these settings".
+
+### 11.6 The maintenance banner
+
+`maintenance` of `GET /_care-pi/status` (the member that the maintenance page of Caddy reads): "Maintenance in progress:
+<operator text of `maintenance.step`>", a link to the Updates page. From 640 px it is in a slot of the top bar between the
+state and the buttons; the slot is always there. Below 640 px it takes the place of the device name and of the state badge,
+on 2 lines ("Maintenance in progress" and the step). The top bar keeps its height (56 px). The dashboard shows the same
+text first in its problems (`Status.maintenance`), and its state is "Maintenance".
+
+### 11.7 Copy
+
+The texts use the words of the operator: "Download the update" (stage), "Install now" (apply), "Roll back",
+"Install anyway" (`now: true`), "Show the effect" (dry run), "Turn on with these settings". `index.json`, lock, ETag,
+cutover, and checkpoint are not in the texts; "backup point" is the checkpoint, "list of versions" is the index.

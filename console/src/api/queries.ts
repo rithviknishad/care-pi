@@ -1,7 +1,7 @@
-import { QueryClient, useQuery, useQueryClient, type QueryClient as QC } from "@tanstack/react-query";
+import { QueryClient, useInfiniteQuery, useQuery, useQueryClient, type QueryClient as QC } from "@tanstack/react-query";
 import { api, call, callFull, root, setCsrfToken } from "./client";
 import { ProblemError, asProblem } from "./problem";
-import type { ClientOs, Config, LogUnit, Session, SetupState } from "./types";
+import type { ClientOs, Config, LogUnit, PublicStatus, Session, SetupState } from "./types";
 
 export const qk = {
   session: ["session"] as const,
@@ -23,13 +23,19 @@ export const qk = {
   jobs: ["jobs"] as const,
   job: (id: string) => ["job", id] as const,
   instructions: (os: ClientOs) => ["tls-instructions", os] as const,
-  phase: (feature: string) => ["phase", feature] as const,
   backups: ["backups"] as const,
   backupsHealth: ["backups", "health"] as const,
   restorePoints: ["backups", "restore-points"] as const,
   disks: ["backups", "disks"] as const,
   recoveryKeyStatus: ["backups", "recovery-key-status"] as const,
   sshKey: (key: "active" | "pending") => ["backups", "ssh-key", key] as const,
+  // Phase 4. The keys below "updates" share the prefix, so one invalidation reads each of them again.
+  updates: ["updates"] as const,
+  updatesHistory: ["updates", "history"] as const,
+  updatesOs: ["updates", "os"] as const,
+  plugs: ["plugs"] as const,
+  plugSchema: (id: string) => ["plugs", id, "settings-schema"] as const,
+  solution: (name: string) => ["solution", name] as const,
 };
 
 export function createQueryClient(): QueryClient {
@@ -246,16 +252,74 @@ export function useSshKey(key: "active" | "pending" = "active", enabled = true) 
   });
 }
 
-// A Phase 4+ resource. The agent answers 501 not-implemented-in-this-version.
-export function usePhaseProbe(feature: "updates" | "plugs") {
+// The maintenance state for the top bar: GET /_care-pi/status (the same data as the maintenance page of Caddy).
+// It reads each 15 s, and each 3 s while a job holds the apply lock or the maintenance page shows
+// (public reads: 60 each minute for each address; docs/api/README.md section 4).
+export function useMaintenance(enabled = true) {
   return useQuery({
-    queryKey: qk.phase(feature),
-    queryFn: async () => {
-      if (feature === "updates") return call(api.GET("/updates"));
-      return call(api.GET("/plugs"));
+    queryKey: qk.publicStatus,
+    queryFn: () => call(root.GET("/_care-pi/status")),
+    enabled,
+    staleTime: 2_000,
+    refetchInterval: (query) => {
+      const data = query.state.data as PublicStatus | undefined;
+      return data?.maintenance?.active || data?.job ? 3_000 : 15_000;
     },
-    retry: false,
-    staleTime: Infinity,
+    refetchIntervalInBackground: false,
+  });
+}
+
+// GET /updates: the whole Updates page in one call. It reads each 30 s and updates the page in place.
+export function useUpdates() {
+  return useQuery({
+    queryKey: qk.updates,
+    queryFn: () => call(api.GET("/updates")),
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export const HISTORY_PAGE = 20;
+
+export function useUpdateHistory(enabled = true) {
+  return useInfiniteQuery({
+    queryKey: qk.updatesHistory,
+    queryFn: ({ pageParam }) =>
+      call(
+        api.GET("/updates/history", {
+          params: { query: { limit: HISTORY_PAGE, ...(pageParam ? { before: pageParam } : {}) } },
+        }),
+      ),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.next_before ?? undefined,
+    enabled,
+  });
+}
+
+export function useOsUpdates(enabled = true) {
+  return useQuery({ queryKey: qk.updatesOs, queryFn: () => call(api.GET("/updates/os")), enabled });
+}
+
+export function usePlugs() {
+  return useQuery({ queryKey: qk.plugs, queryFn: () => call(api.GET("/plugs")) });
+}
+
+export function usePlugSettingsSchema(id: string, enabled = true) {
+  return useQuery({
+    queryKey: qk.plugSchema(id),
+    queryFn: async () =>
+      (await call(api.GET("/plugs/{plug_id}/settings-schema", { params: { path: { plug_id: id } } }))) as JsonSchema,
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+export function useSolution(name: string | null | undefined) {
+  return useQuery({
+    queryKey: qk.solution(name ?? ""),
+    queryFn: () => call(api.GET("/solutions/{name}", { params: { path: { name: name ?? "" } } })),
+    enabled: Boolean(name),
+    staleTime: 60_000,
   });
 }
 

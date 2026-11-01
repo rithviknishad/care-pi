@@ -35,19 +35,18 @@ export interface StepTitle {
 }
 
 // stepTitle gives the operator text of a step (strings.steps). An unknown key gives the raw step name.
-// kind is the kind of the job: a key can have another text in a job of one kind (prune in backup-verify).
+// kind is the kind of the job: a key can have another text in a job of one kind (prune in backup-verify,
+// checkpoint in restore-pitr). That text also wins over the text while the step runs.
 export function stepTitle(step: Pick<JobStep, "action" | "name" | "state">, kind?: string): StepTitle {
   const key = step.action ?? "";
+  const byKind = kind ? s.byKind[kind]?.[key] : undefined;
   const running = step.state === "running" ? s.running[key] : undefined;
-  const text = running ?? (kind ? s.byKind[kind]?.[key] : undefined) ?? s.actions[key];
+  const text = byKind ?? running ?? s.actions[key];
   return text ? { text, raw: false } : { text: step.name, raw: true };
 }
 
 // jobKindText gives the operator text of a job kind, or the kind itself for a kind that is not known.
-export function jobKindText(kind: string | null | undefined): string {
-  if (!kind) return "";
-  return strings.jobs.kinds[kind] ?? kind;
-}
+export { jobKindText } from "@/lib/strings";
 
 // stepArgument gives a short text of the argument of a known step, or "".
 export function stepArgument(step: Pick<JobStep, "action" | "name">): string {
@@ -69,6 +68,8 @@ export function stepArgument(step: Pick<JobStep, "action" | "name">): string {
     case "restart":
     case "enable-target":
     case "wait-healthy":
+    case "stop":
+    case "start":
       return arg.split(/\s+/).filter(Boolean).map(shortUnit).join(", ");
     case "full-cycle":
     case "start-target": {

@@ -1,0 +1,21 @@
+version: 1
+solution:
+  name: care-clinic
+  track: stable
+  plugs:
+    care_filly:
+      enabled: true
+      settings:
+        backend: {MEDISPEAK_BASE_URL: "https://medispeak.example.org/api/v2"}
+    care_onboarding_fe:
+      settings:
+        frontend: {config.redirect_after_login: false}
+    care_multihost_files_be:
+      enabled: null
+updates:
+  auto: true
+  window: {days: [Sat, Sun], start: "23:00", end: "02:00"}
+  os_security: true
+  os_reboot: true
+  os_full: false
+  index_url: file:///media/usb/care-pi/index/index.json

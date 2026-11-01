@@ -16,6 +16,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/plan"
+	"github.com/rithviknishad/care-pi/agent/internal/plugcfg"
 	"github.com/rithviknishad/care-pi/agent/internal/render"
 	"github.com/rithviknishad/care-pi/agent/internal/s3admin"
 	"github.com/rithviknishad/care-pi/agent/internal/secrets"
@@ -29,6 +30,8 @@ type executor struct {
 	ensure       ensureState
 	provider     fe.Provider
 	bucketsDone  bool
+	// journal is the journal of the run (Phase 4: the job id for the maintenance state).
+	journal Journal
 }
 
 func (x *executor) run(ctx context.Context, a plan.Action) error {
@@ -69,9 +72,31 @@ func (x *executor) run(ctx context.Context, a plan.Action) error {
 				return err
 			}
 		}
-		return h.Systemd.Enable(ctx, render.StartUnit)
+		if err := h.Systemd.Enable(ctx, render.StartUnit); err != nil {
+			return err
+		}
+		// The update timers (Phase 4): enable them and start them now.
+		var timers []string
+		for _, u := range a.Units {
+			if u != render.StartUnit {
+				timers = append(timers, u)
+			}
+		}
+		if len(timers) > 0 {
+			if err := h.Systemd.Enable(ctx, timers...); err != nil {
+				return err
+			}
+			return h.Systemd.Start(ctx, timers...)
+		}
+		return nil
 	case plan.PullImages:
 		for _, ref := range a.Names {
+			if cb := x.pr.CareBuild; cb != nil && ref == cb.Image() {
+				if _, err := x.buildCare(ctx); err != nil {
+					return err
+				}
+				continue
+			}
 			ok, err := h.Podman.ImageExists(ctx, ref)
 			if err != nil {
 				return err
@@ -171,6 +196,15 @@ func (x *executor) run(ctx context.Context, a plan.Action) error {
 	case plan.WriteLock:
 		x.pr.Lock.GeneratedAt = x.o.Now().UTC().Format(time.RFC3339)
 		return lock.Write(x.o.Paths, x.pr.Lock, x.o.Now())
+	case plan.Cutover:
+		return x.cutover(ctx, a)
+	case plan.PlugConfig:
+		rows := plugcfg.Desired(x.pr.Config, x.pr.Desire.Plugs, x.pr.Lock)
+		res, err := plugcfg.Sync(ctx, h, x.o.Paths, rows, x.o.Now())
+		if res != nil {
+			_, _ = fmt.Fprintf(x.o.Out, "    plug_config: %d row(s) written, %d deleted\n", len(res.Written), len(res.Deleted))
+		}
+		return err
 	}
 	return fmt.Errorf("unknown action %s", a.Kind)
 }

@@ -4,7 +4,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="15">
+<noscript><meta http-equiv="refresh" content="15"></noscript>
 <style>
 body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#f4f6f8;color:#1f2933}
 main{max-width:34rem;margin:12vh auto;padding:2rem;background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
@@ -22,8 +22,132 @@ small{color:#7b8794}
 <h1>CARE is in maintenance</h1>
 <p class="name">Riverside Pharmacy</p>
 <p>The device updates or restarts CARE. Your data is safe.</p>
-<p>Wait a few minutes. This page opens CARE again when the maintenance is complete.</p>
-<p><small>This page refreshes every 15 seconds.</small></p>
+<p id="step" aria-live="polite">Wait a few minutes. This page opens CARE again when the maintenance is complete.</p>
+<p><small id="since"></small></p>
+<p><small>This page checks the device every 5 seconds.</small></p>
 </main>
+<script>
+(function () {
+  // The sentence of each step: strings.steps.actions of the console (docs/console-ui.md section 9).
+  var steps = {
+    "activate": "Install the new version",
+    "activate-key": "Use the new recovery key",
+    "archive": "Make the support bundle file",
+    "backup-full": "Make a full backup",
+    "backup-incr": "Make an incremental backup",
+    "check-destinations": "Check the backup destinations",
+    "check-disk": "Check the disk",
+    "check-key": "Check the recovery key",
+    "check-space": "Check the free disk space",
+    "check-stanza": "Check the database backups",
+    "checkpoint": "Make a backup point of the database",
+    "collect": "Collect the support data",
+    "create-care-superuser": "Make the Care administrator",
+    "cutover": "Install the new version behind the maintenance page",
+    "cutover-maintenance-on": "Show the maintenance page",
+    "daemon-reload": "Load the new service files",
+    "delete-files": "Delete the old configuration files",
+    "drill-check": "Check the test database",
+    "drill-cleanup": "Delete the test database",
+    "drill-restore": "Restore the latest backup into a test folder",
+    "drill-start": "Start a test database",
+    "enable-target": "Start Care at each boot",
+    "ensure-buckets": "Make the file storage",
+    "ensure-dirs": "Make the directories",
+    "ensure-fe": "Build the Care web app",
+    "ensure-mounts": "Prepare the backup disks",
+    "ensure-repositories": "Prepare the backup destinations",
+    "ensure-stanza": "Prepare the database backups",
+    "ensure-timers": "Set the backup schedule",
+    "fetch-config": "Get the settings from the backup",
+    "fetch-db-repo": "Get the database backup from the destination",
+    "fetch-files": "Get the files from the backup",
+    "fetch-index": "Download the list of versions",
+    "fetch-lock": "Download the description of the version",
+    "finish": "Complete the restore",
+    "forget": "Remove the old copies",
+    "format": "Make the file system",
+    "full-cycle": "Stop and start all the services of Care",
+    "host-check": "Check the device",
+    "init-destination": "Prepare a new copy at the destination",
+    "maintenance-off": "Remove the maintenance page",
+    "maintenance-on": "Show the maintenance page",
+    "migrate": "Update the database",
+    "mount": "Mount the disk",
+    "os-hold": "Hold the container packages again",
+    "os-refresh": "Read the list of OS packages",
+    "os-unhold": "Release the tested container packages",
+    "os-upgrade": "Install the OS updates",
+    "partition": "Make the partition",
+    "pause-backups": "Stop the scheduled backups",
+    "plan": "Find the changes",
+    "plug-config": "Send the plug settings to Care",
+    "prune": "Delete the old builds of the web app",
+    "prune-images": "Delete the old container images",
+    "pull-images": "Download the container images",
+    "reboot": "Restart the device",
+    "rekey-local": "Make the local backups with the new key",
+    "reload-caddy": "Load the new web server settings",
+    "remove-old-repositories": "Delete the old backups",
+    "render": "Make the configuration files",
+    "resolve-lock": "Resolve the versions of the images",
+    "resolve-refs": "Resolve the custom versions",
+    "restart": "Start the changed services again",
+    "restore-account": "Restore the console account of the old device",
+    "restore-db": "Restore the database",
+    "restore-files": "Restore the files",
+    "resume-backups": "Start the scheduled backups again",
+    "rollback": "Go back to the previous version",
+    "set-hostname": "Set the host name",
+    "set-secrets": "Store the secret keys",
+    "snapshot": "Copy the backup to the destination",
+    "stage-build": "Build the custom parts on this device",
+    "stage-bundles": "Download the web app and the plug files",
+    "stage-pull": "Download the new container images",
+    "start": "Start Care",
+    "start-app": "Start Care",
+    "start-db": "Start the database",
+    "start-s3": "Start the file storage",
+    "start-target": "Start all the services of Care",
+    "stop": "Stop Care",
+    "stop-app": "Stop Care",
+    "stop-db": "Stop the database",
+    "stop-s3": "Stop the file storage",
+    "validate": "Check the settings",
+    "verify": "Make sure that Care works",
+    "verify-destination": "Verify the copy at the destination",
+    "verify-files": "Verify the restored files",
+    "verify-local": "Verify the backups on this device",
+    "wait-healthy": "Wait until Care answers",
+    "wait-promote": "Wait until the database accepts changes",
+    "wipe-disk": "Erase the disk",
+    "write-files": "Write the configuration files",
+    "write-lock": "Record the installed versions",
+    "write-mount-unit": "Write the mount settings",
+  };
+  function show(m) {
+    var step = document.getElementById("step"), since = document.getElementById("since");
+    if (m && m.active) {
+      step.textContent = (m.step && steps[m.step]) || "Wait a few minutes. This page opens CARE again when the maintenance is complete.";
+      if (m.started_at) {
+        var t = new Date(m.started_at);
+        since.textContent = "Maintenance since " + t.toLocaleTimeString() + ".";
+      }
+    }
+  }
+  function poll() {
+    fetch("/_care-pi/status", {cache: "no-store", headers: {"Accept": "application/json"}})
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) {
+        if (!s) { return; }
+        if (s.site === "care") { window.location.reload(); return; }
+        show(s.maintenance);
+      })
+      .catch(function () {})
+      .then(function () { setTimeout(poll, 5000); });
+  }
+  poll();
+})();
+</script>
 </body>
 </html>

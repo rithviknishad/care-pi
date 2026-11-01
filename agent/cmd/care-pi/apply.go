@@ -81,6 +81,8 @@ func runApply(cmd *cobra.Command, reason string) error {
 		LockTimeout:  lockTimeout,
 		Phase:        applyFlags.phase,
 		AddressWait:  addressWait,
+		// The plan action cutover takes the checkpoint of Phase 3 (docs/api/README.md section 13.11).
+		Checkpoint: newService(cmd).Checkpoint,
 	})
 	return err
 }

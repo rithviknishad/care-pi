@@ -1,0 +1,20 @@
+# {{.Header}}
+# The local image build of care (track custom, docs/solutions.md section 13.1): the upstream image
+# at its digest and the backend plugs of install-plugs.json. Only the agent starts it, in staging.
+# Before the start, the agent sets care-api to 1 gunicorn worker and stops care-worker.
+
+[Unit]
+Description=care-pi image build {{.CareBuild.ID}}
+
+[Build]
+ImageTag={{.CareBuild.Image}}
+File={{path "RenderedBuild"}}/Containerfile
+SetWorkingDirectory={{path "RenderedBuild"}}
+PodmanArgs=--build-arg=BASE={{.CareBuild.Base}}
+Pull=never
+
+[Service]
+MemoryHigh=640M
+MemoryMax=768M
+OOMScoreAdjust=900
+TimeoutStartSec=3600

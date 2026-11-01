@@ -72,8 +72,9 @@ func (c *Config) CheckImplemented() error {
 	if c.TLS.Tailscale.Enabled {
 		errs = append(errs, fmt.Errorf("tls.tailscale is %w (Phase 6); set tls.tailscale.enabled to false", ErrNotImplemented))
 	}
-	if c.Solution.Track == "pinned" {
-		errs = append(errs, fmt.Errorf("solution.track pinned is %w (Phase 4); use stable or custom", ErrNotImplemented))
+	// Phase 4 implements solution.track pinned and solution.plugs (docs/solutions.md, sections 7 and 12).
+	if c.Solution.Track == "pinned" && c.Solution.Pin == "" {
+		errs = append(errs, fmt.Errorf("solution.track pinned needs solution.pin (a lock version YYYY.MM.N)"))
 	}
 	return errors.Join(errs...)
 }

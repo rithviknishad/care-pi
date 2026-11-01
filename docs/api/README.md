@@ -506,7 +506,21 @@ An operation with a session can also return `csrf` (403); see §3.
 | `no-destination` | 409 | The operation needs 1 or more backup destinations. |
 | `no-recovery-key` | 409 | The operation needs the recovery key. Make it with `POST /backups/recovery-key`. |
 | `insufficient-space` | 409 | The free disk space is not enough for the operation. `space` tells the space that it needs. |
-| `verify-failed` | 500 | A verify or a restore drill found damage. Only the `error` of a job has this type. |
+| `verify-failed` | 500 | A verify or a restore drill found damage (Phase 3), or a start or a check after the migrations failed (Phase 4: the previous lock runs again; `pitr_offer` is set). Only the `error` of a job has this type. |
+| `update-window-closed` | 409 | Phase 4. An update or an OS upgrade outside the update window without `now`. `next_window_at` tells when it opens. |
+| `no-update-available` | 409 | Phase 4. An update or a staging without a target. |
+| `lock-not-found` | 404 | Phase 4. The solution lock or the previous lock does not exist. |
+| `agent-too-old` | 409 | Phase 4. The lock needs a newer agent. `min_agent_version` tells which. |
+| `plug-unknown` | 404 | Phase 4. The plug is not in the solution. |
+| `plug-settings-invalid` | 422 | Phase 4. A plug setting fails the settings schema, or a plug that is on has no value for a required setting. `errors[]` tells which. |
+| `build-required-offline` | 409 | Phase 4. The change needs a download or a local build, and the host has no internet. |
+| `index-unavailable` | 502 | Phase 4. The agent cannot fetch or read `index.json`. |
+| `artefact-invalid` | 502 | Phase 4. A downloaded lock or bundle is missing (HTTP 404), has another SHA-256, or fails its schema. |
+| `rollback-unavailable` | 409 | Phase 4. No previous lock exists. |
+| `checkpoint-failed` | 500 | Phase 4, job error. The checkpoint before the migrations failed. Nothing changed. |
+| `migration-failed` | 500 | Phase 4, job error. `care-beat` did not become healthy. The previous lock runs again; `pitr_offer` is set. |
+| `rollback-failed` | 500 | Phase 4, job error. The rollback failed. The maintenance page stays; `pitr_offer` is set. |
+| `os-update-failed` | 500 | Phase 4, job error. apt failed. The held packages are held again. |
 
 The type URIs need not resolve. The DNS/ACME service of Phase 6 can serve a page for each slug later.
 
@@ -663,10 +677,19 @@ The paths are below `/api/v1` on port 8443, except `/_care-pi/status`. Section 1
 | POST | `/backups/drill` | session + CSRF | `care-pi backup drill [--reason TEXT]` | 3 | new |
 | GET | `/updates` | session | `care-pi update status --json` | 4 | new |
 | POST | `/updates/check` | session + CSRF | `care-pi update check` | 4 | new |
-| POST | `/updates/apply` | session + CSRF | `care-pi update apply [--version VERSION]` | 4 | new |
-| POST | `/updates/rollback` | session + CSRF + reauth | `care-pi update rollback` | 4 | new |
+| POST | `/updates/apply` | session + CSRF | `care-pi update apply [--version VERSION] [--now]` | 4 | new |
+| POST | `/updates/rollback` | session + CSRF + reauth | `care-pi update rollback [--to LOCK_ID]` | 4 | new |
 | GET | `/plugs` | session | `care-pi plugs list --json` | 4 | new |
-| PUT | `/plugs/{plug_id}` | session + CSRF | `care-pi plugs set PLUG_ID --enabled=true\|false` | 4 | new |
+| PUT | `/plugs/{plug_id}` | session + CSRF | `care-pi plugs set PLUG_ID [--enabled=true\|false\|default] [--setting PART.KEY=VALUE]... [--secret-stdin PART.KEY] [--dry-run] [--apply]` | 4 | new |
+| GET | `/plugs/{plug_id}/settings-schema` | session | `care-pi plugs schema PLUG_ID` | 4 | new |
+| POST | `/updates/stage` | session + CSRF | `care-pi update stage [--version VERSION]` | 4 | new |
+| GET | `/updates/history` | session | `care-pi update history --json [--limit N] [--before JOB_ID]` | 4 | new |
+| GET | `/updates/os` | session | `care-pi update --os --check --json` | 4 | new |
+| POST | `/updates/os/apply` | session + CSRF + reauth | `care-pi update --os [--now] [--reboot-if-required]` | 4 | new |
+| POST | `/updates/os/reboot` | session + CSRF + reauth | `care-pi update --os --reboot [--now]` | 4 | new |
+| GET | `/solutions` | session | `care-pi solution list --json` | 4 | new |
+| GET | `/solutions/{name}` | session | `care-pi solution show NAME --json` | 4 | new |
+| GET | `/solutions/{name}/locks/{version}` | session | `care-pi solution show NAME --lock VERSION --json` | 4 | new |
 
 Phase 2 adds these CLI commands (or flags):
 
@@ -1180,7 +1203,8 @@ Phase 4 refers to it by this name.
 - API form: `POST /backups/run` with `{scope: local-db, type: incr, reason}`. The job kind is `backup-run`; the result is
   `BackupRunResult.local` (`label`, `undo_point`, `timeline`).
 - Inside another job: the step action `checkpoint`. The job then records a `Checkpoint` (`label`, `undo_point`, `timeline`,
-  `job_id`, `job_kind`, `reason`) in `RestorePoints.checkpoints`. Phase 4 adds `update` (and `rollback`) as a `job_kind`.
+  `job_id`, `job_kind`, `reason`) in `RestorePoints.checkpoints`. Phase 4 adds `update-apply`, `update-rollback`, `plug-change`,
+  and `apply` (the plan action `cutover`) as a `job_kind` (section 14.5).
 - Undo: `POST /restore` with `{kind: pitr, checkpoint: <label>}` gives the database at `undo_point`.
 - It needs no network, no destination, and no recovery key (a `legacy` repository also works). It takes about 5 s at clinic
   scale (SP6). It fails when the WAL archive fails. The caller must then stop: no change without a checkpoint.
@@ -1267,3 +1291,241 @@ Notes on the earlier sections, which stay as they are:
 | Restore drill | On by default (`drill_enabled: true`), the first day of each month at 04:00; skipped below 2 times the database size. |
 | Migration | The re-key of a Phase 1 or Phase 2 host is recommended, not required (the snapshots carry the random pass). It is the job `recovery-key-rotate` with `new_key: false`. |
 | New config keys | `backups.paused`, `backups.alert_after_hours`, `backups.drill_enabled`, `backups.schedule.drill`; for a destination `disk_label`, `host_key`, `prefix`, `interval_min`, `retention`. |
+
+## 14. Solutions, plugs, updates (Phase 4)
+
+`docs/solutions.md` is the specification of the formats and the steps: the solution lock, `index.json`, the CI
+artefacts, the on-device lock version 2, the tracks, the update steps, rollback, the window, OS updates, and plugs.
+This section tells how the API shows them. The operations have `x-phase: 4`. Until an agent implements Phase 4,
+they return `501 not-implemented-in-this-version`. The agent of Phase 4 wave 6a implements each of them
+(`docs/console-server.md` section 11).
+
+### 14.1 Resources
+
+| Resource | Operations | Rule |
+|---|---|---|
+| Updates | `GET /updates`; `POST /updates/check`, `/updates/stage`, `/updates/apply`, `/updates/rollback`; `GET /updates/history` | One call, `GET /updates`, gives each value of the Updates page (`UpdatesOverview`). It reads state files and the cached index; it never uses the network. |
+| OS updates | `GET /updates/os`; `POST /updates/os/apply`, `/updates/os/reboot` | The OS part of the Updates page. `GET /updates` has a summary (`os`). |
+| Plugs | `GET /plugs`; `PUT /plugs/{plug_id}`; `GET /plugs/{plug_id}/settings-schema` | `GET /plugs` gives each plug with its settings form and values. `PUT` writes `solution.plugs.<id>` and returns the plan. |
+| Solutions | `GET /solutions`, `/solutions/{name}`, `/solutions/{name}/locks/{version}` | Read only. `PUT /config` and `PATCH /config` keep owning `solution.*` (track, pin, custom). |
+| Status | `GET /status` member `updates` (`UpdatesSummary`) and `maintenance` | The dashboard shows a banner from `updates.update_available`, `updates.state`, and `updates.blocked_by`. |
+| Public status | `GET /_care-pi/status` member `maintenance` | The maintenance page of Caddy polls it (section 14.3). |
+
+A change of the track or the pin is a config change: `PATCH /config` with `solution.track` or `solution.pin`,
+then `POST /updates/check`. `GET /updates` then shows the new target. `POST /updates/apply` installs it.
+An `apply` whose plan changes the care image or the set of backend plugs that are on runs the same cutover
+(plan action `cutover`, section 14.3).
+
+What `stable` fetches: `index.json` from `updates.index_url`, else
+`https://github.com/rithviknishad/care-pi/releases/download/index/index.json`. Each artefact reference in the index
+and in a lock is relative to `dist_base` of the index (`<tag>/<asset>`). GitHub Pages needs a public repository (S38),
+so the files are GitHub release assets now. A move to Pages changes only `dist_base` and the default index URL.
+The integrity comes from the SHA-256 values, not from the host. The repository is private now, so a device gets
+HTTP 404 (`index-unavailable`) until the owner decides (`docs/solutions.md`, open point 1). `updates.index_url`
+also accepts `file:///` (an update from a USB drive).
+
+### 14.2 Jobs
+
+| Kind | Holds the apply lock | Started by | Steps (`JobStep.action`) | Result |
+|---|---|---|---|---|
+| `update-check` | no (one check at a time; a second `POST` gives `202` with the running check) | `POST /updates/check`, `care-update-check.timer`, the scheduled window run | `fetch-index`, `fetch-lock`, `resolve-refs` | `UpdateCheckResult` |
+| `update-stage` | yes | `POST /updates/stage`, a check with `updates.auto` | `fetch-lock`, `plan`, `stage-pull`, `stage-bundles`, `stage-build`, `render` | `UpdateStageResult` |
+| `update-apply` | yes | `POST /updates/apply`, `care-update-apply.timer`, a resume | the stage steps when not staged, then the cutover steps of section 14.3 | `UpdateApplyResult` |
+| `update-rollback` | yes | `POST /updates/rollback`, a recovery | `fetch-lock`, `stage-pull` (only missing images), then the cutover steps | `UpdateRollbackResult` |
+| `os-update` | yes | `POST /updates/os/apply`, the window run with `updates.os_full` | `os-refresh`, `os-unhold`, `os-upgrade`, `os-hold`, and a cycle of Care when a held package changed, then `reboot` | `OsUpdateResult` |
+| `plug-change` | yes | `PUT /plugs/{plug_id}?apply=true` | by path: `stage-bundles` and `plug-config`; or a restart; or the cutover (section 14.7) | `PlugChangeJobResult` |
+
+- `source: timer` marks a job of a timer, and a resume or a recovery that the agent starts after an interrupted
+  update (`docs/solutions.md` section 8.6). `reason` tells which.
+- Only `update-stage` can be cancelled (`POST /jobs/{job_id}/cancel`), and only before its step `render`: it changes nothing
+  that Care uses. The other kinds of this table cannot be cancelled.
+- A failed job has `error` (a `Problem`). An update, a rollback, or a plug change that failed after the migrations
+  started has `error.pitr_offer`. `GET /updates` gives the same in `last_result`.
+- A rollback that succeeded (`update-rollback`, also a recovery) has `result.pitr_offer`. The history entry of each of these
+  jobs (`GET /updates/history`, and `last_result`) has the same `pitr_offer`, so the console can show the restore card
+  after a reload (section 14.5). The entry of a recovery has `outcome: rolled-back` (it undid the interrupted update).
+- Contract 0.5.0 replaced the reserved job kinds `update` and `rollback` (no agent made them) with `update-apply` and `update-rollback`.
+
+### 14.3 The update state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Idle
+    Idle --> Staging: target chosen (409 no-update-available, agent-too-old, 404 lock-not-found)
+    Staging --> Staged: fetch-lock, plan, stage-pull, stage-bundles, stage-build, render
+    Staging --> Idle: failure, nothing changed (artefact-invalid, build-required-offline)
+    Staged --> Cutover: window open, or now=true (else 409 update-window-closed)
+    Cutover --> Checkpoint: cutover-maintenance-on, stop
+    Checkpoint --> Migrating: checkpoint
+    Checkpoint --> RolledBack: checkpoint-failed (no PITR offer)
+    Migrating --> Starting: activate, migrate
+    Migrating --> RolledBack: migration-failed (PITR offer)
+    Starting --> Verifying: start, plug-config
+    Starting --> RolledBack: verify-failed (PITR offer)
+    Verifying --> Idle: verify, write-lock, maintenance-off, prune-images
+    Verifying --> RolledBack: verify-failed (PITR offer)
+    RolledBack --> Idle: rollback, maintenance-off
+    RolledBack --> Failed: rollback-failed (the maintenance page stays)
+```
+
+`UpdatesOverview.state` (`UpdateMachineState`) shows the state: `idle`, `checking`, `staging`, `staged`, `applying`
+(Cutover to Verifying), `rolling-back`, `failed`.
+
+The maintenance page:
+
+- The step `cutover-maintenance-on` creates `/var/lib/care-pi/state/mode/maintenance` (Phase 1 flag file). Caddy then
+  serves `status/maintenance.html` at `/`, without a reload. The API, bucket, and plug routes stay.
+- `GET /_care-pi/status` gains `maintenance` (`MaintenanceState`): `active`, `kind`, `job_id`, `step` (the `action` of
+  the step that runs), `started_at`. `active: false` sets the other members to `null`. The member `job` (`PublicJobProgress`)
+  keeps the step name, index, and count for a progress bar.
+- The page polls `GET /_care-pi/status` every 5 s, shows the text of `maintenance.step` (the operator texts of
+  `docs/console-ui.md` section 9; the agent renders them into the page), and loads `/` again when `site` is `care`.
+  The agent copy is `render.MaintenanceSteps`: the exact sentences of `strings.steps.actions` of the console, for example
+  "Update the database". `TestMaintenanceStepsMatchConsole` fails when the two tables differ. A key without a sentence
+  shows the general text ("Wait a few minutes. This page opens CARE again when the maintenance is complete.").
+  Rate limit: 60 public reads each minute for each address (section 4), so 12 each minute is safe.
+- The step `maintenance-off` deletes the flag file. A failed rollback leaves it (`state: failed`).
+
+### 14.4 The update window and the timers
+
+- `updates.window` is `days`, `start`, `end` in the **time zone of the host** (`UpdateWindowState.timezone`,
+  the same value as `Status.clock.timezone`). Each day in `days` opens one window at `start`.
+- `end` after `start`: the window ends the same day. `end` before `start`: it ends the next day. `end` equal to `start`: 24 hours.
+- Daylight saving time: the agent computes in local wall time. A `start` or `end` in the skipped hour moves one hour later;
+  in a repeated hour, the agent uses the first occurrence. The window is then one hour shorter or longer.
+- The window applies to the timer and to `POST /updates/apply` and `POST /updates/os/apply`. Outside it they give
+  `409 update-window-closed` with `next_window_at`; `now: true` runs at once. `POST /updates/check`, `POST /updates/stage`,
+  and `PUT /plugs/{plug_id}` do not check the window: the console shows the plan (`maintenance`, `estimated_downtime_s`)
+  and the operator confirms.
+- Timers (rendered when the setup state is `ready`): `care-update-check.timer` (daily, 12:00 plus a random delay up to
+  4 h; `care-pi update check --scheduled`) and `care-update-apply.timer` (each window opening, `Persistent=true`;
+  `care-pi update apply --scheduled`). The scheduled run: leave when the window is closed; check when the last check is
+  older than 1 hour; install the target when `updates.auto` is `true`, nothing blocks it, and 30 minutes of the window remain;
+  then `os-update` when `updates.os_full` is `true`; then reboot when `/run/reboot-required` exists and `updates.os_reboot`
+  is `true` (or a reboot is scheduled), no job runs, and the window is still open.
+- `GET /updates` gives `next_check_at`, `next_apply_at` (the next opening with work, else `null`), `window.open`,
+  `window.next_open_at`, and `window.closes_at`.
+
+### 14.5 Rollback and the PITR hand-off to Phase 3
+
+- An update that fails after the migrations started rolls back to the previous lock by itself. The code goes back;
+  the database keeps the migrations that ran. The job is `failed`: `error.pitr_offer` has the offer, and `result` is `null`.
+  The history entry (`outcome: rolled-back`) has the same `pitr_offer` (`PitrOffer`).
+- `POST /updates/rollback` (reauthentication) installs a previous lock (`to_lock`, default `rollback.to_lock`). Its result
+  and its history entry (`kind: rollback`, `outcome: succeeded`) have the `pitr_offer` of the update that installed the
+  lock that the rollback removes. A recovery rollback (`docs/solutions.md` section 8.6) does the same, with
+  `outcome: rolled-back` and the offer of the interrupted update.
+- `PitrOffer.restore` is the body of `POST /restore` (section 13.9.1, `RestorePitrRequest`): `{"kind": "pitr", "time": <target time>}`.
+  The console shows the offer with its time, and asks for a reauthentication when the operator accepts. The agent never
+  starts a PITR by itself. Care was stopped at the checkpoint, so the restore loses no data from before the update; it
+  loses the data after the update started (none when the update failed in the cutover).
+- `available: false` with `reason` when the local pgBackRest repository no longer covers the time (retention).
+- The checkpoint is the checkpoint of section 13.11: an incremental pgBackRest backup to the local repository (its end
+  switches the WAL segment and waits for the archive push) under the local backup lock (`docs/solutions.md` section 8.4).
+  The job records it in `RestorePoints.checkpoints` (`job_kind` `update-apply`, `update-rollback`, `plug-change`, or `apply`)
+  and in its result and history as `UpdateCheckpoint`: `backup_label` is the label, `target_time` is its `undo_point`,
+  and `restore_point` is `null` (no named restore point). The Restore page also offers the checkpoint itself
+  (`POST /restore` with `{kind: pitr, checkpoint: <label>}`).
+
+### 14.6 Plug settings and the console form
+
+`GET /plugs` gives `Plug.settings`: the fields of `plugs[].settings` of the solution of the running lock, in order, with
+`value`, `source` (`default` or `operator`), and `secret_set`. `GET /plugs/{plug_id}/settings-schema` gives a JSON Schema
+of the body member `settings` of `PUT /plugs/{plug_id}`.
+
+| `type` | Console control | JSON Schema of the value | Notes |
+|---|---|---|---|
+| `boolean` | switch | `{"type": "boolean"}` | |
+| `string` | text field | `{"type": "string", "pattern": …}` | `pattern` when set |
+| `number` | number field | `{"type": "number", "minimum": min, "maximum": max}` | |
+| `url` | text field, `inputmode=url` | `{"type": "string", "format": "uri", "pattern": "^https?://"}` | |
+| `secret` | password field with "Change" and "Remove"; it shows "set" when `secret_set` is `true` | `{"type": ["string", "null"], "writeOnly": true}` | Only `part: backend` (solution schema rule). Never in a response. A string sets it, `null` deletes it. |
+| `list` | text area, one entry for each line | `{"type": "array", "items": {"type": "string", "minLength": 1, "pattern": …}}` | |
+| `choices` | check boxes | `{"type": "array", "uniqueItems": true, "items": {"oneOf": [{"const": value, "title": label}, …]}}` | `options` gives the values and labels |
+
+For each field: `label` is the JSON Schema `title`, `help` the `description`, `default` the `default`, and
+`required: true` puts the key in `required` of its part (enforced only when the plug is on). `advanced: true` puts the field
+under "Advanced". `placeholder` is the placeholder of the control. The schema has the form
+`{"type": "object", "properties": {"backend": {…}, "frontend": {…}}, "additionalProperties": false}`; each part has
+`additionalProperties: false`. A frontend key is a dotted path (for example `config.redirect_after_login`): it is one
+property name, not nested objects.
+
+Where the values go (`docs/solutions.md` section 1.4): a backend value goes into `configs` of the `ADDITIONAL_PLUGS` entry
+(a restart of api, worker, and beat); a frontend value goes into `meta` of the `plug_config` row (no restart; the browser
+loads it at the next page load). A secret goes to `/etc/care-pi/secrets/plug-<id>.json`, never into `config.yaml`.
+
+### 14.7 A plug change in the console
+
+1. `PUT /plugs/{plug_id}?dry_run=true` with the change. The response has `plan` (`PlugChangePlan`): `path`, `maintenance`,
+   `checkpoint`, `restarts`, `downloads`, `builds`, `needs_internet`, `estimated_downtime_s`, `steps`, `warnings`.
+2. The console shows the plan. For `cutover` and `build-and-cutover`, it says that Care shows the maintenance page and
+   for how long.
+3. `PUT /plugs/{plug_id}?apply=true` with the same body. `202` with `job` (kind `plug-change`). The console follows
+   `GET /jobs/{job_id}/events`. With the path `none`, the agent writes and starts no job: `200` with `job: null`.
+
+| `path` | When |
+|---|---|
+| `plug-config` | A frontend plug on or off, or a frontend setting. |
+| `restart` | A backend plug off, or a backend setting. |
+| `cutover` | A backend plug on that the image contains (each plug of the solution; `docs/solutions.md` section 1.5). |
+| `build-and-cutover` | A backend plug on that the image does not contain (track `custom`). |
+| `none` | The change has no effect now. For example a setting (backend or frontend, also a secret) of a plug that is off: the agent stores the value, and it counts when the plug turns on. |
+
+`enabled: null` removes the operator choice: the solution default and the `auto` rule apply again (`Plug.source`).
+`care_multihost_files_be` has `auto: when_multihost`: it turns on when Caddy serves more than one host name. Phase 4 serves
+one name, so it stays off (`auto_active: false`).
+
+### 14.8 Problems
+
+The new problem types are in the table of section 7. New extension members of `Problem`:
+
+| Member | For |
+|---|---|
+| `min_agent_version` | `agent-too-old` |
+| `next_window_at` | `update-window-closed` |
+| `pitr_offer` | the job error of an update, a rollback, or a plug change after the migrations started |
+
+`plug-settings-invalid` uses `errors[]` with pointers into the body (`/settings/backend/<KEY>`, `/settings/frontend/<PATH>`;
+`~1` escapes a `/` in a key, RFC 6901). The response components `UpdatesConflict` (409), `UpdatesNotFound` (404),
+`PlugSettingsInvalid` (422), and `UpdatesBadGateway` (502) have an example of each type.
+
+### 14.9 Changes of contract 0.5.0
+
+- New operations: section 11 (rows with phase 4).
+- `Status.updates` is `UpdatesSummary` (it was the reserved `UpdatesOverview`; no agent sent it). `Status` and
+  `PublicStatus` gain the required member `maintenance` (`MaintenanceState`). An agent of Phase 2 or 3 sends it now:
+  `active` comes from the flag file.
+- `JobKind`: `update-stage`, `update-apply`, `update-rollback`, `os-update`, `plug-change` (section 14.2).
+  `JobStep.action`: the Phase 4 keys. `JobResult`: six results. `PlanActionKind`: `cutover`, `plug-config`.
+- The reserved shapes `UpdatesOverview`, `AvailableLock`, `UpdateRequest`, `Plug`, `PlugList`, and `PlugChange` have their
+  Phase 4 members. `PUT /plugs/{plug_id}` gives `PlugChangeResult` (it was `Plug`) and `404 plug-unknown` (it was `not-found`).
+- `SolutionDocument` and `SolutionLockDocument` refer to `solutions/schema/solution.schema.json` and `lock.schema.json`,
+  as `Config` refers to the config schema (section 8). The bundle of section 9.2 inlines them.
+
+### 14.10 Decisions of the Phase 4 contract
+
+| Topic | Decision |
+|---|---|
+| Updates page | One call: `GET /updates`. It never uses the network. |
+| Window | The time zone of the host; `days` are the opening days; `end` not after `start` ends the next day; equal is 24 hours. Manual updates and OS upgrades outside the window need `now: true`. |
+| Stable | Follows `latest` of `index.json` for the solution; never downgrades by itself; skips withdrawn locks. Without any lock, the Phase 1 behaviour stays. |
+| Dist base | Release assets now; a move to Pages changes only `dist_base` and the default index URL. |
+| `agent-too-old` | `409`, and `blocked_by` in `GET /updates`. Phase 4 does not replace the agent binary. |
+| Plug switch | No image build and no FE build for a plug of the solution (superset image and superset FE registration, `docs/solutions.md` section 1.5). |
+| `plug_config` rows | The agent writes them with `manage.py shell` in `care-api` (the same validation and cache rule as the admin API), with `meta.url = https://<canonical host>/plugs/<slug>/<sha12>/<entry>`. |
+| Rollback | Code only. The PITR to the checkpoint is an offer that hands off to `POST /restore`. |
+| Reauthentication | Rollback, OS upgrade, and the OS reboot need it. Check, stage, apply, and plug changes do not. |
+
+### 14.11 Contract 0.6.0: Phases 3 and 4 together
+
+Phase 3 (v0.4.0, section 13) and Phase 4 (v0.5.0, this section) were made in parallel from v0.3.0. v0.6.0 has both.
+The agent of v0.6.0 implements each operation with `x-phase` 3 or 4; it returns `501` for each operation with `x-phase`
+greater than 4. Changes beyond the union of the two:
+
+- `JobKind`: the kinds of section 13.8 and of section 14.2. The reserved kinds of v0.3.0 (`backup`, `verify`, `restore`,
+  `update`, `rollback`) are gone.
+- The checkpoint of an update is the checkpoint of section 13.11 (section 14.5). Its schema in the update results and the
+  history is `UpdateCheckpoint` (v0.5.0 named it `Checkpoint`; `Checkpoint` is the schema of section 13.11).
+- `PitrOffer.restore` is a `RestorePitrRequest` (`time` in place of `target_time`).
+- `verify-failed` has one title ("The verify failed") for the verify and drill of Phase 3 and the check after an update.
+- `Status` has `backups` (section 13), `updates` (`UpdatesSummary`), and `maintenance`. `PublicStatus` has `maintenance`.

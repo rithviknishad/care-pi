@@ -35,6 +35,7 @@ func TestInvalidFixtures(t *testing.T) {
 		"invalid-version.yaml":        "/version",
 		"invalid-nested-unknown.yaml": "mode",
 		"invalid-posix-both.yaml":     "/backups/destinations/0",
+		"invalid-plug-choice.yaml":    "/solution/plugs/care_filly",
 	}
 	for file, want := range cases {
 		t.Run(file, func(t *testing.T) {
@@ -74,6 +75,33 @@ func TestPublicTLSIsApplyTimeError(t *testing.T) {
 	err = c.CheckImplemented()
 	if !errors.Is(err, ErrNotImplemented) || !strings.Contains(err.Error(), "tls.public") {
 		t.Fatalf("want a not-implemented error for tls.public, got %v", err)
+	}
+}
+
+// Phase 4 keys: the schema accepts them, and apply implements them (wave 6a).
+func TestPhase4Keys(t *testing.T) {
+	c, err := Load("testdata/valid-phase4.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Updates.OSReboot || c.Updates.OSFull || c.Updates.IndexURL == "" {
+		t.Fatalf("updates: %+v", c.Updates)
+	}
+	if p := c.Solution.Plugs["care_filly"]; p.Enabled == nil || !*p.Enabled || p.Settings == nil || p.Settings.Backend["MEDISPEAK_BASE_URL"] == nil {
+		t.Fatalf("solution.plugs.care_filly: %+v", p)
+	}
+	if p := c.Solution.Plugs["care_multihost_files_be"]; p.Enabled != nil {
+		t.Fatalf("enabled: null must follow the solution: %+v", p)
+	}
+	if err := c.CheckImplemented(); err != nil {
+		t.Fatalf("Phase 4 implements solution.plugs: %v", err)
+	}
+	c.Solution.Track, c.Solution.Pin = "pinned", ""
+	if err := c.CheckImplemented(); err == nil || !strings.Contains(err.Error(), "solution.pin") {
+		t.Fatalf("pinned without a pin: %v", err)
+	}
+	if !Default().Updates.OSReboot {
+		t.Fatal("updates.os_reboot defaults to true")
 	}
 }
 

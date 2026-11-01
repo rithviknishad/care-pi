@@ -10,6 +10,7 @@ import {
   intervalText,
   isoSeconds,
   nearestSnapshot,
+  restoreOffer,
   rpoMinutes,
   toLocalInput,
   undoCheckpoint,
@@ -218,5 +219,22 @@ describe("health", () => {
     );
     expect(lastOffsiteCopy({ destinations: [] })).toBeNull();
     expect(lastOffsiteCopy(undefined)).toBeNull();
+  });
+});
+
+describe("the PITR offer of an update", () => {
+  it("reads /restore?time=<RFC 3339 time>", () => {
+    expect(restoreOffer("2026-11-22T02:05:40Z")).toBe(Date.UTC(2026, 10, 22, 2, 5, 40));
+    expect(restoreOffer("2026-11-22T07:35:40+05:30")).toBe(Date.UTC(2026, 10, 22, 2, 5, 40));
+    expect(restoreOffer("2026-11-22T02:05:40.500Z")).toBe(Date.UTC(2026, 10, 22, 2, 5, 40, 500));
+  });
+
+  it("ignores a missing or a wrong time", () => {
+    expect(restoreOffer(null)).toBeNull();
+    expect(restoreOffer("")).toBeNull();
+    expect(restoreOffer("2026-11-22")).toBeNull();
+    expect(restoreOffer("2026-11-22T02:05:40")).toBeNull();
+    expect(restoreOffer("tomorrow")).toBeNull();
+    expect(restoreOffer("2026-13-45T99:99:99Z")).toBeNull();
   });
 });

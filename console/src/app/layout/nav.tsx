@@ -43,8 +43,8 @@ function navItems(state: SetupStateName): NavItem[] {
     { to: "/certificate", label: strings.nav.certificate, icon: FileBadgeIcon },
     { to: "/security", label: strings.nav.security, icon: LockIcon },
     { to: "/support", label: strings.nav.support, icon: LifeBuoyIcon },
-    { to: "/updates", label: strings.nav.updates, icon: RefreshCwIcon, later: true },
-    { to: "/plugs", label: strings.nav.plugs, icon: PuzzleIcon, later: true },
+    { to: "/updates", label: strings.nav.updates, icon: RefreshCwIcon },
+    { to: "/plugs", label: strings.nav.plugs, icon: PuzzleIcon },
   ];
 }
 

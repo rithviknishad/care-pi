@@ -86,7 +86,9 @@ jobs:
             echo "::error::Cannot resolve ${reference} to a digest"
             exit 1
           fi
-          # Only the enabled plugs with a backend part go into the image.
+          # The superset rule (docs/solutions.md, section 1.5): the image installs each backend plug of the
+          # solution, on or off. ADDITIONAL_PLUGS (the ENV of the image) lists the plugs that are on by default.
+          install=$(yq -o=json -I=0 '[(.plugs // [])[] | select(.backend) | {"name": .backend.name, "package_name": .backend.package, "version": "@" + .backend.ref, "configs": (.backend.configs // {})}]' "$FILE")
           plugs=$(yq -o=json -I=0 '[(.plugs // [])[] | select(.enabled == true and .backend) | {"name": .backend.name, "package_name": .backend.package, "version": "@" + .backend.ref, "configs": (.backend.configs // {})}]' "$FILE")
           {
             echo "image=${image}"
@@ -94,6 +96,7 @@ jobs:
             echo "digest=${digest}"
             echo "revision=${revision}"
             echo "plugs=${plugs}"
+            echo "install=${install}"
           } >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@v4
@@ -118,6 +121,11 @@ jobs:
           labels: |
             org.opencontainers.image.base.digest=${{ steps.resolve.outputs.digest }}
 
+      - name: Write the install list of the build context
+        env:
+          INSTALL: ${{ steps.resolve.outputs.install }}
+        run: printf '%s\n' "$INSTALL" > images/care/install-plugs.json
+
       - name: Build and push
         id: build
         uses: docker/build-push-action@v7
@@ -141,6 +149,7 @@ jobs:
           DIGEST: ${{ steps.resolve.outputs.digest }}
           REVISION: ${{ steps.resolve.outputs.revision }}
           PLUGS: ${{ steps.resolve.outputs.plugs }}
+          INSTALL: ${{ steps.resolve.outputs.install }}
           TAGS: ${{ steps.meta.outputs.tags }}
           PUSHED: ${{ steps.build.outputs.digest }}
         run: |
@@ -152,7 +161,8 @@ jobs:
             echo "| Upstream reference | \`${REFERENCE}\` |"
             echo "| Resolved digest (base) | \`${DIGEST}\` |"
             echo "| Upstream git revision | \`${REVISION:-unknown}\` |"
-            echo "| ADDITIONAL_PLUGS | \`${PLUGS}\` |"
+            echo "| Installed plugs (install-plugs.json) | \`${INSTALL}\` |"
+            echo "| ADDITIONAL_PLUGS (default on-set) | \`${PLUGS}\` |"
             echo "| Pushed digest | \`${PUSHED}\` |"
             echo
             echo "Tags:"

@@ -15,3 +15,9 @@
     - '#/$defs/destination/allOf/1/then/required/2'
     - '#/$defs/destination/allOf/2/then/required/0'
     - '#/$defs/destination/allOf/2/then/required/1'
+# solution.schema.json (Phase 4, through SolutionDocument and SolutionLockDocument): a field of type
+# choices requires options; the "then" and "else" schemas name a key that the parent defines.
+../../solutions/schema/solution.schema.json:
+  no-required-schema-properties-undefined:
+    - '#/$defs/setting/then/required/0'
+    - '#/$defs/setting/else/not/required/0'

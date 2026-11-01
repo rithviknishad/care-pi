@@ -1,0 +1,531 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/rithviknishad/care-pi/blob/main/solutions/schema/lock.schema.json",
+  "title": "care-pi solution lock",
+  "description": "A solution lock pins each component of one solution to an immutable identity: image digests, git shas, and the SHA-256 of each bundle. CI writes one lock for each release (solutions/<name>/locks/<YYYY.MM.N>.lock.yaml, and the release asset <name>-<YYYY.MM.N>.lock.yaml of the release lock-<name>-<YYYY.MM.N>). A lock never changes after its release. docs/solutions.md, section 3, describes each field. This is not the on-device /etc/care-pi/lock.yaml (docs/solutions.md, section 6).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "name", "version", "created_at", "created_by", "notes", "min_agent_version", "source", "solution", "care", "solution_image", "care_fe", "fe", "plugs", "images"],
+  "properties": {
+    "apiVersion": {
+      "description": "The version of this format. The only value is care-pi/v1.",
+      "const": "care-pi/v1"
+    },
+    "kind": {
+      "description": "The kind of object. The only value is SolutionLock.",
+      "const": "SolutionLock"
+    },
+    "name": {
+      "description": "The solution name. It equals solution.name.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "maxLength": 40
+    },
+    "version": {
+      "description": "The calendar version of the lock: YYYY.MM.N. MM has two digits. N starts at 0 in each month.",
+      "$ref": "#/$defs/lockVersion"
+    },
+    "created_at": {
+      "description": "The time when CI wrote the lock (UTC).",
+      "type": "string",
+      "format": "date-time"
+    },
+    "created_by": {
+      "description": "The person or the workflow run that released the lock.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "notes": {
+      "description": "The release notes (Markdown). The release lock-<name>-<version> shows the same text. It can be empty.",
+      "type": "string",
+      "maxLength": 20000
+    },
+    "min_agent_version": {
+      "description": "The oldest agent that can install this lock. An older agent refuses it with the problem agent-too-old.",
+      "$ref": "#/$defs/semver"
+    },
+    "source": {
+      "description": "Where the lock comes from.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "solution_sha256", "run_url"],
+      "properties": {
+        "commit": {
+          "description": "The care-pi git commit of solution.yaml.",
+          "$ref": "#/$defs/gitSha"
+        },
+        "solution_sha256": {
+          "description": "The SHA-256 of solutions/<name>/solution.yaml at that commit.",
+          "$ref": "#/$defs/sha256"
+        },
+        "run_url": {
+          "description": "The CI run that made the artefacts. null for a lock that a person wrote.",
+          "type": ["string", "null"],
+          "format": "uri"
+        }
+      }
+    },
+    "solution": {
+      "description": "The solution.yaml document at source.commit, as data. The agent reads the plugs, labels, settings, env, and defaults of the lock from here, not from its embedded copy. Thus a lock that is newer than the agent shows the correct forms.",
+      "$ref": "solution.schema.json"
+    },
+    "care": {
+      "description": "The upstream CARE image. The solution image is built FROM image@digest.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "ref", "digest", "git_sha"],
+      "properties": {
+        "image": {
+          "description": "The image name without a tag, for example ghcr.io/ohcnetwork/care.",
+          "type": "string",
+          "minLength": 1
+        },
+        "ref": {
+          "description": "The tag or digest that solution.care.ref asked for.",
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "description": "The manifest list digest that CI resolved.",
+          "$ref": "#/$defs/digest"
+        },
+        "git_sha": {
+          "description": "The label org.opencontainers.image.revision of the image. null when the image has no such label.",
+          "oneOf": [{ "$ref": "#/$defs/gitSha" }, { "type": "null" }]
+        }
+      }
+    },
+    "solution_image": {
+      "description": "The image that care-api, care-worker, and care-beat run: the upstream image plus the backend part of each plug of the solution.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "tag", "digest", "installed_plugs"],
+      "properties": {
+        "image": {
+          "description": "The image name without a tag.",
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "description": "The tag: <name>-<version>.",
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*-[0-9]{4}\\.(0[1-9]|1[0-2])\\.[0-9]+$"
+        },
+        "digest": {
+          "description": "The manifest list digest (linux/arm64 and linux/amd64).",
+          "$ref": "#/$defs/digest"
+        },
+        "installed_plugs": {
+          "description": "The ids of the plugs whose backend part is installed in the image: each plug of the solution with a backend part, on or off. ADDITIONAL_PLUGS at run time lists only the plugs that are on.",
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/plugId" }
+        }
+      }
+    },
+    "care_fe": {
+      "description": "The CARE frontend source.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo", "ref", "sha"],
+      "properties": {
+        "repo": {
+          "description": "The https URL of the repository.",
+          "type": "string",
+          "pattern": "^https://[^\\s]+$"
+        },
+        "ref": {
+          "description": "The branch, tag, or sha that solution.care_fe.ref asked for.",
+          "type": "string",
+          "minLength": 1
+        },
+        "sha": {
+          "description": "The resolved commit.",
+          "$ref": "#/$defs/gitSha"
+        }
+      }
+    },
+    "fe": {
+      "description": "The default care_fe bundle of the solution: care_fe at care_fe.sha, built with the default frontend env of the solution (docs/fe.md). A device with the same FE build id downloads this bundle.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["build_id", "url", "sha256", "size_bytes", "env_keys"],
+      "properties": {
+        "build_id": {
+          "description": "The FE build id (docs/fe.md, \"Build id\").",
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "url": {
+          "description": "The bundle (tar.gz). A relative reference resolves against dist_base of index.json.",
+          "$ref": "#/$defs/artefactUrl"
+        },
+        "sha256": {
+          "description": "The SHA-256 of the bundle file.",
+          "$ref": "#/$defs/sha256"
+        },
+        "size_bytes": {
+          "description": "The size of the bundle file.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "env_keys": {
+          "description": "The names of the frontend variables of the build, sorted. No values.",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9_]*$" }
+        }
+      }
+    },
+    "plugs": {
+      "description": "The resolved parts of each plug of the solution, by plug id. Each plug of solution.plugs has an entry, on or off.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/plugId" },
+      "additionalProperties": { "$ref": "#/$defs/plugLock" }
+    },
+    "images": {
+      "description": "The other images of the stack, by image key. A later lock can add a key.",
+      "type": "object",
+      "required": ["postgres", "caddy", "redis", "s3", "node"],
+      "properties": {
+        "postgres": { "$ref": "#/$defs/imageLock" },
+        "caddy": { "$ref": "#/$defs/imageLock" },
+        "redis": { "$ref": "#/$defs/imageLock" },
+        "s3": { "$ref": "#/$defs/imageLock" },
+        "node": { "$ref": "#/$defs/imageLock" }
+      },
+      "propertyNames": { "pattern": "^[a-z0-9-]+$" },
+      "additionalProperties": { "$ref": "#/$defs/imageLock" }
+    }
+  },
+  "$defs": {
+    "lockVersion": {
+      "type": "string",
+      "pattern": "^[0-9]{4}\\.(0[1-9]|1[0-2])\\.[0-9]+$"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "gitSha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "plugId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "maxLength": 64
+    },
+    "artefactUrl": {
+      "description": "A URL reference (RFC 3986). CI writes a relative reference for each artefact of care-pi: <tag>/<asset>. The agent resolves it against dist_base of index.json. An absolute https URL is also valid.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(https://[^\\s]+|[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*)$"
+    },
+    "imageLock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "digest"],
+      "properties": {
+        "ref": {
+          "description": "The image reference with its tag, for example docker.io/library/redis:8-alpine.",
+          "type": "string",
+          "minLength": 1
+        },
+        "digest": {
+          "description": "The manifest list digest.",
+          "$ref": "#/$defs/digest"
+        }
+      }
+    },
+    "plugLock": {
+      "description": "The resolved parts of one plug. A part is absent when the plug has no such part.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "backend": {
+          "description": "The backend part.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ref", "sha", "additional_plug"],
+          "properties": {
+            "ref": {
+              "description": "The ref of solution.yaml.",
+              "type": "string",
+              "minLength": 1
+            },
+            "sha": {
+              "description": "The resolved commit.",
+              "$ref": "#/$defs/gitSha"
+            },
+            "additional_plug": {
+              "description": "The ADDITIONAL_PLUGS entry with the default configs (upstream plugs/plug.py). The device merges the operator settings into configs.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "package_name", "version", "configs"],
+              "properties": {
+                "name": {
+                  "description": "The Django app name.",
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "package_name": {
+                  "description": "The pip requirement without a version.",
+                  "type": "string",
+                  "pattern": "^git\\+https://[^\\s@]+$"
+                },
+                "version": {
+                  "description": "@<sha>.",
+                  "type": "string",
+                  "pattern": "^@[0-9a-f]{40}$"
+                },
+                "configs": {
+                  "description": "The default configs of the plug.",
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "frontend": {
+          "description": "The frontend part. source built: CI built the bundle from repo at sha; the device serves it at /plugs/<slug>/<sha12>/. source external: the browser loads url; the bundle is not pinned.",
+          "oneOf": [
+            { "$ref": "#/$defs/frontendBuilt" },
+            { "$ref": "#/$defs/frontendExternal" }
+          ]
+        }
+      }
+    },
+    "frontendBuilt": {
+      "description": "A frontend bundle that CI built from repo at sha (release plug-<slug>-<sha12>).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slug", "source", "ref", "sha", "url", "sha256", "entry", "size_bytes"],
+      "properties": {
+        "slug": { "description": "The slug of the plug_config row.", "$ref": "#/$defs/slug" },
+        "source": { "description": "built.", "const": "built" },
+        "ref": { "description": "The ref of solution.yaml.", "type": "string", "minLength": 1 },
+        "sha": { "description": "The resolved commit.", "$ref": "#/$defs/gitSha" },
+        "url": { "description": "The bundle (tar.gz), relative to dist_base.", "$ref": "#/$defs/artefactUrl" },
+        "sha256": { "description": "The SHA-256 of the bundle file.", "$ref": "#/$defs/sha256" },
+        "entry": { "description": "The path of remoteEntry.js in the bundle.", "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9._/-]*\\.js$" },
+        "size_bytes": { "description": "The size of the bundle file.", "type": "integer", "minimum": 1 }
+      }
+    },
+    "frontendExternal": {
+      "description": "A frontend bundle that the browser loads from url. Not pinned: sha, sha256, entry, and size_bytes are null.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["slug", "source", "ref", "sha", "url", "sha256", "entry", "size_bytes"],
+      "properties": {
+        "slug": { "description": "The slug of the plug_config row.", "$ref": "#/$defs/slug" },
+        "source": { "description": "external.", "const": "external" },
+        "ref": { "description": "null.", "type": "null" },
+        "sha": { "description": "null.", "type": "null" },
+        "url": { "description": "The absolute https URL of remoteEntry.js.", "type": "string", "pattern": "^https://[^\\s]+$" },
+        "sha256": { "description": "null.", "type": "null" },
+        "entry": { "description": "null.", "type": "null" },
+        "size_bytes": { "description": "null.", "type": "null" }
+      }
+    },
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*$"
+    }
+  },
+  "examples": [
+    {
+      "apiVersion": "care-pi/v1",
+      "kind": "SolutionLock",
+      "name": "care-clinic",
+      "version": "2026.11.0",
+      "created_at": "2026-11-14T10:00:00Z",
+      "created_by": "rithviknishad (workflow solution-lock, run 11650001)",
+      "notes": "First lock of CARE Clinic. care develop of 2026-11-13, care_fe develop of 2026-11-13.\n",
+      "min_agent_version": "v0.4.0",
+      "source": {
+        "commit": "9505cacb7c710ed17125fcc6cb3669e8ddca6c8c",
+        "solution_sha256": "c9e9420c990680921a6caf90891119c1267797f3025c68d6cc58a4ac1a53f193",
+        "run_url": "https://github.com/rithviknishad/care-pi/actions/runs/11650001"
+      },
+      "solution": {
+        "apiVersion": "care-pi/v1",
+        "kind": "Solution",
+        "name": "care-clinic",
+        "title": "CARE Clinic",
+        "description": "Outpatient clinic. Appointments, encounters, prescriptions, and invoices.",
+        "care": {
+          "image": "ghcr.io/ohcnetwork/care",
+          "ref": "latest"
+        },
+        "care_fe": {
+          "repo": "https://github.com/ohcnetwork/care_fe",
+          "ref": "develop"
+        },
+        "plugs": [
+          {
+            "id": "care_onboarding_fe",
+            "label": "CARE Onboarding",
+            "enabled": true,
+            "requires_internet": true,
+            "frontend": {
+              "slug": "care_onboarding_fe",
+              "repo": "https://github.com/ohcnetwork/care_onboarding_fe",
+              "ref": "main",
+              "meta": {
+                "config": {
+                  "redirect_after_login": true
+                }
+              }
+            },
+            "env": {
+              "frontend": {
+                "REACT_MFE_REGISTERED_COMPONENTS": "UserDashboard"
+              }
+            },
+            "settings": [
+              {
+                "part": "frontend",
+                "key": "config.redirect_after_login",
+                "label": "Open the clinic setup after sign-in",
+                "type": "boolean",
+                "default": true
+              }
+            ]
+          },
+          {
+            "id": "care_multihost_files_be",
+            "label": "Files on every address",
+            "enabled": false,
+            "auto": "when_multihost",
+            "backend": {
+              "name": "care_multihost_files_be",
+              "package": "git+https://github.com/ohcnetwork/care_multihost_files_be.git",
+              "ref": "main",
+              "configs": {
+                "ALLOWED_HOSTS": [
+                  "*.local",
+                  "*.ts.net"
+                ]
+              }
+            },
+            "settings": [
+              {
+                "part": "backend",
+                "key": "ALLOWED_HOSTS",
+                "label": "Addresses that can open files",
+                "type": "list"
+              }
+            ]
+          }
+        ],
+        "env": {
+          "backend": {
+            "RATE_LIMIT": "5/10m"
+          },
+          "frontend": {
+            "REACT_ALLOWED_LOCALES": "en,hi,ml",
+            "REACT_ALLOWED_ENCOUNTER_CLASSES": "amb"
+          }
+        },
+        "defaults": {
+          "size_preset": "small-clinic",
+          "clock_policy": "ntp"
+        }
+      },
+      "care": {
+        "image": "ghcr.io/ohcnetwork/care",
+        "ref": "latest",
+        "digest": "sha256:03c0d3dcece83afa3b6105c876cf44bf3bc61d68ceb791d261c5906791f997a9",
+        "git_sha": "456c9ed13b3344caaa3110c6a5263a24a3a8746b"
+      },
+      "solution_image": {
+        "image": "ghcr.io/rithviknishad/care-pi/care",
+        "tag": "care-clinic-2026.11.0",
+        "digest": "sha256:ca655b51ea069a139ccb070fa1fd1258a3142b661916fdb554b928e5a93d40b5",
+        "installed_plugs": [
+          "care_multihost_files_be"
+        ]
+      },
+      "care_fe": {
+        "repo": "https://github.com/ohcnetwork/care_fe",
+        "ref": "develop",
+        "sha": "1f944e82caeee09d9cbfe55f299b7414d890033d"
+      },
+      "fe": {
+        "build_id": "c7cb2784c87242c1",
+        "url": "fe-care-clinic-1f944e82caee-c7cb2784c87242c1/care_fe-care-clinic-1f944e82caee-c7cb2784c87242c1.tar.gz",
+        "sha256": "e5e6cd2910acdba3c12c06f33c81d41e47c3089224bded2b6f5f9bfe37cd1d72",
+        "size_bytes": 13421772,
+        "env_keys": [
+          "REACT_ALLOWED_ENCOUNTER_CLASSES",
+          "REACT_ALLOWED_LOCALES",
+          "REACT_CARE_API_URL",
+          "REACT_MFE_REGISTERED_COMPONENTS"
+        ]
+      },
+      "plugs": {
+        "care_onboarding_fe": {
+          "frontend": {
+            "slug": "care_onboarding_fe",
+            "source": "built",
+            "ref": "main",
+            "sha": "0785ff3b4dc6f0c9fa3abb7ba4f01cc854cff8b6",
+            "url": "plug-care_onboarding_fe-0785ff3b4dc6/plug-care_onboarding_fe-0785ff3b4dc6.tar.gz",
+            "sha256": "428151386eaa5c7e2c45193879f0c2244618520b99632a891f752c7dea7aa74c",
+            "entry": "assets/remoteEntry.js",
+            "size_bytes": 2097152
+          }
+        },
+        "care_multihost_files_be": {
+          "backend": {
+            "ref": "main",
+            "sha": "3edf06b127830e4fbf14823ac69568460eaed291",
+            "additional_plug": {
+              "name": "care_multihost_files_be",
+              "package_name": "git+https://github.com/ohcnetwork/care_multihost_files_be.git",
+              "version": "@3edf06b127830e4fbf14823ac69568460eaed291",
+              "configs": {
+                "ALLOWED_HOSTS": [
+                  "*.local",
+                  "*.ts.net"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "images": {
+        "postgres": {
+          "ref": "ghcr.io/rithviknishad/care-pi/postgres-pgbackrest:17",
+          "digest": "sha256:d80dc0a202c84e8fa4dcb3023143dff30cb5d99dae8c4731d84dab05aab52efb"
+        },
+        "caddy": {
+          "ref": "ghcr.io/rithviknishad/care-pi/caddy:2",
+          "digest": "sha256:d6e0ff2b7a534a9750d13545971476557164f72cb92ad74be7f145491ec4acf4"
+        },
+        "redis": {
+          "ref": "docker.io/library/redis:8-alpine",
+          "digest": "sha256:34fb46c847bb9df96e5205a39d382f648a6e8dce1e014cd85b4ca6a88d88ed03"
+        },
+        "s3": {
+          "ref": "docker.io/versity/versitygw:latest",
+          "digest": "sha256:41242b9fae56fad4e6e77dfe33cb18d1c3fc583f988cf25ef9f2d9be0d440bbb"
+        },
+        "node": {
+          "ref": "docker.io/library/node:22-bookworm-slim",
+          "digest": "sha256:545ea538461003efdc8c81c244531b003f6f26cfccf6c0073b3239fdedf49446"
+        }
+      }
+    }
+  ]
+}

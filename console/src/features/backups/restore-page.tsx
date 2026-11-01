@@ -1,7 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { AlertTriangleIcon, FileStackIcon, HistoryIcon, MonitorSmartphoneIcon, Undo2Icon } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
-import { useSearchParams } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { api, call } from "@/api/client";
 import { ProblemError } from "@/api/problem";
 import { useRestorePoints } from "@/api/queries";
@@ -42,6 +42,7 @@ import {
   fromLocalInput,
   isoSeconds,
   nearestSnapshot,
+  restoreOffer,
   toLocalInput,
   undoCheckpoint,
 } from "./backups-format";
@@ -165,7 +166,8 @@ function UndoCard({ points, onJob }: { points: RestorePoints; onJob: (job: Job) 
 }
 
 // "Undo a mistake": a point in time inside the restore window (docs/api/README.md section 13.9.1).
-function PitrPanel({ points }: { points: RestorePoints }) {
+// offered is the time of the PITR offer of an update (/restore?time=…): the panel starts with it.
+function PitrPanel({ points, offered }: { points: RestorePoints; offered: number | null }) {
   const id = useId();
   const { withReauth } = useReauth();
   const now = useNow();
@@ -173,8 +175,9 @@ function PitrPanel({ points }: { points: RestorePoints }) {
   const from = pitr ? Date.parse(pitr.from) : 0;
   // A restore job archives the current WAL segment first: a time up to the start of the job is possible.
   const max = Math.max(now, pitr ? Date.parse(pitr.to) : 0);
-  const [time, setTime] = useState(() => (pitr ? Date.parse(pitr.to) : 0));
-  const [text, setText] = useState(() => (pitr ? toLocalInput(Date.parse(pitr.to)) : ""));
+  const initial = offered ?? (pitr ? Date.parse(pitr.to) : 0);
+  const [time, setTime] = useState(initial);
+  const [text, setText] = useState(() => (pitr ? toLocalInput(initial) : ""));
   const [confirm, setConfirm] = useState(false);
   const [job, setJob] = useState<Job | null>(null);
   const start = useMutation({
@@ -465,11 +468,26 @@ export default function RestorePage() {
   const points = useRestorePoints();
   const [params, setParams] = useSearchParams();
   const raw = params.get("kind");
-  const kind: Kind | null = raw === "pitr" || raw === "files" || raw === "device" ? raw : null;
+  // /restore?time=<RFC 3339 time>: the PITR offer of an update (docs/console-ui.md section 11.4) opens "Undo a mistake".
+  const offerParam = params.get("time");
+  const offered = restoreOffer(offerParam);
+  const kind: Kind | null =
+    raw === "pitr" || raw === "files" || raw === "device" ? raw : offered !== null ? "pitr" : null;
   const [undoJob, setUndoJob] = useState<Job | null>(null);
   return (
     <div className="flex flex-col gap-4">
       <PageHeader title={r.title} description={r.intro} />
+      {offered !== null && offerParam ? (
+        <Alert variant="info" data-testid="restore-offered" data-time={offerParam}>
+          <HistoryIcon aria-hidden="true" />
+          <AlertDescription className="flex flex-col items-start gap-2">
+            <p>{fmt(r.offered, { time: formatDateTime(offerParam), utc: isoSeconds(offered).replace("T", " ") })}</p>
+            <Button asChild variant="outline" size="sm">
+              <Link to="/updates">{r.back}</Link>
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <div role="radiogroup" aria-label={r.title} className="grid gap-3 md:grid-cols-3">
         {KINDS.map(({ id, icon: Icon }) => (
           <button
@@ -477,7 +495,7 @@ export default function RestorePage() {
             type="button"
             role="radio"
             aria-checked={kind === id}
-            onClick={() => setParams({ kind: id }, { replace: true })}
+            onClick={() => setParams(offerParam ? { kind: id, time: offerParam } : { kind: id }, { replace: true })}
             className={cn(
               "flex min-h-32 flex-col items-start gap-2 rounded-xl border bg-card p-4 text-left outline-none hover:bg-muted-background focus-visible:outline-2 focus-visible:outline-indigo-500",
               kind === id && "border-primary ring-1 ring-primary",
@@ -513,7 +531,7 @@ export default function RestorePage() {
                 <CardDescription>{r.kindHelp[kind]}</CardDescription>
               </CardHeader>
               <CardContent>
-                {kind === "pitr" ? <PitrPanel points={points.data} /> : null}
+                {kind === "pitr" ? <PitrPanel key={offered ?? "now"} points={points.data} offered={offered} /> : null}
                 {kind === "files" ? <FilesPanel points={points.data} /> : null}
                 {kind === "device" ? (
                   <Alert variant="info" data-testid="restore-device">

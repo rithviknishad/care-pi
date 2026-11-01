@@ -2,8 +2,6 @@
 package solution
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -11,7 +9,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/santhosh-tekuri/jsonschema/v6"
 	"go.yaml.in/yaml/v3"
 
 	"github.com/rithviknishad/care-pi/agent/internal/config"
@@ -30,6 +27,10 @@ type Solution struct {
 	Plugs       []Plug   `yaml:"plugs"`
 	Env         EnvSet   `yaml:"env"`
 	Defaults    Defaults `yaml:"defaults"`
+	// MinAgentVersion is the oldest agent that can install a lock of the solution (Phase 4).
+	MinAgentVersion string `yaml:"min_agent_version"`
+	// Doc is the document as data, for the API (SolutionDocument) and the lock (solution).
+	Doc map[string]any `yaml:"-"`
 }
 
 // Care is the upstream backend image.
@@ -86,7 +87,44 @@ type FrontendPlug struct {
 	Ref  string         `yaml:"ref"`
 	URL  string         `yaml:"url"`
 	Meta map[string]any `yaml:"meta"`
+	// Entry is the path of remoteEntry.js in the built bundle (Phase 4).
+	Entry string `yaml:"entry"`
+	// Build tells how CI and the local builder build the bundle (Phase 4).
+	Build *FrontendBuild `yaml:"build"`
 }
+
+// FrontendBuild is the npm script and the output directory of a plug bundle.
+type FrontendBuild struct {
+	Script string `yaml:"script"`
+	Out    string `yaml:"out"`
+}
+
+// EntryPath returns the entry of the bundle, with the default.
+func (f *FrontendPlug) EntryPath() string {
+	if f == nil || f.Entry == "" {
+		return "assets/remoteEntry.js"
+	}
+	return f.Entry
+}
+
+// BuildScript returns the npm script of the bundle, with the default.
+func (f *FrontendPlug) BuildScript() string {
+	if f == nil || f.Build == nil || f.Build.Script == "" {
+		return "build"
+	}
+	return f.Build.Script
+}
+
+// BuildOut returns the output directory of the bundle, with the default.
+func (f *FrontendPlug) BuildOut() string {
+	if f == nil || f.Build == nil || f.Build.Out == "" {
+		return "dist"
+	}
+	return f.Build.Out
+}
+
+// External reports whether the browser loads the bundle from url (no repo).
+func (f *FrontendPlug) External() bool { return f != nil && f.Repo == "" && f.URL != "" }
 
 // AutoWhenMultihost enables a plug when more than one hostname is served.
 const AutoWhenMultihost = "when_multihost"
@@ -117,54 +155,34 @@ func Load(name, dir string) (*Solution, error) {
 
 // Parse validates and decodes a solution document.
 func Parse(data []byte, src string) (*Solution, error) {
-	if err := validate(data); err != nil {
+	if err := ValidateData(KindSolution, data); err != nil {
 		return nil, fmt.Errorf("%s is not valid: %w", src, err)
 	}
 	var s Solution
 	if err := yaml.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("cannot decode %s: %w", src, err)
 	}
-	seen := map[string]bool{}
-	for _, p := range s.Plugs {
-		if seen[p.ID] {
-			return nil, fmt.Errorf("%s is not valid: plug %q occurs more than once", src, p.ID)
-		}
-		seen[p.ID] = true
+	doc, err := toJSONValue(data)
+	if err != nil {
+		return nil, fmt.Errorf("cannot decode %s: %w", src, err)
+	}
+	s.Doc, _ = doc.(map[string]any)
+	if err := checkPlugIDs(&s); err != nil {
+		return nil, fmt.Errorf("%s is not valid: %w", src, err)
 	}
 	return &s, nil
 }
 
-func validate(data []byte) error {
-	schemaData, err := fs.ReadFile(solutions.FS, "schema/solution.schema.json")
-	if err != nil {
-		return fmt.Errorf("cannot read the embedded solution schema: %w", err)
+// checkPlugIDs checks the rule that the schema cannot express: each plug id occurs one time.
+func checkPlugIDs(s *Solution) error {
+	seen := map[string]bool{}
+	for _, p := range s.Plugs {
+		if seen[p.ID] {
+			return fmt.Errorf("plug %q occurs more than once", p.ID)
+		}
+		seen[p.ID] = true
 	}
-	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemaData))
-	if err != nil {
-		return err
-	}
-	c := jsonschema.NewCompiler()
-	const url = "solution.schema.json"
-	if err := c.AddResource(url, doc); err != nil {
-		return err
-	}
-	sch, err := c.Compile(url)
-	if err != nil {
-		return err
-	}
-	var raw any
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-	js, err := json.Marshal(raw)
-	if err != nil {
-		return err
-	}
-	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(js))
-	if err != nil {
-		return err
-	}
-	return sch.Validate(inst)
+	return nil
 }
 
 // EffectivePlug is a plug after the config overrides.
@@ -174,7 +192,19 @@ type EffectivePlug struct {
 	On bool
 	// Custom reports whether config.yaml changed or added the plug.
 	Custom bool
+	// Reason is the rule that gives On (docs/solutions.md, section 1.3): custom, operator, auto, or solution.
+	Reason string
+	// AutoActive reports whether the auto rule turns the plug on now.
+	AutoActive bool
 }
+
+// Reasons of EffectivePlug.Reason.
+const (
+	ReasonCustom   = "custom"
+	ReasonOperator = "operator"
+	ReasonAuto     = "auto"
+	ReasonSolution = "solution"
+)
 
 // HasBackend reports whether the plug has a backend part.
 func (p EffectivePlug) HasBackend() bool { return p.Backend != nil }
@@ -188,6 +218,7 @@ func (s *Solution) Effective(cfg *config.Config, hostnames int) ([]EffectivePlug
 		index[p.ID] = len(out)
 		out = append(out, EffectivePlug{Plug: clonePlug(p)})
 	}
+	customEnabled := map[string]bool{}
 	if cfg.Solution.Track == "custom" {
 		for _, c := range cfg.Solution.Custom.Plugs {
 			i, ok := index[c.ID]
@@ -212,7 +243,7 @@ func (s *Solution) Effective(cfg *config.Config, hostnames int) ([]EffectivePlug
 			ep := &out[i]
 			ep.Custom = true
 			if c.Enabled != nil {
-				ep.Enabled = *c.Enabled
+				customEnabled[c.ID] = *c.Enabled
 			}
 			if c.Backend != nil {
 				if ep.Backend == nil {
@@ -252,7 +283,19 @@ func (s *Solution) Effective(cfg *config.Config, hostnames int) ([]EffectivePlug
 	}
 	for i := range out {
 		p := &out[i]
-		p.On = p.Enabled || (p.Auto == AutoWhenMultihost && hostnames > 1)
+		p.AutoActive = p.Auto == AutoWhenMultihost && hostnames > 1
+		choice, chosen := cfg.Solution.Plugs[p.ID]
+		v, custom := customEnabled[p.ID]
+		switch {
+		case custom:
+			p.On, p.Reason = v, ReasonCustom
+		case chosen && choice.Enabled != nil:
+			p.On, p.Reason = *choice.Enabled, ReasonOperator
+		case p.AutoActive:
+			p.On, p.Reason = true, ReasonAuto
+		default:
+			p.On, p.Reason = p.Enabled, ReasonSolution
+		}
 	}
 	return out, nil
 }
@@ -270,11 +313,12 @@ func clonePlug(p Plug) Plug {
 }
 
 // DefaultBackendPlugs returns the ids and refs of the backend plugs that CI puts into the
-// solution image: the plugs with enabled: true and a backend part.
+// solution image. From Phase 4 this is each plug of the solution with a backend part, on or off
+// (the superset rule, docs/solutions.md section 1.5).
 func (s *Solution) DefaultBackendPlugs() map[string]string {
 	out := map[string]string{}
 	for _, p := range s.Plugs {
-		if p.Enabled && p.Backend != nil {
+		if p.Backend != nil {
 			out[p.ID] = p.Backend.Ref
 		}
 	}
@@ -314,10 +358,18 @@ func joinDistinct(a, b string) string {
 	return strings.Join(parts, ",")
 }
 
+// RegisteredComponents is the frontend variable that registers the components that plugs override.
+const RegisteredComponents = "REACT_MFE_REGISTERED_COMPONENTS"
+
 // PlugEnv returns the merged env of the plugs that are on, in plug order.
+// REACT_MFE_REGISTERED_COMPONENTS has the components of each plug, on or off (the superset rule,
+// docs/solutions.md section 1.5), so a plug switch does not change the FE build id.
 func PlugEnv(plugs []EffectivePlug) EnvSet {
 	be, fe := map[string]string{}, map[string]string{}
 	for _, p := range plugs {
+		if v := p.Env.Frontend[RegisteredComponents]; v != "" {
+			fe = MergeEnv(MultiValueFrontendKeys, fe, map[string]string{RegisteredComponents: v})
+		}
 		if !p.On {
 			continue
 		}

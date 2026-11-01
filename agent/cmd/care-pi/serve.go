@@ -105,6 +105,12 @@ Never use --insecure-dev on a clinic device.`,
 		if ids := jobs.MarkInterrupted(p, time.Now()); len(ids) > 0 {
 			log.Warn("jobs were interrupted by a stop of their process", "ids", ids)
 		}
+		// Phase 4: an update that a power loss interrupted (docs/solutions.md, section 8.6).
+		if j, err := svc.RecoverUpdates(cmd.Context()); err != nil {
+			log.Error("cannot recover the interrupted update", "error", err)
+		} else if j != nil {
+			log.Warn("recovery of an interrupted update", "job", j.ID)
+		}
 		dist, err := fs.Sub(console.Dist, "dist")
 		if err != nil {
 			return err
