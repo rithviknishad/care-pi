@@ -8764,6 +8764,7 @@ export interface components {
          *       "files_snapshot_id": "1a2b3c4d",
          *       "files_snapshot_time": "2026-10-30T02:30:00Z",
          *       "skew_s": 29640,
+         *       "display_name": "Sunrise Clinic",
          *       "hostname": "care",
          *       "care_url": "https://care.local/",
          *       "console_url": "https://care.local:8443/",
@@ -8808,6 +8809,12 @@ export interface components {
             files_snapshot_time: string | null;
             /** @description `restored_to` minus `files_snapshot_time`, in seconds (`02` §6, S18). The console shows it. */
             skew_s: number | null;
+            /**
+             * @description `identity.display_name` of the restored config (the clinic name). The job ends each session with the
+             *     event `done`, so the console cannot read `GET /config` after the restore; it shows this name on the hand-off page.
+             * @example Sunrise Clinic
+             */
+            display_name: string;
             /**
              * @description `identity.hostname` of the restored config. The OS host name is now this name.
              * @example care

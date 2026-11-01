@@ -793,3 +793,88 @@ wave 4d (`wave4d-shots/`).
 
 New observation (follow-up 11, not fixed): the phone dashboard of lumine showed `care-caddy.service` at 95.5 MiB of
 its 96M cap (89.8 MiB a minute before). Measure the peak of Caddy before Phase 3, and raise the cap if necessary.
+
+## Phase 3 exit test — lumine, 2026-10-31 — **PASS (9 of 9), with 6 fixes before the commit and follow-ups**
+
+Wave 5a of Phase 3 (the server side: `docs/backups.md`, contract v0.4.0 `docs/api/README.md` section 13).
+The console of this binary is the Phase 2 console (`make -o console-build build-linux`; the console agent worked in
+parallel on `console/**`). One agent ran the test on lumine; it was the only agent on lumine. Scripts and raw output:
+`local/wave5/` (S39). Destinations:
+
+| Id | Type | Where |
+|---|---|---|
+| `local` | `posix`, `path: /srv/care-backups` | the root disk (the test warns, as it must) |
+| `usb` | `posix`, `disk_label: care-usb1` | a 4 GiB file-backed loop device (`/var/lib/care-pi-test/loop.img`, `losetup` is in `util-linux` on trixie), prepared by the job `disk-prepare` |
+| `mac` | `sftp` | the Mac over Tailscale, `rithviknishad@100.127.72.71:/Users/rithviknishad/care-pi-sftp-backups`; the agent key in `~/.ssh/authorized_keys` with `restrict,from="100.67.15.72",command="internal-sftp"` |
+| `s3` | `s3` | a second versitygw on lumine outside the pod (the quadlet `w5-s3`, `http://127.0.0.1:7071`, bucket `care-w5-backups`, prefix `lumine`); the test created the bucket |
+
+| # | Criterion | Result |
+|---|---|---|
+| 1 | Deploy the binary, re-run the installer, apply | **PASS** — install 3 s; the plan had `write-files` (13), `daemon-reload`, `ensure-mounts`, `ensure-repositories`, `ensure-timers`; `ensure-timers` started the first full backup (Phase 2 hosts have none): 3 s. The local repository stayed `legacy` until the rotation |
+| 2 | Recovery key: `create`, `show`, `confirm` (CLI); `rotate --keep-key` (the re-key of the random Phase 1 pass) | **PASS** — key `b7616345`; the re-key job 67 s (the maintenance page included), `local_repository: derived`, `pgbackrest check` OK, `pg.legacy` deleted at the end; care-db peak 195 MiB |
+| 3 | Destinations: test → secrets → apply → first snapshot → `GET /backups` → verify | **PASS** — `local`: root-disk warning; `usb`: `disk-prepare` of `loop1` 1 s (`sda`, the system disk, → 409 `disk-in-use`); `mac`: TOFU fingerprint `SHA256:x0173fcoSkvkLEhIUue3D9rdVXtdh0L6rdP9bYKNueA` = `ssh-keygen -lf` of the Mac, then `install-ssh-key`, then `ok`; `s3`: `create-bucket`, then `ok`. Apply of 4 destinations 19 s. First timer snapshots ok (units 92–96 MiB, later about 62 MiB). `backup run --destination` 4–30 s each; `GET /backups` shows the last snapshot of each destination; verify of all (`pgbackrest verify`, `restic check --read-data-subset=5%` × 4) 91 s |
+| 4 | Golden path (`05` §7): patient 1 → `backup run --scope local-db --type incr` → note the time → patient 2 → PITR → restore latest | **PASS** — PITR to the noted time: job 70 s, downtime 65.8 s (Care `/ping/` not 200 for 60 s), patient 2 gone, patient 1 there, timeline 1 → 2; undo with the checkpoint of the job: 72 s (downtime 67 s), patient 2 back, timeline 3. A fresh full backup and `pgbackrest check` OK after each restore |
+| 5 | Files restore to a side directory; bytes and xattrs | **PASS** — 2 s; the bytes and the xattrs `user.checksums`, `user.content-type`, `user.etag` equal (`python3 os.getxattr`) |
+| 6 | Drill; skip at low disk | **PASS** — 10 s, `cluster state: in production`, `select 1`; with `CARE_PI_DRILL_FREE_BYTES=1` the timer run records `skipped` and a manual run gives 409 `insufficient-space` |
+| 7 | Outage isolation: the SFTP port 2299 | **PASS** — the `mac` timer run failed at once ("Connection refused"), `mac` degraded, the others ok, no banner; the apply did not fail; `pg_stat_archiver` failed count 0 (archived 8 → 9); after the fix the next run caught up (15 s) |
+| 8 | DR: purge, install, claim, `restore dr` from the SFTP destination | **PASS** — purge 11:30:43, install 6 s, claim, inspect (warning `source-may-be-active`, correct), `restore dr` 355 s (database part 130 s, FE build about 225 s), ready 11:39:29: **8 min 46 s** in total. The old console password logs in (200), the claim password does not (401), both patients are there, the Phase 2 file `f5d3cb67…` gives 200 and the same SHA-256. Timers active; the destinations continue in `care-pi-b7616345` |
+| 8b | DR again through the console API (the daemon path), after fixes 5 and 6 | **PASS** — claim (`POST /session/claim`), `POST /restore/dr/inspect`, `POST /restore/dr`, the SSE stream of the job to the event `done` (with `display_name: Lumine Test Clinic`): 364 s (database part 120 s, FE build 234 s). Then the agent ended each session and restarted care-caddy with the local CA of the old device: the root CA fingerprint is the same as before the purge, and `curl --cacert <old root>` gives 200 on 443 and 8443. Old console password 200, claim password 401, both patients, the file 200 with the same SHA-256 |
+| 9 | Reboot | **PASS** — all care units and the 12 timers active, `multi-user.target` 9.0 s (the quadlet `w5-s3` adds `network-online`). First reboot: the boot "finished" at 2 min 47 s because the USB automount waited 90 s for the loop device that was not attached again (fix 4); after the fix the run failed in less than 1 s ("the backup disk care-usb1 is not connected"), the boot finished at 1 min 40 s (care-beat 34 s and care-clock 30 s are the longest units, as in Phase 2) |
+
+### Fixes (found on lumine, fixed before the first commit of the wave)
+
+The fixes are in new files of this wave, so each is part of the wave commit, not a separate commit.
+
+| # | Symptom on lumine | Cause | Fix |
+|---|---|---|---|
+| 1 | `systemd-analyze calendar 'daily 02:00'` on lumine: "Failed to parse calendar specification"; a timer with it never runs | systemd does not accept `daily 02:00` (the default of `backups.schedule.db_incr` and `files`) | the renderer writes `*-*-* HH:MM` for `daily HH:MM` (`render.Calendar`); `docs/config.md` |
+| 2 | The drill failed: the drill PostgreSQL stopped in the recovery | `max_connections` of the drill (low default) was lower than on the primary (40); a hot standby needs at least the value of the primary | the drill sets `max_connections=40` |
+| 3 | A failed drill start waited for the full timeout | the step only polled `pg_isready` | `drill-start` reads `ActiveState` of `care-backup-drill-pg.service` and fails at once |
+| 4 | A run to a USB disk that was not connected waited 90 s (also at boot) | the automount waits for the device timeout; `x-systemd.device-timeout` has no effect in a native mount unit | before each run and each test, the agent checks `/dev/disk/by-label/<label>` and fails at once |
+| 5 | After the DR, the root CA of the device was new (`66:B1…` before, `3E:0A…` after): each clinic device that trusted the old root gets a certificate warning | the snapshots had `/etc/care-pi`, not the local CA of Caddy (`/var/lib/care-pi/caddy/caddy/pki/authorities/local`) | each snapshot has the CA; `fetch-config` restores it to a stage; after the event `done` and the end of the sessions, the agent replaces the CA, deletes the certificates of the new CA, and restarts care-caddy (contract section 13.2 and 13.9.3) |
+| 6 | The DR from the CLI did not end the sessions and did not switch the CA | `care-pi restore dr` exited after the event `done`; the job runs in the CLI process, so its `AfterDone` stopped with it | `runJob` waits for the job of its process (`Jobs.Wait`) |
+
+### Timings
+
+| Event | Time |
+|---|---|
+| Deploy (install.sh with the new binary) | 3 s |
+| First full backup (timer, 46 MB database) | 3 s |
+| Re-key (`rotate --keep-key`) | 67 s |
+| `disk-prepare` (4 GiB loop device) | 1 s |
+| Apply with 4 new destinations | 19 s |
+| Snapshot of one destination (`backup run --destination`) | 4–30 s (SFTP the slowest) |
+| Verify of all (local + 4 destinations, 5 % read) | 91 s |
+| PITR / undo (downtime) | 70 s (65.8 s) / 72 s (67 s) |
+| Files restore to a side directory | 2 s |
+| Drill | 10 s |
+| DR: purge → ready | 8 min 46 s (install 6 s, restore job 355 s, of which the FE build about 225 s) |
+| DR through the API (8b): the job to the event `done` / the CA switch after it | 364 s / 1 s |
+| Reboot: SSH back / boot finished | 38 s / 1 min 40 s (after fix 4) |
+
+### Memory (`MemoryPeak`)
+
+| Unit | Peak |
+|---|---|
+| care-db during the re-key and the restores | 155–195 MiB |
+| A destination snapshot unit (restic in its transient unit) | first runs 92–96 MiB, later 53–63 MiB |
+| `care-pi.service` (the agent) after the reboot | 10.8 MiB |
+| `care-backup-*` CLI unit of a local full backup | 34 MiB |
+| The test S3 server `w5-s3` | 73 MiB |
+
+### Follow-ups (not fixed; the owner decides)
+
+1. The console of this test is the Phase 2 console. The Phase 3 console (`5eb08f6`, wave 5b) needs its device e2e
+   (`console/e2e/real/backups.spec.ts`) on lumine.
+2. A real USB disk (not a loop device): `disk-prepare`, unplug, plug in, and the automount.
+3. An S3 provider on the internet (Backblaze B2 or AWS) and a slow uplink; the 15-minute timer with a large first snapshot.
+4. The DR test restored on the same Pi. A second Pi (or a new SD card) is the full criterion of `06`.
+5. Two restores in one day can expire the checkpoint of the first (`db_full: 2`, each restore makes a full backup).
+   The console offers the undo for 24 h; the agent gives 404 when the backup is gone. Keep the checkpoint
+   (`--annotation`/`expire --set`) or say it in the UI.
+6. The drill uses `max_connections=40` (the value of `care-db.container.tmpl`). Take it from the model when a preset changes it.
+
+Leftovers on lumine and the Mac (test only): the quadlet `w5-s3` and its data (`/var/lib/care-pi-test/s3`), `/var/lib/care-pi-test/loop.img`
+(attach it again after a reboot: `sudo losetup -fP --show /var/lib/care-pi-test/loop.img`), `/srv/care-backups`, the line
+in `~/.ssh/authorized_keys` of the Mac (`local/wave5/42-mac-authorized_keys-line.txt`; the file before the change is
+`42-mac-authorized_keys.before`), and `~/care-pi-sftp-backups/care-pi-b7616345` on the Mac.
