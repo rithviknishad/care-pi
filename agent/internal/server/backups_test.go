@@ -443,10 +443,23 @@ func TestBackupsReady(t *testing.T) {
 	if j.State != jobs.StateFailed || j.Error.Slug != "destination-unreachable" {
 		t.Fatalf("%s %+v", j.State, j.Error)
 	}
+	before := len(e.fake.Filter("restic "))
 	r = e.do("POST", "/api/v1/backups/verify", map[string]any{"scope": "destination", "destination": "local", "read_data_subset_pct": 10, "prune": true})
 	e.want(r, 202, "")
 	if j := e.waitJob(r.json(t)["id"].(string)); j.State != jobs.StateSucceeded {
 		t.Fatalf("%+v", j.Error)
+	}
+	// A stale restic lock (a run that lost its connection) blocks forget, prune, and check: "restic unlock" comes first.
+	var seq []string
+	for _, c := range e.fake.Filter("restic ")[before:] {
+		for _, p := range []string{"restic unlock", "restic forget", "restic prune", "restic check"} {
+			if strings.HasPrefix(c, p) {
+				seq = append(seq, p)
+			}
+		}
+	}
+	if strings.Join(seq, ",") != "restic unlock,restic forget,restic forget,restic prune,restic check" {
+		t.Fatalf("restic calls of the verify %q", seq)
 	}
 	e.want(e.do("POST", "/api/v1/backups/verify", map[string]any{"read_data_subset_pct": 0}, invalid), 422, "invalid-request")
 	t.Setenv("CARE_PI_DRILL_FREE_BYTES", "1")

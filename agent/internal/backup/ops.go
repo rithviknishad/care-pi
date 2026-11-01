@@ -279,7 +279,19 @@ func (o Ops) Forget(ctx context.Context, d config.BackupDestination, tag string,
 		return err
 	}
 	defer s.Close()
+	o.unlockStale(ctx, s, d)
 	return o.forgetLocked(ctx, s, d, tag)
+}
+
+// unlockStale removes the stale restic locks of a destination ("restic unlock" without --remove-all: a lock that
+// is older than 30 minutes, or of a process of this host that ended). A run that lost its connection (an SFTP
+// destination that went away) leaves its lock, and then each exclusive operation (forget, prune, check) fails
+// until the lock is gone. care-pi runs one restic process for each destination at a time (o.lock), so a live lock
+// of this device cannot be here. A failure is a warning only: the next command reports the real error.
+func (o Ops) unlockStale(ctx context.Context, s *Session, d config.BackupDestination) {
+	if _, err := s.Run(ctx, o.Runner, "unlock"); err != nil {
+		o.logf("warning: cannot remove the stale locks of %s: %v", d.ID, err)
+	}
 }
 
 func (o Ops) forgetLocked(ctx context.Context, s *Session, d config.BackupDestination, tag string) error {
@@ -355,6 +367,7 @@ func (o Ops) VerifyDest(ctx context.Context, d config.BackupDestination, k Key, 
 	defer s.Close()
 	res := &VerifyDest{ID: d.ID, SubsetPct: pct}
 	start := time.Now()
+	o.unlockStale(ctx, s, d)
 	if prune {
 		end := step("forget: "+d.ID, "forget")
 		var ferr error
@@ -474,6 +487,7 @@ func (o Ops) RemoveRepository(ctx context.Context, d config.BackupDestination, o
 		return loc, err
 	}
 	defer s.Close()
+	o.unlockStale(ctx, s, d)
 	if _, err := s.Run(ctx, o.Runner, "forget", "--keep-tag", "care-pi-keep-nothing"); err != nil {
 		return loc, err
 	}

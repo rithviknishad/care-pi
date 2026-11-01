@@ -238,6 +238,10 @@ daemon: each run has its own unit, its own memory cap (`MemoryMax=512M`, `Memory
 - The restore jobs stop `care-backup.target` (step `pause-backups`) and wait 10 minutes at most for each backup lock.
   While a restore job runs, a backup job gives `409 job-running`. The step `resume-backups` starts the target again.
   When `pause-backups` fails (a backup still holds its lock after 10 minutes), the job starts the target again and fails.
+- restic has its own locks in each repository. A run that lost its connection (an SFTP destination that went away)
+  leaves its lock there, and each exclusive operation (`forget`, `prune`, `check`) fails until the lock goes. Under
+  `backup-<id>.lock`, before `forget`, `verify`, and the removal of an old repository, the agent runs `restic unlock`.
+  It removes only stale locks: older than 30 minutes, or of a process of this host that ended.
 
 ## 7. The sandbox
 
