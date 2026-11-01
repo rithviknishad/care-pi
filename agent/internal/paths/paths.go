@@ -89,8 +89,10 @@ const (
 	WiFiState      = "/var/lib/care-pi/state/wifi.json"
 	// Secret files of Phase 6 (below SecretsDir). The PSK is in NetworkManager's own keyfile too (0600 root).
 	DNSClientKeyFile = "/etc/care-pi/secrets/dns_client.key"
-	ACMEDNSFile      = "/etc/care-pi/secrets/acme_dns.json"
-	WiFiSecretFile   = "/etc/care-pi/secrets/wifi.json"
+	// DNSClientPendingKeyFile is the new key of "care-pi tls public rotate --new-key" until the service took it.
+	DNSClientPendingKeyFile = "/etc/care-pi/secrets/dns_client.key.pending"
+	ACMEDNSFile             = "/etc/care-pi/secrets/acme_dns.json"
+	WiFiSecretFile          = "/etc/care-pi/secrets/wifi.json"
 	// TailscaleSocketDir is the directory of the socket of tailscaled. care-caddy mounts it when Tailscale is on.
 	TailscaleSocketDir = "/run/tailscale"
 	// FirewallDropIn adds the Tailscale port (41641/udp) to the table of care-pi-firewall.service (installer).

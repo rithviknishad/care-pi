@@ -166,7 +166,12 @@ cutover), then deletes the registration. The service never gives the same id aga
 - `care-pi tls public status [--json]`: the name, the certificate, the last address update.
 - `care-pi tls public update-address`: send the address when it changed (the timer adds `--scheduled`).
 - `care-pi tls public rotate [--new-key]`: get new acme-dns credentials from the service (`--new-key`: also a new
-  Ed25519 key). CLI only.
+  Ed25519 key). CLI only. With `--new-key`, the agent writes the new key to `secrets/dns_client.key.pending` before the
+  request. When the answer is lost, the service can have the new key, and the old key gets `401 bad_signature`. Then
+  each request of the agent signs again once with the pending key; when the service takes it, it becomes the key
+  (`secrets/dns_client.key`). Run the command again after a lost answer: it also gets acme-dns credentials that work.
+- The service refuses the key (`401`, for example a key that is lost): `PUT /tls/public` on registers again (a new
+  name), and off forgets the registration (the service keeps it until an operator deletes it).
 
 ## 4. Tailscale
 
@@ -321,6 +326,7 @@ The Wi-Fi settings of the Raspberry Pi Imager are NetworkManager profiles too (f
 | `/var/lib/care-pi/ca/root.key`, `root.crt` | agent | The name-constrained root CA. |
 | `/var/lib/care-pi/state/ca.json` | agent | The fingerprint, the old fingerprint, `changed_at`, the constraints. |
 | `/etc/care-pi/secrets/dns_client.key` | agent | The Ed25519 key of the DNS client (PKCS #8, 0600). |
+| `/etc/care-pi/secrets/dns_client.key.pending` | agent | The new key of `rotate --new-key` until the service takes it (section 3.6). |
 | `/etc/care-pi/secrets/acme_dns.json` | agent | The credentials of acme-dns (0600); podman secret `care-pi-acme-dns`. |
 | `/var/lib/care-pi/state/tls-public.json` | agent | The id, the name, the last address and the time of its update. |
 | `/var/lib/care-pi/state/tls-tailscale.json` | agent | The last state of the Tailscale job. |

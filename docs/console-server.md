@@ -294,7 +294,7 @@ stopped with `missing steps: tls`).
 | `/var/lib/care-pi/ca/root.crt`, `root.key` | Phase 6: the name-constrained root CA of the agent (`/tls/root-ca`; `docs/connectivity.md`) | root 0644, 0600 |
 | `/var/lib/care-pi/caddy/caddy/pki/authorities/local/root.crt` | The root CA of Caddy. The agent reads it for `/tls/root-ca` only before the Phase 6 switch | root |
 | `/var/lib/care-pi/state/{ca.json,tls-public.json,tls-tailscale.json,wifi.json,pod-live.json}` | Phase 6: the CA switch, the registration with the DNS service, the last Tailscale and Wi-Fi state, the addresses of the pod that runs | root 0600 |
-| `/etc/care-pi/secrets/{dns_client.key,acme_dns.json,wifi.json}` | Phase 6: the Ed25519 key of the DNS client, the credentials of acme-dns, the Wi-Fi passphrase | root 0600 |
+| `/etc/care-pi/secrets/{dns_client.key,dns_client.key.pending,acme_dns.json,wifi.json}` | Phase 6: the Ed25519 key of the DNS client (and the new key of `tls public rotate --new-key` until the service takes it), the credentials of acme-dns, the Wi-Fi passphrase | root 0600 |
 | `/run/care-pi/tailscale-auth-key` | Phase 6: the auth key while `tailscale up` runs; deleted after the step | root 0600 |
 | `/var/lib/care-pi/state/{updates.json,update-history.jsonl,update-cache/,staging/,plug-config.json,images.json}` | Phase 4: the update state (`docs/solutions.md` section 6.4) | root 0600, directories 0700 |
 | `/etc/care-pi/secrets/plug-<id>.json` | Phase 4: the secret settings of one plug | root 0600 |

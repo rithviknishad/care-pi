@@ -2,6 +2,7 @@ package server
 
 import (
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
@@ -14,9 +15,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/rithviknishad/care-pi/agent/internal/apply"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/dnsclient"
 	"github.com/rithviknishad/care-pi/agent/internal/host"
@@ -242,6 +245,88 @@ func TestPublicUpdateStagingCertificate(t *testing.T) {
 	p := r.json(t)["public"].(map[string]any)
 	if c := p["certificate"].(map[string]any); p["primary"] != false || c["state"] != "issued" || c["staging"] != true {
 		t.Fatalf("public %v", p)
+	}
+}
+
+// m1: "care-pi tls public rotate --new-key" whose answer is lost. The agent stores the new key before the request
+// (secrets/dns_client.key.pending), so it is not locked out: a later request signs with the pending key and promotes it.
+func TestPublicRotateLostAnswer(t *testing.T) {
+	e, f := readyConnEnv(t)
+	writeRootCA(t, e.p)
+	e.jobOK(e.do("PUT", "/api/v1/tls/public", map[string]any{"enabled": true, "hostname_hint": "sunrise"}))
+	clinic, _ := f.Clinic("")
+	// Each signature has a new timestamp: the retries of the test come within milliseconds (the replay cache).
+	var mu sync.Mutex
+	tick := e.clock.now()
+	e.svc.Now = func() time.Time { mu.Lock(); defer mu.Unlock(); tick = tick.Add(time.Second); return tick }
+	f.Now = func() time.Time { mu.Lock(); defer mu.Unlock(); return tick }
+	keyFile, pending := e.p.Abs(paths.DNSClientKeyFile), e.p.Abs(paths.DNSClientPendingKeyFile)
+
+	// Each try of the rotation arrives, and each answer is lost.
+	f.SetLose(3)
+	var out []string
+	err := e.svc.PublicRotate(t.Context(), true, func(l string) { out = append(out, l) })
+	if err == nil || !strings.Contains(strings.Join(out, "\n"), "dns_client.key.pending") {
+		t.Fatalf("rotate: %v %q", err, out)
+	}
+	nk, err := dnsclient.ReadKey(pending)
+	must(t, err)
+	if c, _ := f.Clinic(clinic.ID); !c.PubKey.Equal(nk.Public()) {
+		t.Fatal("the service must have the pending key")
+	}
+	// The timer: the old key gets 401; the pending key works and becomes the key.
+	e.svc.IPs = netinfoStatic("192.168.1.78")
+	if _, err := e.svc.PublicUpdate(t.Context(), func(string) {}); err != nil {
+		t.Fatalf("update after the lost rotation: %v", err)
+	}
+	if k, err := dnsclient.ReadKey(keyFile); err != nil || !k.Equal(nk) {
+		t.Fatalf("the pending key is not the key: %v", err)
+	}
+	if _, err := os.Stat(pending); !os.IsNotExist(err) {
+		t.Fatal("the pending key file is still there")
+	}
+	if c, _ := f.Clinic(clinic.ID); c.IPv4 != "192.168.1.78" {
+		t.Fatalf("the service has %s", c.IPv4)
+	}
+
+	// One lost answer: the rotation finishes in the same command, with the last acme-dns credentials.
+	f.SetLose(1)
+	out = nil
+	must(t, e.svc.PublicRotate(t.Context(), true, func(l string) { out = append(out, l) }))
+	c, _ := f.Clinic(clinic.ID)
+	k, err := dnsclient.ReadKey(keyFile)
+	must(t, err)
+	cred, _ := os.ReadFile(e.p.Abs(paths.ACMEDNSFile))
+	if !c.PubKey.Equal(k.Public()) || k.Equal(nk) || !strings.Contains(string(cred), c.Password) {
+		t.Fatalf("after one lost answer: the key or the credentials differ from the service (%q)", out)
+	}
+	if _, err := os.Stat(pending); !os.IsNotExist(err) {
+		t.Fatal("the pending key file is still there")
+	}
+}
+
+// m1: the service refuses the key of the device (401). Enable registers again (a new id); disable forgets the
+// registration.
+func TestPublicNameKeyRefused(t *testing.T) {
+	e, f := readyConnEnv(t)
+	writeRootCA(t, e.p)
+	e.jobOK(e.do("PUT", "/api/v1/tls/public", map[string]any{"enabled": true, "hostname_hint": "sunrise"}))
+	first, _ := f.Clinic("")
+	_, other, _ := ed25519.GenerateKey(rand.Reader)
+	f.SetKey(first.ID, other.Public().(ed25519.PublicKey))
+	// Enable again (for example after a failed apply): the id cannot be used, so the device registers again.
+	e.jobOK(e.do("PUT", "/api/v1/tls/public", map[string]any{"enabled": true, "hostname_hint": "sunrise"}))
+	st := apply.ReadPublicState(e.p)
+	if st.ClinicID == "" || st.ClinicID == first.ID {
+		t.Fatalf("enable with a refused key: id %q, want a new id", st.ClinicID)
+	}
+	f.SetKey(st.ClinicID, other.Public().(ed25519.PublicKey))
+	e.jobOK(e.do("PUT", "/api/v1/tls/public", map[string]any{"enabled": false}))
+	if _, err := os.Stat(e.p.Abs(paths.PublicState)); !os.IsNotExist(err) {
+		t.Fatal("disable with a refused key must forget the registration")
+	}
+	if cfg, _ := config.Load(e.p.Abs(paths.ConfigFile)); cfg.TLS.Public.Enabled {
+		t.Fatal("the public name is still on")
 	}
 }
 

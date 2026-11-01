@@ -27,6 +27,8 @@ type Fake struct {
 	// FailNext makes the next n requests fail with FailStatus (default 503).
 	FailNext   int
 	FailStatus int
+	// LoseNext makes the service do the next n requests, then close the connection without the answer.
+	LoseNext int
 
 	mu      sync.Mutex
 	nonces  map[string]bool
@@ -61,6 +63,22 @@ func (f *Fake) SetFail(n, status int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.FailNext, f.FailStatus = n, status
+}
+
+// SetLose makes the service do the next n requests and lose their answers (the connection closes).
+func (f *Fake) SetLose(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.LoseNext = n
+}
+
+// SetKey gives the clinic another public key: the service then refuses the key of the device (401 bad_signature).
+func (f *Fake) SetKey(id string, pk ed25519.PublicKey) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if c := f.Clinics[id]; c != nil {
+		c.PubKey = pk
+	}
 }
 
 // Clinic returns a copy of the registration with the id, or of the only registration when id is "".
@@ -116,6 +134,18 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.Requests = append(f.Requests, r.Method+" "+r.URL.Path)
+	if f.LoseNext > 0 {
+		f.LoseNext--
+		orig := w
+		w = httptest.NewRecorder()
+		defer func() {
+			if hj, ok := orig.(http.Hijacker); ok {
+				if conn, _, err := hj.Hijack(); err == nil {
+					_ = conn.Close()
+				}
+			}
+		}()
+	}
 	if f.FailNext > 0 {
 		f.FailNext--
 		st := f.FailStatus

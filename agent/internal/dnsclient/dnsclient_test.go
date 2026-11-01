@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -212,5 +213,72 @@ func TestLoadKeyAgain(t *testing.T) {
 	}
 	if st, _ := os.Stat(path); st.Mode().Perm() != 0o600 {
 		t.Fatalf("mode %v", st.Mode())
+	}
+}
+
+// m1: a rotation to a new key whose answer is lost. The service has the new key, so the old key gets 401
+// bad_signature. The client signs again once with the pending key, and promotes it when the service takes it.
+func TestPendingKeyAfterLostRotation(t *testing.T) {
+	f := NewFake()
+	defer f.Close()
+	c := client(t, f)
+	// Each signature has a new timestamp: the retries of the test come within milliseconds (the replay cache).
+	var mu sync.Mutex
+	tick := time.Now()
+	c.Now = func() time.Time { mu.Lock(); defer mu.Unlock(); tick = tick.Add(time.Second); return tick }
+	f.Now = func() time.Time { mu.Lock(); defer mu.Unlock(); return tick }
+	ctx := context.Background()
+	reg, err := c.Register(ctx, "care", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var promoted []ed25519.PrivateKey
+	c.Promote = func(k ed25519.PrivateKey) error { promoted = append(promoted, k); return nil }
+
+	// The first try of Rotate arrives, and its answer is lost. The second try (old key) gets 401; the try with the
+	// pending key rotates again and gives the credentials.
+	_, nk, _ := ed25519.GenerateKey(rand.Reader)
+	c.Pending = nk
+	f.SetLose(1)
+	rot, err := c.Rotate(ctx, reg.ID, nk)
+	if err != nil {
+		t.Fatalf("rotate after a lost answer: %v", err)
+	}
+	fc, _ := f.Clinic(reg.ID)
+	if !c.Key.Equal(nk) || c.Pending != nil || len(promoted) != 1 || !promoted[0].Equal(nk) ||
+		!fc.PubKey.Equal(nk.Public()) || rot.ACME.Password != fc.Password {
+		t.Fatalf("key %v pending %v promoted %d; the credentials must be the last ones", c.Key.Equal(nk), c.Pending != nil, len(promoted))
+	}
+
+	// Each try is lost: Rotate fails, the pending key stays. The next request (the address timer) promotes it.
+	_, nk2, _ := ed25519.GenerateKey(rand.Reader)
+	c.Pending = nk2
+	f.SetLose(3)
+	if _, err := c.Rotate(ctx, reg.ID, nk2); !errors.Is(err, ErrUnreachable) {
+		t.Fatalf("all answers lost: %v", err)
+	}
+	if !c.Key.Equal(nk) || c.Pending == nil {
+		t.Fatal("the client must keep the old key and the pending key")
+	}
+	if _, err := c.UpdateAddress(ctx, reg.ID, "192.168.1.10"); err != nil {
+		t.Fatalf("the address with the pending key: %v", err)
+	}
+	if !c.Key.Equal(nk2) || c.Pending != nil || len(promoted) != 2 || !promoted[1].Equal(nk2) {
+		t.Fatal("the pending key is not promoted")
+	}
+
+	// A pending key of a rotation that never arrived: the key works, the pending key stays unused.
+	_, nk3, _ := ed25519.GenerateKey(rand.Reader)
+	c.Pending = nk3
+	if _, err := c.Status(ctx, reg.ID); err != nil || !c.Key.Equal(nk2) || c.Pending == nil || len(promoted) != 2 {
+		t.Fatalf("status %v", err)
+	}
+	// Neither key works: the error of the key, and nothing changes.
+	_, other, _ := ed25519.GenerateKey(rand.Reader)
+	f.SetKey(reg.ID, other.Public().(ed25519.PublicKey))
+	_, err = c.Status(ctx, reg.ID)
+	var se *Error
+	if !errors.As(err, &se) || !se.Unauthorized() || se.Code != "bad_signature" || !c.Key.Equal(nk2) || len(promoted) != 2 {
+		t.Fatalf("both keys refused: %v", err)
 	}
 }

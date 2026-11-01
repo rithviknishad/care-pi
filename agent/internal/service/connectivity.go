@@ -38,13 +38,30 @@ const (
 )
 
 func (s *Service) dnsClient() (*dnsclient.Client, error) {
-	key, _, err := dnsclient.LoadOrCreateKey(s.Paths.Abs(paths.DNSClientKeyFile))
+	keyFile := s.Paths.Abs(paths.DNSClientKeyFile)
+	key, _, err := dnsclient.LoadOrCreateKey(keyFile)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read the key of the DNS client: %w", err)
 	}
 	c := &dnsclient.Client{BaseURL: s.DNSURL, Key: key, Now: s.Now}
 	if s.DNSBackoff > 0 {
 		c.Backoff = s.DNSBackoff
+	}
+	// A rotation to a new key lost its answer: the service can have the new key (docs/connectivity.md 3.6).
+	pending := s.Paths.Abs(paths.DNSClientPendingKeyFile)
+	if pk, err := dnsclient.ReadKey(pending); err == nil {
+		c.Pending = pk
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("cannot read the pending key of the DNS client: %w", err)
+	}
+	c.Promote = func(k ed25519.PrivateKey) error {
+		if err := dnsclient.WriteKey(keyFile, k); err != nil {
+			return err
+		}
+		if err := os.Remove(pending); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
 	}
 	return c, nil
 }
@@ -292,9 +309,14 @@ func (s *Service) publicEnable(ctx context.Context, rec *jobs.Recorder, req Publ
 	if reuse {
 		if _, err := cli.Status(ctx, st.ClinicID); err != nil {
 			var se *dnsclient.Error
-			if errors.As(err, &se) && se.Revoked() {
+			switch {
+			case errors.As(err, &se) && se.Revoked():
 				reuse = false
-			} else if err != nil {
+			case errors.As(err, &se) && se.Unauthorized():
+				// The service has another key for the id (a lost key rotation): this device cannot use the id.
+				rec.Logf("the DNS service refuses the key of this device for %s; register again", st.ClinicID)
+				reuse = false
+			default:
 				return nil, dnsProblem(err)
 			}
 		}
@@ -408,6 +430,11 @@ func (s *Service) publicDisable(ctx context.Context, rec *jobs.Recorder) (any, e
 			err = cli.Delete(ctx, st.ClinicID)
 			var se *dnsclient.Error
 			if errors.As(err, &se) && se.Revoked() {
+				err = nil
+			}
+			if errors.As(err, &se) && se.Unauthorized() {
+				// The service has another key for the id: this device cannot delete it. Forget the registration.
+				rec.Logf("warning: the DNS service refuses the key of this device; the agent forgets the registration %s", st.ClinicID)
 				err = nil
 			}
 			return dnsProblem(err)
@@ -560,14 +587,45 @@ func (s *Service) PublicRotate(ctx context.Context, newKey bool, out func(string
 	if err != nil {
 		return err
 	}
+	pending := s.Paths.Abs(paths.DNSClientPendingKeyFile)
+	if cli.Pending != nil {
+		// An earlier rotation lost its answer. A signed request finds the key that the service has (and promotes the
+		// pending key when the service has it); then the pending key of that rotation is not necessary any more.
+		if _, err := cli.Status(ctx, st.ClinicID); err != nil {
+			return dnsProblem(err)
+		}
+		if cli.Pending != nil {
+			out("the earlier rotation did not reach the DNS service; its pending key is deleted")
+			cli.Pending = nil
+			if err := os.Remove(pending); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+		} else {
+			out("the DNS service has the key of the earlier rotation; it is the key now")
+		}
+	}
 	var nk ed25519.PrivateKey
 	if newKey {
 		if _, nk, err = ed25519.GenerateKey(rand.Reader); err != nil {
 			return err
 		}
+		// Store the new key before the request: when the answer is lost, the service can have the new key, and the
+		// old key then does not work (services/dns/API.md 5.4). Each later request tries the pending key.
+		if err := dnsclient.WriteKey(pending, nk); err != nil {
+			return fmt.Errorf("cannot write the pending key: %w", err)
+		}
+		cli.Pending = nk
 	}
 	reg, err := cli.Rotate(ctx, st.ClinicID, nk)
 	if err != nil {
+		var se *dnsclient.Error
+		if nk != nil && errors.As(err, &se) && !se.Unauthorized() {
+			// The service answered and refused the rotation: it keeps the old key.
+			_ = os.Remove(pending)
+		}
+		if nk != nil && !errors.As(err, &se) {
+			out("the DNS service did not answer; the new key stays in " + paths.DNSClientPendingKeyFile + " and the next request tries it. Run the command again later")
+		}
 		return dnsProblem(err)
 	}
 	if err := dnsclient.WriteCredentials(s.Paths.Abs(paths.ACMEDNSFile), reg.ACME.Credentials()); err != nil {
@@ -575,7 +633,10 @@ func (s *Service) PublicRotate(ctx context.Context, newKey bool, out func(string
 	}
 	if nk != nil {
 		if err := dnsclient.WriteKey(s.Paths.Abs(paths.DNSClientKeyFile), nk); err != nil {
-			return fmt.Errorf("the service has the new key, but the agent cannot write it (%w); keep this process output", err)
+			return fmt.Errorf("the service has the new key, but the agent cannot write it (%w); the key is in %s", err, paths.DNSClientPendingKeyFile)
+		}
+		if err := os.Remove(pending); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
 		}
 	}
 	out("new acme-dns credentials for " + reg.FullDomain)

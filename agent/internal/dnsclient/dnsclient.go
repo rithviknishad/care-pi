@@ -131,6 +131,10 @@ func (e *Error) Temporary() bool { return e.Status == http.StatusTooManyRequests
 // Revoked reports whether the clinic id is revoked or unknown (register again).
 func (e *Error) Revoked() bool { return e.Status == http.StatusGone || e.Code == "unknown_clinic" }
 
+// Unauthorized reports whether the service refused the key of the client (HTTP 401): the service has another key
+// for the id, so this device cannot use the id any more.
+func (e *Error) Unauthorized() bool { return e.Status == http.StatusUnauthorized }
+
 // ErrUnreachable wraps a network error: the service did not answer.
 var ErrUnreachable = errors.New("the DNS service does not answer")
 
@@ -145,6 +149,11 @@ type Client struct {
 	// again each 5 minutes, so one call tries only a few times.
 	Attempts int
 	Backoff  time.Duration
+	// Pending is the new key of a rotation whose answer can be lost (secrets/dns_client.key.pending), or nil. The
+	// service then has the new key, and refuses Key with 401 bad_signature. Such a request is signed again once with
+	// Pending; when the service takes it, Pending becomes Key and Promote stores it.
+	Pending ed25519.PrivateKey
+	Promote func(ed25519.PrivateKey) error
 	// skew is the server time minus the local time, from a stale_timestamp answer (a clock without NTP).
 	skew time.Duration
 }
@@ -226,6 +235,9 @@ func (c *Client) do(ctx context.Context, r request, out any) error {
 				i--
 				continue
 			}
+			if se.Status == http.StatusUnauthorized && se.Code == "bad_signature" && c.Pending != nil && r.signed && r.path != "/v1/register" {
+				return c.withPending(ctx, r, body, out, err)
+			}
 			if !se.Temporary() {
 				return err
 			}
@@ -239,6 +251,30 @@ func (c *Client) do(ctx context.Context, r request, out any) error {
 		}
 	}
 	return last
+}
+
+// withPending signs the request again with the pending key of a rotation (the answer of the rotation was lost, and the
+// service has the new key). When the service takes it, the pending key becomes the key. Else refused is the error.
+// A rotation to the pending key itself (a retry of Rotate after the lost answer) works too: the service checks both
+// signatures with the new key, and gives new acme-dns credentials again.
+func (c *Client) withPending(ctx context.Context, r request, body []byte, out any, refused error) error {
+	old := c.Key
+	c.Key = c.Pending
+	if err := c.once(ctx, r, body, out); err != nil {
+		c.Key = old
+		var se *Error
+		if errors.As(err, &se) && se.Unauthorized() {
+			return refused
+		}
+		return err
+	}
+	c.Pending = nil
+	if c.Promote != nil {
+		if err := c.Promote(c.Key); err != nil {
+			return fmt.Errorf("the DNS service has the new key, but the client cannot store it: %w", err)
+		}
+	}
+	return nil
 }
 
 func (c *Client) once(ctx context.Context, r request, body []byte, out any) error {
@@ -377,22 +413,31 @@ func (c *Client) Delete(ctx context.Context, id string) error {
 	return c.do(ctx, request{method: http.MethodDelete, path: "/v1/clinics/" + id, signed: true}, nil)
 }
 
+// ReadKey reads the Ed25519 key (PKCS #8 PEM) at path. A missing file gives an error that is os.ErrNotExist.
+func ReadKey(path string) (ed25519.PrivateKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, fmt.Errorf("%s has no PEM key", path)
+	}
+	k, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	ek, ok := k.(ed25519.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("%s is not an Ed25519 key", path)
+	}
+	return ek, nil
+}
+
 // LoadOrCreateKey reads the Ed25519 key (PKCS #8 PEM) at path, or makes one with mode 0600.
 func LoadOrCreateKey(path string) (ed25519.PrivateKey, bool, error) {
-	if data, err := os.ReadFile(path); err == nil {
-		block, _ := pem.Decode(data)
-		if block == nil {
-			return nil, false, fmt.Errorf("%s has no PEM key", path)
-		}
-		k, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-		if err != nil {
-			return nil, false, fmt.Errorf("%s: %w", path, err)
-		}
-		ek, ok := k.(ed25519.PrivateKey)
-		if !ok {
-			return nil, false, fmt.Errorf("%s is not an Ed25519 key", path)
-		}
-		return ek, false, nil
+	if k, err := ReadKey(path); err == nil {
+		return k, false, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, false, err
 	}
