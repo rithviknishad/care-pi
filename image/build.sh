@@ -54,7 +54,7 @@ while [ $# -gt 0 ]; do
 done
 
 die() { echo "build.sh: $*" >&2; exit 1; }
-[ -n "${DIST}" ] && [ -d "${DIST}" ] || die "--dist DIR is required"
+if [ -z "${DIST}" ] || [ ! -d "${DIST}" ]; then die "--dist DIR is required"; fi
 [[ "${LOCK_VERSION}" =~ ^[0-9]{4}\.[0-9]{1,2}\.[0-9]+$ ]] || die "--lock-version must be YYYY.MM.N"
 [[ "${SOLUTION}" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || die "invalid --solution"
 VERSION="${VERSION:-${LOCK_VERSION}}"

@@ -28,7 +28,7 @@ while [ $# -gt 0 ]; do
 	esac
 done
 die() { echo "fetch-dist.sh: $*" >&2; exit 1; }
-[ -n "${SOLUTION}" ] && [ -n "${LOCK_VERSION}" ] && [ -n "${OUT}" ] && [ -x "${CARE_PI}" ] || { usage >&2; exit 2; }
+if [ -z "${SOLUTION}" ] || [ -z "${LOCK_VERSION}" ] || [ -z "${OUT}" ] || [ ! -x "${CARE_PI}" ]; then usage >&2; exit 2; fi
 
 # fetch REL [SHA256]: download the asset <tag>/<file> and its .sha256; check the SHA-256.
 fetch() {
