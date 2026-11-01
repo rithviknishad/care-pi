@@ -30,3 +30,6 @@ console/dist/*
 !console/dist/.gitkeep
 console/test-results/
 console/playwright-report/
+
+# cloudflare wrangler local state
+.wrangler/
