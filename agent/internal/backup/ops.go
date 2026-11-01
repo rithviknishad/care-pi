@@ -235,6 +235,7 @@ func (o Ops) snapshotLocked(ctx context.Context, d config.BackupDestination, tag
 	})
 	o.logf("%s: snapshot %s (%s), %d bytes added", d.ID, sum.SnapshotID[:min(8, len(sum.SnapshotID))], tag, sum.DataAddedPacked)
 	if forget {
+		o.unlockStale(ctx, s, d)
 		if err := o.forgetLocked(ctx, s, d, tag); err != nil {
 			o.logf("%s: forget: %v", d.ID, err)
 		}

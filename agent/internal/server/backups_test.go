@@ -461,6 +461,22 @@ func TestBackupsReady(t *testing.T) {
 	if strings.Join(seq, ",") != "restic unlock,restic forget,restic forget,restic prune,restic check" {
 		t.Fatalf("restic calls of the verify %q", seq)
 	}
+	// The timer run of a destination (snapshot, then the retention) removes the stale locks before its forget too.
+	before = len(e.fake.Filter("restic "))
+	if err := e.svc.TimerSnapshot(context.Background(), "local", "db"); err != nil {
+		t.Fatal(err)
+	}
+	seq = nil
+	for _, c := range e.fake.Filter("restic ")[before:] {
+		for _, p := range []string{"restic backup", "restic unlock", "restic forget"} {
+			if strings.HasPrefix(c, p) {
+				seq = append(seq, p)
+			}
+		}
+	}
+	if strings.Join(seq, ",") != "restic backup,restic unlock,restic forget" {
+		t.Fatalf("restic calls of the timer run %q", seq)
+	}
 	e.want(e.do("POST", "/api/v1/backups/verify", map[string]any{"read_data_subset_pct": 0}, invalid), 422, "invalid-request")
 	t.Setenv("CARE_PI_DRILL_FREE_BYTES", "1")
 	e.want(e.do("POST", "/api/v1/backups/drill", map[string]any{"reason": nil}), 409, "insufficient-space")
