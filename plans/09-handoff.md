@@ -574,3 +574,19 @@ Open after Phase 4 (the owner decides; `08` has the list): public images (or a p
 assets (`docs/solutions.md` open point 1); a maintenance page for the path `restart` (56 s of API break); the staging
 of a failed `--lock-file` update; `care-api` at 487 of 512 MiB; `agent-too-old` with a tagged build; `update --os --now`
 and F5; F1 on a device. Next phase: Phase 5 (the image).
+
+### 8k. Deferred to the final acceptance (after Phase 7)
+
+The owner asked to keep these for the end. Do them on lumine before the project is called done:
+
+- `care-pi update --os --now` with a real `apt-get full-upgrade` and the reboot path (Phase 4 §11).
+- `agent-too-old` with a release build that has a version tag.
+- Backend plug *off* (`restart` path): 56 s API downtime without a maintenance page. Decide: show the page, or accept.
+- `care-api` peak 487 of 512 MiB on `small-clinic`: decide whether to raise the cap to 576M.
+- Test leftovers to remove: on lumine the `w5-s3` container, `/var/lib/care-pi-test`, `/srv/care-backups`; on the
+  Mac the restricted `authorized_keys` line and `~/care-pi-sftp-backups/care-pi-b7616345`. They are live test
+  destinations until then.
+- Phase 1 fresh-flash test (`curl | sh`, ghcr pulls, the reboot-required cgroup path, host name `care` + collision).
+
+The ghcr packages are public since 2026-11-01 (S43 done). lumine pulls `care`, `caddy`, `postgres-pgbackrest`
+without a token. The recovery key words of lumine are in `local/care-recovery-key` on the owner's Mac (S39).
