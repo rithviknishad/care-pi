@@ -149,7 +149,10 @@ Use it for a NAS mount or for a test.
 3. Add the destination `{id: usb, type: posix, disk_label: care-usb1}`, then apply.
 
 The agent refuses the disk of the system, a mounted disk, a label of a destination of another disk, and a label of another
-connected backup disk (`409 disk-in-use`). The operation needs a recent authentication and `wipe: true`.
+connected backup disk (`409 disk-in-use`). It also refuses a disk that LVM, LUKS, or md RAID uses: a partition (or the
+disk) with the signature `LVM2_member`, `crypto_LUKS`, or `linux_raid_member`, or a `crypt`, `lvm`, or `raid` device
+below a partition. A mount or swap at any depth below the disk counts. The detail of the problem tells the reason.
+The operation needs a recent authentication and `wipe: true`.
 
 The mount units are `var-lib-care\x2dpi-disks-<label>.mount` (`nofail`) and `.automount` (idle unmount after 10 minutes).
 `care-backup.target` wants the automount unit. Before each run, the agent checks `/dev/disk/by-label/<label>`.

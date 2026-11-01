@@ -77,3 +77,67 @@ func TestCommands(t *testing.T) {
 		t.Fatal("label")
 	}
 }
+
+// layers are disks below LUKS, LVM, and md RAID: the mounts, the swap, and the holder of each descendant count.
+const layers = `{"blockdevices": [
+ {"name":"sdd","path":"/dev/sdd","size":64000000000,"type":"disk","tran":"usb","rm":true,"fstype":null,"label":null,"mountpoints":[null],
+  "children":[{"name":"sdd1","path":"/dev/sdd1","size":63999000000,"type":"part","fstype":"crypto_LUKS","label":null,"mountpoints":[null],
+   "children":[{"name":"luks-1","path":"/dev/mapper/luks-1","size":63990000000,"type":"crypt","fstype":"ext4","label":null,"mountpoints":["/mnt/secure"]}]}]},
+ {"name":"sde","path":"/dev/sde","size":64000000000,"type":"disk","tran":"usb","rm":true,"fstype":null,"label":null,"mountpoints":[null],
+  "children":[{"name":"sde1","path":"/dev/sde1","size":63999000000,"type":"part","fstype":"LVM2_member","label":null,"mountpoints":[null],
+   "children":[{"name":"data-lv","path":"/dev/mapper/data-lv","size":63990000000,"type":"lvm","fstype":"ext4","label":null,"mountpoints":[null]}]}]},
+ {"name":"sdf","path":"/dev/sdf","size":64000000000,"type":"disk","tran":"usb","rm":true,"fstype":null,"label":null,"mountpoints":[null],
+  "children":[{"name":"sdf1","path":"/dev/sdf1","size":63999000000,"type":"part","fstype":"linux_raid_member","label":"pi:0","mountpoints":[null],
+   "children":[{"name":"md0","path":"/dev/md0","size":63990000000,"type":"raid1","fstype":null,"label":null,"mountpoints":[null]}]}]},
+ {"name":"sdg","path":"/dev/sdg","size":64000000000,"type":"disk","tran":"usb","rm":true,"fstype":null,"label":null,"mountpoints":[null],
+  "children":[{"name":"sdg1","path":"/dev/sdg1","size":63999000000,"type":"part","fstype":"LVM2_member","label":null,"mountpoints":[null]}]},
+ {"name":"sdh","path":"/dev/sdh","size":64000000000,"type":"disk","tran":"usb","rm":true,"fstype":null,"label":null,"mountpoints":[null],
+  "children":[{"name":"sdh1","path":"/dev/sdh1","size":63999000000,"type":"part","fstype":"crypto_LUKS","label":null,"mountpoints":[null],
+   "children":[{"name":"luks-2","path":"/dev/mapper/luks-2","size":63990000000,"type":"crypt","fstype":"LVM2_member","label":null,"mountpoints":[null],
+    "children":[{"name":"vg-swap","path":"/dev/mapper/vg-swap","size":4000000000,"type":"lvm","fstype":"swap","label":null,"mountpoints":["[SWAP]"]},
+                {"name":"vg-root","path":"/dev/mapper/vg-root","size":59000000000,"type":"lvm","fstype":"ext4","label":null,"mountpoints":["/"]}]}]}]},
+ {"name":"sdi","path":"/dev/sdi","size":64000000000,"type":"disk","tran":"usb","rm":true,"fstype":"crypto_LUKS","label":null,"mountpoints":[null]},
+ {"name":"sdj","path":"/dev/sdj","size":64000000000,"type":"disk","tran":"usb","rm":true,"fstype":null,"label":null,"mountpoints":[null],
+  "children":[{"name":"sdj1","path":"/dev/sdj1","size":63999000000,"type":"part","fstype":"ext4","label":"photos","mountpoints":[null]}]}
+]}`
+
+// TestParseLayers: a disk whose partition is a LUKS, LVM, or md RAID member is held, and the mounts below it count.
+func TestParseLayers(t *testing.T) {
+	list, err := Parse([]byte(layers), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name, usage string
+		mounted     bool
+		mount, held string
+	}{
+		{"sdd", UsageOther, true, "/mnt/secure", "/dev/sdd1 is a LUKS encrypted volume (crypto_LUKS)"},
+		{"sde", UsageOther, false, "", "/dev/sde1 is an LVM physical volume (LVM2_member)"},
+		{"sdf", UsageOther, false, "", "/dev/sdf1 is a member of an md RAID array (linux_raid_member)"},
+		{"sdg", UsageOther, false, "", "/dev/sdg1 is an LVM physical volume (LVM2_member)"},
+		{"sdh", UsageSystem, true, "/", "/dev/sdh1 is a LUKS encrypted volume (crypto_LUKS)"},
+		{"sdi", UsageOther, false, "", "/dev/sdi is a LUKS encrypted volume (crypto_LUKS)"},
+		{"sdj", UsageOther, false, "", ""},
+	} {
+		d := Find(list, c.name)
+		if d == nil {
+			t.Fatalf("%s is missing", c.name)
+		}
+		mount := ""
+		if len(d.Partitions) > 0 && d.Partitions[0].Mount != nil {
+			mount = *d.Partitions[0].Mount
+		}
+		if d.Usage != c.usage || d.Mounted != c.mounted || mount != c.mount || d.Held != c.held {
+			t.Errorf("%s: usage %s mounted %v mount %q held %q", c.name, d.Usage, d.Mounted, mount, d.Held)
+		}
+	}
+	// A crypt, lvm, or raid device below a partition without a member signature still holds the disk.
+	l, err := Parse([]byte(strings.Replace(layers, `"fstype":"linux_raid_member"`, `"fstype":null`, 1)), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := Find(l, "sdf"); d.Held != "/dev/sdf1 is in use by /dev/md0 (type raid1)" {
+		t.Fatalf("sdf %q", d.Held)
+	}
+}

@@ -502,7 +502,7 @@ An operation with a session can also return `csrf` (403); see §3.
 | `destination-untrusted-hostkey` | 422 | An SFTP server presents a host key that is not pinned: the first contact, or a changed key. `host_key` has the key that the server presents. |
 | `recovery-key-mismatch` | 422 | The recovery key cannot open the repository at the destination, or a typed word is not the word of the key. |
 | `restore-window-exceeded` | 422 | The time of a restore is outside the restore window. `restore_window` tells the window. |
-| `disk-in-use` | 409 | The disk holds the system, a partition of it is mounted, or a destination uses its label. |
+| `disk-in-use` | 409 | The disk holds the system, a partition of it is mounted (also through LUKS, LVM, or md RAID), LVM, LUKS, or md RAID uses a partition of it, or a destination uses its label. The detail tells the reason. |
 | `no-destination` | 409 | The operation needs 1 or more backup destinations. |
 | `no-recovery-key` | 409 | The operation needs the recovery key. Make it with `POST /backups/recovery-key`. |
 | `insufficient-space` | 409 | The free disk space is not enough for the operation. `space` tells the space that it needs. |

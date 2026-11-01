@@ -256,6 +256,14 @@ func TestBackupsSetup(t *testing.T) {
 	e.fake.On(lsblkCmd, host.Response{Out: strings.Replace(lsblkJSON, `"mountpoints":[null]}]}`,
 		`"mountpoints":[null]},{"name":"sdc","path":"/dev/sdc","size":64000000000,"type":"disk","tran":"usb","rm":true,"model":"Other","serial":"X2","fstype":null,"label":null,"mountpoints":[null],"children":[{"name":"sdc1","path":"/dev/sdc1","size":63000000000,"type":"part","fstype":"ext4","label":"care-usb9","mountpoints":[null]}]}]}`, 1)})
 	e.want(e.do("POST", "/api/v1/backups/disks/sdb/prepare", map[string]any{"wipe": true, "label": "care-usb9"}), 409, "disk-in-use")
+	// A disk below LUKS (or LVM, or md RAID) is in use, also when nothing on it is mounted; the detail tells why.
+	e.fake.On(lsblkCmd, host.Response{Out: strings.Replace(lsblkJSON, `"mountpoints":[null]}]}`,
+		`"mountpoints":[null]},{"name":"sdd","path":"/dev/sdd","size":64000000000,"type":"disk","tran":"usb","rm":true,"model":"Vault","serial":"X3","fstype":null,"label":null,"mountpoints":[null],"children":[{"name":"sdd1","path":"/dev/sdd1","size":63000000000,"type":"part","fstype":"crypto_LUKS","label":null,"mountpoints":[null],"children":[{"name":"luks-1","path":"/dev/mapper/luks-1","size":62000000000,"type":"crypt","fstype":"ext4","label":null,"mountpoints":[null]}]}]}]}`, 1)})
+	r = e.do("POST", "/api/v1/backups/disks/sdd/prepare", map[string]any{"wipe": true, "label": "care-usb7"})
+	e.want(r, 409, "disk-in-use")
+	if d, _ := r.json(t)["detail"].(string); !strings.Contains(d, "/dev/sdd1 is a LUKS encrypted volume (crypto_LUKS)") {
+		t.Fatal(string(r.body))
+	}
 	e.fake.On(lsblkCmd, host.Response{Out: lsblkJSON})
 	// Without a label, the agent chooses the next free care-usbN.
 	r = e.do("POST", "/api/v1/backups/disks/sdb/prepare", map[string]any{"wipe": true})

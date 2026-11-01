@@ -426,6 +426,8 @@ func diskInUse(d *disks.Disk, label string, cfg *config.Config) error {
 	switch {
 	case d.Usage == disks.UsageSystem:
 		return problem.Newf(problem.DiskInUse, "%s holds the system. Choose another disk.", d.Device)
+	case d.Held != "":
+		return problem.Newf(problem.DiskInUse, "%s: %s. care-pi never erases a disk that LVM, LUKS, or md RAID uses. Remove it from that layer, or choose another disk.", d.Device, d.Held)
 	case d.Mounted:
 		for _, p := range d.Partitions {
 			if p.Mount != nil {

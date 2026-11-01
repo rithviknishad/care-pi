@@ -1727,7 +1727,9 @@ export interface paths {
          *     unit of `/var/lib/care-pi/disks/<label>` (`nofail`, `x-systemd.automount`), mounts the file system, and tests a write.
          *     `apply` renders the same units for a `posix` destination with this `disk_label`. When no destination has the label,
          *     the next apply removes the units. After the job, add the destination with `PATCH /config` (`{type: posix, disk_label}`).
-         *     A disk with `usage: system`, a mounted partition, or a label that a destination uses gives `409` with `disk-in-use`.
+         *     A disk with `usage: system`, a mounted partition, a label that a destination uses, or a partition that LVM, LUKS, or md RAID
+         *     uses (`LVM2_member`, `crypto_LUKS`, `linux_raid_member`, or a `crypt`, `lvm`, or `raid*` device below it) gives `409`
+         *     with `disk-in-use`. The detail tells the reason.
          *     A disk that is not there gives `404` with `not-found`. The job holds the apply lock. Each setup state after the claim allows it.
          */
         post: operations["prepareBackupDisk"];
@@ -9725,12 +9727,12 @@ export interface components {
             /** @description The kernel marks the disk as removable. */
             removable: boolean;
             /**
-             * @description `system`: the disk holds `/`, `/boot`, or swap. The agent never prepares it. `care-backup`: a partition has a care-pi label.
+             * @description `system`: the disk holds `/`, `/boot`, or swap (also through LUKS, LVM, or md RAID). The agent never prepares it. `care-backup`: a partition has a care-pi label.
              *     `empty`: no partition table or no file system. `other-data`: other file systems; a prepare erases them.
              * @enum {string}
              */
             usage: "system" | "care-backup" | "empty" | "other-data";
-            /** @description A partition of the disk is mounted now (also by care-pi). */
+            /** @description A partition of the disk, or a device below it (LUKS, LVM, md RAID), is mounted now (also by care-pi). */
             mounted: boolean;
             /** @description The partitions. */
             partitions: components["schemas"]["BackupDiskPartition"][];
@@ -9768,7 +9770,7 @@ export interface components {
              */
             label: string | null;
             /**
-             * @description The mount point now. `null` when it is not mounted.
+             * @description The mount point now, also of a device below the partition (LUKS, LVM, md RAID). `null` when it is not mounted.
              * @example /var/lib/care-pi/disks/care-usb1
              */
             mount: string | null;

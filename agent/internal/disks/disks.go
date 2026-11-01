@@ -55,6 +55,8 @@ type Disk struct {
 	DestinationID *string     `json:"destination_id"`
 	// Name is the kernel name (sdb).
 	Name string `json:"-"`
+	// Held tells why LVM, LUKS, or md RAID uses the disk ("" when nothing does). Such a disk is never wiped.
+	Held string `json:"-"`
 }
 
 type lsblkDev struct {
@@ -116,6 +118,44 @@ func truthy(v any) bool {
 
 var systemMounts = map[string]bool{"/": true, "/boot": true, "/boot/firmware": true, "/usr": true, "/var": true, "[SWAP]": true}
 
+// heldFSTypes are the signatures of a device that another layer uses.
+var heldFSTypes = map[string]string{
+	"LVM2_member":       "an LVM physical volume",
+	"crypto_LUKS":       "a LUKS encrypted volume",
+	"linux_raid_member": "a member of an md RAID array",
+}
+
+// below holds what a device and the devices below it (partitions, LUKS mappings, LVM volumes, md
+// arrays, at any depth) have: the mount points, swap, and the first reason why another layer holds it.
+type below struct {
+	mounts []string
+	swap   bool
+	held   string
+}
+
+func (b *below) add(d lsblkDev, part string) {
+	b.mounts = append(b.mounts, d.mounts()...)
+	fs := ""
+	if f := trimPtr(d.FSType); f != nil {
+		fs = *f
+	}
+	b.swap = b.swap || fs == "swap"
+	if b.held == "" {
+		dev := d.Path
+		if dev == "" {
+			dev = "/dev/" + d.Name
+		}
+		if what, ok := heldFSTypes[fs]; ok {
+			b.held = fmt.Sprintf("%s is %s (%s)", dev, what, fs)
+		} else if d.Type == "crypt" || d.Type == "lvm" || strings.HasPrefix(d.Type, "raid") {
+			b.held = fmt.Sprintf("%s is in use by %s (type %s)", part, dev, d.Type)
+		}
+	}
+	for _, c := range d.Children {
+		b.add(c, part)
+	}
+}
+
 // skip are kernel names that are never a backup disk.
 var skip = regexp.MustCompile(`^(zram|ram|sr|mmcblk[0-9]+boot|mmcblk[0-9]+rpmb|nbd|dm-)`)
 
@@ -154,6 +194,11 @@ func Parse(out []byte, byID map[string]string) ([]Disk, error) {
 		if b.FSType != nil && *b.FSType == "swap" {
 			system = true
 		}
+		if f := trimPtr(b.FSType); f != nil {
+			if what, ok := heldFSTypes[*f]; ok {
+				d.Held = fmt.Sprintf("%s is %s (%s)", d.Device, what, *f)
+			}
+		}
 		var care *string
 		for _, c := range b.Children {
 			ps, _ := c.Size.Int64()
@@ -161,9 +206,15 @@ func Parse(out []byte, byID map[string]string) ([]Disk, error) {
 			if p.Device == "" {
 				p.Device = "/dev/" + c.Name
 			}
-			if ms := c.mounts(); len(ms) > 0 {
+			// The mounts and swap of the partition and of each device below it (LUKS, LVM, md).
+			var bl below
+			bl.add(c, p.Device)
+			if ms := bl.mounts; len(ms) > 0 {
 				d.Mounted = true
 				m := ms[len(ms)-1]
+				if own := c.mounts(); len(own) > 0 {
+					m = own[len(own)-1]
+				}
 				for _, x := range ms {
 					system = system || systemMounts[x]
 					if x == "/" {
@@ -172,8 +223,11 @@ func Parse(out []byte, byID map[string]string) ([]Disk, error) {
 				}
 				p.Mount = &m
 			}
-			if p.FSType != nil && *p.FSType == "swap" {
+			if bl.swap {
 				system = true
+			}
+			if d.Held == "" {
+				d.Held = bl.held
 			}
 			if p.Label != nil && LabelRE.MatchString(*p.Label) && care == nil {
 				l := *p.Label
