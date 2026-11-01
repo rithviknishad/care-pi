@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: care-pi agent API
-  version: 0.6.0
+  version: 0.7.0
   summary: The HTTP API between the care-pi agent and the console.
   description: |
     This document is the contract between the care-pi agent (`care-pi serve`) and the console.
@@ -71,9 +71,11 @@ tags:
   - name: support
     description: The support bundle. Logs, states, and config without secrets, in one file.
   - name: network
-    description: Host names, LAN addresses, the mDNS name that avahi announces, and Wi-Fi.
+    description: Host names, LAN addresses, the mDNS name that avahi announces, and Wi-Fi (Phase 6, design note section 15).
   - name: tls
-    description: TLS modes, the root CA download, and the install steps for each OS.
+    description: |
+      TLS modes, the root CA download, and the install steps for each OS. Phase 6 (design note section 15): the
+      name-constrained root of the agent, the public name, and the Tailscale name.
   - name: fe
     description: The care_fe build.
   - name: care
@@ -1645,14 +1647,19 @@ paths:
     put:
       tags: [network]
       operationId: setWifi
-      summary: Set the Wi-Fi network
-      description: Phase 6. The agent writes a NetworkManager profile (S35). Ethernet stays required until setup is finished.
+      summary: Add or change the Wi-Fi network
+      description: |
+        Phase 6 (S35, design note section 15.4). The agent writes the NetworkManager profile `care-pi-wifi` (a secondary
+        connection beside ethernet, not a bond), connects, checks the route metrics, and applies: the pod publishes on the
+        Wi-Fi address too. With `failover`, ethernet keeps the default route while it is up. The passphrase goes to
+        `/etc/care-pi/secrets/wifi.json` and the keyfile of NetworkManager (both 0600, root), never to `config.yaml`, a
+        command line, or a log. Ethernet stays required until the setup is finished. The result is a job (`network-wifi`).
       security:
         - session: []
           csrf: []
       x-phase: 6
-      x-cli: care-pi network wifi --ssid SSID --psk-stdin [--failover]
-      x-problems: [not-authenticated, csrf, invalid-request, not-implemented-in-this-version]
+      x-cli: care-pi network wifi set --ssid SSID --psk-stdin [--country CC] [--failover]
+      x-problems: [not-authenticated, csrf, invalid-request, setup-incomplete, job-running, not-implemented-in-this-version]
       requestBody:
         required: true
         content:
@@ -1662,18 +1669,68 @@ paths:
       responses:
         default:
           $ref: '#/components/responses/UnexpectedProblem'
-        '200':
-          description: The network state.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Network'
+        '202':
+          $ref: '#/components/responses/JobAccepted'
         '401':
           $ref: '#/components/responses/NotAuthenticated'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/UnprocessableContent'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+    delete:
+      tags: [network]
+      operationId: removeWifi
+      summary: Remove the Wi-Fi network of care-pi
+      description: |
+        Phase 6. The agent deletes the profile `care-pi-wifi`, `secrets/wifi.json`, and `network.wifi`, then applies.
+        Other Wi-Fi profiles (for example the network of the Imager settings) stay. The result is a job (`network-wifi`).
+      security:
+        - session: []
+          csrf: []
+      x-phase: 6
+      x-cli: care-pi network wifi remove
+      x-problems: [not-authenticated, csrf, setup-incomplete, job-running, not-implemented-in-this-version]
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '202':
+          $ref: '#/components/responses/JobAccepted'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+  /network/wifi/scan:
+    get:
+      tags: [network]
+      operationId: scanWifi
+      summary: List the Wi-Fi networks in range
+      description: |
+        Phase 6. The agent turns the radio on and runs a scan (about 5 seconds). One entry for each SSID (the strongest),
+        strongest first. Hidden networks are not in the list.
+      x-phase: 6
+      x-cli: care-pi network wifi scan --json
+      x-problems: [not-authenticated, wifi-no-device, wifi-failed, not-implemented-in-this-version]
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The networks.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WifiScan'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '501':
           $ref: '#/components/responses/NotImplemented'
   /tls:
@@ -1681,6 +1738,10 @@ paths:
       tags: [tls]
       operationId: getTls
       summary: Get the TLS modes and the root CA
+      description: |
+        The root CA with its name constraints (07 §4.1), the switch from the root of Caddy (`local_ca.ca_changed_at`),
+        the public name with its certificate and the last address update, and the tailnet state with the login URL
+        while a login waits (Phase 6, design note section 15).
       x-cli: care-pi tls show --json
       x-problems: [not-authenticated]
       responses:
@@ -1848,14 +1909,22 @@ paths:
     put:
       tags: [tls]
       operationId: enrolPublicCertificate
-      summary: Turn the public certificate mode on or off
-      description: Phase 6. The agent registers `<clinic_id>.care-pi.rithviknishad.dev` with the DNS/ACME service and starts an apply job.
+      summary: Turn the public name on or off
+      description: |
+        Phase 6 (S36, 07 §3.8, design note section 15.2). On: the agent registers with the DNS/ACME service
+        (`services/dns/API.md`), which gives the id; the name is `<id>.care-pi.rithviknishad.dev`. The agent writes the
+        acme-dns credentials to `/etc/care-pi/secrets/acme_dns.json`, sends the LAN address (not the public address of the
+        clinic), sets `tls.public`, and applies: Caddy gets a Let's Encrypt certificate through DNS-01, the name gets HSTS,
+        it becomes the canonical host, and the local CA names stay on (S36.3). After the certificate comes, port 80 of
+        the local names sends the browser to the public name. More than one name turns on the plugs with
+        `auto: when_multihost` (a `cutover`). Off: the agent removes the name, applies, and deletes the registration;
+        the id never comes back. The result is a job (`tls-public-enrol`).
       security:
         - session: []
           csrf: []
       x-phase: 6
-      x-cli: care-pi tls public enable --clinic-id ID
-      x-problems: [not-authenticated, csrf, invalid-request, job-running, not-implemented-in-this-version]
+      x-cli: care-pi tls public enable [--hostname-hint NAME] [--acme-ca URL] | care-pi tls public disable (also care-pi tls public status, update-address, rotate)
+      x-problems: [not-authenticated, csrf, invalid-request, setup-incomplete, state-conflict, job-running, not-implemented-in-this-version]
       requestBody:
         required: true
         content:
@@ -1882,14 +1951,22 @@ paths:
       tags: [tls]
       operationId: enrolTailscale
       summary: Turn the Tailscale mode on or off
-      description: Phase 6. Strictly opt-in (S37). The agent installs nothing until the operator turns it on.
+      description: |
+        Phase 6 (P11, S37, design note section 15.3). Strictly opt-in: the agent installs `tailscale` from the apt
+        repository of Tailscale only now. With `auth_key`, `tailscale up` uses the key (through a file in `/run`, never a
+        command line). Without it, tailscaled waits for a login in the browser: `GET /tls` shows `tailscale.login_url`
+        while the job waits (15 minutes at most). Then the agent sets `tls.tailscale` (the MagicDNS name) and applies:
+        Caddy gets the certificate of the name from tailscaled, the pod publishes on the Tailscale address (a full cycle),
+        the firewall accepts 41641/udp, and the name gets HSTS. The tailnet must have MagicDNS and HTTPS Certificates on.
+        Off: the agent removes the name, applies, and runs `tailscale down` and `tailscale logout`. The package stays.
+        The result is a job (`tls-tailscale-enrol`).
       security:
         - session: []
           csrf: []
       x-phase: 6
       x-reauth: true
-      x-cli: care-pi tls tailscale enable --auth-key-stdin
-      x-problems: [not-authenticated, csrf, reauth-required, invalid-request, job-running, not-implemented-in-this-version]
+      x-cli: care-pi tls tailscale enable [--auth-key-stdin] | care-pi tls tailscale disable
+      x-problems: [not-authenticated, csrf, reauth-required, invalid-request, setup-incomplete, state-conflict, job-running, not-implemented-in-this-version]
       requestBody:
         required: true
         content:
@@ -4531,6 +4608,15 @@ components:
         - https://care-pi.rithviknishad.dev/problems/migration-failed
         - https://care-pi.rithviknishad.dev/problems/rollback-failed
         - https://care-pi.rithviknishad.dev/problems/os-update-failed
+        - https://care-pi.rithviknishad.dev/problems/dns-service-unreachable
+        - https://care-pi.rithviknishad.dev/problems/dns-service-rejected
+        - https://care-pi.rithviknishad.dev/problems/acme-pending
+        - https://care-pi.rithviknishad.dev/problems/tailscale-install-failed
+        - https://care-pi.rithviknishad.dev/problems/tailscale-login-required
+        - https://care-pi.rithviknishad.dev/problems/tailscale-https-disabled
+        - https://care-pi.rithviknishad.dev/problems/wifi-auth-failed
+        - https://care-pi.rithviknishad.dev/problems/wifi-no-device
+        - https://care-pi.rithviknishad.dev/problems/wifi-failed
       examples: [https://care-pi.rithviknishad.dev/problems/invalid-config]
     ValidationError:
       type: object
@@ -6470,7 +6556,7 @@ components:
               description: '`tls.public.enabled`.'
             hostname:
               type: [string, 'null']
-              description: The public host name. `null` before Phase 6.
+              description: The public host name. `null` when the mode is off.
         tailscale:
           type: object
           additionalProperties: false
@@ -6482,7 +6568,7 @@ components:
               description: '`tls.tailscale.enabled`.'
             hostname:
               type: [string, 'null']
-              description: The tailnet host name. `null` before Phase 6.
+              description: The MagicDNS name. `null` when the mode is off.
       examples:
         - local_ca: {enabled: true, fingerprint_sha256: 3f1d6c0e5a2b9e4d7c8f1a0b2c3d4e5f60718293a4b5c6d7e8f9011223344556, not_after: '2036-10-27T10:00:00Z'}
           public: {enabled: false, hostname: null}
@@ -6749,7 +6835,7 @@ components:
           kind: modify
     PlanActionKind:
       type: string
-      enum: [ensure-dirs, set-secrets, write-files, delete-files, daemon-reload, enable-target, pull-images, full-cycle, start-target, restart, reload-caddy, ensure-buckets, ensure-stanza, ensure-mounts, ensure-repositories, ensure-timers, ensure-fe, cutover, plug-config, write-lock]
+      enum: [ensure-dirs, ensure-ca, set-secrets, write-files, disable-units, delete-files, daemon-reload, reload-firewall, enable-target, pull-images, full-cycle, start-target, restart, reload-caddy, ensure-buckets, ensure-stanza, ensure-mounts, ensure-repositories, ensure-timers, ensure-fe, cutover, plug-config, update-dns, write-lock]
       description: |
         The action kinds of `agent/internal/plan`, in execution order. A later version can add kinds.
         Phase 3 adds `ensure-mounts` (the mount units of `disk_label` destinations), `ensure-repositories` (`restic init`
@@ -6757,6 +6843,10 @@ components:
         and `ensure-timers` (turn the backup timers on or off, `backups.paused`).
         Phase 4 adds `cutover` (the steps of `docs/solutions.md` section 8 in place of a restart, when the care image or the
         set of backend plugs that are on changes) and `plug-config` (write the `plug_config` rows of Care); both come before `write-lock`.
+        Phase 6 adds `ensure-ca` (make the name-constrained root of the agent; on a host with the root of Caddy this is the
+        one-time switch, and care-caddy restarts), `disable-units` (stop and disable `care-dns-update.timer` before its file
+        goes), `reload-firewall` (reload `care-pi-firewall.service` after a change of its Tailscale drop-in), and `update-dns`
+        (send a new LAN address to the DNS service; a failure is a warning).
       examples: [restart]
     PlanAction:
       type: object
@@ -6945,15 +7035,17 @@ components:
       examples: [20261030T101500.123Z-apply]
     JobKind:
       type: string
-      enum: [apply, setup, fe-build, fe-prune, support-bundle, backup-run, backup-verify, restore-pitr, restore-files, restore-dr, disk-prepare, recovery-key-rotate, restore-drill, update-check, update-stage, update-apply, update-rollback, os-update, plug-change, tls]
+      enum: [apply, setup, fe-build, fe-prune, support-bundle, backup-run, backup-verify, restore-pitr, restore-files, restore-dr, disk-prepare, recovery-key-rotate, restore-drill, update-check, update-stage, update-apply, update-rollback, os-update, plug-change, tls-public-enrol, tls-tailscale-enrol, network-wifi]
       description: |
         The kind of job. These kinds hold the apply lock: `apply`, `setup`, `fe-build`, `fe-prune`, the Phase 3 kinds
         `restore-pitr`, `restore-files`, `restore-dr`, `disk-prepare`, `recovery-key-rotate`, the Phase 4 kinds `update-stage`,
-        `update-apply`, `update-rollback`, `os-update`, `plug-change`, and `tls`.
+        `update-apply`, `update-rollback`, `os-update`, `plug-change`, and the Phase 6 kinds `tls-public-enrol`, `tls-tailscale-enrol`,
+        `network-wifi`.
         Phase 2 makes `apply`, `setup`, `fe-build`, `fe-prune`, `support-bundle`.
         Phase 3 makes `backup-run`, `backup-verify`, `restore-pitr`, `restore-files`, `restore-dr`, `disk-prepare`,
         `recovery-key-rotate`, `restore-drill` (design note section 13.8). Phase 4 makes `update-check` (no apply lock),
-        `update-stage`, `update-apply`, `update-rollback`, `os-update`, `plug-change` (design note section 14.2). Phase 6 adds `tls`.
+        `update-stage`, `update-apply`, `update-rollback`, `os-update`, `plug-change` (design note section 14.2). Phase 6 makes
+        `tls-public-enrol`, `tls-tailscale-enrol`, and `network-wifi` (design note section 15); version 0.7.0 replaced the reserved kind `tls`.
         Version 0.4.0 replaced the reserved kinds `backup`, `verify`, and `restore` with the kinds of Phase 3; version 0.5.0
         replaced the reserved kinds `update` and `rollback`, which no agent made, with `update-apply` and `update-rollback`.
       examples: [apply]
@@ -7004,6 +7096,9 @@ components:
             `stage-bundles`, `stage-build`, `cutover-maintenance-on`, `stop`, `checkpoint`, `activate`, `migrate`, `start`,
             `plug-config`, `verify`, `write-lock`, `maintenance-off`, `rollback`, `prune-images`, `os-refresh`, `os-unhold`,
             `os-upgrade`, `os-hold`, `reboot`.
+            Phase 6 keys (design note section 15): `ensure-ca`, `disable-units`, `reload-firewall`, `update-dns`, `write-config`,
+            `dns-register`, `dns-address`, `dns-delete`, `wait-certificate`, `tailscale-install`, `tailscale-up`, `tailscale-login`,
+            `tailscale-down`, `tailscale-logout`, `wifi-radio`, `wifi-profile`, `wifi-connect`, `wifi-verify`, `wifi-remove`.
             `null` for a journal of Phase 1 when the name does not start with a known key.
           examples: [restart]
         state:
@@ -7197,6 +7292,9 @@ components:
         - $ref: '#/components/schemas/UpdateRollbackResult'
         - $ref: '#/components/schemas/OsUpdateResult'
         - $ref: '#/components/schemas/PlugChangeJobResult'
+        - $ref: '#/components/schemas/TlsPublicResult'
+        - $ref: '#/components/schemas/TlsTailscaleResult'
+        - $ref: '#/components/schemas/NetworkWifiResult'
       discriminator:
         propertyName: kind
         mapping:
@@ -7219,6 +7317,9 @@ components:
           update-rollback: '#/components/schemas/UpdateRollbackResult'
           os-update: '#/components/schemas/OsUpdateResult'
           plug-change: '#/components/schemas/PlugChangeJobResult'
+          tls-public-enrol: '#/components/schemas/TlsPublicResult'
+          tls-tailscale-enrol: '#/components/schemas/TlsTailscaleResult'
+          network-wifi: '#/components/schemas/NetworkWifiResult'
       examples:
         - kind: fe-prune
           removed: [1a2b3c4d5e6f]
@@ -7763,7 +7864,7 @@ components:
       type: object
       additionalProperties: false
       description: The network state.
-      required: [hostname, os_hostname, mdns, addresses, published, address_changed, interfaces, gateway, dns_servers, internet, dhcp_hint, urls, wifi]
+      required: [hostname, os_hostname, mdns, addresses, published, address_changed, interfaces, gateway, default_interface, dns_servers, internet, dhcp_hint, dhcp_hints, tailscale_address, urls, wifi]
       properties:
         hostname:
           type: string
@@ -7813,8 +7914,14 @@ components:
         gateway:
           type: [string, 'null']
           format: ipv4
-          description: The default IPv4 gateway.
+          description: The default IPv4 gateway (of the default route with the lowest metric).
           examples: [192.168.1.1]
+        default_interface:
+          type: [string, 'null']
+          description: |
+            Phase 6. The interface that carries the default route now (the lowest metric). With the Wi-Fi failover on,
+            it is the ethernet interface while the cable is in, else the Wi-Fi interface.
+          examples: [eth0]
         dns_servers:
           type: array
           description: The DNS servers of the host.
@@ -7839,6 +7946,18 @@ components:
           oneOf:
             - $ref: '#/components/schemas/DhcpHint'
             - type: 'null'
+        dhcp_hints:
+          type: array
+          description: |
+            Phase 6. One reservation for each interface with a DHCP address: ethernet, and Wi-Fi. A reservation for
+            each MAC address keeps both addresses fixed, so the public name and the bookmarks keep working after a failover.
+          items:
+            $ref: '#/components/schemas/DhcpHint'
+        tailscale_address:
+          type: [string, 'null']
+          format: ipv4
+          description: Phase 6. The address of `tailscale0`, or `null`. It is not a LAN address.
+          examples: [100.101.102.103]
         urls:
           type: array
           description: The URLs of Care, for the QR code of other devices.
@@ -7848,7 +7967,7 @@ components:
           examples: [[https://care.local/, https://192.168.1.10/]]
         wifi:
           x-phase: 6
-          description: The Wi-Fi state (Phase 6). `null` before Phase 6.
+          description: The Wi-Fi state (Phase 6). `null` when the host has no Wi-Fi device and no `network.wifi`.
           oneOf:
             - $ref: '#/components/schemas/WifiState'
             - type: 'null'
@@ -7869,9 +7988,12 @@ components:
                 - {address: 192.168.1.10, prefix_length: 24, family: ipv4, dynamic: true}
                 - {address: 'fd00::1a2b:3c4d', prefix_length: 64, family: ipv6, dynamic: true}
           gateway: 192.168.1.1
+          default_interface: eth0
           dns_servers: [192.168.1.1]
           internet: {reachable: true, checked_at: '2026-10-30T10:55:00Z'}
           dhcp_hint: {interface: eth0, mac: 'd8:3a:dd:00:11:22', address: 192.168.1.10}
+          dhcp_hints: [{interface: eth0, mac: 'd8:3a:dd:00:11:22', address: 192.168.1.10}]
+          tailscale_address: null
           urls: [https://care.local/, https://192.168.1.10/]
           wifi: null
     NetworkInterface:
@@ -7969,7 +8091,7 @@ components:
       x-phase: 6
       type: object
       additionalProperties: false
-      description: A Wi-Fi network (Phase 6).
+      description: A Wi-Fi network (Phase 6, S35).
       required: [ssid, psk, failover]
       properties:
         ssid:
@@ -7984,53 +8106,192 @@ components:
           writeOnly: true
           minLength: 8
           maxLength: 63
-          description: The WPA passphrase. The agent stores it in `/etc/care-pi/secrets/`.
+          description: |
+            The WPA passphrase (printable ASCII). The agent stores it in `/etc/care-pi/secrets/wifi.json` and in the
+            keyfile of NetworkManager (both 0600, root). It never goes to `config.yaml`, a command line, or a log.
           examples: [a wifi passphrase]
+        country:
+          type: [string, 'null']
+          pattern: '^[A-Z]{2}$'
+          description: |
+            The Wi-Fi country (ISO 3166-1 alpha-2). `raspi-config` keeps it on Raspberry Pi OS. `null` keeps the country of
+            `network.wifi.country`.
+          examples: [IN]
         failover:
           type: boolean
-          description: Use Wi-Fi only when ethernet is down.
+          description: |
+            `true`: Wi-Fi carries the traffic only when ethernet is down (route metric 600; ethernet has 100).
+            `false`: Wi-Fi is the main network (route metric 50).
+        reason:
+          type: [string, 'null']
+          maxLength: 200
+          description: The reason in the job journal.
       examples:
         - ssid: Sunrise-Staff
           psk: a wifi passphrase
+          country: IN
           failover: true
     WifiState:
       x-phase: 6
       type: object
       additionalProperties: false
       description: The Wi-Fi state (Phase 6).
-      required: [ssid, connected, failover]
+      required: [ssid, country, failover, connected, device, radio, active_ssid, signal, address, default_route, profiles]
+      properties:
+        ssid:
+          type: [string, 'null']
+          description: '`network.wifi.ssid`: the network of the profile `care-pi-wifi`. `null` without it.'
+          examples: [Sunrise-Staff]
+        country:
+          type: [string, 'null']
+          description: '`network.wifi.country`.'
+          examples: [IN]
+        failover:
+          type: boolean
+          description: '`network.wifi.failover`.'
+        connected:
+          type: boolean
+          description: The Wi-Fi device is connected to `ssid`.
+        device:
+          type: [string, 'null']
+          description: The Wi-Fi interface. `null` when the host has none.
+          examples: [wlan0]
+        radio:
+          type: boolean
+          description: The Wi-Fi radio is on.
+        active_ssid:
+          type: [string, 'null']
+          description: The network of the device now, from any profile.
+          examples: [Sunrise-Staff]
+        signal:
+          type: [integer, 'null']
+          minimum: 0
+          maximum: 100
+          description: The signal of the active network in percent.
+          examples: [67]
+        address:
+          type: [string, 'null']
+          format: ipv4
+          description: The IPv4 address of the Wi-Fi interface.
+          examples: [192.168.1.23]
+        default_route:
+          type: boolean
+          description: The default route goes through Wi-Fi now (the failover is active, or Wi-Fi is the main network).
+        profiles:
+          type: array
+          description: |
+            The Wi-Fi profiles of NetworkManager. `managed: true` is `care-pi-wifi`. The others come from the Imager settings
+            (cloud-init) or from the operator; care-pi does not change them.
+          items:
+            $ref: '#/components/schemas/WifiProfile'
+      examples:
+        - ssid: Sunrise-Staff
+          country: IN
+          failover: true
+          connected: true
+          device: wlan0
+          radio: true
+          active_ssid: Sunrise-Staff
+          signal: 67
+          address: 192.168.1.23
+          default_route: false
+          profiles:
+            - {name: care-pi-wifi, ssid: Sunrise-Staff, autoconnect: true, active: true, managed: true}
+    WifiProfile:
+      x-phase: 6
+      type: object
+      additionalProperties: false
+      description: One Wi-Fi profile of NetworkManager.
+      required: [name, ssid, autoconnect, active, managed]
+      properties:
+        name:
+          type: string
+          description: The connection name.
+          examples: [preconfigured]
+        ssid:
+          type: string
+          description: The network name.
+          examples: [Sunrise-Staff]
+        autoconnect:
+          type: boolean
+          description: NetworkManager connects it at the boot.
+        active:
+          type: boolean
+          description: The connection is active now.
+        managed:
+          type: boolean
+          description: The connection is `care-pi-wifi`.
+      examples:
+        - {name: preconfigured, ssid: Home, autoconnect: true, active: false, managed: false}
+    WifiNetwork:
+      x-phase: 6
+      type: object
+      additionalProperties: false
+      description: One network of a scan.
+      required: [ssid, signal, security, channel, in_use]
       properties:
         ssid:
           type: string
           description: The network name.
           examples: [Sunrise-Staff]
-        connected:
+        signal:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: The signal in percent.
+          examples: [72]
+        security:
+          type: string
+          description: The security of the network as NetworkManager tells it. Empty for an open network.
+          examples: [WPA2]
+        channel:
+          type: integer
+          description: The channel.
+          examples: [6]
+        in_use:
           type: boolean
-          description: The host is connected to the network.
-        failover:
-          type: boolean
-          description: Wi-Fi is only a failover for ethernet.
+          description: The device is connected to this network.
       examples:
-        - ssid: Sunrise-Staff
-          connected: false
-          failover: true
+        - {ssid: Sunrise-Staff, signal: 72, security: WPA2, channel: 6, in_use: false}
+    WifiScan:
+      x-phase: 6
+      type: object
+      additionalProperties: false
+      description: The result of a scan.
+      required: [device, networks]
+      properties:
+        device:
+          type: [string, 'null']
+          description: The Wi-Fi interface.
+          examples: [wlan0]
+        networks:
+          type: array
+          description: One entry for each SSID, strongest first.
+          items:
+            $ref: '#/components/schemas/WifiNetwork'
+      examples:
+        - device: wlan0
+          networks:
+            - {ssid: Sunrise-Staff, signal: 72, security: WPA2, channel: 6, in_use: false}
     TlsState:
       type: object
       additionalProperties: false
-      description: The TLS modes. HSTS is never sent for the local CA names (07 F7).
+      description: |
+        The TLS modes (design note section 15). HSTS is never sent for the local CA names (07 F7); the public name and the
+        Tailscale name send it.
       required: [local_ca, public, tailscale]
       properties:
         local_ca:
           type: object
           additionalProperties: false
           description: The local CA mode.
-          required: [enabled, root, hostnames]
+          required: [enabled, root, hostnames, uncovered, ca_changed_at, previous_fingerprint_sha256, cert_page_url]
           properties:
             enabled:
               type: boolean
               description: '`tls.local_ca.enabled`.'
             root:
-              description: The root CA. `null` when the CA does not exist yet.
+              description: The root CA that the clinic devices must trust. `null` when the CA does not exist yet.
               oneOf:
                 - $ref: '#/components/schemas/CaRoot'
                 - type: 'null'
@@ -8040,48 +8301,226 @@ components:
               items:
                 type: string
               examples: [[care.local, 192.168.1.10]]
+            uncovered:
+              type: array
+              description: |
+                The names and addresses of `hostnames` that the name constraints of the root do not permit, for example a
+                LAN address in a new /24 after a move of the device. A device that opens such an address sees a certificate
+                error; the other names work. A new root (`POST /tls/local-ca/rotate`, Phase 7) covers them.
+              items:
+                type: string
+              examples: [[]]
+            ca_changed_at:
+              type: [string, 'null']
+              format: date-time
+              description: |
+                The time of the one-time switch from the root that Caddy made to the name-constrained root of the agent
+                (07 §4.1). After it, each device of the clinic must install the new root. `null` on a host that never had
+                the root of Caddy.
+            previous_fingerprint_sha256:
+              description: The SHA-256 fingerprint of the root before the switch. `null` without a switch.
+              oneOf:
+                - $ref: '#/components/schemas/Sha256Hex'
+                - type: 'null'
+            cert_page_url:
+              type: string
+              format: uri
+              description: |
+                The page of the DNS/ACME service that offers a root from the fragment of the URL (07 §4.4). The QR code of
+                the console is `<cert_page_url>#<base64 DER>`; the fragment never reaches the service.
+              examples: [https://care-pi.rithviknishad.dev/cert]
         public:
           x-phase: 6
-          type: object
-          additionalProperties: false
-          description: The public certificate mode (Phase 6).
-          required: [enabled, clinic_id, hostname]
-          properties:
-            enabled:
-              type: boolean
-              description: '`tls.public.enabled`.'
-            clinic_id:
-              type: [string, 'null']
-              description: '`tls.public.clinic_id`.'
-            hostname:
-              type: [string, 'null']
-              description: '`<clinic_id>.care-pi.rithviknishad.dev`.'
+          $ref: '#/components/schemas/TlsPublic'
         tailscale:
           x-phase: 6
-          type: object
-          additionalProperties: false
-          description: The Tailscale mode (Phase 6).
-          required: [enabled, hostname]
-          properties:
-            enabled:
-              type: boolean
-              description: '`tls.tailscale.enabled`.'
-            hostname:
-              type: [string, 'null']
-              description: The tailnet name.
+          $ref: '#/components/schemas/TlsTailscale'
       examples:
         - local_ca:
             enabled: true
             root:
-              subject: CN=care-pi care.local Root CA
+              subject: CN=care-pi care.local Root CA,O=care-pi
               fingerprint_sha256: 3f1d6c0e5a2b9e4d7c8f1a0b2c3d4e5f60718293a4b5c6d7e8f9011223344556
               fingerprint_sha256_colon: '3F:1D:6C:0E:5A:2B:9E:4D:7C:8F:1A:0B:2C:3D:4E:5F:60:71:82:93:A4:B5:C6:D7:E8:F9:01:12:23:34:45:56'
-              not_before: '2026-10-30T10:00:00Z'
-              not_after: '2036-10-27T10:00:00Z'
-              name_constraints: null
+              not_before: '2026-11-01T10:00:00Z'
+              not_after: '2036-10-30T10:00:00Z'
+              name_constraints:
+                permitted_dns_domains: [.local, .care-pi.rithviknishad.dev]
+                permitted_ip_ranges: [192.168.1.0/24]
             hostnames: [care.local, 192.168.1.10]
-          public: {enabled: false, clinic_id: null, hostname: null}
-          tailscale: {enabled: false, hostname: null}
+            uncovered: []
+            ca_changed_at: '2026-11-01T10:00:00Z'
+            previous_fingerprint_sha256: 9a1d6c0e5a2b9e4d7c8f1a0b2c3d4e5f60718293a4b5c6d7e8f9011223344500
+            cert_page_url: https://care-pi.rithviknishad.dev/cert
+          public:
+            enabled: true
+            clinic_id: sunrise-k3x9
+            hostname: sunrise-k3x9.care-pi.rithviknishad.dev
+            acme_ca: null
+            certificate: {state: issued, not_after: '2027-01-30T10:00:00Z', issuer: R11, staging: false}
+            dns: {address: 192.168.1.10, updated_at: '2026-11-01T10:00:00Z', last_error: null, last_error_at: null, revoked: false}
+            primary: true
+            health_url: https://sunrise-k3x9.care-pi.rithviknishad.dev/_care-pi/health
+          tailscale:
+            enabled: false
+            hostname: null
+            installed: false
+            backend_state: null
+            login_url: null
+            tailnet: null
+            ipv4: null
+            https_enabled: false
+            published: false
+    TlsPublic:
+      x-phase: 6
+      type: object
+      additionalProperties: false
+      description: The public name (Phase 6, S36, 07 §3.8).
+      required: [enabled, clinic_id, hostname, acme_ca, certificate, dns, primary, health_url]
+      properties:
+        enabled:
+          type: boolean
+          description: '`tls.public.enabled`.'
+        clinic_id:
+          type: [string, 'null']
+          description: '`tls.public.clinic_id`: the id that the DNS service gave.'
+          examples: [sunrise-k3x9]
+        hostname:
+          type: [string, 'null']
+          description: '`<clinic_id>.care-pi.rithviknishad.dev`. The canonical host of Care while the mode is on.'
+          examples: [sunrise-k3x9.care-pi.rithviknishad.dev]
+        acme_ca:
+          type: [string, 'null']
+          format: uri
+          description: '`tls.public.acme_ca`. `null`: Let''s Encrypt.'
+        certificate:
+          description: The certificate of the name in the data directory of Caddy. `null` when the mode is off.
+          oneOf:
+            - $ref: '#/components/schemas/PublicCertificate'
+            - type: 'null'
+        dns:
+          type: object
+          additionalProperties: false
+          description: The last update of the A record (`care-dns-update.timer`, every 5 minutes, and each address change).
+          required: [address, updated_at, last_error, last_error_at, revoked]
+          properties:
+            address:
+              type: [string, 'null']
+              format: ipv4
+              description: The LAN address that the DNS service has.
+            revoked:
+              type: boolean
+              description: |
+                The DNS service answered `410 revoked`: an operator of the service deleted the registration. Turn the mode
+                off and on again for a new name.
+            updated_at:
+              type: [string, 'null']
+              format: date-time
+              description: The time of the last successful update.
+            last_error:
+              type: [string, 'null']
+              description: The error of the last update. `null` after a success.
+            last_error_at:
+              type: [string, 'null']
+              format: date-time
+              description: The time of `last_error`.
+        primary:
+          type: boolean
+          description: Port 80 of the local names sends the browser to the public name (the certificate is issued, 07 §6.1).
+        health_url:
+          type: [string, 'null']
+          format: uri
+          description: |
+            The URL that the console fetches (mode `no-cors`) to find a router that blocks a public name with a private
+            address (DNS rebinding protection, 07 §3.8).
+      examples:
+        - enabled: true
+          clinic_id: sunrise-k3x9
+          hostname: sunrise-k3x9.care-pi.rithviknishad.dev
+          acme_ca: null
+          certificate: {state: pending, not_after: null, issuer: null, staging: false}
+          dns: {address: 192.168.1.10, updated_at: '2026-11-01T10:00:00Z', last_error: null, last_error_at: null, revoked: false}
+          primary: false
+          health_url: https://sunrise-k3x9.care-pi.rithviknishad.dev/_care-pi/health
+    PublicCertificate:
+      x-phase: 6
+      type: object
+      additionalProperties: false
+      description: The certificate of the public name.
+      required: [state, not_after, issuer, staging]
+      properties:
+        state:
+          type: string
+          enum: [issued, pending, expired, error]
+          description: |
+            `pending`: Caddy has no certificate yet (the first one takes about a minute). `error`: no certificate 15 minutes
+            after the enrolment; see `care-pi logs caddy`.
+        not_after:
+          type: [string, 'null']
+          format: date-time
+          description: The end of the validity. Caddy renews it 30 days before.
+        issuer:
+          type: [string, 'null']
+          description: The common name of the issuer.
+          examples: [R11]
+        staging:
+          type: boolean
+          description: The certificate comes from a staging directory (`tls.public.acme_ca`); browsers do not trust it.
+      examples:
+        - {state: issued, not_after: '2027-01-30T10:00:00Z', issuer: R11, staging: false}
+    TlsTailscale:
+      x-phase: 6
+      type: object
+      additionalProperties: false
+      description: The Tailscale mode (Phase 6, P11, S37).
+      required: [enabled, hostname, installed, backend_state, login_url, tailnet, ipv4, https_enabled, published]
+      properties:
+        enabled:
+          type: boolean
+          description: '`tls.tailscale.enabled`.'
+        hostname:
+          type: [string, 'null']
+          description: '`tls.tailscale.hostname`: the MagicDNS name.'
+          examples: [care.tail1234.ts.net]
+        installed:
+          type: boolean
+          description: The host has the package `tailscale`.
+        backend_state:
+          type: [string, 'null']
+          enum: [NoState, NeedsLogin, NeedsMachineAuth, Stopped, Starting, Running, null]
+          description: The state of tailscaled. `null` without the package.
+        login_url:
+          type: [string, 'null']
+          format: uri
+          description: |
+            The login URL while tailscaled waits for a login (`NeedsLogin`). It lets each person who has it add the device to a
+            tailnet: show it only to the operator. It is never in a job log.
+          examples: [https://login.tailscale.com/a/1a2b3c4d]
+        tailnet:
+          type: [string, 'null']
+          description: The name of the tailnet.
+          examples: [clinic@example.com]
+        ipv4:
+          type: [string, 'null']
+          format: ipv4
+          description: The Tailscale address.
+          examples: [100.101.102.103]
+        https_enabled:
+          type: boolean
+          description: The tailnet gives a certificate for the name (MagicDNS and HTTPS Certificates on).
+        published:
+          type: boolean
+          description: The pod publishes on the Tailscale address. `false` after a boot without the address; the next apply publishes it.
+      examples:
+        - enabled: false
+          hostname: null
+          installed: true
+          backend_state: NeedsLogin
+          login_url: https://login.tailscale.com/a/1a2b3c4d
+          tailnet: null
+          ipv4: null
+          https_enabled: false
+          published: false
     CaRoot:
       type: object
       additionalProperties: false
@@ -8091,7 +8530,7 @@ components:
         subject:
           type: string
           description: The subject of the certificate.
-          examples: [CN=care-pi care.local Root CA]
+          examples: ['CN=care-pi care.local Root CA,O=care-pi']
         fingerprint_sha256:
           $ref: '#/components/schemas/Sha256Hex'
         fingerprint_sha256_colon:
@@ -8108,25 +8547,29 @@ components:
           format: date-time
           description: The end of the validity.
         name_constraints:
-          x-phase: 7
           description: |
-            The X.509 name constraints (07 §4.1). Phase 7 makes a root CA with name constraints.
-            Until then the root is the root that Caddy makes, and this member is `null`.
+            The X.509 name constraints of the root (07 §4.1, critical). The agent makes the root with them; Caddy issues
+            certificates only for the permitted names and addresses. `null` for the root that Caddy made (a host before the
+            first apply of Phase 6).
           oneOf:
             - $ref: '#/components/schemas/NameConstraints'
             - type: 'null'
       examples:
-        - subject: CN=care-pi care.local Root CA
+        - subject: CN=care-pi care.local Root CA,O=care-pi
           fingerprint_sha256: 3f1d6c0e5a2b9e4d7c8f1a0b2c3d4e5f60718293a4b5c6d7e8f9011223344556
           fingerprint_sha256_colon: '3F:1D:6C:0E:5A:2B:9E:4D:7C:8F:1A:0B:2C:3D:4E:5F:60:71:82:93:A4:B5:C6:D7:E8:F9:01:12:23:34:45:56'
-          not_before: '2026-10-30T10:00:00Z'
-          not_after: '2036-10-27T10:00:00Z'
-          name_constraints: null
+          not_before: '2026-11-01T10:00:00Z'
+          not_after: '2036-10-30T10:00:00Z'
+          name_constraints:
+            permitted_dns_domains: [.local, .care-pi.rithviknishad.dev]
+            permitted_ip_ranges: [192.168.1.0/24]
     NameConstraints:
-      x-phase: 7
       type: object
       additionalProperties: false
-      description: The permitted subtrees of the root CA (Phase 7, 07 §4.1).
+      description: |
+        The permitted subtrees of the root (07 §4.1, Q-c). A DNS domain with a leading dot permits the names below it.
+        Each IPv4 range is the /24 of a LAN address, so a DHCP change in the same /24 keeps the root valid.
+        Everything else is excluded: the extension is critical.
       required: [permitted_dns_domains, permitted_ip_ranges]
       properties:
         permitted_dns_domains:
@@ -8140,10 +8583,10 @@ components:
           description: The IP ranges in CIDR form.
           items:
             type: string
-          examples: [[192.168.1.10/32]]
+          examples: [[192.168.1.0/24]]
       examples:
         - permitted_dns_domains: [.local, .care-pi.rithviknishad.dev]
-          permitted_ip_ranges: [192.168.1.10/32]
+          permitted_ip_ranges: [192.168.1.0/24]
     ClientOs:
       type: string
       enum: [ios, android, windows, macos, linux, chromeos]
@@ -8230,26 +8673,39 @@ components:
       x-phase: 6
       type: object
       additionalProperties: false
-      description: The public certificate mode (Phase 6).
-      required: [enabled, clinic_id]
+      description: The public name (Phase 6).
+      required: [enabled]
       properties:
         enabled:
           type: boolean
           description: Turn the mode on or off.
-        clinic_id:
+        hostname_hint:
           type: [string, 'null']
-          pattern: '^[a-z0-9][a-z0-9-]{1,62}$'
-          description: The clinic id. Required when `enabled` is `true`.
+          pattern: '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'
+          description: |
+            The start of the id. The DNS service adds a short suffix (`sunrise` gives `sunrise-k3x9`). `null`:
+            `identity.hostname`. Ignored when `enabled` is `false`.
           examples: [sunrise]
+        acme_ca:
+          type: [string, 'null']
+          format: uri
+          description: |
+            The ACME directory (`tls.public.acme_ca`), for example
+            `https://acme-staging-v02.api.letsencrypt.org/directory` for a test. An empty string goes back to Let's Encrypt.
+            `null` or absent keeps the value.
+        reason:
+          type: [string, 'null']
+          maxLength: 200
+          description: The reason in the job journal.
       examples:
         - enabled: true
-          clinic_id: sunrise
+          hostname_hint: sunrise
     TailscaleRequest:
       x-phase: 6
       type: object
       additionalProperties: false
       description: The Tailscale mode (Phase 6).
-      required: [enabled, auth_key]
+      required: [enabled]
       properties:
         enabled:
           type: boolean
@@ -8258,8 +8714,15 @@ components:
           type: [string, 'null']
           format: password
           writeOnly: true
-          description: A Tailscale auth key. `null` gives a login URL in the job events. The agent deletes the key after the enrolment.
+          maxLength: 200
+          description: |
+            A Tailscale auth key (`tskey-...`). `null` or absent starts the login in the browser: `GET /tls` shows
+            `tailscale.login_url`. The key goes to tailscale through a file in `/run`; the agent deletes it after `tailscale up`.
           examples: [tskey-auth-EXAMPLE]
+        reason:
+          type: [string, 'null']
+          maxLength: 200
+          description: The reason in the job journal.
       examples:
         - enabled: true
           auth_key: null
@@ -10701,6 +11164,88 @@ components:
           reboot_required: true
           rebooting: false
           duration_s: 212.7
+    TlsPublicResult:
+      x-phase: 6
+      type: object
+      additionalProperties: false
+      description: The result of a `tls-public-enrol` job that succeeded.
+      required: [kind, enabled, hostname, certificate]
+      properties:
+        kind:
+          type: string
+          const: tls-public-enrol
+          description: The job kind.
+        enabled:
+          type: boolean
+          description: The mode is on after the job.
+        hostname:
+          type: [string, 'null']
+          description: The public name.
+          examples: [sunrise-k3x9.care-pi.rithviknishad.dev]
+        certificate:
+          type: string
+          enum: [issued, pending, none]
+          description: '`pending`: no certificate after 5 minutes; Caddy tries again, and `GET /tls` shows the state. `none`: the mode is off.'
+      examples:
+        - kind: tls-public-enrol
+          enabled: true
+          hostname: sunrise-k3x9.care-pi.rithviknishad.dev
+          certificate: issued
+    TlsTailscaleResult:
+      x-phase: 6
+      type: object
+      additionalProperties: false
+      description: The result of a `tls-tailscale-enrol` job that succeeded.
+      required: [kind, enabled, hostname, tailnet]
+      properties:
+        kind:
+          type: string
+          const: tls-tailscale-enrol
+          description: The job kind.
+        enabled:
+          type: boolean
+          description: The mode is on after the job.
+        hostname:
+          type: [string, 'null']
+          description: The MagicDNS name.
+          examples: [care.tail1234.ts.net]
+        tailnet:
+          type: [string, 'null']
+          description: The tailnet.
+          examples: [clinic@example.com]
+      examples:
+        - kind: tls-tailscale-enrol
+          enabled: true
+          hostname: care.tail1234.ts.net
+          tailnet: clinic@example.com
+    NetworkWifiResult:
+      x-phase: 6
+      type: object
+      additionalProperties: false
+      description: The result of a `network-wifi` job that succeeded.
+      required: [kind, ssid, connected, address]
+      properties:
+        kind:
+          type: string
+          const: network-wifi
+          description: The job kind.
+        ssid:
+          type: [string, 'null']
+          description: The network. `null` after a removal.
+          examples: [Sunrise-Staff]
+        connected:
+          type: boolean
+          description: The Wi-Fi device is connected.
+        address:
+          type: [string, 'null']
+          format: ipv4
+          description: The Wi-Fi address.
+          examples: [192.168.1.23]
+      examples:
+        - kind: network-wifi
+          ssid: Sunrise-Staff
+          connected: true
+          address: 192.168.1.23
     PlugChangeJobResult:
       x-phase: 4
       type: object

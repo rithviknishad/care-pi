@@ -521,8 +521,18 @@ An operation with a session can also return `csrf` (403); see §3.
 | `migration-failed` | 500 | Phase 4, job error. `care-beat` did not become healthy. The previous lock runs again; `pitr_offer` is set. |
 | `rollback-failed` | 500 | Phase 4, job error. The rollback failed. The maintenance page stays; `pitr_offer` is set. |
 | `os-update-failed` | 500 | Phase 4, job error. apt failed. The held packages are held again. |
+| `dns-service-unreachable` | 502 | Phase 6. The DNS/ACME service does not answer (after 3 tries), or the device has no internet. |
+| `dns-service-rejected` | 502 | Phase 6. The DNS/ACME service refused the request (for example a revoked id, a full zone, or a bad hint). The detail has the error of the service. |
+| `acme-pending` | 504 | Phase 6. The certificate of the public name is not issued yet. Caddy tries again. |
+| `tailscale-install-failed` | 500 | Phase 6, job error. apt could not install `tailscale`. |
+| `tailscale-login-required` | 409 | Phase 6. Tailscale needs a login: the login link expired, or the auth key is not valid. |
+| `tailscale-https-disabled` | 409 | Phase 6. The tailnet has no MagicDNS or no HTTPS certificates. |
+| `wifi-auth-failed` | 422 | Phase 6. The Wi-Fi network refused the passphrase. |
+| `wifi-no-device` | 409 | Phase 6. The host has no Wi-Fi device, or `rfkill` blocks it. |
+| `wifi-failed` | 500 | Phase 6. NetworkManager could not connect, or the route check failed. |
 
 The type URIs need not resolve. The DNS/ACME service of Phase 6 can serve a page for each slug later.
+Section 15.6 tells which operation returns each Phase 6 type.
 
 ## 8. The config resource
 
@@ -639,13 +649,15 @@ The paths are below `/api/v1` on port 8443, except `/_care-pi/status`. Section 1
 | POST | `/support-bundle` | session + CSRF | `care-pi support-bundle [--out FILE] [--lines N]` | 2 | new |
 | GET | `/support-bundle/{bundle_id}` | session | `care-pi support-bundle --out FILE` | 2 | new |
 | GET | `/network` | session | `care-pi status --json` | 2 | yes |
-| PUT | `/network/wifi` | session + CSRF | `care-pi network wifi --ssid SSID --psk-stdin [--failover]` | 6 | new |
+| PUT | `/network/wifi` | session + CSRF | `care-pi network wifi set --ssid SSID --psk-stdin [--country CC] [--failover]` | 6 | new |
+| DELETE | `/network/wifi` | session + CSRF | `care-pi network wifi remove` | 6 | new |
+| GET | `/network/wifi/scan` | session | `care-pi network wifi scan --json` | 6 | new |
 | GET | `/tls` | session | `care-pi tls show --json` | 2 | new |
 | GET | `/tls/root-ca` | public | `care-pi tls root-ca [--format der\|pem] [--out FILE]` | 2 | new |
 | GET | `/tls/root-ca/mobileconfig` | public | `care-pi tls root-ca --format mobileconfig [--out FILE]` | 2 | new |
 | GET | `/tls/instructions/{os}` | public | `-` | 2 | — |
-| PUT | `/tls/public` | session + CSRF | `care-pi tls public enable --clinic-id ID` | 6 | new |
-| PUT | `/tls/tailscale` | session + CSRF + reauth | `care-pi tls tailscale enable --auth-key-stdin` | 6 | new |
+| PUT | `/tls/public` | session + CSRF | `care-pi tls public enable [--hostname-hint NAME] [--acme-ca URL]`; `care-pi tls public disable` | 6 | new |
+| PUT | `/tls/tailscale` | session + CSRF + reauth | `care-pi tls tailscale enable [--auth-key-stdin]`; `care-pi tls tailscale disable` | 6 | new |
 | POST | `/tls/local-ca/rotate` | session + CSRF + reauth | `care-pi tls local-ca rotate` | 7 | new |
 | GET | `/fe` | session | `care-pi fe status --json` | 2 | `--json` is new |
 | POST | `/fe/build` | session + CSRF | `care-pi fe build [--force]` | 2 | yes |
@@ -1483,7 +1495,8 @@ the values that run.
 
 `enabled: null` removes the operator choice: the solution default and the `auto` rule apply again (`Plug.source`).
 `care_multihost_files_be` has `auto: when_multihost`: it turns on when Caddy serves more than one host name. Phase 4 serves
-one name, so it stays off (`auto_active: false`).
+one name, so it stays off (`auto_active: false`). Phase 6 adds the public name and the Tailscale name (section 15.5):
+with 2 or more names, the plug turns on in the plan of the apply (a cutover).
 
 ### 14.8 Problems
 
@@ -1539,3 +1552,112 @@ greater than 4. Changes beyond the union of the two:
 - `PitrOffer.restore` is a `RestorePitrRequest` (`time` in place of `target_time`).
 - `verify-failed` has one title ("The verify failed") for the verify and drill of Phase 3 and the check after an update.
 - `Status` has `backups` (section 13), `updates` (`UpdatesSummary`), and `maintenance`. `PublicStatus` has `maintenance`.
+
+## 15. Connectivity (Phase 6)
+
+`docs/connectivity.md` is the specification: the name-constrained local CA, the public name, Tailscale, the names that
+Care serves, the first contact, and Wi-Fi. This section tells how the API shows them. The operations have `x-phase: 6`.
+An agent of Phase 6 implements each of them. An older agent returns `501 not-implemented-in-this-version`.
+
+### 15.1 Resources
+
+| Resource | Operations | Rule |
+|---|---|---|
+| TLS | `GET /tls` | One call gives the three modes (`TlsState`): `local_ca` (the root, its name constraints, `uncovered`, the one-time CA switch), `public`, and `tailscale`. It reads files, the state of Caddy, and `tailscale status`; it never calls the DNS service. The console polls it while a login or a certificate waits. |
+| Public name | `PUT /tls/public` | `enabled: true` registers and turns the mode on; `enabled: false` turns it off and deletes the registration. `hostname_hint` is the start of the id. `acme_ca` sets `tls.public.acme_ca` (`""` removes it). |
+| Tailscale | `PUT /tls/tailscale` | Needs a recent password check (`x-reauth`). `auth_key` is optional: without it, `GET /tls` shows `tailscale.login_url` while the job waits. |
+| Network | `GET /network` | Gains `default_interface`, `dhcp_hints` (one for each interface with a DHCP address), `tailscale_address`, and `wifi` (`WifiState`, with the profiles of NetworkManager that care-pi does not manage). |
+| Wi-Fi | `GET /network/wifi/scan`, `PUT /network/wifi`, `DELETE /network/wifi` | The scan is synchronous (about 5 s). `PUT` and `DELETE` start a job. The passphrase is write-only. |
+| Status | `GET /status` member `tls` (`TlsSummary`) | The dashboard lists each name with its mode and its certificate. |
+
+The CLI has the same operations (`x-cli`): `care-pi tls public enable|disable|status|update-address|rotate`,
+`care-pi tls tailscale enable|disable|status`, and `care-pi network wifi scan|set|remove|status`.
+`care-pi tls public rotate` has no operation (section 15.8).
+
+### 15.2 Jobs
+
+| Kind | Started by | Steps (`JobStep.action`) | Result |
+|---|---|---|---|
+| `tls-public-enrol` | `PUT /tls/public` | on: `dns-register`, `dns-address`, `write-config`, the apply steps, `wait-certificate`, and the apply steps again when the certificate is issued. Off: `write-config`, the apply steps, `dns-delete`. | `TlsPublicResult`: `hostname`, `certificate` (`issued`, `pending`, or `none`). |
+| `tls-tailscale-enrol` | `PUT /tls/tailscale` | on: `tailscale-install`, `tailscale-up` (auth key) or `tailscale-login` (login link), `write-config`, the apply steps. Off: `write-config`, the apply steps, `tailscale-down`, `tailscale-logout`. | `TlsTailscaleResult`: `hostname`, `tailnet`. |
+| `network-wifi` | `PUT /network/wifi`, `DELETE /network/wifi` | Set: `wifi-radio`, `wifi-profile`, `wifi-connect`, `wifi-verify`, `write-config`, the apply steps. Remove: `wifi-remove`, `write-config`, the apply steps. | `NetworkWifiResult`: `ssid`, `connected`, `address`. |
+
+Each kind holds the apply lock. The apply steps are the steps of section 6 (an `apply` inside the job).
+A change of the name set is a cutover of the plug `care_multihost_files_be` (section 15.5).
+
+### 15.3 The local CA
+
+- `local_ca.root.name_constraints` (`NameConstraints`) has `permitted_dns_domains` (`.local`,
+  `.care-pi.rithviknishad.dev`, and each other local name) and `permitted_ip_ranges` (the `/24` of each LAN address).
+  `null` means that the root has no constraints (the root of Caddy before the switch).
+- `local_ca.uncovered` lists the names and the addresses that the constraints do not permit. A non-empty list means that
+  the browsers refuse those leaf certificates. `POST /tls/local-ca/rotate` (Phase 7) makes a new root.
+- `local_ca.ca_changed_at` and `local_ca.previous_fingerprint_sha256` are set after the one-time switch from the root of
+  Caddy (`docs/connectivity.md` section 2.3). The console shows a warning one time for each fingerprint.
+- `local_ca.cert_page_url` is `https://care-pi.rithviknishad.dev/cert`. The QR code of the console adds
+  `#<root DER, base64url>`.
+- `GET /tls/root-ca` gives the root of the agent. Before the switch, it gives the root of Caddy.
+
+### 15.4 The public name and Tailscale in `GET /tls`
+
+| Member | Content |
+|---|---|
+| `public.hostname`, `public.clinic_id`, `public.acme_ca` | The name, the id from the DNS service, the ACME directory (`null`: Let's Encrypt). |
+| `public.certificate` | `PublicCertificate`: `state` (`issued`, `pending`, `expired`, `error`), `not_after`, `issuer`, `staging`. The agent reads the certificate from the data directory of Caddy. |
+| `public.dns` | The last address that the agent sent, `updated_at`, `last_error`, `last_error_at`, and `revoked`. |
+| `public.primary` | `true` when port 80 sends the browser to the public name (the certificate is issued). |
+| `public.health_url` | `https://<name>/_care-pi/health`. The console loads it from the browser (`no-cors`) to find a DNS rebinding block. |
+| `tailscale.installed`, `tailscale.backend_state` | The package, and `BackendState` of `tailscale status --json` (`NeedsLogin`, `Running`, …). |
+| `tailscale.login_url` | The login link while a login waits, else `null`. The link is secret: it is not in a job log. |
+| `tailscale.hostname`, `tailscale.tailnet`, `tailscale.ipv4` | The MagicDNS name, the tailnet, and the address of `tailscale0`. |
+| `tailscale.https_enabled` | `false` when the tailnet gives no HTTPS certificates. |
+| `tailscale.published` | `true` when the pod publishes on the Tailscale address. |
+
+### 15.5 Apply and the plan
+
+New plan actions (`PlanActionKind`): `ensure-ca` (make the root; the one-time switch restarts care-caddy),
+`disable-units` (stop `care-dns-update.timer` before its file goes), `reload-firewall` (the Tailscale drop-in of
+`care-pi-firewall.service`), and `update-dns` (send a new LAN address to the DNS service). `docs/apply.md` tells the
+order. The names in the order public, local, Tailscale give the canonical host (the first name). More than 1 name turns
+on `care_multihost_files_be` (`auto: when_multihost`; section 14.7).
+
+### 15.6 Problems
+
+The new problem types are in the table of section 7.
+
+| Operation | Phase 6 types |
+|---|---|
+| `PUT /tls/public` | `dns-service-unreachable`, `dns-service-rejected` (as the job error), `state-conflict` (`enabled: false` when the public name is off). The job never fails for `acme-pending`: it succeeds with `certificate: pending`. |
+| `PUT /tls/tailscale` | `tailscale-install-failed`, `tailscale-login-required`, `tailscale-https-disabled` (as the job error), `state-conflict` (`enabled: false` when Tailscale is off). |
+| `GET /network/wifi/scan` | `wifi-no-device`, `wifi-failed`. |
+| `PUT /network/wifi` | `wifi-auth-failed`, `wifi-no-device`, `wifi-failed` (as the job error). |
+
+`acme-pending` is for a later operation that needs the certificate (for example a check of the public name).
+Each operation of Phase 6 also returns `setup-incomplete` before the setup is finished.
+
+### 15.7 Changes of contract 0.7.0
+
+- New operations: `GET /network/wifi/scan`, `DELETE /network/wifi`. `PUT /tls/public`, `PUT /tls/tailscale`, and
+  `PUT /network/wifi` have their Phase 6 shapes. They keep `x-phase: 6`, so an agent of Phase 5 or older returns `501`.
+- `PublicTlsRequest`: `hostname_hint`, `acme_ca`, and `reason` replace `clinic_id` (the service gives the id).
+  `TailscaleRequest`: `auth_key` and `reason`. `WifiRequest`: `country` and `reason`.
+- `TlsState`: `local_ca.root.name_constraints` is filled (it was always `null`); new `local_ca.uncovered`,
+  `local_ca.ca_changed_at`, `local_ca.previous_fingerprint_sha256`, and `local_ca.cert_page_url`. `public` is
+  `TlsPublic` and `tailscale` is `TlsTailscale` (both were reserved).
+- `Network`: `default_interface`, `dhcp_hints`, `tailscale_address`, and `wifi` (`WifiState`).
+- `JobKind`: `tls-public-enrol`, `tls-tailscale-enrol`, and `network-wifi` replace the reserved kind `tls`.
+  `JobStep.action`: the Phase 6 keys of section 15.2. `JobResult`: three results. `PlanActionKind`: four kinds.
+- Problem types: section 7.
+
+### 15.8 Decisions of the Phase 6 contract
+
+| Topic | Decision |
+|---|---|
+| Name constraints | `.local`, `.care-pi.rithviknishad.dev`, each other local name, and the `/24` of each LAN address. Not the Tailscale name and address: the local CA never signs them (`docs/connectivity.md` section 2.2). |
+| Canonical host | The public name when it is on, else the local name. Tailscale is never the canonical host. |
+| Port 80 | `301` to the public name when its certificate is issued, else to the same host (`07` section 6.1). |
+| HSTS | On the public name and the Tailscale name only. |
+| Login link | Only in `GET /tls` and `care-pi tls tailscale status`. Never in a job log or an event. |
+| Wi-Fi | A secondary NetworkManager connection, not a bond (SP11). |
+| Rotate | `care-pi tls public rotate` is CLI only: the credentials change without a change of the name. |
+| `POST /tls/local-ca/rotate` | Stays `x-phase: 7`. A device on a new network needs it (`local_ca.uncovered`). |
