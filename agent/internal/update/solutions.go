@@ -200,7 +200,7 @@ func (u *Updater) UpdateReady(ctx context.Context) bool {
 // Recovery tells what the agent does after an interrupted cutover.
 type Recovery struct {
 	JobID string
-	// Rollback is true when the target tree is on disk: a job update-rollback to the lock on disk.
+	// Rollback is true when the target tree is (or can be) on disk: a job update-rollback to the lock on disk.
 	Rollback bool
 	// Restart is true when the previous tree is on disk: start the stack and turn the page off.
 	Restart bool
@@ -218,7 +218,10 @@ func (u *Updater) PendingRecovery() *Recovery {
 		return nil
 	}
 	r := &Recovery{JobID: c.JobID}
-	if !c.Activated {
+	// An interruption inside activate can leave a part of the target tree on disk: only a cutover
+	// that never reached activate restarts the previous tree. Re-installing the lock on disk (the
+	// previous lock: write-lock did not run) is safe in both cases.
+	if !c.Activated && !c.Activating && c.Step != "activate" {
 		r.Restart = true
 		return r
 	}

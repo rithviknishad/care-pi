@@ -542,7 +542,16 @@ func (u *Updater) cutover(ctx context.Context, rec *jobs.Recorder, s cutoverSpec
 		return res, p
 	}
 	if err := step(rec, "activate", s.targetID, func() error {
-		mark("activate", nil)
+		// The marker comes before the first write: a recovery after an interruption inside this step
+		// cannot know how much of the target tree is on disk, so it rolls back (section 8.6).
+		if err := UpdateState(u.Paths, func(st *State) {
+			if st.Cutover == nil {
+				st.Cutover = &CutoverRecord{JobID: rec.ID(), Kind: s.kind, TargetID: s.targetID}
+			}
+			st.Cutover.Step, st.Cutover.Activating = "activate", true
+		}); err != nil {
+			return fmt.Errorf("cannot record the activation in %s: %w", paths.UpdateState, err)
+		}
 		if err := writePrevious(u.Paths, s.targetID); err != nil {
 			return err
 		}

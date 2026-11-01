@@ -60,10 +60,12 @@ type StagingRecord struct {
 
 // CutoverRecord is the phase of a cutover. The agent writes it before each cutover step.
 type CutoverRecord struct {
-	JobID      string      `json:"job_id"`
-	Kind       string      `json:"kind"`
-	Step       string      `json:"step"`
-	TargetID   string      `json:"target_id"`
+	JobID    string `json:"job_id"`
+	Kind     string `json:"kind"`
+	Step     string `json:"step"`
+	TargetID string `json:"target_id"`
+	// Activating is written at the start of the step activate, before its first write.
+	Activating bool        `json:"activating,omitempty"`
 	Activated  bool        `json:"activated"`
 	Migrated   bool        `json:"migrated"`
 	Checkpoint *Checkpoint `json:"checkpoint,omitempty"`

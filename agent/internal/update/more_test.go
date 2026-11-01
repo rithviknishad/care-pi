@@ -302,6 +302,68 @@ func TestRecovery(t *testing.T) {
 	_ = lock.FileVersion
 }
 
+// TestRecoveryInsideActivate: the step activate records its marker before its first write, and an
+// interruption inside activate rolls back to the lock on disk (it does not start a half-written tree).
+func TestRecoveryInsideActivate(t *testing.T) {
+	e := newTEnv(t, "pinned", "2026.11.0")
+	e.install()
+	e.writeConfig("stable", "")
+	var seen *CutoverRecord
+	e.fake.Hook = func(c host.Cmd, in []byte) (host.Response, bool) {
+		if st := ReadState(e.p); seen == nil && st.Cutover != nil && st.Cutover.Step == "activate" {
+			cr := *st.Cutover
+			seen = &cr
+		}
+		return host.PlugConfigHook(c, in)
+	}
+	rec := e.job(jobs.KindUpdateApply)
+	if _, err := e.u.Apply(context.Background(), rec, ApplyOptions{Now: true}); err != nil {
+		t.Fatal(err)
+	}
+	if seen == nil || !seen.Activating || seen.Activated {
+		t.Fatalf("the cutover record inside activate %+v", seen)
+	}
+	e.fake.Hook = host.PlugConfigHook
+	for _, c := range []struct {
+		rec      CutoverRecord
+		rollback bool
+	}{
+		{CutoverRecord{Step: "checkpoint"}, false},
+		{CutoverRecord{Step: "activate"}, true},
+		{CutoverRecord{Step: "activate", Activating: true}, true},
+		{CutoverRecord{Step: "rollback", Activating: true}, true},
+		{CutoverRecord{Step: "migrate", Activating: true, Activated: true}, true},
+	} {
+		cr := c.rec
+		cr.JobID, cr.Kind = "20261122T020300.000Z-update-apply", jobs.KindUpdateApply
+		if err := UpdateState(e.p, func(s *State) { s.Cutover = &cr }); err != nil {
+			t.Fatal(err)
+		}
+		r := e.u.PendingRecovery()
+		if r == nil || r.Rollback != c.rollback || r.Restart == c.rollback || r.Offer != nil {
+			t.Fatalf("%+v: recovery %+v", c.rec, r)
+		}
+	}
+	// The marker of an interrupted activate: the recovery installs the lock on disk again.
+	if err := UpdateState(e.p, func(s *State) {
+		s.Cutover = &CutoverRecord{JobID: "20261122T020300.000Z-update-apply", Kind: jobs.KindUpdateApply, Step: "activate", Activating: true}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	disk := e.running().Solution.Version
+	r := e.u.PendingRecovery()
+	rec = e.job(jobs.KindUpdateRollback)
+	if _, err := e.u.Recover(context.Background(), rec, r); err != nil {
+		t.Fatal(err)
+	}
+	if got := actions(rec); !reflect.DeepEqual(got, []string{"rollback", "maintenance-off"}) {
+		t.Fatalf("recovery steps %v", got)
+	}
+	if e.u.PendingRecovery() != nil || e.running().Solution.Version != disk {
+		t.Fatalf("after the recovery: %+v", ReadState(e.p).Cutover)
+	}
+}
+
 // TestMakeLockDist runs N → N+1 → rollback against a dist of solutions/scripts/make-lock.sh (the local index of
 // wave 6a). CARE_PI_E2E_INDEX is the file:// URL of its index.json, with the locks 2026.11.0 and 2026.11.1.
 func TestMakeLockDist(t *testing.T) {

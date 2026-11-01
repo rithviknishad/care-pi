@@ -706,8 +706,13 @@ finds a cutover job with no holder of the apply lock (for example after a power 
 
 | What is on disk | What the agent does |
 |---|---|
-| The previous tree (the interruption was before `activate`) | It starts the stack, waits until healthy, and turns the page off. |
-| The target tree (the interruption was after `activate`) | A job `update-rollback` (`source: timer`, `reason: recovery <job id>`) installs the lock on disk again (the lock before the update, because `write-lock` did not run) and gives the PITR offer of the interrupted job when `migrate` started. |
+| The previous tree (the interruption was before the step `activate` started) | It starts the stack, waits until healthy, and turns the page off. |
+| The target tree, or a part of it (the interruption was inside or after `activate`) | A job `update-rollback` (`source: timer`, `reason: recovery <job id>`) installs the lock on disk again (the lock before the update, because `write-lock` did not run) and gives the PITR offer of the interrupted job when `migrate` started. |
+
+The step `activate` writes `activating: true` to `state/updates.json` before its first write (`previous/`, the
+units, the env files), and `activated: true` at its end. A cutover record with the step `activate` or with
+`activating` is a rollback: the agent cannot know how much of the target tree is on disk, and the install of
+the lock on disk is safe in both cases.
 
 Wave 6a does not resume an update after a successful `migrate`. It rolls back, and the next window installs the target again.
 `care-pi serve` runs the recovery at start (`service.RecoverUpdates`), after it marks the interrupted jobs.
