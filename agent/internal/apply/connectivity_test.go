@@ -168,3 +168,38 @@ func TestPublicModeApply(t *testing.T) {
 		t.Fatalf("want the enrol hint: %v", err)
 	}
 }
+
+// m2: the update and plug jobs install a target with Activate. Without a root of the agent (a host that had no LAN
+// address at its last apply), Activate must make the root before it writes the Caddyfile that names it; else a
+// restart of care-caddy fails on a missing file. The running care-caddy restarts for the new root.
+func TestActivateMakesTheRoot(t *testing.T) {
+	e := applied(t)
+	if err := os.RemoveAll(e.p.Abs(paths.CADir)); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(e.p.Abs(paths.CAState))
+	h := host.New(e.fake)
+	h.Git = &host.FakeGit{Refs: gitRefs}
+	pr, err := Prepare(context.Background(), PrepareOptions{Paths: e.p, ConfigPath: e.cfg, SolutionsDir: solutionsDir, Host: h,
+		IPs: netinfo.Static{"192.168.1.10", "10.0.0.5"}, Offline: true, Phase: "full"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !pr.EnsureCA {
+		t.Fatal("the target must need the root")
+	}
+	p, err := Activate(context.Background(), Options{Paths: e.p, ConfigPath: e.cfg, Host: h, Out: &e.out}, pr)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, e.out.String())
+	}
+	if !p.Has(plan.EnsureCA) || !ca.Exists(e.p) {
+		t.Fatalf("no root after Activate: %v", p.Actions)
+	}
+	caddy, _ := os.ReadFile(e.p.Abs(paths.RenderedCaddy + "/Caddyfile"))
+	if !strings.Contains(string(caddy), "cert /etc/care-pi-ca/root.crt") {
+		t.Fatal("the Caddyfile does not name the root")
+	}
+	if got := e.fake.Filter("systemctl try-restart", "systemctl restart", "systemctl start"); !reflect.DeepEqual(got, []string{"systemctl try-restart care-caddy.service"}) {
+		t.Fatalf("units: %q", got)
+	}
+}

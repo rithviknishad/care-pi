@@ -166,7 +166,9 @@ func (x *executor) buildCare(ctx context.Context) (bool, error) {
 }
 
 // Activate installs the tree of a prepared target (Phase 4): the directories, the podman secrets,
-// the files, daemon-reload, and the start units. It starts or stops no unit of the stack.
+// the files, daemon-reload, and the start units. It starts or stops no unit of the stack, with one exception:
+// when the root of the agent does not exist yet (Phase 6), it makes the root (ensure-ca) before it writes the
+// Caddyfile that names the root, and restarts care-caddy when it runs (a reload keeps the old intermediate).
 // The update jobs call it in the step activate (docs/solutions.md, section 8.1).
 func Activate(ctx context.Context, o Options, pr *Prepared) (*plan.Plan, error) {
 	o.defaults()
@@ -184,15 +186,21 @@ func Activate(ctx context.Context, o Options, pr *Prepared) (*plan.Plan, error) 
 		return nil, err
 	}
 	p := plan.Build(plan.Input{Desired: pr.Tree, Current: current, SecretsChanged: changed, SecretUnits: secretUnits(),
-		TargetActive: true})
+		TargetActive: true, EnsureCA: pr.EnsureCA})
 	ex := &executor{o: o, pr: pr, plan: p, secretValues: values, journal: noJournal{}}
 	for _, a := range p.Actions {
 		switch a.Kind {
-		case plan.EnsureDirs, plan.SetSecrets, plan.WriteFiles, plan.DeleteFiles, plan.DaemonReload, plan.EnableTarget:
+		case plan.EnsureDirs, plan.EnsureCA, plan.SetSecrets, plan.WriteFiles, plan.DeleteFiles, plan.DaemonReload, plan.EnableTarget:
 			_, _ = fmt.Fprintln(o.Out, "    "+a.String())
 			if err := ex.run(ctx, a); err != nil {
 				return p, fmt.Errorf("%s: %w", a.Kind, err)
 			}
+		}
+	}
+	if p.Has(plan.EnsureCA) {
+		_, _ = fmt.Fprintln(o.Out, "    try-restart care-caddy.service (the new root of the agent)")
+		if err := o.Host.Systemd.TryRestart(ctx, "care-caddy.service"); err != nil {
+			return p, fmt.Errorf("%s: %w", plan.EnsureCA, err)
 		}
 	}
 	return p, nil

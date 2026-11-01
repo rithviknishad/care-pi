@@ -601,7 +601,7 @@ Each state maps to job steps (`JobStep.action`). The jobs are `update-check`, `u
 | Cutover | `cutover-maintenance-on` | Create `state/mode/maintenance` and `maintenance.json`. Caddy shows the maintenance page at `/`. The API routes stay. | page | → `maintenance-off` |
 | Cutover | `stop` | Stop `care-api`, `care-worker`, `care-beat`; wait until each unit is `inactive` (SP6). | down | → `rollback` |
 | Checkpoint | `checkpoint` | `backup.Checkpoint` (section 8.4). | down | → `rollback`; no PITR offer (the database did not change) |
-| Migrating | `activate` | Copy the current tree to `staging/<target id>/previous/`; install the target tree (units, env, podman secrets); `daemon-reload`; point `fe/current` at the target build. | down | → `rollback` |
+| Migrating | `activate` | Copy the current tree to `staging/<target id>/previous/`; install the target tree (units, env, podman secrets); `daemon-reload`; point `fe/current` at the target build. Phase 6: a host without the root of the agent gets it first (`ensure-ca`), and a running `care-caddy` restarts. | down | → `rollback` |
 | Migrating | `migrate` | Start `care-beat`; wait until it is healthy (it runs `migrate`, `sync_permissions_roles`, `sync_valueset`). Limit 20 min (`update.DefaultMigrateTimeout`). The `log` events are the lines of its journal. | down | → `rollback` + PITR offer |
 | Starting | `start` | Start `care-worker` and `care-api`; wait until healthy. | starting | → `rollback` + PITR offer |
 | Starting | `plug-config` | Write the `plug_config` rows (section 12.2). | up behind the page | → `rollback` + PITR offer |
