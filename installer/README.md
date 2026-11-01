@@ -76,7 +76,7 @@ Each step is idempotent. If nothing changes, it prints `already configured`.
 10. `apt-mark hold` for `podman crun netavark aardvark-dns conmon skopeo`.
 11. Directories under `/etc/care-pi` and `/var/lib/care-pi`.
 12. Agent binary: copy `--binary`, or download and verify the checksum.
-13. Agent service: `/etc/systemd/system/care-pi.service` (`care-pi serve`, `Type=notify`, `Restart=always`, `MemoryMax=128M`, `MemorySwapMax=32M`, `ProtectSystem=strict` with `ReadWritePaths`; function `care_pi_unit`). Enable it and start it. Restart it when the unit or the binary changed. The installer owns this unit: `care-pi apply` never writes it. `docs/console-server.md`, section 2, explains each line.
+13. Agent service: `/etc/systemd/system/care-pi.service` (`care-pi serve`, `Type=notify`, `Restart=always`, `MemoryMax=128M`, `MemorySwapMax=32M`, `ProtectSystem=strict` with `ReadWritePaths`; function `care_pi_unit`). Enable it and start it. Restart it when the unit or the binary changed. The installer owns this unit: `care-pi apply` never writes it. `docs/console-server.md`, section 2, explains each line. The backups (Phase 3) add no path and no capability to the sandbox: restic, the probe of a destination, and the commands of a disk preparation run in transient units (`systemd-run`), and systemd mounts the backup disks from their mount units (`docs/backups.md`, "The sandbox").
 14. NetworkManager dispatcher hook `90-care-pi`. The hook coalesces the events of 5 s into one apply (15 s in the first 3 minutes after the boot: function `debounce_s`, from `/proc/uptime`). The apply waits up to 60 s for a LAN IPv4 address (`--address-wait`). It holds its flock until the apply ends, so its applies never overlap. An event during an apply gives one more apply after it.
 15. `care-pi host check`, then `care-pi bootstrap --hostname NAME --preset NAME --fe-provider NAME --yes [--unattended]`. In setup mode (the default), bootstrap prints the claim code in a box, and the script prints the console URLs (`https://<name>:8443/`, `https://<ip>:8443/`). With `--unattended`, the script prints the Care URLs. The last message says `Care is ready` only when an FE build exists. Else it tells how to leave the setup page.
 
@@ -150,11 +150,14 @@ Without systemd, the script loads the table with `nft -f` and warns that nothing
 
 `uninstall.sh` stops `care.target` and `care-clock.service`. It disables `care-start.service`, `care.target`, and `care-clock.service` with `systemctl`.
 It never stops the pod unit.
+It disables and stops `care-backup.target` and the `care-backup-*` units (a backup that runs stops), and it stops the mount units of the backup disks (`var-lib-care\x2dpi-disks-*.mount` and `.automount`).
 It runs `systemctl disable --now care-pi-firewall.service` (the stop deletes the table `inet care-pi`).
-It removes the quadlets, the unit files, the NetworkManager hook, `/etc/care-pi/firewall.nft`, the files of an older install.sh (`/etc/nftables.d/care-pi.nft` and the `include` line), and the agent binary.
+It removes the quadlets, the unit files (also `care-backup.target` and the mount units of the backup disks), the NetworkManager hook, `/etc/care-pi/firewall.nft`, the files of an older install.sh (`/etc/nftables.d/care-pi.nft` and the `include` line), and the agent binary.
 It keeps the avahi and journald settings.
 It keeps `/etc/care-pi` and `/var/lib/care-pi` unless you add `--purge-data`.
 `--purge-data` also removes the podman secrets `care-pi-*`. The container images stay.
+`--purge-data` uses `rm -rf --one-file-system`: a backup disk that is still mounted below `/var/lib/care-pi/disks` keeps its data.
+The backups on the destinations (a directory, a USB disk, SFTP, S3) stay. A new install can restore from them (`docs/backups.md`, "Disaster recovery").
 `--purge-data` asks two questions, unless you add `--yes`.
 
 ```sh

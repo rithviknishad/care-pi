@@ -118,6 +118,15 @@ stop_care() {
   fi
   log "Disable care-start.service, care.target, and care-clock.service."
   systemctl disable care-start.service care.target care-clock.service 2>/dev/null || true
+  # The backup timers (docs/backups.md). A running backup ends first: its unit stops.
+  systemctl disable --now care-backup.target 2>/dev/null || true
+  systemctl stop 'care-backup-*' 2>/dev/null || true
+  # Unmount each backup disk: a purge of /var/lib/care-pi must never delete its backups.
+  for unit in /etc/systemd/system/var-lib-care*pi-disks-*.automount /etc/systemd/system/var-lib-care*pi-disks-*.mount; do
+    if [ -e "$unit" ]; then
+      systemctl stop "${unit##*/}" 2>/dev/null || true
+    fi
+  done
   for timer in /etc/systemd/system/care-*.timer; do
     if [ -e "$timer" ]; then
       systemctl disable --now "${timer##*/}" 2>/dev/null || true
@@ -129,7 +138,8 @@ remove_units() {
   log "Remove the quadlets and the unit files."
   rm -rf /etc/containers/systemd/care*
   rm -f /etc/systemd/system/care.target /etc/systemd/system/care-clock.service /etc/systemd/system/care-start.service
-  rm -f /etc/systemd/system/care-*.timer /etc/systemd/system/care-*.service
+  rm -f /etc/systemd/system/care-*.timer /etc/systemd/system/care-*.service /etc/systemd/system/care-backup.target
+  rm -f /etc/systemd/system/var-lib-care*pi-disks-*.mount /etc/systemd/system/var-lib-care*pi-disks-*.automount
   rm -rf /etc/systemd/system/care.target.d /etc/systemd/system/care-*.d
   for link in /etc/systemd/system/*.wants/care*; do
     if [ -L "$link" ]; then
@@ -199,7 +209,8 @@ remove_binary() {
 
 purge_data() {
   log "Delete /etc/care-pi and /var/lib/care-pi."
-  rm -rf /etc/care-pi /var/lib/care-pi
+  # --one-file-system: a backup disk that is still mounted below /var/lib/care-pi/disks keeps its data.
+  rm -rf --one-file-system /etc/care-pi /var/lib/care-pi
   remove_secrets
 }
 
