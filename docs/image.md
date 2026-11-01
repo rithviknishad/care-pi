@@ -211,7 +211,12 @@ The mechanism is the cloud-init module `write_files`: it writes the file `/etc/c
 `care-pi bootstrap --from-image` reads it:
 
 - The file is a `config.yaml` document (`docs/config.md`). The keys that it does not set get their defaults.
-- bootstrap validates it. An invalid file stops the first boot with exit code 2 (section 8).
+- bootstrap validates it, and runs the checks of `apply` on it before it installs it: a feature that this version does
+  not have (for example `clock.policy: rtc`), or a mode that needs an enrol job (`tls.public`, `tls.tailscale`).
+  A file that fails is not used, and the device is never silent: bootstrap moves the file to `preseed.yaml.rejected`,
+  writes the error to `/var/lib/care-pi/state/firstboot-error.json`, and starts setup mode (the claim). The claim page of
+  the console and the setup page on port 443 show the error (`firstboot_error` of `GET /_care-pi/status`) until the
+  setup is finished. Correct the `user-data` and flash again, or continue with the console setup.
 - bootstrap installs it as `/etc/care-pi/config.yaml` and applies everything at once (`--unattended`): no console
   setup. Care starts from the pre-pulled images and the pre-seeded FE build. The console is not claimed: claim it later.
   Create the first Care user with `sudo care-pi care create-superuser`.
@@ -266,7 +271,9 @@ Without a pre-seed, the first boot starts setup mode (the default).
 
 `care-firstboot.service` has `DefaultDependencies=no` and the usual service dependencies by hand. `cloud-final.service`
 has `After=multi-user.target`, so the default `After=` of `multi-user.target` on its wanted units would give an ordering
-cycle. A failure starts the unit again after 2 minutes, at most 3 times in one hour.
+cycle. A failure starts the unit again after 2 minutes, at most 3 times in one hour. The script exits with the exit code
+of bootstrap; exit code 2 (wrong input: the same error again) does not start the unit again
+(`RestartPreventExitStatus=2`).
 
 ### 6.2 The claim
 
@@ -326,7 +333,7 @@ the index of GitHub. It replaces the cached snapshot. A newer lock on the track 
 | The console does not accept the Imager password | Use the claim code: `ssh <user>@<host>.local sudo care-pi auth claim-code`. Check `user-data` on the boot partition: it must have `user:` with `passwd:`. |
 | No console after 10 minutes | `journalctl -u care-firstboot -b`. Then `systemctl status care-pi care-caddy`. |
 | `care-firstboot`: "the memory cgroup controller is not active" | Somebody changed `cmdline.txt`. Put `cgroup_enable=memory cgroup_memory=1` back on its one line, remove `cgroup_disable=memory`, and reboot. |
-| `care-firstboot`: "the pre-seed is not valid" | Correct `/etc/care-pi/preseed.yaml` (`sudo care-pi --config /etc/care-pi/preseed.yaml config validate`), or remove it to use the console setup. Then run `sudo care-pi bootstrap --from-image`. |
+| The console says "The pre-seed was not used" | The pre-seed is not valid, or it asks for a feature that this version does not have (section 5). The device is in setup mode: claim it and use the console setup. Or correct the `user-data` (check it with `care-pi --config <file> config validate`) and flash the card again. |
 | The first boot failed 3 times | Correct the cause, then `sudo care-pi bootstrap --from-image` (or `sudo systemctl restart care-firstboot`). The marker stops later runs. |
 | Updates without internet | Copy a dist directory to a USB drive and set `updates.index_url` to its `file:///` index (`docs/solutions.md`, section 2.2). |
 | Build: `losetup` fails | The container needs `--privileged` and `-v /dev:/dev` (`image/build.sh` does this). |

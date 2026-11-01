@@ -480,6 +480,7 @@ export const systemRoutes = [
           : null,
         time: now(),
         maintenance,
+        firstboot_error: state.setup.state === "ready" ? null : (state.firstbootError ?? null),
       });
     },
   },

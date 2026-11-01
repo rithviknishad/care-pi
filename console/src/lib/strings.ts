@@ -214,6 +214,7 @@ export const strings = {
     noMethods: "This device cannot be claimed now. Somebody claimed it.",
     goLogin: "Go to the login page",
     badSecret: "The claim code or the password is not correct.",
+    firstbootTitle: "The pre-seed was not used",
   },
   codes: {
     title: "Save your recovery codes",

@@ -10,7 +10,6 @@ import (
 
 	"github.com/rithviknishad/care-pi/agent/internal/auth"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
-	"github.com/rithviknishad/care-pi/agent/internal/exitcode"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/solution"
 	"github.com/rithviknishad/care-pi/agent/internal/update/updatetest"
@@ -34,12 +33,34 @@ func TestInstallPreseed(t *testing.T) {
 		t.Fatalf("no pre-seed: %v %v", used, err)
 	}
 
-	writeFile(t, p.Abs(paths.PreseedConfig), "version: 1\nidentity: {hostname: Not_A_Label}\n")
-	if _, err := installPreseed(&w, p, cfgPath); exitcode.Code(err) != exitcode.BadInput {
-		t.Fatalf("invalid pre-seed: %v", err)
+	// m3: a pre-seed that bootstrap cannot use gives setup mode (not a silent device), and the error is recorded.
+	for _, bad := range []struct{ name, data, want string }{
+		{"not valid", "version: 1\nidentity: {hostname: Not_A_Label}\n", "the pre-seed is not valid"},
+		{"not implemented", "version: 1\nclock: {policy: rtc}\n", "clock.policy rtc"},
+		{"needs a registration", "version: 1\ntls:\n  public: {enabled: true, clinic_id: hill-k3x9}\n", "no registration with the DNS service"},
+	} {
+		_ = os.Remove(p.Abs(paths.FirstbootError))
+		writeFile(t, p.Abs(paths.PreseedConfig), bad.data)
+		if used, err := installPreseed(&w, p, cfgPath); used || err != nil {
+			t.Fatalf("%s: %v %v; want setup mode", bad.name, used, err)
+		}
+		if _, err := os.Stat(cfgPath); err == nil {
+			t.Fatalf("%s: a bad pre-seed must not become config.yaml", bad.name)
+		}
+		var rec FirstbootError
+		data, err := os.ReadFile(p.Abs(paths.FirstbootError))
+		if err != nil || json.Unmarshal(data, &rec) != nil || !strings.Contains(rec.Error, bad.want) || rec.File != paths.PreseedConfig+".rejected" {
+			t.Fatalf("%s: firstboot-error.json %s %v", bad.name, data, err)
+		}
+		if _, err := os.Stat(p.Abs(paths.PreseedConfig)); !os.IsNotExist(err) {
+			t.Fatalf("%s: the rejected pre-seed is still at %s", bad.name, paths.PreseedConfig)
+		}
+		if got, _ := os.ReadFile(p.Abs(paths.PreseedConfig + ".rejected")); string(got) != bad.data {
+			t.Fatalf("%s: preseed.yaml.rejected %q", bad.name, got)
+		}
 	}
-	if _, err := os.Stat(cfgPath); err == nil {
-		t.Fatal("an invalid pre-seed must not become config.yaml")
+	if !strings.Contains(w.String(), "start setup mode") {
+		t.Fatalf("output:\n%s", w.String())
 	}
 
 	// A partial config: the defaults fill the rest.

@@ -9,7 +9,9 @@
 # 2. Read the host name that Imager set. Restart avahi, so that it announces that name.
 # 3. Check the memory cgroup controller and the zram swap (plans/09-handoff.md, section 3).
 # 4. Run "care-pi bootstrap --from-image": setup mode (the console claim), or a full apply when
-#    the user-data had a pre-seed (/etc/care-pi/preseed.yaml).
+#    the user-data had a pre-seed (/etc/care-pi/preseed.yaml). A pre-seed that bootstrap cannot use gives
+#    setup mode with the error on the setup pages. The exit code of bootstrap is the exit code of this script
+#    (care-firstboot.service does not start again after exit code 2).
 set -eu
 
 PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -53,5 +55,10 @@ fi
 # 4. Bootstrap. It holds the apply lock, generates the secrets, writes config.yaml (or installs the
 # pre-seed), imports the dist snapshot, makes the claim code, and starts Caddy and the console.
 log "run: care-pi bootstrap --from-image"
-care-pi bootstrap --from-image --yes || fail "care-pi bootstrap failed. Read: journalctl -u care-firstboot. After a fix, run: sudo care-pi bootstrap --from-image"
+rc=0
+care-pi bootstrap --from-image --yes || rc=$?
+if [ "$rc" -ne 0 ]; then
+  printf 'care-firstboot: ERROR: care-pi bootstrap failed (exit code %s). Read: journalctl -u care-firstboot. After a fix, run: sudo care-pi bootstrap --from-image\n' "$rc" >&2
+  exit "$rc"
+fi
 log "done. Open https://$name.local:8443/ (or https://<IP>:8443/) and sign in with the password of the Imager user."

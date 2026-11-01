@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: care-pi agent API
-  version: 0.7.0
+  version: 0.7.1
   summary: The HTTP API between the care-pi agent and the console.
   description: |
     This document is the contract between the care-pi agent (`care-pi serve`) and the console.
@@ -4691,7 +4691,7 @@ components:
       type: object
       additionalProperties: false
       description: The minimal public status. No address, no version, no unit detail.
-      required: [site, setup_state, claim_methods, display_name, console_port, clock, care_healthy, job, time, maintenance]
+      required: [site, setup_state, claim_methods, display_name, console_port, clock, care_healthy, job, time, maintenance, firstboot_error]
       properties:
         site:
           type: string
@@ -4741,6 +4741,13 @@ components:
           description: The clock of the host.
         maintenance:
           $ref: '#/components/schemas/MaintenanceState'
+        firstboot_error:
+          type: [string, 'null']
+          description: |
+            Contract 0.7.1. Why the first boot of the Raspberry Pi image did not use the pre-seed
+            (`/etc/care-pi/preseed.yaml`: not valid, or a feature that this version does not have), and what to do. The
+            first boot then starts setup mode (`docs/image.md` section 5). `null` without such an error, and after the setup.
+          examples: ['The first boot did not use the pre-seed: the pre-seed asks for something that this version cannot do: clock.policy rtc is not implemented in this version (SP9); use ntp. The device starts setup mode: claim it in the console. Or correct the user-data and flash the card again.']
       examples:
         - site: setup
           setup_state: unclaimed
@@ -4754,6 +4761,7 @@ components:
           job: null
           time: '2026-10-30T10:15:00Z'
           maintenance: {active: false, kind: null, job_id: null, step: null, started_at: null}
+          firstboot_error: null
         - site: maintenance
           setup_state: ready
           claim_methods: []
@@ -4766,6 +4774,7 @@ components:
           job: {kind: update-apply, step: 'migrate: start care-beat.service', step_index: 9, step_count: 15, started_at: '2026-11-22T02:03:00Z'}
           time: '2026-11-22T02:06:10Z'
           maintenance: {active: true, kind: update-apply, job_id: 20261122T020300.000Z-update-apply, step: migrate, started_at: '2026-11-22T02:04:55Z'}
+          firstboot_error: null
     PublicJobProgress:
       type: object
       additionalProperties: false

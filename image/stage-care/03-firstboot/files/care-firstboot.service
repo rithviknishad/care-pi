@@ -16,7 +16,9 @@ After=sysinit.target basic.target swap.target network-online.target cloud-final.
 Conflicts=shutdown.target
 Before=shutdown.target
 ConditionPathExists=!/var/lib/care-pi/state/firstboot-done
-# A failure starts the unit again after 2 minutes, at most 3 times in one hour.
+# A failure starts the unit again after 2 minutes, at most 3 times in one hour. Exit code 2 (wrong input:
+# a run again gives the same error) does not start it again. A bad pre-seed does not fail the unit: bootstrap
+# starts setup mode, and the console shows the error (docs/image.md, section 5).
 StartLimitIntervalSec=1h
 StartLimitBurst=3
 
@@ -27,6 +29,7 @@ ExecStart=/usr/local/lib/care-pi/care-firstboot
 TimeoutStartSec=45min
 Restart=on-failure
 RestartSec=2min
+RestartPreventExitStatus=2
 StandardOutput=journal+console
 StandardError=journal+console
 

@@ -147,6 +147,9 @@ const (
 	// FirstbootDone marks the end of a successful "care-pi bootstrap --from-image".
 	// care-firstboot.service does not run when it exists.
 	FirstbootDone = "/var/lib/care-pi/state/firstboot-done"
+	// FirstbootError records why the first boot did not use the pre-seed (it started setup mode).
+	// GET /_care-pi/status shows it as firstboot_error until the setup is finished.
+	FirstbootError = "/var/lib/care-pi/state/firstboot-error.json"
 )
 
 // UID and GID of the postgres user in the postgres image.

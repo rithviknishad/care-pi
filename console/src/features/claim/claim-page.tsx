@@ -11,7 +11,7 @@ import { describedBy, validateNewPassword } from "@/lib/form";
 import { ProblemAlert } from "@/components/app/problem-alert";
 import { useRetryWait } from "@/hooks/use-retry-wait";
 import { RecoveryCodesPanel } from "@/components/app/recovery-codes";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -135,6 +135,8 @@ export default function ClaimPage() {
     });
   };
 
+  const firstbootError = pub.data.firstboot_error;
+
   return (
     <Card>
       <CardHeader>
@@ -144,6 +146,12 @@ export default function ClaimPage() {
         <CardDescription>{strings.claim.intro}</CardDescription>
       </CardHeader>
       <CardContent>
+        {firstbootError ? (
+          <Alert variant="warning" className="mb-4">
+            <AlertTitle>{strings.claim.firstbootTitle}</AlertTitle>
+            <AlertDescription>{firstbootError}</AlertDescription>
+          </Alert>
+        ) : null}
         <form onSubmit={submit} className="flex flex-col gap-2" noValidate>
           {current === "claim-code" ? (
             <FormField

@@ -7,7 +7,7 @@ import type { ClaimMethod } from "@/api/types";
 import ClaimPage from "@/features/claim/claim-page";
 import { looksLikeClaimCode } from "@/lib/codes";
 
-const status = vi.hoisted(() => ({ methods: [] as ClaimMethod[] }));
+const status = vi.hoisted(() => ({ methods: [] as ClaimMethod[], firstbootError: null as string | null }));
 
 vi.mock("@/api/queries", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/queries")>();
@@ -17,7 +17,7 @@ vi.mock("@/api/queries", async (importOriginal) => {
     usePublicStatus: () => ({
       isPending: false,
       isError: false,
-      data: { setup_state: "unclaimed", claim_methods: status.methods },
+      data: { setup_state: "unclaimed", claim_methods: status.methods, firstboot_error: status.firstbootError },
     }),
   };
 });
@@ -38,6 +38,22 @@ const OS_LABEL = "Password of the device user";
 describe("claim page", () => {
   beforeEach(() => {
     status.methods = [];
+    status.firstbootError = null;
+  });
+
+  it("shows no pre-seed error without one", () => {
+    status.methods = ["os-password", "claim-code"];
+    renderPage();
+    expect(screen.queryByText("The pre-seed was not used")).toBeNull();
+  });
+
+  it("shows the error of the pre-seed above the claim form", () => {
+    status.methods = ["os-password", "claim-code"];
+    status.firstbootError = "The first boot did not use the pre-seed: the pre-seed is not valid.";
+    renderPage();
+    expect(screen.getByText("The pre-seed was not used")).toBeInTheDocument();
+    expect(screen.getByText(status.firstbootError)).toBeInTheDocument();
+    expect(screen.getByLabelText(OS_LABEL)).toBeInTheDocument();
   });
 
   it("shows the field of the first claim method: claim-code after an installer install", () => {

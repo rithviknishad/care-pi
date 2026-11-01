@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"runtime"
 	"strconv"
@@ -497,6 +498,23 @@ type PublicStatus struct {
 	Job         *PublicJobProgress `json:"job"`
 	Time        time.Time          `json:"time"`
 	Maintenance MaintenanceState   `json:"maintenance"`
+	// FirstbootError is why the first boot of the image did not use the pre-seed (state/firstboot-error.json),
+	// until the setup is finished; else nil.
+	FirstbootError *string `json:"firstboot_error"`
+}
+
+// firstbootError reads the error of state/firstboot-error.json, or nil.
+func (s *Service) firstbootError() *string {
+	var rec struct {
+		Error  string `json:"error"`
+		Action string `json:"action"`
+	}
+	data, err := os.ReadFile(s.Paths.Abs(paths.FirstbootError))
+	if err != nil || json.Unmarshal(data, &rec) != nil || rec.Error == "" {
+		return nil
+	}
+	msg := strings.TrimSpace("The first boot did not use the pre-seed: " + rec.Error + ". " + rec.Action)
+	return &msg
 }
 
 // MaintenanceState is the maintenance page (schema MaintenanceState): the flag file
@@ -546,6 +564,9 @@ func (s *Service) PublicStatus(ctx context.Context) *PublicStatus {
 	p.Clock.Policy = cfg.Clock.Policy
 	if s.Host != nil && s.Host.Clock != nil {
 		p.Clock.Synchronized, _ = s.Host.Clock.NTPSynchronized(ctx)
+	}
+	if p.SetupState != setup.Ready {
+		p.FirstbootError = s.firstbootError()
 	}
 	if j := jobs.Latest(s.Paths, func(j *jobs.Job) bool { return j.State == jobs.StateRunning && jobs.LockKinds[j.Kind] }); j != nil {
 		jp := &PublicJobProgress{Kind: j.Kind, StartedAt: j.CreatedAt}

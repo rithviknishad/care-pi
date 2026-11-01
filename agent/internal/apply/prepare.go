@@ -223,6 +223,12 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 		ACMEDNS: conn.acmeDNS, EnsureCA: conn.caRoot && !conn.caExists}, nil
 }
 
+// CheckImplemented runs the apply-time checks on a config before it is installed (the pre-seed of the image): the
+// features that this version does not have, and the modes that need a registration first.
+func CheckImplemented(p paths.Paths, cfg *config.Config) error {
+	return checkImplemented(p, cfg, nil, nil)
+}
+
 // checkImplemented rejects valid settings that this version cannot apply, and settings that need a step
 // of an enrol job first (Phase 6).
 func checkImplemented(p paths.Paths, cfg *config.Config, _ *solution.Solution, _ *render.Plan) error {

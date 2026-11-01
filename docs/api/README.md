@@ -100,7 +100,9 @@ The claim code:
 - Anyone who can read the file is root on the host, so the code adds no new risk.
 
 `GET /_care-pi/status` lists the methods in `claim_methods`. The console shows the field for the first method
-and a link for the other one. Without OS customisation, `os-password` is not available. Then the operator reads the
+and a link for the other one. Contract 0.7.1: when the first boot of the image could not use the pre-seed
+(`docs/image.md` section 5), the first boot starts setup mode, and `firstboot_error` tells why until the setup is
+finished. The claim page of the console and the setup page on port 443 show it. Without OS customisation, `os-password` is not available. Then the operator reads the
 claim code with SSH, or from another channel that a later phase adds (USB export, status TTY: 07 §6).
 
 This keeps 07 §6: no plaintext page, HTTPS only, the Imager password is the claim credential on the image path.
