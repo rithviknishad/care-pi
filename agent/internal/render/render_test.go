@@ -16,6 +16,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/fe"
 	"github.com/rithviknishad/care-pi/agent/internal/host"
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
+	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/solution"
 )
 
@@ -258,10 +259,36 @@ func TestOwned(t *testing.T) {
 		"/etc/systemd/system/care-pi.service":          false,
 		"/etc/care-pi/rendered/caddy/Caddyfile":        true,
 		"/etc/care-pi/config.yaml":                     false,
+		"/etc/sysctl.d/50-care-pi.conf":                true,
+		"/etc/sysctl.d/99-sysctl.conf":                 false,
 	}
 	for p, want := range cases {
 		if got := Owned(p); got != want {
 			t.Errorf("Owned(%s) = %v, want %v", p, got, want)
+		}
+	}
+}
+
+// B1: the installer writes the sysctl file of the pod before the first apply. Its text must be the rendered text,
+// else each apply writes the file again (and care-pi.service needs a transient unit for it).
+func TestInstallerSysctlIsTheRenderedFile(t *testing.T) {
+	for _, name := range []string{"small-clinic", "small-clinic-bootstrap", "public-tailscale"} {
+		tree, _ := fixture(t, name)
+		f, ok := tree[paths.SysctlFile]
+		if !ok || !strings.Contains(string(f.Content), "\nnet.ipv4.ip_nonlocal_bind = 1\n") || f.Mode != 0o644 {
+			t.Fatalf("%s: the tree has no sysctl file with ip_nonlocal_bind: %+v", name, f)
+		}
+		script, err := os.ReadFile(filepath.Join("..", "..", "..", "installer", "install.sh"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, body, ok := strings.Cut(string(script), "sysctl_conf() {\n  cat <<'EOF'\n")
+		if !ok {
+			t.Fatal("install.sh has no function sysctl_conf")
+		}
+		body, _, _ = strings.Cut(body, "\nEOF\n")
+		if body+"\n" != string(f.Content) {
+			t.Fatalf("install.sh writes another sysctl file:\n--- install.sh ---\n%s\n--- render ---\n%s", body, f.Content)
 		}
 	}
 }

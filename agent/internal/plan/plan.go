@@ -117,6 +117,11 @@ type Input struct {
 	SecretsChanged []string
 	SecretUnits    map[string][]string
 	TargetActive   bool
+	// PodActive is true when care-pod.service is active. FailedUnits lists the units of the stack in the state
+	// failed: care.target stays active (it only wants its units) when the pod fails to start, for example
+	// on an address that is not there.
+	PodActive   bool
+	FailedUnits []string
 	// EnsureStale is true when the buckets or the stanza were not ensured for this config.
 	EnsureStale bool
 	LockChanged bool
@@ -261,7 +266,7 @@ func Build(in Input) *Plan {
 			u := unitOf(c.Path)
 			switch {
 			case u == "care-pod":
-				podChanged = !podShrinkOnly(in.Desired[c.Path].Content, in.PodLive, in.TargetActive)
+				podChanged = !podShrinkOnly(in.Desired[c.Path].Content, in.PodLive, in.PodActive)
 			case u == "care-fe-build", u == "care-plug-build", strings.HasPrefix(u, "care-build-"):
 				// Transient unit: daemon-reload is enough.
 			case cycleUnits[u]:
@@ -340,7 +345,8 @@ func Build(in Input) *Plan {
 
 	add := func(a Action) { pl.Actions = append(pl.Actions, a) }
 	anything := len(pl.Changes) > 0 || len(in.SecretsChanged) > 0
-	if anything || pl.First || !in.TargetActive {
+	failed := len(in.FailedUnits) > 0
+	if anything || pl.First || !in.TargetActive || failed {
 		add(Action{Kind: EnsureDirs})
 	}
 	if in.EnsureCA {
@@ -410,6 +416,12 @@ func Build(in Input) *Plan {
 				units = append(units, u+".service")
 			}
 		}
+		// A failed unit of the stack (the pod after a boot without one of its addresses): reset it and start
+		// care.target again. A restart of the changed units follows, so the units that ran get the new files.
+		if failed {
+			add(Action{Kind: StartTarget, Units: []string{"care.target"}, Reason: "failed: " + strings.Join(in.FailedUnits, " ")})
+			started = true
+		}
 		if len(units) > 0 {
 			add(Action{Kind: Restart, Units: units})
 			started = true
@@ -471,7 +483,8 @@ func dedupe(s []string) []string {
 // publishes: each line of the new file is in the running file in the same order, and each line that the new
 // file does not have is a PublishPort line, a comment, an empty line, or a line of the Tailscale wait.
 // The running pod then keeps the old publishes: an address that went away (eth0 after a Wi-Fi failover)
-// does no harm, and the pod needs no full cycle when the address comes back.
+// does no harm, and the pod needs no full cycle when the address comes back. active is the ActiveState of
+// care-pod.service, not of care.target: a pod that failed has no publishes to keep.
 func podShrinkOnly(desired, live []byte, active bool) bool {
 	if !active || live == nil || desired == nil {
 		return false

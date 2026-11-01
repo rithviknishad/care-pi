@@ -261,13 +261,14 @@ func PlanFor(ctx context.Context, o Options, pr *Prepared) (*plan.Plan, error) {
 	if err != nil {
 		return nil, err
 	}
-	active, err := targetActive(ctx, o.Host)
+	stack, err := readStack(ctx, o.Host)
 	if err != nil {
 		return nil, err
 	}
 	return plan.Build(plan.Input{Desired: pr.Tree, Current: current, ImagesChanged: lock.ImagesChanged(pr.PrevLock, pr.Lock),
-		SecretsChanged: changed, SecretUnits: secretUnits(), TargetActive: active, LockChanged: !lock.Equal(pr.PrevLock, pr.Lock),
-		Cutover: careChanged(pr.PrevLock, pr.Lock), Bootstrap: pr.Phase != "" && pr.Phase != "full",
+		SecretsChanged: changed, SecretUnits: secretUnits(), TargetActive: stack.target, PodActive: stack.pod, FailedUnits: stack.failed,
+		LockChanged: !lock.Equal(pr.PrevLock, pr.Lock),
+		Cutover:     careChanged(pr.PrevLock, pr.Lock), Bootstrap: pr.Phase != "" && pr.Phase != "full",
 		PlugConfig: plugcfg.NeedsSync(o.Paths, plugcfg.Desired(pr.Config, pr.Desire.Plugs, pr.Lock))}), nil
 }
 

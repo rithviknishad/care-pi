@@ -182,10 +182,11 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	active, err := targetActive(ctx, o.Host)
+	stack, err := readStack(ctx, o.Host)
 	if err != nil {
 		return nil, err
 	}
+	active := stack.target
 	ensure := ensureRecord(pr, o.Paths)
 	prevEnsure := readEnsure(o.Paths)
 	stale := !prevEnsure.equal(ensure)
@@ -207,6 +208,8 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 		SecretsChanged: secretsChanged,
 		SecretUnits:    units,
 		TargetActive:   active,
+		PodActive:      stack.pod,
+		FailedUnits:    stack.failed,
 		EnsureStale:    stale,
 		LockChanged:    lockChanged,
 		FEWanted:       feWanted,
@@ -432,11 +435,11 @@ func healScaleDown(ctx context.Context, o Options) error {
 		_, _ = fmt.Fprintf(o.Out, "a leftover FE build drop-in exists (%s); apply removes it\n", fe.ScaleDownDropIn)
 		return nil
 	}
-	active, err := targetActive(ctx, o.Host)
+	stack, err := readStack(ctx, o.Host)
 	if err != nil {
 		return err
 	}
-	if err := fe.RemoveScaleDown(ctx, o.Paths, o.Host, active); err != nil {
+	if err := fe.RemoveScaleDown(ctx, o.Paths, o.Host, stack.target); err != nil {
 		return fmt.Errorf("cannot remove the leftover FE build drop-in: %w", err)
 	}
 	_, _ = fmt.Fprintf(o.Out, "removed a leftover FE build drop-in (%s)\n", fe.ScaleDownDropIn)
@@ -590,12 +593,30 @@ func careChanged(a, b *lock.Lock) bool {
 	return strings.Join(a.BackendPlugsOn(), ",") != strings.Join(b.BackendPlugsOn(), ",")
 }
 
-func targetActive(ctx context.Context, h *host.Host) (bool, error) {
-	props, err := h.Systemd.Show(ctx, []string{"care.target"}, "ActiveState")
+// stackState is the ActiveState of care.target and of the units of the stack.
+type stackState struct {
+	target, pod bool
+	// failed lists the units of the stack in the state failed.
+	failed []string
+}
+
+// readStack reads the state of care.target and of each unit of the stack with one systemctl call.
+func readStack(ctx context.Context, h *host.Host) (stackState, error) {
+	units := append([]string{"care.target"}, stackUnits()...)
+	props, err := h.Systemd.Show(ctx, units, "ActiveState")
 	if err != nil {
-		return false, fmt.Errorf("cannot read the state of care.target: %w", err)
+		return stackState{}, fmt.Errorf("cannot read the state of care.target: %w", err)
 	}
-	return props[0]["ActiveState"] == "active", nil
+	st := stackState{target: props[0]["ActiveState"] == "active"}
+	for i, u := range units[1:] {
+		switch props[i+1]["ActiveState"] {
+		case "active":
+			st.pod = st.pod || u == "care-pod.service"
+		case "failed":
+			st.failed = append(st.failed, u)
+		}
+	}
+	return st, nil
 }
 
 // ensureState records what the last successful ensure steps created.

@@ -212,6 +212,7 @@ These rules implement the table in `plans/03-solutions-releases-updates.md` sect
 | First apply (no `care.target` on disk) | write all files, `daemon-reload`, `enable care-start.service`, pull missing images, `reset-failed`, `start care.target`, buckets, stanza, FE build |
 | No change, `care.target` active | none: print `no changes` |
 | `care.target` not active | `reset-failed`, `start care.target`, buckets, stanza |
+| A unit of the stack is `failed` while `care.target` is active (for example `care-pod.service` after a boot without one of its addresses) | `reset-failed`, `start care.target` (the reason names the failed units), then the restarts of the changed units, buckets, stanza |
 | `backend.env` (backend env var, hostname, address) | `restart care-beat care-worker care-api` (api last). No `daemon-reload`. |
 | Caddyfile or a status page only | `podman exec care-caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile`. A failed reload restarts `care-caddy`. |
 | `care-api` or `care-worker` unit (sizing preset) | `daemon-reload`, restart that unit |
@@ -235,7 +236,8 @@ These rules implement the table in `plans/03-solutions-releases-updates.md` sect
 | Phase 4: the `plug_config` rows of the FE plugs (a plug on or off, its frontend settings, the canonical host) | `plug-config` after the start |
 | Phase 4: `care-build-<solution>.build` (local backend build) | written as a transient unit: apply starts it only for a build (`stage-build`), never with `care.target` |
 | Phase 6: no root CA of the agent, and 1 or more LAN addresses | `ensure-ca` after `ensure-dirs`: make the root; on a host with the root of Caddy, delete the root, the intermediate, and the local leaf certificates of Caddy (the one-time switch), then restart `care-caddy` (a reload keeps the old intermediate) |
-| Phase 6: `care.pod` only loses addresses (for example the Wi-Fi address after a failover), compared with `state/pod-live.json` | write the file, `daemon-reload`, no full cycle: the pod that runs keeps the old address until the next cycle. A new address needs a full cycle. |
+| Phase 6: `care.pod` only loses addresses (for example the Wi-Fi address after a failover), compared with `state/pod-live.json`, and `care-pod.service` is active | write the file, `daemon-reload`, no full cycle: the pod that runs keeps the old address until the next cycle. A new address needs a full cycle. A pod that is not active gets a full cycle. |
+| Phase 6: `/etc/sysctl.d/50-care-pi.conf` (`net.ipv4.ip_nonlocal_bind = 1`; the installer writes the same file) | `write-files`, then `systemctl restart systemd-sysctl.service`. `care-pi.service` cannot write `/etc/sysctl.d`: the agent writes the file through a transient unit (`care-pi-sysctl`). |
 | Phase 6: `care-dns-update.timer` added or removed | added: `daemon-reload`, `enable` and `start` the timer. Removed: `disable-units` (stop and disable the timer) before `delete-files` |
 | Phase 6: the Tailscale drop-in of `care-pi-firewall.service` | `daemon-reload`, `reload-firewall` (`systemctl try-reload-or-restart care-pi-firewall.service`) |
 | Phase 6: a new LAN address with the public mode (or the last update is older than 6 hours) | `update-dns` before `write-lock`: send the address to the DNS service. A failure is a warning; the timer tries again. |

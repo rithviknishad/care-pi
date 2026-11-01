@@ -399,14 +399,46 @@ PublishPort=127.0.0.1:19000:9000`
 	}
 	// In a plan: the pod file is written and systemd reloads it, but nothing restarts.
 	p := Build(Input{Desired: tree(with(base(), pod, failover)), Current: current(with(base(), pod, livePod)), TargetActive: true,
-		PodLive: []byte(livePod)})
+		PodActive: true, PodLive: []byte(livePod)})
 	if got := kinds(p); !reflect.DeepEqual(got, []Kind{EnsureDirs, WriteFiles, DaemonReload}) {
 		t.Fatalf("failover plan %v", got)
 	}
 	p = Build(Input{Desired: tree(with(base(), pod, newAddress)), Current: current(with(base(), pod, livePod)), TargetActive: true,
-		PodLive: []byte(livePod)})
+		PodActive: true, PodLive: []byte(livePod)})
 	if !p.Has(FullCycle) {
 		t.Fatalf("a new address needs a full cycle: %v", kinds(p))
+	}
+}
+
+// B1: care.target stays active when care-pod.service fails (a boot without an address of the pod). The plan must
+// start the stack again, and a pod that failed has no publishes to keep.
+func TestFailedPodStartsTheTarget(t *testing.T) {
+	failedPod := []string{"care-pod.service", "care-caddy.service"}
+	// No file change: reset the failed units and start care.target.
+	p := Build(Input{Desired: tree(base()), Current: current(base()), TargetActive: true, FailedUnits: failedPod})
+	if got, want := kinds(p), []Kind{EnsureDirs, StartTarget, EnsureBucket, EnsureStanza}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("plan %v, want %v", got, want)
+	}
+	if a, _ := p.Get(StartTarget); !strings.Contains(a.Reason, "care-pod.service") {
+		t.Fatalf("reason %q", a.Reason)
+	}
+	// The pod file lost an address (podShrinkOnly), but the pod failed: a full cycle, not "keep the running pod".
+	live := "[Pod]\nPodName=care\nPublishPort=192.168.1.10:443:443\nPublishPort=100.101.102.103:443:443"
+	shrunk := "[Pod]\nPodName=care\nPublishPort=192.168.1.10:443:443"
+	p = Build(Input{Desired: tree(with(base(), pod, shrunk)), Current: current(with(base(), pod, live)), TargetActive: true,
+		PodActive: false, FailedUnits: failedPod, PodLive: []byte(live)})
+	if !p.Has(FullCycle) {
+		t.Fatalf("a failed pod with a new pod file needs a full cycle: %v", kinds(p))
+	}
+	// A failed unit and a changed unit: start the target, then restart the changed unit.
+	p = Build(Input{Desired: tree(with(base(), api, "api v2")), Current: current(base()), TargetActive: true, PodActive: true,
+		FailedUnits: []string{"care-worker.service"}})
+	if got, want := kinds(p), []Kind{EnsureDirs, WriteFiles, DaemonReload, StartTarget, Restart, EnsureBucket, EnsureStanza}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("plan %v, want %v", got, want)
+	}
+	// Nothing failed and nothing changed: no action.
+	if p := Build(Input{Desired: tree(base()), Current: current(base()), TargetActive: true, PodActive: true}); !p.Empty() {
+		t.Fatalf("plan %v, want none", kinds(p))
 	}
 }
 

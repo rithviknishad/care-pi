@@ -969,4 +969,5 @@ var HostPaths = map[string]string{
 	"RunDir":        paths.RunDir,
 	"CADir":         paths.CADir,
 	"CACaddyDir":    paths.CACaddyDir,
+	"SysctlFile":    paths.SysctlFile,
 }

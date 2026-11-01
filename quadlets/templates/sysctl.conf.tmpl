@@ -1,0 +1,7 @@
+# {{.Header}}
+# The pod publishes ports 80, 443, and the console port on the Tailscale address and on each LAN address. An
+# optional address (tailscale0, the second LAN address of Wi-Fi) can be absent at the boot: an expired node key,
+# no control server, no Wi-Fi link. A publish on an absent address stops the pod, and then all of Care. With this
+# setting the publish succeeds, and the address works when it comes (docs/connectivity.md, section 4.2).
+# The installer writes the same file (installer/install.sh, function sysctl_conf).
+net.ipv4.ip_nonlocal_bind = 1

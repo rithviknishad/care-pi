@@ -2,7 +2,8 @@
 # care-pi uninstaller. This is a development tool. It removes the units, quadlets,
 # hooks, and agent binary that install.sh and care-pi create.
 #
-# It also removes the care-pi firewall (care-pi-firewall.service and its table).
+# It also removes the care-pi firewall (care-pi-firewall.service and its table) and
+# the sysctl file of the pod (/etc/sysctl.d/50-care-pi.conf).
 # It keeps /etc/care-pi and /var/lib/care-pi (the data) unless you use --purge-data.
 # It does not undo the host preparation of install.sh: the packages, the kernel
 # command line, the zram, avahi, and journald settings, the host name, the apt
@@ -55,7 +56,8 @@ Options:
 
 The script keeps the packages and the host settings that install.sh made
 (kernel command line, zram, avahi, journald, host name, apt holds, upgrades).
-It removes the care-pi firewall unit and its nftables table.
+It removes the care-pi firewall unit and its nftables table, and the sysctl file
+/etc/sysctl.d/50-care-pi.conf (the setting stays until the next boot).
 It keeps tailscale, the Wi-Fi profile care-pi-wifi, and the public name. Before
 the uninstall, run "care-pi tls tailscale disable", "care-pi network wifi remove",
 and "care-pi tls public disable" to remove them.
@@ -208,6 +210,9 @@ remove_firewall() {
 remove_hooks() {
   log "Remove the NetworkManager hook."
   rm -f /etc/NetworkManager/dispatcher.d/90-care-pi
+  # The kernel keeps net.ipv4.ip_nonlocal_bind=1 until the next boot.
+  log "Remove the sysctl file of the pod (/etc/sysctl.d/50-care-pi.conf)."
+  rm -f /etc/sysctl.d/50-care-pi.conf
 }
 
 remove_binary() {

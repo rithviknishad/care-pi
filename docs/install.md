@@ -134,7 +134,8 @@ It stops if the host is not supported.
 | 12 | Agent | The script installs `/usr/local/bin/care-pi`. See [Agent download](#agent-download). |
 | 13 | Agent service | The script writes `/etc/systemd/system/care-pi.service` (`care-pi serve`: the console API on `/run/care-pi/api.sock`), enables it, and starts it. It restarts the unit when the unit or the binary changed. After a reboot request, the unit starts at the next boot. `docs/console-server.md` describes the unit. The backups add no path and no capability to its sandbox (`docs/backups.md`, "The sandbox"). |
 | 14 | NetworkManager hook | If NetworkManager is present, the script installs `/etc/NetworkManager/dispatcher.d/90-care-pi`. After an address change, it waits 5 s (15 s in the first 3 minutes after the boot, from `/proc/uptime`) and runs `care-pi apply --reason address-change`. The events of that time give one apply. An event during an apply gives one more apply after it. Two applies of the hook never overlap. The apply also waits up to 60 s for a LAN IPv4 address (`docs/apply.md`, step 5). |
-| 15 | Host check and bootstrap | The script runs `care-pi host check`. Then it runs `care-pi bootstrap --hostname NAME --preset NAME --fe-provider NAME --yes` (with `--unattended` when the script has it). On a new host, bootstrap starts setup mode and prints the claim code. With `--unattended` and `--fe-provider local`, bootstrap also makes the first care_fe build. A host with an earlier install (a `lock.yaml`) always gets the full apply. |
+| 15 | sysctl | The script writes `/etc/sysctl.d/50-care-pi.conf` with `net.ipv4.ip_nonlocal_bind = 1` and restarts `systemd-sysctl`. The pod can then publish on an address that is not there yet (the Tailscale address, a second LAN address of Wi-Fi), so a missing address does not stop Care at the boot (`docs/connectivity.md`, section 4.2). `care-pi apply` renders the same file. |
+| 16 | Host check and bootstrap | The script runs `care-pi host check`. Then it runs `care-pi bootstrap --hostname NAME --preset NAME --fe-provider NAME --yes` (with `--unattended` when the script has it). On a new host, bootstrap starts setup mode and prints the claim code. With `--unattended` and `--fe-provider local`, bootstrap also makes the first care_fe build. A host with an earlier install (a `lock.yaml`) always gets the full apply. |
 
 The script writes a log to `/var/log/care-pi-install.log`.
 It prefixes its own lines with `[care-pi]`.
@@ -232,7 +233,8 @@ skips each step that needs a running system:
 | 12. Agent | Copies `--binary` and runs `care-pi version`. | Nothing. |
 | 13. Agent service | Writes `care-pi.service`. Enables it. | The start. It starts at the first boot. |
 | 14. NetworkManager hook | The same. | Nothing. |
-| 15. Host check and bootstrap | Nothing. | `care-pi host check` and `care-pi bootstrap`. At the first boot, `care-firstboot.service` runs `care-pi bootstrap --from-image`. |
+| 15. sysctl | Writes `50-care-pi.conf`. | The restart of `systemd-sysctl`. It loads the file at the first boot. |
+| 16. Host check and bootstrap | Nothing. | `care-pi host check` and `care-pi bootstrap`. At the first boot, `care-firstboot.service` runs `care-pi bootstrap --from-image`. |
 
 Run the script again with `--image-build`: each step prints `already configured`.
 
@@ -399,7 +401,7 @@ The script:
    It disables and stops `care-backup.target` and the `care-backup-*` units, and stops the mount units of the backup disks,
 3. waits until every `care-*` unit is inactive (except `care-pi-firewall.service`, which step 4 stops),
 4. runs `systemctl disable --now care-pi-firewall.service`. The stop deletes the table `inet care-pi`,
-5. removes the quadlets (`/etc/containers/systemd/care*`), the unit files (also `care-pi.service`, `care-backup.target`, and the mount units of the backup disks), the NetworkManager hook, `/etc/care-pi/firewall.nft`, the files of an older install.sh, and the agent binary,
+5. removes the quadlets (`/etc/containers/systemd/care*`), the unit files (also `care-pi.service`, `care-backup.target`, and the mount units of the backup disks), the NetworkManager hook, `/etc/sysctl.d/50-care-pi.conf` (the setting stays until the next boot), `/etc/care-pi/firewall.nft`, the files of an older install.sh, and the agent binary,
 6. removes a leftover pod `care` with `podman pod rm -f`.
 
 The script never stops the pod unit with `systemctl`.

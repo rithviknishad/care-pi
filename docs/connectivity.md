@@ -193,6 +193,17 @@ The pod publishes 80, 443, and 8443 on the address of `tailscale0` too. The LAN 
 does not have it. At the boot, `tailscale0` can come after the pod: the pod waits up to 30 s for the address
 (`ExecStartPre=-care-pi network wait-address`), and starts without it when it does not come.
 
+The address can also stay away: an expired node key, a logout, no answer from the control server. The second LAN
+address (Wi-Fi, section 7.2) can be away too: no Wi-Fi link at the boot. A publish on an address that the host does not
+have fails, and then the pod and each container of Care fail. So the installer and `apply` write
+`/etc/sysctl.d/50-care-pi.conf` with `net.ipv4.ip_nonlocal_bind = 1`: the kernel lets a program bind to an IPv4 address
+that the host does not have. The pod starts, and the publish works when the address comes.
+The trade-off: the setting is for the whole host. Another program that binds to a wrong address starts and gets no
+traffic, where it failed before. It gives no access to other traffic: the kernel only delivers the packets that come to
+the addresses of the host. The setting is only for IPv4; care-pi publishes on IPv4 addresses only.
+When a unit of the stack is `failed` (for example a pod of an older care-pi that failed at the boot), the next `apply`
+starts `care.target` again (`docs/apply.md`, plan rules).
+
 The apply writes the drop-in `/etc/systemd/system/care-pi-firewall.service.d/50-care-pi-tailscale.conf`.
 It adds `udp dport 41641 accept` to the table `inet care-pi` after the unit of the installer loads the table.
 The plan action `reload-firewall` reloads the unit. With the Tailscale mode off, the apply deletes the drop-in and
@@ -265,7 +276,8 @@ The cost: each link has its own address, and a failover changes the address of t
 With Wi-Fi up, the LAN address list has 2 addresses. The pod publishes 80, 443, and 8443 on each. `default_sni` and
 avahi use the primary address (the interface of the default route). The first time Wi-Fi comes up, the apply cycles the
 pod (Care stops for about 2 minutes). A later failover only removes an address: the apply does not cycle the pod
-(`state/pod-live.json`), so the failover is seamless. Reserve each address in the router (DHCP reservation):
+(`state/pod-live.json`), so the failover is seamless. At a boot without one of the two links, the pod starts with the
+address that is there (`net.ipv4.ip_nonlocal_bind`, section 4.2). Reserve each address in the router (DHCP reservation):
 `GET /network` shows the MAC address and the address of each interface (`dhcp_hints`).
 
 ### 7.3 Set it
@@ -308,6 +320,7 @@ The Wi-Fi settings of the Raspberry Pi Imager are NetworkManager profiles too (f
 | `/var/lib/care-pi/state/pod-live.json` | agent | The published addresses of the pod that runs. |
 | `/etc/systemd/system/care-dns-update.{timer,service}` | apply | The address updates (public mode only). |
 | `/etc/systemd/system/care-pi-firewall.service.d/50-care-pi-tailscale.conf` | apply | UDP 41641 (Tailscale mode only). |
+| `/etc/sysctl.d/50-care-pi.conf` | installer and apply | `net.ipv4.ip_nonlocal_bind = 1` (section 4.2). |
 
 ## 9. Troubleshooting
 
@@ -324,4 +337,4 @@ The Wi-Fi settings of the Raspberry Pi Imager are NetworkManager profiles too (f
 | The Tailscale name stops working after months. | The key of the device expired. | Turn off the key expiry of the device in the admin console of Tailscale. |
 | `wifi-auth-failed` | The passphrase is wrong. | Type the passphrase again. |
 | `wifi-no-device` | The device has no Wi-Fi (or the radio is blocked: `rfkill`). | Use ethernet. |
-| Care is slow to start at the boot with Tailscale on. | `tailscale0` is not up; the pod waits up to 30 s. | No action. Care starts without the Tailscale address, and the next apply adds it. |
+| Care is slow to start at the boot with Tailscale on. | `tailscale0` is not up; the pod waits up to 30 s. | No action. Care starts without the Tailscale address (section 4.2). The Tailscale address works when it comes. |

@@ -114,7 +114,7 @@ container. It unpacks the image, mounts the two partitions with loop devices, an
 - `care-pi version` (the binary of the image), the host name `care`;
 - the units: `care-firstboot`, `care-pi`, `care-pi-firewall`, `care-pi-led` (and its path unit), avahi, timesyncd, the apt
   timers, NetworkManager, cloud-init (`systemctl --root=<mount> is-enabled`);
-- the packages and the apt holds; the drop-ins of zram, journald, apt, the firewall, and the NetworkManager hook;
+- the packages and the apt holds; the drop-ins of zram, journald, sysctl, apt, the firewall, and the NetworkManager hook;
 - that no device secret, `config.yaml`, `lock.yaml`, SSH host key, or first-boot marker is in the image;
 - the dist snapshot (a valid `index.json` with `dist_base: file:///var/lib/care-pi-dist/`, each lock with the SHA-256 of
   the index), the FE build of the lock without `fe/current`, and each built FE plug bundle;
@@ -143,7 +143,7 @@ A boot test in QEMU (`virt` machine with the Pi OS kernel) is an open point (sec
 | `/etc/systemd/system/care-pi.service` | Enabled. It starts at each boot, also before the first-boot work ends (as after the installer). |
 | `/boot/firmware/cmdline.txt` | `cgroup_enable=memory cgroup_memory=1` (the stock file has `cgroup_disable=memory`). |
 | `/etc/rpi/swap.conf.d/50-care-pi.conf` | zram of 1x RAM (`plans/09-handoff.md`, section 3). |
-| `/etc/systemd/journald.conf.d/50-care-pi.conf`, `/etc/avahi/avahi-daemon.conf`, `/etc/apt/apt.conf.d/52care-pi.conf`, `/etc/care-pi/firewall.nft`, `/etc/NetworkManager/dispatcher.d/90-care-pi` | The files of the installer. |
+| `/etc/systemd/journald.conf.d/50-care-pi.conf`, `/etc/sysctl.d/50-care-pi.conf`, `/etc/avahi/avahi-daemon.conf`, `/etc/apt/apt.conf.d/52care-pi.conf`, `/etc/care-pi/firewall.nft`, `/etc/NetworkManager/dispatcher.d/90-care-pi` | The files of the installer. |
 | `/var/lib/containers/storage` | The pre-pulled images: the solution image, `postgres-pgbackrest`, `caddy`, `redis`, `versitygw`, `node`. |
 | `/var/lib/care-pi-dist/` | The dist snapshot: `index/index.json` (`dist_base: file:///var/lib/care-pi-dist/`), the lock, the FE bundle, and the FE plug bundles, each with its `.sha256`. |
 | `/var/lib/care-pi/fe/<build id>/` | The default FE build of the lock. No `fe/current`: setup mode shows the setup page. The apply at the end of the setup points `fe/current` at the build. |

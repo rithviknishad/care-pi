@@ -61,7 +61,7 @@ Exit codes: `0` success, `1` failure, `2` wrong flags.
 
 ## What the script does
 
-The script detects the host and then runs 15 steps.
+The script detects the host and then runs 16 steps.
 Each step is a function named `step_<name>`.
 Each step is idempotent. If nothing changes, it prints `already configured`.
 
@@ -79,7 +79,8 @@ Each step is idempotent. If nothing changes, it prints `already configured`.
 12. Agent binary: copy `--binary`, or download and verify the checksum.
 13. Agent service: `/etc/systemd/system/care-pi.service` (`care-pi serve`, `Type=notify`, `Restart=always`, `MemoryMax=128M`, `MemorySwapMax=32M`, `ProtectSystem=strict` with `ReadWritePaths`; function `care_pi_unit`). Enable it and start it. Restart it when the unit or the binary changed. The installer owns this unit: `care-pi apply` never writes it. `docs/console-server.md`, section 2, explains each line. The backups (Phase 3) add no path and no capability to the sandbox: restic, the probe of a destination, and the commands of a disk preparation run in transient units (`systemd-run`), and systemd mounts the backup disks from their mount units (`docs/backups.md`, "The sandbox").
 14. NetworkManager dispatcher hook `90-care-pi`. The hook coalesces the events of 5 s into one apply (15 s in the first 3 minutes after the boot: function `debounce_s`, from `/proc/uptime`). The apply waits up to 60 s for a LAN IPv4 address (`--address-wait`). It holds its flock until the apply ends, so its applies never overlap. An event during an apply gives one more apply after it.
-15. `care-pi host check`, then `care-pi bootstrap --hostname NAME --preset NAME --fe-provider NAME --yes [--unattended]`. In setup mode (the default), bootstrap prints the claim code in a box, and the script prints the console URLs (`https://<name>:8443/`, `https://<ip>:8443/`). With `--unattended`, the script prints the Care URLs. The last message says `Care is ready` only when an FE build exists. Else it tells how to leave the setup page.
+15. sysctl: `/etc/sysctl.d/50-care-pi.conf` with `net.ipv4.ip_nonlocal_bind = 1`, then restart `systemd-sysctl` (function `sysctl_conf`; `apply` renders the same file). The pod can then publish on an address that is not there yet: the Tailscale address, a second LAN address of Wi-Fi (`docs/connectivity.md`, section 4.2).
+16. `care-pi host check`, then `care-pi bootstrap --hostname NAME --preset NAME --fe-provider NAME --yes [--unattended]`. In setup mode (the default), bootstrap prints the claim code in a box, and the script prints the console URLs (`https://<name>:8443/`, `https://<ip>:8443/`). With `--unattended`, the script prints the Care URLs. The last message says `Care is ready` only when an FE build exists. Else it tells how to leave the setup page.
 
 With `--image-build`, the steps write their files and enable their units with `systemctl enable` (offline in the chroot).
 They skip each action that needs a running system: `systemctl start`/`restart`/`reload`, `hostnamectl`, `timedatectl`,
@@ -174,7 +175,7 @@ It never stops the pod unit.
 It disables and stops `care-backup.target` and the `care-backup-*` units (a backup that runs stops), and it stops the mount units of the backup disks (`var-lib-care\x2dpi-disks-*.mount` and `.automount`).
 It runs `systemctl disable --now care-pi-firewall.service` (the stop deletes the table `inet care-pi`).
 It removes the quadlets, the unit files (also `care-backup.target` and the mount units of the backup disks), the NetworkManager hook, `/etc/care-pi/firewall.nft`, the files of an older install.sh (`/etc/nftables.d/care-pi.nft` and the `include` line), and the agent binary.
-It keeps the avahi and journald settings.
+It keeps the avahi and journald settings. It removes `/etc/sysctl.d/50-care-pi.conf` (the setting stays until the next boot).
 Phase 6: the firewall drop-in and `care-dns-update.timer` go with the units (`care-*.d`, `care-*.timer`). The package
 `tailscale` (with its node key), the NetworkManager profile `care-pi-wifi`, and the registration of the public name stay:
 the device can need the Wi-Fi to stay reachable. Before the uninstall, run `care-pi tls tailscale disable`,

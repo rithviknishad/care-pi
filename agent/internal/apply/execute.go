@@ -1,6 +1,7 @@
 package apply
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/rithviknishad/care-pi/agent/internal/backup"
@@ -51,6 +53,12 @@ func (x *executor) run(ctx context.Context, a plan.Action) error {
 		return writeSecretState(x.o.Paths, st)
 	case plan.WriteFiles:
 		for _, p := range a.Paths {
+			if p == paths.SysctlFile {
+				if err := x.writeSysctl(ctx, x.pr.Tree[p]); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := writeFile(x.o.Paths, x.pr.Tree[p], x.o.Chown); err != nil {
 				return err
 			}
@@ -343,6 +351,28 @@ func writeFile(p paths.Paths, f render.File, chown bool) error {
 		if err := os.Chown(abs, f.UID, f.GID); err != nil {
 			return fmt.Errorf("cannot set the owner of %s: %w", f.Path, err)
 		}
+	}
+	return nil
+}
+
+// writeSysctl writes the sysctl file of the pod (docs/connectivity.md, section 4.2) and loads it: systemd-sysctl.service
+// loads each file of /etc/sysctl.d again. care-pi.service cannot write /etc/sysctl.d (ProtectSystem=strict), so there
+// the file goes through a transient unit. The installer writes the same file, so the agent seldom writes it.
+func (x *executor) writeSysctl(ctx context.Context, f render.File) error {
+	err := writeFile(x.o.Paths, f, x.o.Chown)
+	if err != nil && (errors.Is(err, syscall.EROFS) || errors.Is(err, fs.ErrPermission)) {
+		script := `set -eu; f="$1"; mkdir -p "${f%/*}"; cat > "$f.tmp"; chmod 0644 "$f.tmp"; mv "$f.tmp" "$f"`
+		_, err = x.o.Host.Runner.Run(ctx, host.Cmd{Name: "systemd-run", Args: []string{"--wait", "--collect", "--pipe", "--quiet",
+			"--unit=care-pi-sysctl", "--", "/bin/sh", "-c", script, "sh", x.o.Paths.Abs(f.Path)}, Stdin: bytes.NewReader(f.Content)})
+		if err != nil {
+			err = fmt.Errorf("cannot write %s: %w", f.Path, err)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	if err := x.o.Host.Systemd.Restart(ctx, paths.SysctlUnit); err != nil {
+		return fmt.Errorf("cannot load %s: %w", f.Path, err)
 	}
 	return nil
 }

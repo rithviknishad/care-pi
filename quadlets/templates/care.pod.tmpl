@@ -34,7 +34,8 @@ PublishPort=127.0.0.1:17070:7070
 {{- if .TailscaleIP}}
 
 [Service]
-# A publish on an address that does not exist stops the pod. At the boot, tailscaled sets the address of
-# tailscale0 some seconds after its start. Wait for it, at most {{.WaitAddressTimeout}}; then start in any case.
+# At the boot, tailscaled sets the address of tailscale0 some seconds after its start. Wait for it, at most
+# {{.WaitAddressTimeout}}; then start in any case. net.ipv4.ip_nonlocal_bind ({{path "SysctlFile"}}) lets the pod
+# publish on an address that is not there (an expired node key, no control server): the publish works when it comes.
 ExecStartPre=-{{path "Binary"}} network wait-address --address {{.TailscaleIP}} --timeout {{.WaitAddressTimeout}}
 {{- end}}

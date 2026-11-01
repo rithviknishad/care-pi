@@ -81,6 +81,8 @@ var outputs = []output{
 	{"pgbackrest.conf.tmpl", paths.RenderedDB + "/pgbackrest.conf", 0o640, paths.PostgresGID, full},
 	{"frontend.env.tmpl", paths.RenderedFE + "/frontend.env", 0o600, 0, feBuild},
 	{"fe-build.sh.tmpl", paths.RenderedFE + "/" + FEBuildScriptName, 0o700, 0, feBuild},
+	// Phase 6 (docs/connectivity.md, section 4.2): a publish on an absent optional address does not stop the pod.
+	{"sysctl.conf.tmpl", paths.SysctlFile, 0o644, 0, always},
 }
 
 // phase4Outputs are the outputs of Phase 4 (docs/solutions.md).
@@ -271,11 +273,11 @@ func Owned(p string) bool {
 	case p == systemd("care-update-check.timer"), p == systemd("care-update-check.service"),
 		p == systemd("care-update-apply.timer"), p == systemd("care-update-apply.service"):
 		return true
-	case p == systemd(DNSUpdateTimer), p == systemd("care-dns-update.service"), p == paths.FirewallDropIn:
+	case p == systemd(DNSUpdateTimer), p == systemd("care-dns-update.service"), p == paths.FirewallDropIn, p == paths.SysctlFile:
 		return true
 	}
 	return false
 }
 
 // OwnedDirs lists the directories that hold owned files. apply scans them for stale files.
-var OwnedDirs = []string{paths.QuadletDir, paths.SystemdDir, paths.RenderedDir, path.Dir(paths.FirewallDropIn)}
+var OwnedDirs = []string{paths.QuadletDir, paths.SystemdDir, paths.RenderedDir, path.Dir(paths.FirewallDropIn), path.Dir(paths.SysctlFile)}

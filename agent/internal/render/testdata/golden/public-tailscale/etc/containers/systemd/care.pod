@@ -30,6 +30,7 @@ PublishPort=127.0.0.1:19000:9000
 PublishPort=127.0.0.1:17070:7070
 
 [Service]
-# A publish on an address that does not exist stops the pod. At the boot, tailscaled sets the address of
-# tailscale0 some seconds after its start. Wait for it, at most 30s; then start in any case.
+# At the boot, tailscaled sets the address of tailscale0 some seconds after its start. Wait for it, at most
+# 30s; then start in any case. net.ipv4.ip_nonlocal_bind (/etc/sysctl.d/50-care-pi.conf) lets the pod
+# publish on an address that is not there (an expired node key, no control server): the publish works when it comes.
 ExecStartPre=-/usr/local/bin/care-pi network wait-address --address 100.101.102.103 --timeout 30s

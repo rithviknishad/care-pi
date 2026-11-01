@@ -102,8 +102,24 @@ func (e *env) reset() {
 	e.out.Reset()
 }
 
+// targetState scripts the state of care.target. Each unit of the stack has the same state.
 func (e *env) targetState(s string) {
-	e.fake.On("systemctl show -p ActiveState care.target", host.Response{Out: "ActiveState=" + s + "\n"})
+	e.stackState(s, nil)
+}
+
+// stackState scripts the state of care.target and of the units of the stack (readStack). units overrides the
+// state of single units; the other units have the state of the target.
+func (e *env) stackState(target string, units map[string]string) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "ActiveState=%s\n\n", target)
+	for _, u := range render.Units {
+		st := target
+		if v, ok := units[u]; ok {
+			st = v
+		}
+		fmt.Fprintf(&b, "ActiveState=%s\n\n", st)
+	}
+	e.fake.On("systemctl show -p ActiveState care.target "+strings.Join(render.Units, " "), host.Response{Out: b.String()})
 }
 
 func (e *env) secretsPresent() {
@@ -196,6 +212,8 @@ func TestFirstApply(t *testing.T) {
 	}
 	want = append(want,
 		"podman secret create --replace "+render.AdditionalPlugsSecret+" -",
+		// The sysctl file of the pod (net.ipv4.ip_nonlocal_bind) is new: systemd-sysctl loads it.
+		"systemctl restart systemd-sysctl.service",
 		"systemctl daemon-reload",
 		"systemctl enable care-start.service",
 		"systemctl enable care-update-check.timer care-update-apply.timer",
@@ -338,6 +356,57 @@ func applied(t *testing.T) *env {
 	e.targetState("active")
 	e.secretsPresent()
 	return e
+}
+
+// B1: the pod failed at the boot (an address of the pod was not there) and took each container with it, but
+// care.target stays active. The next apply resets the units and starts care.target again.
+func TestFailedPodIsStartedAgain(t *testing.T) {
+	e := applied(t)
+	e.reset()
+	e.secretsPresent()
+	failed := map[string]string{}
+	for _, u := range render.Units {
+		failed[u] = "failed"
+	}
+	e.stackState("active", failed)
+	if _, err := e.run(false); err != nil {
+		t.Fatalf("%v\n%s", err, e.out.String())
+	}
+	want := []string{"systemctl reset-failed " + unitList, "systemctl start care.target", stanzaCreate}
+	if got := e.mutating(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands:\n got  %q\n want %q\n%s", got, want, e.out.String())
+	}
+	if !strings.Contains(e.out.String(), "failed: care-pod.service") {
+		t.Fatalf("the plan does not tell the failed units:\n%s", e.out.String())
+	}
+}
+
+// B1: care-pi.service cannot write /etc/sysctl.d (ProtectSystem=strict). The sysctl file then goes through a
+// transient unit, and systemd-sysctl loads it.
+func TestSysctlFileThroughTransientUnit(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can write a read-only directory")
+	}
+	e := applied(t)
+	file := e.p.Abs(paths.SysctlFile)
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Dir(file), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(file), 0o700) })
+	if _, err := e.run(false); err != nil {
+		t.Fatalf("%v\n%s", err, e.out.String())
+	}
+	got := e.mutating()
+	if len(got) != 2 || !strings.HasPrefix(got[0], "systemd-run --wait --collect --pipe --quiet --unit=care-pi-sysctl -- /bin/sh -c ") ||
+		!strings.HasSuffix(got[0], " sh "+file) || got[1] != "systemctl restart systemd-sysctl.service" {
+		t.Fatalf("commands %q", got)
+	}
+	if !strings.Contains(e.out.String(), "add    "+paths.SysctlFile) {
+		t.Fatalf("plan:\n%s", e.out.String())
+	}
 }
 
 func TestBackendEnvChangeRestartsCareUnitsOnly(t *testing.T) {

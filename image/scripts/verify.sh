@@ -73,7 +73,7 @@ done
 holds="$(chroot "${mnt}" apt-mark showhold | tr '\n' ' ')"
 check "apt holds podman crun netavark aardvark-dns conmon skopeo (${holds})" bash -c "for p in podman crun netavark aardvark-dns conmon skopeo; do echo ' ${holds} ' | grep -q \" \$p \" || exit 1; done"
 for f in etc/rpi/swap.conf.d/50-care-pi.conf etc/systemd/journald.conf.d/50-care-pi.conf etc/care-pi/firewall.nft \
-	etc/apt/apt.conf.d/52care-pi.conf etc/systemd/system/care-pi.service etc/systemd/system/care-firstboot.service \
+	etc/apt/apt.conf.d/52care-pi.conf etc/sysctl.d/50-care-pi.conf etc/systemd/system/care-pi.service etc/systemd/system/care-firstboot.service \
 	usr/local/lib/care-pi/care-firstboot usr/local/lib/care-pi/care-pi-led; do
 	check "file /${f}" test -f "${mnt}/${f}"
 done

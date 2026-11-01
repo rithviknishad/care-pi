@@ -96,6 +96,10 @@ const (
 	// FirewallDropIn adds the Tailscale port (41641/udp) to the table of care-pi-firewall.service (installer).
 	FirewallUnit   = "care-pi-firewall.service"
 	FirewallDropIn = "/etc/systemd/system/care-pi-firewall.service.d/50-care-pi-tailscale.conf"
+	// SysctlFile sets net.ipv4.ip_nonlocal_bind=1: the pod can publish on an address that is not there yet
+	// (tailscale0, a second LAN address). The installer and apply write it; systemd-sysctl.service loads it.
+	SysctlFile = "/etc/sysctl.d/50-care-pi.conf"
+	SysctlUnit = "systemd-sysctl.service"
 
 	// RunDir is on a tmpfs. ApplyLock serialises apply, bootstrap, fe build, and fe prune.
 	RunDir    = "/run/care-pi"
