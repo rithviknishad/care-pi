@@ -126,7 +126,8 @@ API: `PUT /tls/public {"enabled": true, "hostname_hint": "sunrise"}`. The job is
 | apply steps | When the certificate is there: the redirect of port 80 goes to the public name. |
 
 When the certificate is not there after 5 minutes, the job succeeds with `certificate: pending`. Caddy tries again.
-The timer runs `care-pi tls public update-address`, and it applies again when the certificate comes.
+The timer runs `care-pi tls public update-address`, and it applies again when the certificate comes. An expired
+certificate does not count: `GET /tls` shows it as `expired`, and port 80 stays on the same host until Caddy renews it.
 
 ### 3.3 The address updates
 

@@ -34,9 +34,7 @@ func readConnectivity(p paths.Paths, cfg *config.Config, src netinfo.Source, ips
 		if data, err := os.ReadFile(p.Abs(paths.ACMEDNSFile)); err == nil {
 			c.acmeDNS = strings.TrimSpace(string(data))
 		}
-		if cert, _ := ca.IssuedCert(p, h); cert != nil && now.Before(cert.NotAfter) {
-			c.publicIssued = true
-		}
+		c.publicIssued = ca.ValidCert(p, h, now) != nil
 	}
 	if cfg.TLS.Tailscale.Enabled && src != nil {
 		c.tailscaleIP = netinfo.TailscaleIPv4(src)

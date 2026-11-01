@@ -470,16 +470,48 @@ func CommonName(primary string) string {
 // IssuedCert returns the certificate that Caddy holds for a name from an ACME issuer (the public mode):
 // <caddy data>/caddy/certificates/<issuer>/<name>/<name>.crt, for each issuer except the local CA.
 // It returns the certificate with the latest expiry, and the issuer directory, or nil.
+// The certificate can be expired: ValidCert gives only a certificate that a browser trusts now.
 func IssuedCert(p paths.Paths, name string) (*x509.Certificate, string) {
+	var best *x509.Certificate
+	var issuer string
+	for _, c := range issuedCerts(p, name) {
+		if best == nil || c.cert.NotAfter.After(best.NotAfter) {
+			best, issuer = c.cert, c.issuer
+		}
+	}
+	return best, issuer
+}
+
+// ValidCert returns the certificate of IssuedCert that a browser trusts at now: it is not expired. It returns nil
+// when there is none. Port 80 sends the browser to the public name only with such a certificate.
+func ValidCert(p paths.Paths, name string, now time.Time) *x509.Certificate {
+	var best *x509.Certificate
+	for _, c := range issuedCerts(p, name) {
+		if !now.Before(c.cert.NotAfter) {
+			continue
+		}
+		if best == nil || c.cert.NotAfter.After(best.NotAfter) {
+			best = c.cert
+		}
+	}
+	return best
+}
+
+type issued struct {
+	cert   *x509.Certificate
+	issuer string
+}
+
+// issuedCerts reads the certificate of name from each ACME issuer directory of Caddy.
+func issuedCerts(p paths.Paths, name string) []issued {
 	if name == "" {
-		return nil, ""
+		return nil
 	}
 	dirs, err := os.ReadDir(p.Abs(paths.CaddyCertsDir))
 	if err != nil {
-		return nil, ""
+		return nil
 	}
-	var best *x509.Certificate
-	var issuer string
+	var out []issued
 	for _, d := range dirs {
 		if !d.IsDir() || d.Name() == "local" {
 			continue
@@ -492,11 +524,9 @@ func IssuedCert(p paths.Paths, name string) (*x509.Certificate, string) {
 		if err != nil {
 			continue
 		}
-		if best == nil || c.NotAfter.After(best.NotAfter) {
-			best, issuer = c, d.Name()
-		}
+		out = append(out, issued{c, d.Name()})
 	}
-	return best, issuer
+	return out
 }
 
 // Adopt replaces the agent root with the root in dir (root.crt and root.key; a restore from backup, so the clinic

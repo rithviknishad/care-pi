@@ -57,14 +57,46 @@ func readyConnEnv(t *testing.T) (*env, *dnsclient.Fake) {
 // writeIssued writes a certificate of name as Caddy stores an ACME certificate.
 func writeIssued(t *testing.T, p paths.Paths, name string) {
 	t.Helper()
+	writeACME(t, p, "acme-v02.api.letsencrypt.org-directory", name, time.Now().Add(90*24*time.Hour))
+}
+
+// writeACME writes a certificate of name below the issuer directory dir of Caddy, valid until notAfter.
+func writeACME(t *testing.T, p paths.Paths, dir, name string, notAfter time.Time) {
+	t.Helper()
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	tmpl := &x509.Certificate{SerialNumber: big.NewInt(7), Subject: pkix.Name{CommonName: name}, Issuer: pkix.Name{CommonName: "R11"},
-		DNSNames: []string{name}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(90 * 24 * time.Hour)}
+		DNSNames: []string{name}, NotBefore: notAfter.Add(-90 * 24 * time.Hour), NotAfter: notAfter}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	must(t, err)
-	dir := p.Abs(paths.CaddyCertsDir + "/acme-v02.api.letsencrypt.org-directory/" + name)
-	must(t, os.MkdirAll(dir, 0o700))
-	must(t, os.WriteFile(filepath.Join(dir, name+".crt"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600))
+	d := p.Abs(paths.CaddyCertsDir + "/" + dir + "/" + name)
+	must(t, os.MkdirAll(d, 0o700))
+	must(t, os.WriteFile(filepath.Join(d, name+".crt"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600))
+}
+
+// m5: an expired certificate of the public name does not count as issued. Before the fix, the timer saw the
+// certificate, apply rendered no redirect, and the timer ran apply again each 5 minutes.
+func TestPublicUpdateExpiredCertificate(t *testing.T) {
+	e, f := readyConnEnv(t)
+	writeRootCA(t, e.p)
+	e.jobOK(e.do("PUT", "/api/v1/tls/public", map[string]any{"enabled": true, "hostname_hint": "sunrise"}))
+	clinic, _ := f.Clinic("")
+	host := clinic.ID + ".care-pi.rithviknishad.dev"
+	writeACME(t, e.p, "acme-v02.api.letsencrypt.org-directory", host, e.clock.now().Add(-time.Hour))
+	for i := 0; i < 2; i++ {
+		res, err := e.svc.PublicUpdate(t.Context(), func(string) {})
+		must(t, err)
+		if res.Applied {
+			t.Fatalf("run %d: an expired certificate made an apply", i)
+		}
+	}
+	caddy, _ := os.ReadFile(e.p.Abs(paths.RenderedCaddy + "/Caddyfile"))
+	if strings.Contains(string(caddy), "redir https://"+host) {
+		t.Fatal("port 80 must not go to a name with an expired certificate")
+	}
+	r := e.do("GET", "/api/v1/tls", nil)
+	if p := r.json(t)["public"].(map[string]any); p["primary"] != false || p["certificate"].(map[string]any)["state"] != "expired" {
+		t.Fatalf("public %v", p)
+	}
 }
 
 // TestPublicName: PUT /tls/public on and off with the fake DNS service (docs/api/README.md section 15.2).

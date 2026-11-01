@@ -351,7 +351,7 @@ func (s *Service) publicEnable(ctx context.Context, rec *jobs.Recorder, req Publ
 	_ = step(rec, "wait-certificate: wait for the certificate of "+host, func() error {
 		deadline := time.Now().Add(wait)
 		for {
-			if c, _ := ca.IssuedCert(s.Paths, host); c != nil {
+			if ca.ValidCert(s.Paths, host, s.now()) != nil {
 				certificate = "issued"
 				return nil
 			}
@@ -507,7 +507,8 @@ func (s *Service) PublicUpdate(ctx context.Context, out func(string)) (*PublicUp
 			out("sent the address " + ips[0] + " to the DNS service")
 		}
 	}
-	if c, _ := ca.IssuedCert(s.Paths, host); c != nil && !s.port80Public(host) {
+	// An expired certificate does not count: apply would render no redirect, and the timer would apply each 5 minutes.
+	if ca.ValidCert(s.Paths, host, s.now()) != nil && !s.port80Public(host) {
 		out("the certificate of " + host + " exists; apply sends port 80 to it")
 		release, err := s.Jobs.AcquireLock(ctx)
 		if err != nil {

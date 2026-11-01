@@ -230,3 +230,41 @@ func TestEnsureNewHost(t *testing.T) {
 		t.Fatalf("trusted: agent %v, %v", agent, err)
 	}
 }
+
+// writeACMECert writes a certificate of name as Caddy stores an ACME certificate of the issuer directory dir.
+func writeACMECert(t *testing.T, p paths.Paths, dir, name string, notAfter time.Time) {
+	t.Helper()
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(notAfter.Unix()), Subject: pkix.Name{CommonName: name},
+		DNSNames: []string{name}, NotBefore: notAfter.Add(-90 * 24 * time.Hour), NotAfter: notAfter}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := p.Abs(paths.CaddyCertsDir + "/" + dir + "/" + name)
+	if err := os.MkdirAll(d, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(d, name+".crt"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// m5: an expired certificate is issued (GET /tls shows it as expired), but it is not valid.
+func TestValidCertNeedsNotAfter(t *testing.T) {
+	p := paths.New(t.TempDir())
+	const name = "sunrise-k3x9.care-pi.rithviknishad.dev"
+	if ValidCert(p, name, now) != nil {
+		t.Fatal("no certificate: want nil")
+	}
+	writeACMECert(t, p, "acme-v02.api.letsencrypt.org-directory", name, now.Add(-time.Hour))
+	if c, _ := IssuedCert(p, name); c == nil {
+		t.Fatal("IssuedCert must give the expired certificate")
+	}
+	if ValidCert(p, name, now) != nil {
+		t.Fatal("an expired certificate is not valid")
+	}
+	if ValidCert(p, name, now.Add(-2*time.Hour)) == nil {
+		t.Fatal("before its NotAfter the certificate is valid")
+	}
+}
