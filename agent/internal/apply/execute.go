@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rithviknishad/care-pi/agent/internal/backup"
 	"github.com/rithviknishad/care-pi/agent/internal/fe"
+	"github.com/rithviknishad/care-pi/agent/internal/host"
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/plan"
@@ -154,9 +156,18 @@ func (x *executor) run(ctx context.Context, a plan.Action) error {
 			return fmt.Errorf("pgbackrest stanza-create failed: %w: %s", err, strings.TrimSpace(string(out)))
 		}
 		if x.bucketsDone {
-			return writeEnsure(x.o.Paths, x.ensure)
+			return x.saveEnsure(func(e *ensureState) { e.Buckets, e.Stanza = x.ensure.Buckets, x.ensure.Stanza })
 		}
 		return nil
+	case plan.EnsureMounts:
+		x.ensure.Mounts = ""
+		return x.ensureMounts(ctx)
+	case plan.EnsureRepositories:
+		env := backup.Env{Paths: x.o.Paths, Runner: h.Runner, Systemd: h.Systemd, Podman: h.Podman, Now: x.o.Now, Out: x.o.Out}
+		backup.EnsureRepositories(ctx, env, x.pr.Config, "cli")
+		return x.saveEnsure(func(e *ensureState) { e.Repos = x.ensure.Repos })
+	case plan.EnsureTimers:
+		return x.ensureTimers(ctx, a)
 	case plan.WriteLock:
 		x.pr.Lock.GeneratedAt = x.o.Now().UTC().Format(time.RFC3339)
 		return lock.Write(x.o.Paths, x.pr.Lock, x.o.Now())
@@ -272,4 +283,102 @@ func writeFile(p paths.Paths, f render.File, chown bool) error {
 		}
 	}
 	return nil
+}
+
+// saveEnsure updates the ensure record with the parts that a step ensured.
+func (x *executor) saveEnsure(fn func(*ensureState)) error {
+	st := readEnsure(x.o.Paths)
+	fn(&st)
+	return writeEnsure(x.o.Paths, st)
+}
+
+// listUnits returns the loaded units that match the pattern: name and active state.
+func listUnits(ctx context.Context, r host.Runner, pattern string) map[string]string {
+	out, err := r.Run(ctx, host.Cmd{Name: "systemctl", Args: []string{"list-units", "--all", "--plain", "--no-legend", "--no-pager", pattern}})
+	m := map[string]string{}
+	if err != nil {
+		return m
+	}
+	for _, l := range strings.Split(string(out), "\n") {
+		f := strings.Fields(l)
+		if len(f) >= 3 {
+			m[f[0]] = f[2]
+		}
+	}
+	return m
+}
+
+// ensureMounts starts the automount unit of each backup disk and stops the units of a removed disk.
+// A disk that is not connected is not an error: the automount waits for its first use.
+func (x *executor) ensureMounts(ctx context.Context) error {
+	h := x.o.Host
+	want := map[string]bool{}
+	for _, m := range x.pr.Model.Backup.Mounts {
+		want[m.Mount], want[m.Automount] = true, true
+		if err := h.Systemd.Start(ctx, m.Automount); err != nil {
+			_, _ = fmt.Fprintf(x.o.Out, "    warning: cannot start %s: %v\n", m.Automount, err)
+			continue
+		}
+		_, _ = fmt.Fprintf(x.o.Out, "    %s at %s\n", m.Label, m.Where)
+	}
+	for u, state := range listUnits(ctx, h.Runner, "var-lib-care*pi-disks-*") {
+		if !want[u] && state != "inactive" {
+			_, _ = fmt.Fprintln(x.o.Out, "    stop", u)
+			_ = h.Systemd.Stop(ctx, u)
+		}
+	}
+	mounts := x.ensureMountsRecord()
+	return x.saveEnsure(func(e *ensureState) { e.Mounts = mounts })
+}
+
+func (x *executor) ensureMountsRecord() string {
+	return ensureRecord(x.pr, x.o.Paths).Mounts
+}
+
+// ensureTimers enables and starts care-backup.target, restarts the changed timers, and stops each
+// backup timer that the target does not want (backups.paused, a removed destination). When the local
+// repository has no backup yet, it starts one full backup.
+func (x *executor) ensureTimers(ctx context.Context, a plan.Action) error {
+	h := x.o.Host
+	b := x.pr.Model.Backup
+	if err := h.Systemd.Enable(ctx, render.BackupTarget); err != nil {
+		return err
+	}
+	if err := h.Systemd.Start(ctx, render.BackupTarget); err != nil {
+		return err
+	}
+	want := map[string]bool{}
+	for _, u := range b.Wants {
+		want[u] = true
+	}
+	var restart []string
+	for _, u := range a.Units {
+		if want[u] {
+			restart = append(restart, u)
+		}
+	}
+	if len(restart) > 0 {
+		if err := h.Systemd.Restart(ctx, restart...); err != nil {
+			return err
+		}
+	}
+	for u, state := range listUnits(ctx, h.Runner, "care-backup-*.timer") {
+		if !want[u] && state != "inactive" {
+			_, _ = fmt.Fprintln(x.o.Out, "    stop", u)
+			_ = h.Systemd.Stop(ctx, u)
+		}
+	}
+	if b.Paused {
+		_, _ = fmt.Fprintln(x.o.Out, "    backups.paused is true: the backup timers do not run")
+	}
+	if !x.o.NoFirstBackup {
+		if info, err := (backup.PG{Podman: h.Podman}).Info(ctx); err == nil && info.StatusCode != 1 && len(info.Backups) == 0 {
+			_, _ = fmt.Fprintln(x.o.Out, "    the local repository has no backup: start care-backup-db-full.service")
+			if _, err := h.Runner.Run(ctx, host.Cmd{Name: "systemctl", Args: []string{"start", "--no-block", "care-backup-db-full.service"}}); err != nil {
+				_, _ = fmt.Fprintln(x.o.Out, "    warning:", err)
+			}
+		}
+	}
+	timers := ensureRecord(x.pr, x.o.Paths).Timers
+	return x.saveEnsure(func(e *ensureState) { e.Timers = timers })
 }

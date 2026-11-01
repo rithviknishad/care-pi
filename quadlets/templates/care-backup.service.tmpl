@@ -1,0 +1,17 @@
+# {{.Header}}
+# {{.Comment}}
+
+[Unit]
+Description={{.Description}}
+Documentation=https://github.com/rithviknishad/care-pi/blob/main/docs/backups.md
+
+[Service]
+Type=oneshot
+ExecStart={{.ExecStart}}
+# Its own memory cap, not the cap of care-pi.service. Low CPU and IO priority (02 section 4).
+MemoryMax={{.MemoryMax}}
+MemorySwapMax={{.MemorySwapMax}}
+Nice=10
+IOSchedulingClass=idle
+Environment=GOMAXPROCS=2
+TimeoutStartSec={{.Timeout}}

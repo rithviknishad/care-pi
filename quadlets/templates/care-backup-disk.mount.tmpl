@@ -1,0 +1,14 @@
+# {{.Header}}
+# The backup disk {{.Label}} (docs/backups.md, "USB disk"). The automount unit mounts it at the
+# first use. A disk that is not connected does not stop the boot (nofail).
+
+[Unit]
+Description=care-pi backup disk {{.Label}}
+Documentation=https://github.com/rithviknishad/care-pi/blob/main/docs/backups.md
+
+[Mount]
+What=/dev/disk/by-label/{{.Label}}
+Where={{.Where}}
+Type=ext4
+Options=nofail,noatime,x-systemd.device-timeout=10s
+TimeoutSec=30

@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -139,4 +140,35 @@ func TestEventCap(t *testing.T) {
 	if len(evs) != 3 || evs[0].Event != "step" || !strings.Contains(string(evs[1].Data), "dropped 51 log lines") || evs[2].Event != "done" {
 		t.Fatalf("the tail of a long job: %d events", len(evs))
 	}
+}
+
+// TestAfterDoneWaitsForStreams: AfterDone sees the journal with the event done, and WaitUnwatched
+// waits for the open event streams of the job.
+func TestAfterDoneWaitsForStreams(t *testing.T) {
+	p := paths.New(t.TempDir())
+	m := &Manager{Paths: p}
+	got := make(chan string, 1)
+	var stop func()
+	j, err := m.Start(context.Background(), Spec{Kind: KindRestoreDR, Source: SourceConsole,
+		AfterDone: func(j *Job) {
+			start := time.Now()
+			m.WaitUnwatched(j.ID, 5*time.Second)
+			loaded, _ := Load(p, j.ID)
+			got <- fmt.Sprintf("%s %v", loaded.State, time.Since(start) >= 100*time.Millisecond)
+		}},
+		func(ctx context.Context, r *Recorder) (any, error) {
+			stop = m.Watch(r.ID())
+			go func() { time.Sleep(150 * time.Millisecond); stop(); stop() }()
+			return nil, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Wait(context.Background(), j.ID); err != nil {
+		t.Fatal(err)
+	}
+	if s := <-got; s != "succeeded true" {
+		t.Fatal(s)
+	}
+	m.WaitUnwatched("none", time.Second)
 }

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/rithviknishad/care-pi/agent/internal/applock"
+	"github.com/rithviknishad/care-pi/agent/internal/backup"
 	"github.com/rithviknishad/care-pi/agent/internal/exitcode"
 	"github.com/rithviknishad/care-pi/agent/internal/fe"
 	"github.com/rithviknishad/care-pi/agent/internal/host"
@@ -61,6 +62,11 @@ type Options struct {
 	// Journal gets one step for each action. The agent passes the recorder of its job.
 	// When it is nil, apply writes its own job journal (source cli) when the plan has actions.
 	Journal Journal
+	// NoStart is the restore apply of a restore from backup (apply --phase=restore): render, write,
+	// and pull, but start no unit of the stack, and run no ensure step that needs it (docs/backups.md).
+	NoStart bool
+	// NoFirstBackup tells ensure-timers not to start the first full backup: the job makes it (setup, restore from backup).
+	NoFirstBackup bool
 	// AddressWait bounds the wait for a LAN IPv4 address before the render. 0 does not wait.
 	// The CLI (apply, bootstrap) waits: at the boot, the NetworkManager hook can run apply
 	// before the DHCP lease. Without an address after the wait, apply renders without it and warns.
@@ -164,8 +170,9 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	ensure := ensureRecord(pr)
-	stale := !readEnsure(o.Paths).equal(ensure)
+	ensure := ensureRecord(pr, o.Paths)
+	prevEnsure := readEnsure(o.Paths)
+	stale := !prevEnsure.equal(ensure)
 	lockChanged := !lock.Equal(pr.PrevLock, pr.Lock)
 	feWanted := pr.Config.FE.Provider != "none" && pr.Model.FEBuildID != "" && fe.Current(o.Paths) != pr.Model.FEBuildID &&
 		pr.Phase != setup.PhaseBootstrap
@@ -192,7 +199,13 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 		FEWanted:       feWanted,
 		StackImages:    stackImages,
 		Bootstrap:      pr.Phase == setup.PhaseBootstrap,
+		MountsStale:    prevEnsure.Mounts != ensure.Mounts,
+		ReposStale:     prevEnsure.Repos != ensure.Repos,
+		TimersStale:    prevEnsure.Timers != ensure.Timers,
 	})
+	if o.NoStart {
+		p.Actions = noStart(p.Actions, stackImages)
+	}
 	res := &Result{Plan: p, Changed: !p.Empty(), LockChanged: lockChanged, Phase: pr.Phase,
 		Solution: pr.Config.Solution.Name, Track: pr.Config.Solution.Track, Preset: pr.Model.Sizing.Preset,
 		Hostnames: pr.Model.Hostnames, Addresses: pr.IPs, FEBuildID: pr.Model.FEBuildID, FEProvider: provider.Name()}
@@ -526,13 +539,33 @@ func targetActive(ctx context.Context, h *host.Host) (bool, error) {
 type ensureState struct {
 	Buckets string `json:"buckets"`
 	Stanza  string `json:"stanza"`
+	// Mounts, Repos, and Timers record the last ensure of the backup units (docs/backups.md).
+	Mounts string `json:"mounts,omitempty"`
+	Repos  string `json:"repos,omitempty"`
+	Timers string `json:"timers,omitempty"`
 }
 
-func (e ensureState) equal(o ensureState) bool { return e == o }
+// equal compares the buckets and the stanza: the backup parts have their own plan actions.
+func (e ensureState) equal(o ensureState) bool { return e.Buckets == o.Buckets && e.Stanza == o.Stanza }
 
-func ensureRecord(pr *Prepared) ensureState {
+func ensureRecord(pr *Prepared, p paths.Paths) ensureState {
 	b := pr.Model.Buckets
-	return ensureState{Buckets: b.Patient + "," + b.Facility + "@" + b.Region, Stanza: pr.Model.Stanza}
+	st := ensureState{Buckets: b.Patient + "," + b.Facility + "@" + b.Region, Stanza: pr.Model.Stanza}
+	if pr.Phase == setup.PhaseBootstrap {
+		return st
+	}
+	var labels []string
+	for _, m := range pr.Model.Backup.Mounts {
+		labels = append(labels, m.Label)
+	}
+	st.Mounts = "mounts:" + strings.Join(labels, ",")
+	keyID := ""
+	if k, _, err := (&backup.KeyStore{Paths: p}).Get(backup.Active); err == nil {
+		keyID = k.ID()
+	}
+	st.Repos = "repos:" + backup.Fingerprint(pr.Config, keyID)
+	st.Timers = fmt.Sprintf("timers:%t:%s", pr.Model.Backup.Paused, strings.Join(pr.Model.Backup.Wants, ","))
+	return st
 }
 
 func readEnsure(p paths.Paths) ensureState {
@@ -547,4 +580,40 @@ func readEnsure(p paths.Paths) ensureState {
 func writeEnsure(p paths.Paths, st ensureState) error {
 	data, _ := json.MarshalIndent(st, "", "  ")
 	return lock.WriteFileAtomic(p.Abs(paths.EnsureState), data, 0o600)
+}
+
+// noStart removes the actions that start a unit of the stack or need it, and makes sure that the
+// images are pulled (a restore from backup).
+func noStart(in []plan.Action, images []string) []plan.Action {
+	var out []plan.Action
+	pulled := false
+	for _, a := range in {
+		switch a.Kind {
+		case plan.FullCycle, plan.StartTarget, plan.Restart, plan.EnsureBucket, plan.EnsureStanza,
+			plan.EnsureRepositories, plan.EnsureTimers, plan.EnsureFE:
+			continue
+		case plan.PullImages:
+			pulled = true
+		case plan.WriteLock:
+			if !pulled {
+				out = append(out, plan.Action{Kind: plan.PullImages, Names: images, Reason: "restore from backup"})
+				pulled = true
+			}
+		}
+		out = append(out, a)
+	}
+	if !pulled {
+		out = append(out, plan.Action{Kind: plan.PullImages, Names: images, Reason: "restore from backup"})
+	}
+	return out
+}
+
+// SetPodmanSecret sets one podman secret and records its hash, so the next apply finds no change.
+func SetPodmanSecret(ctx context.Context, p paths.Paths, pm host.Podman, name, value string) error {
+	if err := pm.SecretSet(ctx, name, []byte(value)); err != nil {
+		return fmt.Errorf("cannot set podman secret %s: %w", name, err)
+	}
+	st := readSecretState(p)
+	st[name] = secrets.Hash(value)
+	return writeSecretState(p, st)
 }

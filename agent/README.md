@@ -34,9 +34,14 @@ the same service layer (`internal/service`), so each operation has a CLI command
 | `clock wait` | `cmd/care-pi/clock.go` |
 | `host check` | `cmd/care-pi/host.go` |
 | `fe build`, `fe status`, `fe prune` (and the hidden `fe build-id`, `fe env`, `fe script` for CI) | `cmd/care-pi/fe.go` |
+| `backup status\|health\|run\|verify\|drill\|ssh-key`, `backup recovery-key create\|show\|confirm\|status\|rotate`, `backup destination list\|test\|secrets`, `backup disk list\|prepare` (and the hidden `backup destination probe` of the transient unit) | `cmd/care-pi/backup.go` |
+| `restore points\|pitr\|files\|dr` | `cmd/care-pi/restore.go` |
 
 Global flags: `--config` (default `/etc/care-pi/config.yaml`), `--root` (default `/`), `-v`.
-`apply`, `bootstrap`, `fe build`, and `fe prune` hold the apply lock `/run/care-pi/apply.lock` for their full run.
+`apply`, `bootstrap`, `fe build`, `fe prune`, `restore pitr|files|dr`, `backup disk prepare`, and
+`backup recovery-key rotate` hold the apply lock `/run/care-pi/apply.lock` for their full run.
+`backup run|verify|drill` take only the lock of their target (`docs/backups.md`, section 6). The backup timers run
+these commands with `--from-timer`.
 Their flag `--lock-timeout` (default `30m`) limits the wait for the lock (`docs/apply.md`, "The apply lock").
 `bootstrap --fe-provider` (default `local`) sets `fe.provider` of a new `config.yaml`.
 `--root` puts every absolute path below another directory. The tests use it.
@@ -56,13 +61,16 @@ To add a subcommand, add one file in `cmd/care-pi/`. Register the command on `ro
 | `internal/render` | The template model and the renderer. The templates are in `quadlets/templates/`. |
 | `internal/plan` | Compare the rendered tree with the disk. Decide the actions (buckets and stanza before the FE build). Unified diff for `--dry-run`. |
 | `internal/apply` | Run the plan through the host clients. Write the job journal. |
-| `internal/host` | The host clients: `Systemd`, `Podman`, `Skopeo`, `Journal`, `Clock`, `Git`. One `Runner` executes each command. `Fake` records the commands for tests. `Dev` answers with plausible output for the dev listener (`serve --fake-host`). `Transient` runs `podman pull` in a transient unit (`care-pi serve`). |
+| `internal/host` | The host clients: `Systemd`, `Podman`, `Skopeo`, `Journal`, `Clock`, `Git`. One `Runner` executes each command. `Fake` records the commands for tests. `Dev` answers with plausible output for the dev listener (`serve --fake-host`), also for the backup commands. `Transient` runs `podman pull`, restic, the disk tools, and the probe of a destination in a transient unit (`care-pi serve`; `docs/backups.md`, "The sandbox"). |
 | `internal/s3admin` | Create the buckets and the facility read policy with minio-go. |
+| `internal/backup` | Phase 3. The recovery key (BIP-39, HKDF-SHA256, the key store), the destinations, the restic runner (one session for each run in `/run/care-pi/backup/`), pgBackRest (`info`, the backup arguments, the encrypted `backup.info`), the state files, the locks, the health and the banners, the destination tests (SSH TOFU, S3, the posix probe), `ensure-repositories`. `docs/backups.md`. |
+| `internal/restore` | Phase 3. The restore jobs: point in time (with the checkpoint and the rollback), files, the restore drill, the re-key and the rotation, the restore from backup of a new device. |
+| `internal/disks` | Phase 3. The block devices (`lsblk --json`), their usage, and the commands of a disk preparation (`wipefs`, `sfdisk`, `mkfs.ext4`). |
 | `internal/fe` | The FE providers: `none`, `artifact` (download and extract a bundle), `local` (scale down, start `care-fe-build.service`, restore; also after SIGINT, SIGTERM, or SIGHUP). The build id, `fe/current`, the list of builds, and prune. `RemoveScaleDown` removes a leftover scale-down drop-in for apply. |
 | `internal/status` | Collect the unit states, health, memory, and lock summary. |
 | `internal/hostcheck` | Check the host prerequisites. It never changes the host. |
 | `internal/server` | `care-pi serve`: the routes of the contract, the middleware (session, CSRF, `Origin`, rate limits, body rules), SSE, the SPA, the unix socket and the dev listener, sd_notify. `server/contracttest` validates each test exchange against `docs/api/openapi.yaml` (kin-openapi). |
-| `internal/service` | The operations of the API and of the CLI: status, setup, config (ETag, merge patch, plan preview), apply, jobs, logs, support bundle, network, TLS, FE, Care, power. |
+| `internal/service` | The operations of the API and of the CLI: status, setup, config (ETag, merge patch, plan preview), apply, jobs, logs, support bundle, network, TLS, FE, Care, power, backups and restore (`backups.go`, `backupjobs.go`). |
 | `internal/auth` | The console account (`secrets/agent.json`): argon2id, recovery codes, TOTP, the claim code and the Imager password, sessions (`state/sessions.json`), rate limits and locks. |
 | `internal/setup` | The setup record (`state/setup.json`), the state machine, and the apply phase (`bootstrap` or `full`). |
 | `internal/jobs` | The job journals and their events (`state/jobs/`), the apply lock for jobs, cancel, retention. |
@@ -85,6 +93,10 @@ The apply tests run against `host.Fake` and a temporary `--root`.
 They check the exact command list, for example
 stop `care.target` → wait until inactive → `reset-failed` → start `care.target`.
 Most apply tests set `fe.provider: none`, because the default `local` adds an FE build to each apply.
+The restore tests (`internal/restore`) check the ordered commands of each job the same way: the point-in-time restore
+and its rollback, the files restore, the drill, the rotation, and the restore from backup. `internal/backup` checks
+the key vectors of `docs/backups.md`, the restic arguments, the retention, and the health with a fake clock.
+`internal/disks` checks that a disk preparation refuses the disk of the system.
 
 ## Clock gate
 
@@ -99,7 +111,8 @@ The reload makes Caddy check the certificates with the correct clock (`docs/appl
 ## Golden files
 
 `internal/render/testdata/golden/<case>/` holds the rendered tree of each case:
-`solo`, `small-clinic`, `busy-counter`, `custom`, and `small-clinic-bootstrap` (setup mode: `apply --phase bootstrap`).
+`solo`, `small-clinic`, `busy-counter`, `custom`, `small-clinic-bootstrap` (setup mode: `apply --phase bootstrap`),
+and `backups` (Phase 3: a USB disk, an SFTP, and an S3 destination; the timers, the mount units, the SSH files).
 The configs are `internal/render/testdata/config-<case>.yaml`.
 The cases use a test solution in `internal/render/testdata/solutions/`, the addresses
 `192.168.1.10` and `10.0.0.5`, and a lock from a fake resolver (digest = SHA-256 of the reference).

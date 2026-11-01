@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -175,5 +176,27 @@ func TestTransientWrap(t *testing.T) {
 	}
 	if !sameMountNS() {
 		t.Log("the test process is not in the mount namespace of PID 1")
+	}
+}
+
+func TestDevBackupCommands(t *testing.T) {
+	ctx := context.Background()
+	d := NewDev()
+	for _, c := range []Cmd{
+		{Name: "podman", Args: []string{"exec", "--user", "postgres", "care-db", "pgbackrest", "--stanza=main", "info", "--output=json"}},
+		{Name: "lsblk", Args: []string{"--json"}},
+		{Name: "systemctl", Args: []string{"list-timers", "--all", "--output=json", "care-backup-*"}},
+		{Name: "restic", Args: []string{"-o", "s3.bucket-lookup=path", "snapshots", "--json"}},
+		{Name: "/usr/local/bin/care-pi", Args: []string{"backup", "destination", "probe", "/srv/x"}},
+	} {
+		out, err := d.Run(ctx, c)
+		var v any
+		if err != nil || json.Unmarshal(out, &v) != nil {
+			t.Fatalf("%v: %v %q", c, err, out)
+		}
+	}
+	out, _ := d.Run(ctx, Cmd{Name: "restic", Args: []string{"backup", "--json"}})
+	if !strings.Contains(string(out), `"message_type":"summary"`) {
+		t.Fatalf("%q", out)
 	}
 }

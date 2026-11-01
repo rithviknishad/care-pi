@@ -26,6 +26,13 @@ const (
 	RenderedCare  = "/etc/care-pi/rendered/care"
 	RenderedDB    = "/etc/care-pi/rendered/db"
 	RenderedFE    = "/etc/care-pi/rendered/fe"
+	// RenderedBackup holds the SSH config and known_hosts of the SFTP destinations.
+	RenderedBackup = "/etc/care-pi/rendered/backup"
+
+	// Backups (docs/backups.md). The recovery key and the S3 keys of the destinations are secrets.
+	RecoveryKeyFile  = "/etc/care-pi/secrets/recovery.key"
+	PendingKeyFile   = "/etc/care-pi/secrets/recovery.key.pending"
+	BackupSecretsDir = "/etc/care-pi/secrets/backup"
 
 	QuadletDir = "/etc/containers/systemd"
 	SystemdDir = "/etc/systemd/system"
@@ -48,15 +55,32 @@ const (
 	ModeDir     = "/var/lib/care-pi/state/mode"
 	EnsureState = "/var/lib/care-pi/state/ensure.json"
 	SupportDir  = "/var/lib/care-pi/state/support"
+	// BackupStateDir holds local.json, destinations/<id>.json, drill.json, key.json, checkpoints.json.
+	BackupStateDir = "/var/lib/care-pi/state/backups"
+	// DisksDir holds the mount points of the backup disks (disk_label).
+	DisksDir = "/var/lib/care-pi/disks"
+	// RestoreDir holds the side directories of a files restore and the staging of a restore from backup.
+	RestoreDir = "/var/lib/care-pi/restore"
+	// DrillDir holds the data directory of a restore drill while it runs.
+	DrillDir = "/var/lib/care-pi/drill"
+	// ResticCache is the cache of restic (metadata of each repository).
+	ResticCache = "/var/cache/care-pi/restic"
 
 	// CaddyRootCA is the root certificate of the local CA of Caddy (Caddy data /data/caddy/pki/...).
 	CaddyRootCA = "/var/lib/care-pi/caddy/caddy/pki/authorities/local/root.crt"
+	// CaddyCA is the local CA of Caddy (root and intermediate, certificates and keys). Each snapshot
+	// has it, so a restore from backup keeps the root that the clinic devices trust (docs/backups.md).
+	CaddyCA = "/var/lib/care-pi/caddy/caddy/pki/authorities/local"
+	// CaddyLocalCerts holds the certificates that the local CA of Caddy issued.
+	CaddyLocalCerts = "/var/lib/care-pi/caddy/caddy/certificates/local"
 
 	// RunDir is on a tmpfs. ApplyLock serialises apply, bootstrap, fe build, and fe prune.
 	RunDir    = "/run/care-pi"
 	ApplyLock = "/run/care-pi/apply.lock"
 	// AgentSocket is the socket of "care-pi serve". Caddy is its only client.
 	AgentSocket = "/run/care-pi/api.sock"
+	// RunBackupDir holds the files of one restic run (password file, SSH key, S3 credentials). tmpfs.
+	RunBackupDir = "/run/care-pi/backup"
 	// AgentUnit runs "care-pi serve". The installer writes it.
 	AgentUnit     = "care-pi.service"
 	AgentUnitFile = "/etc/systemd/system/care-pi.service"
@@ -131,6 +155,7 @@ func Layout() []Dir {
 		{RenderedCare, 0o700, 0, 0},
 		{RenderedDB, 0o750, 0, PostgresGID},
 		{RenderedFE, 0o700, 0, 0},
+		{RenderedBackup, 0o700, 0, 0},
 		{QuadletDir, 0o755, 0, 0},
 		{SystemdDir, 0o755, 0, 0},
 		{DataDir, 0o755, 0, 0},
@@ -148,5 +173,8 @@ func Layout() []Dir {
 		{JobsDir, 0o700, 0, 0},
 		{LockHistory, 0o700, 0, 0},
 		{ModeDir, 0o755, 0, 0},
+		{BackupStateDir, 0o700, 0, 0},
+		{DisksDir, 0o755, 0, 0},
+		{RestoreDir, 0o700, 0, 0},
 	}
 }

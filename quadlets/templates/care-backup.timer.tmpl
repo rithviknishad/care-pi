@@ -1,0 +1,19 @@
+# {{.Header}}
+
+[Unit]
+Description={{.Description}}
+Documentation=https://github.com/rithviknishad/care-pi/blob/main/docs/backups.md
+PartOf=care-backup.target
+
+[Timer]
+{{- if .OnCalendar}}
+OnCalendar={{.OnCalendar}}
+Persistent=true
+{{- else}}
+OnActiveSec=1min
+OnUnitActiveSec={{.IntervalMin}}min
+{{- end}}
+AccuracySec=1min
+{{- if .Unit}}
+Unit={{.Unit}}
+{{- end}}

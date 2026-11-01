@@ -167,6 +167,11 @@ func Render(m *Model) (Tree, error) {
 		}
 		tree[o.path] = File{Path: o.path, Content: tidy(b.Bytes()), Mode: o.mode, GID: o.gid}
 	}
+	if !m.Bootstrap {
+		if err := renderBackup(t, m, tree); err != nil {
+			return nil, err
+		}
+	}
 	return tree, nil
 }
 
@@ -214,6 +219,8 @@ func Owned(p string) bool {
 		}
 		return false
 	case p == systemd("care.target"), p == systemd("care-clock.service"), p == systemd(StartUnit):
+		return true
+	case BackupUnit(p):
 		return true
 	}
 	return false

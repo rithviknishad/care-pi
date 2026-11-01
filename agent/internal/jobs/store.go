@@ -55,7 +55,7 @@ func Load(p paths.Paths, id string) (*Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	dead := d.Result == "running" && !alive(p, d)
+	dead := (d.Result == "running" || d.Result == "queued") && !alive(p, d)
 	j := toJob(id, d, dead)
 	if j.State == StateRunning {
 		if n := countEvents(p, id); n > j.LastEventID {
@@ -126,6 +126,16 @@ func Latest(p paths.Paths, keep func(*Job) bool) *Job {
 		}
 	}
 	return nil
+}
+
+// RunningOf returns the id of the newest job that runs (or waits) and has one of the kinds, or "".
+func RunningOf(p paths.Paths, kinds map[string]bool) string {
+	if j := Latest(p, func(j *Job) bool {
+		return (j.State == StateRunning || j.State == StateQueued) && kinds[j.Kind]
+	}); j != nil {
+		return j.ID
+	}
+	return ""
 }
 
 // RunningLockJob returns the id of the newest running job that holds the apply lock, or "".
@@ -215,7 +225,7 @@ func MarkInterrupted(p paths.Paths, now time.Time) []string {
 	var out []string
 	for _, id := range ids(p) {
 		d, err := readDoc(p, id)
-		if err != nil || d.Result != "running" || alive(p, d) {
+		if err != nil || (d.Result != "running" && d.Result != "queued") || alive(p, d) {
 			continue
 		}
 		t := now.UTC().Truncate(time.Millisecond)
@@ -257,6 +267,10 @@ type Spec struct {
 	Lock bool
 	// OnStart runs with the id after the journal exists and before the job body starts.
 	OnStart func(id string)
+	// AfterDone runs after the journal has the event done and the open event streams got the
+	// notification, before the job releases the apply lock. The job restore-dr ends the sessions here,
+	// so that each event stream gets the event done first (docs/api/README.md section 13.9.3).
+	AfterDone func(j *Job)
 }
 
 // Func is the body of a job. It returns the result of a job that succeeded.
@@ -272,9 +286,10 @@ type Manager struct {
 	// CancelPoll is the interval of the check for a cancel file.
 	CancelPoll time.Duration
 
-	mu      sync.Mutex
-	running map[string]*run
-	waiters map[string]chan struct{}
+	mu       sync.Mutex
+	running  map[string]*run
+	waiters  map[string]chan struct{}
+	watchers map[string]int
 }
 
 type run struct {
@@ -286,6 +301,7 @@ func (m *Manager) init() {
 	if m.running == nil {
 		m.running = map[string]*run{}
 		m.waiters = map[string]chan struct{}{}
+		m.watchers = map[string]int{}
 	}
 	if m.Now == nil {
 		m.Now = time.Now
@@ -406,8 +422,44 @@ func (m *Manager) Start(ctx context.Context, s Spec, fn Func) (*Job, error) {
 		}
 		j := rec.Finish(err, result)
 		m.Log.Info("job ended", "id", j.ID, "kind", j.Kind, "state", j.State)
+		if s.AfterDone != nil {
+			s.AfterDone(j)
+		}
 	}()
 	return first, nil
+}
+
+// Watch records an open event stream of the job. The returned function ends the record.
+func (m *Manager) Watch(id string) func() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.init()
+	m.watchers[id]++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if m.watchers[id]--; m.watchers[id] <= 0 {
+				delete(m.watchers, id)
+			}
+		})
+	}
+}
+
+// WaitUnwatched waits until no event stream of the job is open, for max at most.
+func (m *Manager) WaitUnwatched(id string, max time.Duration) {
+	end := time.Now().Add(max)
+	for {
+		m.mu.Lock()
+		m.init()
+		n := m.watchers[id]
+		m.mu.Unlock()
+		if n == 0 || time.Now().After(end) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // Cancel asks a running cancellable job to stop.

@@ -1059,3 +1059,33 @@ func (m *Manager) RotateClaimCode() (string, error) {
 	m.log.Info("auth: new claim code")
 	return c, nil
 }
+
+// RestoreAccount replaces the console account with the account of an old device (a restore from
+// backup, docs/api/README.md section 13.9.3): its password, its recovery codes, and its TOTP. It
+// deletes each lock. It keeps the sessions: the job restore-dr ends them with RevokeAll after
+// each event stream of the job got the event done.
+func (m *Manager) RestoreAccount(data []byte) error {
+	var a Account
+	if err := json.Unmarshal(data, &a); err != nil {
+		return fmt.Errorf("the console account of the backup is not valid: %w", err)
+	}
+	if a.PasswordHash == "" {
+		return fmt.Errorf("the console account of the backup has no password")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	err := m.withFileLock(func() error {
+		a.Lockout = lockout{}
+		m.acct = &a
+		if err := m.saveAccount(); err != nil {
+			return err
+		}
+		return m.touchUnlock()
+	})
+	if err != nil {
+		return err
+	}
+	m.Limits.Reset()
+	m.log.Info("auth: the console account of the old device is restored")
+	return nil
+}

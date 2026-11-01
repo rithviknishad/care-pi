@@ -19,6 +19,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/rithviknishad/care-pi/agent/internal/backup"
 	"github.com/rithviknishad/care-pi/agent/internal/buildinfo"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/jobs"
@@ -162,6 +163,19 @@ func (s *Service) secretValues() []string {
 			if v := strings.TrimSpace(l); len(v) >= 6 {
 				out = append(out, v)
 			}
+		}
+	}
+	// The S3 keys of the destinations, and the values that come from the recovery keys.
+	if ents, err := os.ReadDir(filepath.Join(dir, "backup")); err == nil {
+		for _, e := range ents {
+			if c := backup.ReadCredentials(s.Paths, strings.TrimSuffix(e.Name(), ".json")); c != nil {
+				out = append(out, c.AccessKeyID, c.SecretAccessKey)
+			}
+		}
+	}
+	for _, which := range []string{backup.Active, backup.Pending} {
+		if k, _, err := s.keys().Get(which); err == nil {
+			out = append(out, k.Hex(), k.ResticPassword(), k.CipherPass(), strings.Join(k.Words(), " "), k.QRPayload())
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return len(out[i]) > len(out[j]) })

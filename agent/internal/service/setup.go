@@ -8,6 +8,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"github.com/rithviknishad/care-pi/agent/internal/applock"
 	"github.com/rithviknishad/care-pi/agent/internal/apply"
 	"github.com/rithviknishad/care-pi/agent/internal/auth"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
@@ -46,6 +47,14 @@ type SetupState struct {
 	JobID       *string          `json:"job_id"`
 	ClaimedAt   *time.Time       `json:"claimed_at"`
 	ReadyAt     *time.Time       `json:"ready_at"`
+	Restore     SetupRestore     `json:"restore"`
+}
+
+// SetupRestore is the entry point of "Restore from backup" (schema SetupRestore).
+type SetupRestore struct {
+	Available bool    `json:"available"`
+	JobID     *string `json:"job_id"`
+	JobState  *string `json:"job_state"`
 }
 
 func (s *Service) setupInput() (setup.Input, error) {
@@ -103,6 +112,21 @@ func (s *Service) SetupState() (*SetupState, error) {
 	out.Draft = draftOf(cfg)
 	out.Draft.CareAdmin = CareAdminDraft{Username: strPtr(in.Record.CareAdmin.Username),
 		Email: strPtr(in.Record.CareAdmin.Email), PasswordSet: in.CarePassword}
+	out.Draft.Backups = s.backupsDraft(cfg)
+	for i := range out.Steps {
+		st := &out.Steps[i]
+		if st.ID == setup.StepBackups && st.Status != setup.Done && st.Status != setup.Skipped && v.State != setup.Ready {
+			st.Errors = s.backupsStepIssues(cfg)
+		}
+	}
+	out.Restore.Available = (v.State == setup.Claimed || v.State == setup.InSetup) && !applock.Held(s.Paths)
+	if id := in.Record.RestoreJobID; id != "" {
+		out.Restore.JobID = &id
+		if j, err := jobs.Load(s.Paths, id); err == nil {
+			state := j.State
+			out.Restore.JobState = &state
+		}
+	}
 	return out, nil
 }
 
@@ -445,11 +469,6 @@ func (s *Service) StepCareAdmin(username, email, password string) (*SetupState, 
 	return s.SetupState()
 }
 
-// StepBackups is Phase 3.
-func (s *Service) StepBackups() (*SetupState, error) {
-	return nil, problem.Later(3, "The backups step comes in Phase 3. A dev build can skip it.")
-}
-
 // Skip skips an optional step: env always, backups only in a dev build.
 func (s *Service) Skip(step string) (*SetupState, error) {
 	if _, err := s.editable(); err != nil {
@@ -458,7 +477,7 @@ func (s *Service) Skip(step string) (*SetupState, error) {
 	if !setup.Skippable(step, DevBuild()) {
 		msg := "Only env can be skipped, and backups in a dev build."
 		if step == setup.StepBackups {
-			msg = "This is a release build. The backups step is required, and it comes in Phase 3."
+			msg = "This is a release build. The backups step is required: add a destination and confirm the recovery key."
 		}
 		return nil, problem.New(problem.StepNotSkippable, msg)
 	}
@@ -541,7 +560,7 @@ func (s *Service) runSetup(ctx context.Context, rec *jobs.Recorder, admin setup.
 		return nil, err
 	}
 	o := s.applyOptions(apply.Options{Reason: "setup finish", Out: rec.Writer(), Journal: rec, LockHeld: true,
-		Phase: setup.PhaseFull})
+		Phase: setup.PhaseFull, NoFirstBackup: true})
 	if _, err := apply.Run(ctx, o); err != nil {
 		return nil, applyProblem(err)
 	}
@@ -562,6 +581,14 @@ func (s *Service) runSetup(ctx context.Context, rec *jobs.Recorder, admin setup.
 	if err != nil {
 		return nil, err
 	}
+	// The first full backup, so a PITR is possible at once (docs/api/README.md section 13.7).
+	end = rec.StepAction("backup-full: the first backup of the local repository", "backup-full")
+	_, err = s.ops(rec, cfg, jobs.SourceConsole).LocalBackup(ctx, "full", "setup finish")
+	end(stepErr(err))
+	if err != nil {
+		rec.Logf("the first full backup failed: %v; the timer tries again", err)
+	}
+	s.InvalidateBackups()
 	now := s.now()
 	if _, err := s.Setup.Update(func(r *setup.Record) error {
 		r.ReadyAt = &now

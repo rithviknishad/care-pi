@@ -31,7 +31,24 @@ const (
 	KindFEBuild       = "fe-build"
 	KindFEPrune       = "fe-prune"
 	KindSupportBundle = "support-bundle"
+
+	// Phase 3 (docs/api/README.md section 13.8).
+	KindBackupRun         = "backup-run"
+	KindBackupVerify      = "backup-verify"
+	KindRestorePITR       = "restore-pitr"
+	KindRestoreFiles      = "restore-files"
+	KindRestoreDR         = "restore-dr"
+	KindDiskPrepare       = "disk-prepare"
+	KindRecoveryKeyRotate = "recovery-key-rotate"
+	KindRestoreDrill      = "restore-drill"
 )
+
+// Kinds lists each job kind of the schema JobKind.
+var Kinds = []string{KindApply, KindSetup, KindFEBuild, KindFEPrune, KindSupportBundle, "update-check", "update", "rollback", "tls",
+	KindBackupRun, KindBackupVerify, KindRestorePITR, KindRestoreFiles, KindRestoreDR, KindDiskPrepare, KindRecoveryKeyRotate, KindRestoreDrill}
+
+// RestoreKinds stop the backups while they run: a backup kind gives job-running then.
+var RestoreKinds = map[string]bool{KindRestorePITR: true, KindRestoreFiles: true, KindRestoreDR: true, KindRecoveryKeyRotate: true}
 
 // Sources.
 const (
@@ -70,7 +87,8 @@ const (
 
 // LockKinds hold the apply lock.
 var LockKinds = map[string]bool{KindApply: true, KindSetup: true, KindFEBuild: true, KindFEPrune: true,
-	"restore": true, "update": true, "rollback": true, "tls": true}
+	"update": true, "rollback": true, "tls": true, KindRestorePITR: true, KindRestoreFiles: true, KindRestoreDR: true,
+	KindDiskPrepare: true, KindRecoveryKeyRotate: true}
 
 // IDPattern is the pattern of a job id.
 var IDPattern = regexp.MustCompile(`^[0-9]{8}T[0-9]{6}\.[0-9]{3}Z-[a-z][a-z-]*$`)
@@ -82,6 +100,17 @@ var actionKeys = map[string]bool{
 	"reload-caddy": true, "ensure-buckets": true, "ensure-stanza": true, "ensure-fe": true, "write-lock": true,
 	"validate": true, "host-check": true, "resolve-lock": true, "render": true, "plan": true, "wait-healthy": true,
 	"create-care-superuser": true, "collect": true, "archive": true, "prune": true, "set-hostname": true,
+	// Phase 3.
+	"ensure-mounts": true, "ensure-repositories": true, "ensure-timers": true,
+	"pause-backups": true, "resume-backups": true, "maintenance-on": true, "maintenance-off": true, "stop-app": true,
+	"start-app": true, "stop-db": true, "start-db": true, "wait-promote": true, "checkpoint": true, "backup-incr": true,
+	"backup-full": true, "check-stanza": true, "snapshot": true, "forget": true, "verify-local": true,
+	"verify-destination": true, "check-space": true, "check-key": true, "check-destinations": true, "restore-db": true,
+	"restore-files": true, "verify-files": true, "stop-s3": true, "start-s3": true, "fetch-config": true,
+	"fetch-db-repo": true, "fetch-files": true, "restore-account": true, "finish": true, "check-disk": true,
+	"wipe-disk": true, "partition": true, "format": true, "write-mount-unit": true, "mount": true, "rekey-local": true,
+	"init-destination": true, "activate-key": true, "remove-old-repositories": true, "drill-restore": true,
+	"drill-start": true, "drill-check": true, "drill-cleanup": true,
 }
 
 // ActionOf returns the action key of a step name ("restart: care-api.service" gives "restart"), or "".
@@ -384,6 +413,30 @@ func (r *Recorder) endStep(i int, err error) {
 	r.save()
 }
 
+// SetQueued marks the job queued (true) while it waits for a lock of a backup target, and running again (false).
+func (r *Recorder) SetQueued(queued bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return
+	}
+	if queued {
+		r.doc.Result = "queued"
+	} else {
+		r.doc.Result = "running"
+	}
+	r.save()
+}
+
+// SetResult sets the result of the job before it ends (a job that fails can still have a result).
+func (r *Recorder) SetResult(result any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if raw, err := json.Marshal(result); err == nil {
+		r.doc.Output = raw
+	}
+}
+
 // SetDetail sets the short result of the step that runs now.
 func (r *Recorder) SetDetail(detail string) {
 	r.mu.Lock()
@@ -562,6 +615,9 @@ func toJob(id string, d fileDoc, dead bool) Job {
 		j.State = StateCancelled
 	case "queued":
 		j.State = StateQueued
+		if dead {
+			j.State = StateFailed
+		}
 	default:
 		j.State = StateRunning
 		if dead {
@@ -583,7 +639,7 @@ func toJob(id string, d fileDoc, dead bool) Job {
 		}
 	}
 	for i, s := range d.Steps {
-		j.Steps = append(j.Steps, toStep(i, s, dead && d.Result == "running"))
+		j.Steps = append(j.Steps, toStep(i, s, dead && (d.Result == "running" || d.Result == "queued")))
 	}
 	j.Cancellable = d.Cancellable && j.State == StateRunning
 	return j

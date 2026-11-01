@@ -402,6 +402,11 @@ func (s *Service) Status(ctx context.Context) (*Status, error) {
 		st.Lock = ls
 	}
 	st.Jobs = s.jobsSummary()
+	if st.SetupState != setup.Unclaimed {
+		if b, err := s.Backups(ctx); err == nil {
+			st.Backups = b
+		}
+	}
 
 	f := &st.Flags
 	f.Degraded = st.Degraded

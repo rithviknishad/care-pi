@@ -165,8 +165,35 @@ func (t Transient) Run(ctx context.Context, c Cmd) ([]byte, error) {
 	return t.Exec.Run(ctx, t.Wrap(c))
 }
 
+// transientNames run in a transient unit of their own (docs/backups.md, "The sandbox"): restic
+// (memory, the mount namespace of the host for the backup disks, the cache in /var/cache), the
+// probe of a posix destination (it must see the host as restic does), and the commands of the job
+// disk-prepare (a block device of the host; no new capability for care-pi.service).
+var transientNames = map[string]bool{"restic": true, "wipefs": true, "sfdisk": true, "partprobe": true, "mkfs.ext4": true}
+
+// TransientCmd returns the systemd-run command of a command that runs in its own unit.
+func TransientCmd(c Cmd) Cmd {
+	name := c.Name
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	args := []string{"--quiet", "--wait", "--pipe", "--collect", "--description=care-pi " + name}
+	if name == "restic" {
+		args = append(args, "--property=MemoryMax=512M", "--property=MemorySwapMax=128M", "--nice=10",
+			"--property=IOSchedulingClass=idle")
+	}
+	for _, kv := range c.Env {
+		args = append(args, "--setenv="+kv)
+	}
+	args = append(append(args, "--", c.Name), c.Args...)
+	return Cmd{Name: "systemd-run", Args: args, Stdin: c.Stdin, Attach: c.Attach}
+}
+
 // Wrap returns the command that Run runs for c.
 func (t Transient) Wrap(c Cmd) Cmd {
+	if transientNames[c.Name] || (strings.HasSuffix(c.Name, "/care-pi") && len(c.Args) > 0 && c.Args[0] == "backup") {
+		return TransientCmd(c)
+	}
 	if c.Name != "podman" || len(c.Args) == 0 {
 		return c
 	}

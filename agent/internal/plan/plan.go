@@ -34,6 +34,13 @@ const (
 	// EnsureStanza runs before EnsureFE: WAL archiving fails until the stanza exists,
 	// and a local FE build takes minutes (Phase 1 exit test, finding 7).
 	EnsureStanza Kind = "ensure-stanza"
+	// EnsureMounts starts the automount units of the backup disks (docs/backups.md).
+	EnsureMounts Kind = "ensure-mounts"
+	// EnsureRepositories runs "restic init" of a new destination. A destination that does not
+	// answer does not fail the apply: its timer tries again.
+	EnsureRepositories Kind = "ensure-repositories"
+	// EnsureTimers turns the backup timers on or off (backups.paused) and restarts a changed timer.
+	EnsureTimers Kind = "ensure-timers"
 	EnsureFE     Kind = "ensure-fe"
 	WriteLock    Kind = "write-lock"
 )
@@ -105,6 +112,11 @@ type Input struct {
 	StackImages []string
 	// Bootstrap is setup mode: no buckets, no stanza, and no FE build (no database and no S3 run).
 	Bootstrap bool
+	// MountsStale, ReposStale, and TimersStale tell that the last ensure of the backup mounts, the
+	// restic repositories, or the backup timers was for another config (or never ran).
+	MountsStale bool
+	ReposStale  bool
+	TimersStale bool
 }
 
 // Plan is the ordered list of actions and the file changes.
@@ -196,6 +208,9 @@ func Build(in Input) *Plan {
 		backendEnv      bool
 		caddyConf       bool
 		dbConf          bool
+		mountsChanged   bool
+		timers          []string
+		backupConf      bool
 		restart         = map[string]bool{}
 		cycle           []string
 	)
@@ -222,9 +237,21 @@ func Build(in Input) *Plan {
 			}
 		case dir == paths.SystemdDir:
 			unitFiles = true
-			if b := path.Base(c.Path); b == "care.target" || b == render.StartUnit {
+			b := path.Base(c.Path)
+			switch {
+			case b == "care.target" || b == render.StartUnit:
 				targetChanged = true
+			case render.MountFile(c.Path):
+				mountsChanged = true
+			case render.BackupUnit(c.Path):
+				if path.Ext(b) == ".timer" && c.Kind == Modify {
+					timers = append(timers, b)
+				} else if c.Kind != Modify || b == render.BackupTarget {
+					backupConf = true
+				}
 			}
+		case strings.HasPrefix(c.Path, paths.RenderedBackup+"/"):
+			backupConf = true
 		case c.Path == paths.RenderedCare+"/backend.env":
 			backendEnv = true
 		case strings.HasPrefix(c.Path, paths.RenderedCaddy+"/"):
@@ -325,6 +352,17 @@ func Build(in Input) *Plan {
 	}
 	if (started || in.EnsureStale || dbConf) && !in.Bootstrap {
 		add(Action{Kind: EnsureStanza})
+	}
+	if !in.Bootstrap {
+		if mountsChanged || in.MountsStale {
+			add(Action{Kind: EnsureMounts})
+		}
+		if backupConf || in.ReposStale {
+			add(Action{Kind: EnsureRepositories})
+		}
+		if len(timers) > 0 || backupConf || mountsChanged || in.TimersStale {
+			add(Action{Kind: EnsureTimers, Units: timers})
+		}
 	}
 	if in.FEWanted && !in.Bootstrap {
 		add(Action{Kind: EnsureFE})

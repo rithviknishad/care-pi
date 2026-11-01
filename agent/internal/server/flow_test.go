@@ -75,7 +75,7 @@ func TestSetupFlow(t *testing.T) {
 	e.want(e.do("PUT", "/api/v1/setup/steps/env", map[string]any{"backend": map[string]any{}, "frontend": map[string]any{},
 		"fe": map[string]any{"provider": "none"}}), 200, "")
 	e.want(e.do("PUT", "/api/v1/setup/steps/backups", map[string]any{"destinations": []any{map[string]any{"id": "usb", "type": "posix", "path": "/mnt/b"}},
-		"credentials": map[string]any{}, "recovery_key_words": []any{map[string]any{"index": 1, "word": "able"}, map[string]any{"index": 2, "word": "acid"}, map[string]any{"index": 3, "word": "also"}}}), 501, "not-implemented-in-this-version")
+		"credentials": map[string]any{}, "recovery_key_words": []any{map[string]any{"index": 1, "word": "able"}, map[string]any{"index": 2, "word": "acid"}, map[string]any{"index": 3, "word": "also"}}}), 409, "no-recovery-key")
 	e.want(e.do("POST", "/api/v1/setup/steps/backups/skip", nil), 200, "")
 	e.want(e.do("PUT", "/api/v1/setup/steps/care-admin", map[string]any{"username": "admin", "email": "admin@sunrise.example", "password": password}), 422, "weak-password")
 	e.want(e.do("PUT", "/api/v1/setup/steps/care-admin", map[string]any{"username": "ad..min", "email": "admin@sunrise.example", "password": "a care superuser passphrase"}), 422, "invalid-request")
@@ -406,19 +406,12 @@ func TestNotImplementedAndPublic(t *testing.T) {
 		method, url string
 		body        any
 	}
-	dest := map[string]any{"id": "usb", "type": "posix", "path": "/mnt/b"}
 	for _, l := range []later{
 		{"PUT", "/api/v1/security/ssh", map[string]any{"enabled": false, "authorized_keys": []any{}}},
 		{"PUT", "/api/v1/network/wifi", map[string]any{"ssid": "x", "psk": "a wifi passphrase", "failover": true}},
 		{"PUT", "/api/v1/tls/public", map[string]any{"enabled": false, "clinic_id": nil}},
 		{"PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": false, "auth_key": nil}},
 		{"POST", "/api/v1/tls/local-ca/rotate", nil},
-		{"GET", "/api/v1/backups", nil},
-		{"POST", "/api/v1/backups/run", map[string]any{"destination": nil}},
-		{"POST", "/api/v1/backups/destinations/test", map[string]any{"destination": dest, "credentials": nil}},
-		{"GET", "/api/v1/backups/recovery-key", nil},
-		{"GET", "/api/v1/restore/points", nil},
-		{"POST", "/api/v1/restore", map[string]any{"kind": "pitr"}},
 		{"GET", "/api/v1/updates", nil},
 		{"POST", "/api/v1/updates/check", nil},
 		{"POST", "/api/v1/updates/apply", map[string]any{"version": nil}},
@@ -493,6 +486,13 @@ func TestJobsLogsAndBundle(t *testing.T) {
 		t.Fatalf("logs %v", m)
 	}
 	e.want(e.do("GET", "/api/v1/logs/fe-build", nil), 404, "unit-not-found")
+	// backup: the journal of each care-backup-* service; each line names its unit.
+	e.fake.On("journalctl --unit care-backup-* --output json --no-pager --lines 100", host.Response{Out: strings.Replace(line, `"PRIORITY"`, `"_SYSTEMD_UNIT":"init.scope","UNIT":"care-backup-db@usb.service","PRIORITY"`, 1) + "\n"})
+	r = e.do("GET", "/api/v1/logs/backup", nil)
+	e.want(r, 200, "")
+	if !strings.Contains(string(r.body), `"unit":"care-backup-db@usb.service"`) || !strings.Contains(string(r.body), `"unit":"backup"`) {
+		t.Fatal(string(r.body))
+	}
 	e.want(e.do("GET", "/api/v1/logs/api?n=0", nil, invalid), 422, "invalid-request")
 
 	// Follow: read the first line and a heartbeat, then close.

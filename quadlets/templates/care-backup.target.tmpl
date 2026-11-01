@@ -1,0 +1,14 @@
+# {{.Header}}
+# The backup timers of care-pi (docs/backups.md). The agent enables this target. A stop of the target
+# stops each timer (PartOf=); the restore jobs and backups.paused use it. The automount units of the
+# backup disks are here too, so the disks mount at their first use.
+
+[Unit]
+Description=care-pi backup timers
+Documentation=https://github.com/rithviknishad/care-pi/blob/main/docs/backups.md
+{{- if .Backup.Wants}}
+Wants={{join .Backup.Wants " "}}
+{{- end}}
+
+[Install]
+WantedBy=multi-user.target
