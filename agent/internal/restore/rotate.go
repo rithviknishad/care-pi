@@ -167,6 +167,16 @@ func Rotate(ctx context.Context, e Env, req RotateRequest, setPass SetCipherPass
 		}); err != nil {
 			return nil, err
 		}
+		if req.NewKey {
+			// remove-old-repositories deletes each files snapshot of the old key: the new repository
+			// needs its own before that, not only at the next daily timer run.
+			if err := e.Step("snapshot: "+d.ID+" (files)", "snapshot", func() error {
+				_, err := ops.Snapshot(ctx, d, backup.TagFiles, target, false)
+				return err
+			}); err != nil {
+				return nil, err
+			}
+		}
 		res.Destinations = append(res.Destinations, backup.RotateDest{ID: d.ID,
 			Location: backup.Location(backup.Effective(d, e.Config.Backups), target.ID()), SnapshotID: sum.SnapshotID})
 	}

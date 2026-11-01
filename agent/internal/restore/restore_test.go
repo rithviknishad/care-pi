@@ -254,6 +254,77 @@ func TestRotateKeepKey(t *testing.T) {
 		"wait-healthy:succeeded", "maintenance-off:succeeded", "backup-full:succeeded", "remove-old-repositories:succeeded", "resume-backups:succeeded"})
 }
 
+// TestRotateNewKeyFiles: a rotation to a new key sends a db and a files snapshot to the new repository of
+// each destination before it deletes the old repositories, so a files copy stays off the device.
+func TestRotateNewKeyFiles(t *testing.T) {
+	te := newTenv(t, jobs.KindRecoveryKeyRotate)
+	ks := te.e.Keys()
+	old, _, _, err := ks.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, which, _, err := ks.Create()
+	if err != nil || which != backup.Pending {
+		t.Fatal(which, err)
+	}
+	dests := []config.BackupDestination{{ID: "a", Type: backup.TypePOSIX, Path: "/srv/a"}, {ID: "b", Type: backup.TypePOSIX, Path: "/srv/b"}}
+	te.e.Config.Backups.Destinations = dests
+	for _, d := range dests {
+		if err := os.MkdirAll(te.p.Abs(backup.Location(d, old.ID())+"/snapshots"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(te.p.Abs(paths.BackupPG+"/archive"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	te.fake.On(infoCmd, host.Response{Out: info("20261030-010000F")})
+	var snaps []string
+	te.fake.Hook = func(c host.Cmd, _ []byte) (host.Response, bool) {
+		if !strings.HasPrefix(c.String(), "restic backup") {
+			return host.Response{}, false
+		}
+		repo := ""
+		for _, kv := range c.Env {
+			if v, ok := strings.CutPrefix(kv, "RESTIC_REPOSITORY="); ok {
+				repo = v
+			}
+		}
+		tag := "db"
+		if strings.Contains(c.String(), "--tag files") {
+			tag = "files"
+		}
+		oldKept := "old repository kept"
+		if _, err := os.Stat(te.p.Abs(backup.Location(dests[len(snaps)/2], old.ID()))); err != nil {
+			oldKept = "old repository gone"
+		}
+		snaps = append(snaps, tag+" "+repo+": "+oldKept)
+		return host.Response{Out: `{"message_type":"summary","data_added":10,"data_added_packed":8,"snapshot_id":"aaaa1111bbbb"}`}, true
+	}
+	res, err := Rotate(context.Background(), te.e, RotateRequest{NewKey: true, RemoveOld: true, Source: jobs.SourceCLI},
+		func(context.Context, string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	check(t, "snapshots", snaps, []string{
+		"db /srv/a/care-pi-" + k.ID() + ": old repository kept", "files /srv/a/care-pi-" + k.ID() + ": old repository kept",
+		"db /srv/b/care-pi-" + k.ID() + ": old repository kept", "files /srv/b/care-pi-" + k.ID() + ": old repository kept"})
+	var names []string
+	for _, s := range te.rec.Job().Steps {
+		names = append(names, s.Name)
+	}
+	check(t, "steps", names[12:], []string{"init-destination: a", "snapshot: a (db)", "snapshot: a (files)",
+		"init-destination: b", "snapshot: b (db)", "snapshot: b (files)", "activate-key: " + k.ID(),
+		"remove-old-repositories", "resume-backups: care-backup.target"})
+	for _, d := range dests {
+		if _, err := os.Stat(te.p.Abs(backup.Location(d, old.ID()))); !os.IsNotExist(err) {
+			t.Fatalf("the old repository of %s stays: %v", d.ID, err)
+		}
+	}
+	if res.KeyID != k.ID() || len(res.Destinations) != 2 || len(res.RemovedRepositories) != 3 {
+		t.Fatalf("%+v", res)
+	}
+}
+
 func TestFilesSideDir(t *testing.T) {
 	te := newTenv(t, jobs.KindRestoreFiles)
 	ks := te.e.Keys()

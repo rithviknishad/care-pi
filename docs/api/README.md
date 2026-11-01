@@ -1032,7 +1032,7 @@ The steps, in order (the keys of `JobStep.action`):
 | `restore-files` (`side-dir`) | `check-space`, `restore-files`, `verify-files` |
 | `restore-dr` | `check-key`, `check-space`, `fetch-config`, the plan actions of the restore apply (section 13.9), `fetch-db-repo`, `restore-db`, `fetch-files`, `start-target`, `wait-promote`, `wait-healthy`, `backup-full`, `ensure-repositories`, `ensure-timers`, `set-hostname`, `restore-account`, `finish` |
 | `disk-prepare` | `check-disk`, `wipe-disk`, `partition`, `format`, `write-mount-unit`, `mount`, `check-destinations` |
-| `recovery-key-rotate` | `check-destinations`, `pause-backups`, `maintenance-on`, `stop-app`, `stop-db`, `rekey-local`, `start-db`, `ensure-stanza`, `start-app`, `wait-healthy`, `maintenance-off`, `backup-full`; for each destination: `init-destination` (only `new_key: true`) and `snapshot`; then `activate-key` (only `new_key: true`), `remove-old-repositories` (only with that option), `resume-backups` |
+| `recovery-key-rotate` | `check-destinations`, `pause-backups`, `maintenance-on`, `stop-app`, `stop-db`, `rekey-local`, `start-db`, `ensure-stanza`, `start-app`, `wait-healthy`, `maintenance-off`, `backup-full`; for each destination: `init-destination` (only `new_key: true`), `snapshot` (`db`), and `snapshot` (`files`, only `new_key: true`: the old repositories hold the only files snapshots); then `activate-key` (only `new_key: true`), `remove-old-repositories` (only with that option), `resume-backups` |
 
 The step name has the target after the key, for example `snapshot: usb (db)` or `restore-db: 2026-10-30T09:40:00Z`.
 The setup job of section 5 gets the plan actions `ensure-mounts`, `ensure-repositories`, and `ensure-timers`, and ends

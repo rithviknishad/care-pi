@@ -115,7 +115,7 @@ A rotation (`POST /backups/recovery-key/rotate`, job `recovery-key-rotate`) has 
 
 | Form | CLI | What it does |
 |---|---|---|
-| New key (`new_key: true`) | `care-pi backup recovery-key rotate` | Uses the confirmed pending key: a new local repository, a new repository `care-pi-<new key id>` at each destination, a full backup, and a first snapshot. Then the new key is the active key. |
+| New key (`new_key: true`) | `care-pi backup recovery-key rotate` | Uses the confirmed pending key: a new local repository, a new repository `care-pi-<new key id>` at each destination, a full backup, and a first `db` and `files` snapshot. Then the new key is the active key, and only then the job deletes the old repositories. |
 | Same key (`new_key: false`) | `care-pi backup recovery-key rotate --keep-key` | The re-key of a Phase 1 or Phase 2 host (a `legacy` local repository with a random pass). The job moves the repository to `/var/lib/care-pi/backup/pg.legacy`, writes the derived pass, restarts care-db, runs `stanza-create`, makes a full backup, and sends a snapshot to each destination. |
 
 With `remove_old_repositories: true` (the default; the CLI flag `--keep-old-repositories` turns it off), the job deletes
