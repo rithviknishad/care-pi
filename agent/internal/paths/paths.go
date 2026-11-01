@@ -87,7 +87,8 @@ const (
 	PublicState    = "/var/lib/care-pi/state/tls-public.json"
 	TailscaleState = "/var/lib/care-pi/state/tls-tailscale.json"
 	WiFiState      = "/var/lib/care-pi/state/wifi.json"
-	// Secret files of Phase 6 (below SecretsDir). The PSK is in NetworkManager's own keyfile too (0600 root).
+	// Secret files of Phase 6 (below SecretsDir). The Wi-Fi passphrase is only in the keyfile of NetworkManager
+	// (0600 root): WiFiSecretFile is the file of an older agent, which the Wi-Fi jobs delete.
 	DNSClientKeyFile = "/etc/care-pi/secrets/dns_client.key"
 	// DNSClientPendingKeyFile is the new key of "care-pi tls public rotate --new-key" until the service took it.
 	DNSClientPendingKeyFile = "/etc/care-pi/secrets/dns_client.key.pending"

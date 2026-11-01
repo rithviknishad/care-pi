@@ -8,7 +8,7 @@
 // changes the eth0 connection that the setup depends on (01 §12).
 //
 // The PSK never goes on a command line: the agent writes the NetworkManager keyfile (mode 0600, root) through the
-// stdin of a transient unit, then loads it with "nmcli connection load". secrets/wifi.json keeps a copy for apply.
+// stdin of a transient unit, then loads it with "nmcli connection load". The keyfile is the only store of the PSK.
 package wifi
 
 import (

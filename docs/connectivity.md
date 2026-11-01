@@ -308,8 +308,10 @@ API: `GET /network/wifi/scan`, then `PUT /network/wifi`. The job is `network-wif
 | `wifi-verify` | Read `ip route`: ethernet has the lower metric with the failover on. |
 | `write-config` | Set `network.wifi`, then apply (the pod publishes on the new address). |
 
-The passphrase goes from the request to `secrets/wifi.json` (0600) and to the keyfile of NetworkManager. It is never
-in a command line, `config.yaml`, or a log. Remove: `care-pi network wifi remove`, or `DELETE /network/wifi`.
+The passphrase goes from the request only to the keyfile of NetworkManager (0600, root). `config.yaml` keeps the SSID.
+The passphrase is never in `/etc/care-pi` (so never in a backup), a command line, or a log. An older agent wrote
+`secrets/wifi.json` (nothing read it, and each backup copied it): the next `network-wifi` job deletes it. A restore from
+a backup does not bring the Wi-Fi back: set it again. Remove: `care-pi network wifi remove`, or `DELETE /network/wifi`.
 
 The Wi-Fi settings of the Raspberry Pi Imager are NetworkManager profiles too (for example `preconfigured`).
 `GET /network` shows them in `wifi.profiles`. care-pi does not change them.
@@ -331,7 +333,6 @@ The Wi-Fi settings of the Raspberry Pi Imager are NetworkManager profiles too (f
 | `/var/lib/care-pi/state/tls-public.json` | agent | The id, the name, the last address and the time of its update. |
 | `/var/lib/care-pi/state/tls-tailscale.json` | agent | The last state of the Tailscale job. |
 | `/var/lib/care-pi/state/wifi.json` | agent | The last state of the Wi-Fi job. |
-| `/etc/care-pi/secrets/wifi.json` | agent | The SSID and the passphrase (0600). |
 | `/var/lib/care-pi/state/pod-live.json` | agent | The published addresses of the pod that runs. |
 | `/etc/systemd/system/care-dns-update.{timer,service}` | apply | The address updates (public mode only). |
 | `/etc/systemd/system/care-pi-firewall.service.d/50-care-pi-tailscale.conf` | apply | UDP 41641 (Tailscale mode only). |

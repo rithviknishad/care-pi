@@ -239,8 +239,8 @@ type Network struct {
 	WiFi *WiFi `yaml:"wifi,omitempty" json:"wifi,omitempty"`
 }
 
-// WiFi is a Wi-Fi profile (Phase 6, S35): a NetworkManager connection beside ethernet. The PSK is in
-// secrets/wifi.json, never here.
+// WiFi is a Wi-Fi profile (Phase 6, S35): a NetworkManager connection beside ethernet. The PSK is only in the
+// keyfile of NetworkManager, never here.
 type WiFi struct {
 	SSID     string `yaml:"ssid" json:"ssid"`
 	Failover bool   `yaml:"failover" json:"failover"`

@@ -800,12 +800,6 @@ type WiFiRequest struct {
 	Reason   string
 }
 
-// wifiSecret is secrets/wifi.json. NetworkManager keeps its own copy in its keyfile (0600, root).
-type wifiSecret struct {
-	SSID string `json:"ssid"`
-	PSK  string `json:"psk"`
-}
-
 // wifiState is state/wifi.json.
 type wifiState struct {
 	Fingerprint string     `json:"fingerprint"`
@@ -835,7 +829,9 @@ func (s *Service) StartWiFi(ctx context.Context, req WiFiRequest, source string)
 
 func (s *Service) wifiSet(ctx context.Context, rec *jobs.Recorder, spec wifi.Spec) (any, error) {
 	wc := s.wifiClient()
-	if err := writeJSONFile(s.Paths.Abs(paths.WiFiSecretFile), wifiSecret{SSID: spec.SSID, PSK: spec.PSK}); err != nil {
+	// The keyfile of NetworkManager is the only store of the passphrase; config.yaml has the SSID. An older agent
+	// wrote secrets/wifi.json, which nothing read and each backup copied: delete it.
+	if err := os.Remove(s.Paths.Abs(paths.WiFiSecretFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
 	err := wc.Apply(ctx, spec, rec.Step)

@@ -328,7 +328,7 @@ for example `images.postgres: localhost/care-pi/postgres:17-pgbackrest`.
 
 | Key | Type | Default | Phase | Description |
 |---|---|---|---|---|
-| `network.wifi` | `null`, or `{ssid, failover, country}` | `null` | Phase 6 | The Wi-Fi network. Use `care-pi network wifi set` or `PUT /network/wifi`: the job writes the NetworkManager profile `care-pi-wifi` and this key. The passphrase is in `secrets/wifi.json` (0600) and in the keyfile of NetworkManager, never in this file. |
+| `network.wifi` | `null`, or `{ssid, failover, country}` | `null` | Phase 6 | The Wi-Fi network. Use `care-pi network wifi set` or `PUT /network/wifi`: the job writes the NetworkManager profile `care-pi-wifi` and this key. The passphrase is only in the keyfile of NetworkManager (0600), never in this file or in `/etc/care-pi`. |
 | `network.wifi.ssid` | string, 1 to 32 characters | — | Phase 6 | The network name. |
 | `network.wifi.failover` | boolean | `false` | Phase 6 | `true`: Wi-Fi is the backup of ethernet (route metric 600, autoconnect priority -10). `false`: Wi-Fi is the main network (route metric 50). |
 | `network.wifi.country` | `[A-Z]{2}`, or `null` | `null` | Phase 6 | The regulatory domain of the radio, for example `IN`. `null` keeps the value of the host (the Imager settings set it). |

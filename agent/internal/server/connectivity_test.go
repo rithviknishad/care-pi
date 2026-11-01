@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"io/fs"
 	"math/big"
 	"net/netip"
 	"os"
@@ -436,6 +437,8 @@ func TestWiFi(t *testing.T) {
 	e.want(e.do("PUT", "/api/v1/network/wifi", map[string]any{"ssid": "x", "psk": "a wifi passphrase", "country": "in", "failover": true}, invalid), 422, "invalid-request")
 	e.fake.On("sh -c command -v raspi-config", host.Response{Code: 1})
 	e.fake.On("ip -json route show default", host.Response{Out: `[{"dev":"eth0","metric":100,"gateway":"192.168.1.1"},{"dev":"wlan0","metric":600,"gateway":"192.168.1.1"}]`})
+	// The file of an older agent goes (m4).
+	must(t, os.WriteFile(e.p.Abs(paths.WiFiSecretFile), []byte(`{"ssid":"Old","psk":"an old passphrase"}`), 0o600))
 	r = e.do("PUT", "/api/v1/network/wifi", map[string]any{"ssid": "Sunrise-Staff", "psk": "a wifi passphrase", "country": "IN", "failover": true})
 	e.jobOK(r)
 	for _, c := range e.fake.Calls {
@@ -447,8 +450,21 @@ func TestWiFi(t *testing.T) {
 	if strings.Contains(string(cfgData), "passphrase") || !strings.Contains(string(cfgData), "Sunrise-Staff") {
 		t.Fatalf("config.yaml:\n%s", cfgData)
 	}
-	if st, err := os.Stat(e.p.Abs(paths.WiFiSecretFile)); err != nil || st.Mode().Perm() != 0o600 {
-		t.Fatalf("secrets/wifi.json %v %v", st, err)
+	// m4: the keyfile of NetworkManager is the only store of the passphrase. No file of care-pi has it, so no
+	// backup has it (the backups copy /etc/care-pi).
+	if _, err := os.Stat(e.p.Abs(paths.WiFiSecretFile)); !os.IsNotExist(err) {
+		t.Fatalf("secrets/wifi.json: %v", err)
+	}
+	for _, dir := range []string{paths.EtcDir, paths.DataDir} {
+		must(t, filepath.WalkDir(e.p.Abs(dir), func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			if data, _ := os.ReadFile(path); strings.Contains(string(data), "a wifi passphrase") {
+				t.Errorf("%s has the passphrase", path)
+			}
+			return nil
+		}))
 	}
 	r = e.do("GET", "/api/v1/network", nil)
 	e.want(r, 200, "")
@@ -459,9 +475,6 @@ func TestWiFi(t *testing.T) {
 	e.jobOK(e.do("DELETE", "/api/v1/network/wifi", nil))
 	if len(e.fake.Filter("nmcli connection delete care-pi-wifi")) != 1 {
 		t.Fatal("no delete")
-	}
-	if _, err := os.Stat(e.p.Abs(paths.WiFiSecretFile)); err == nil {
-		t.Fatal("secrets/wifi.json is still there")
 	}
 
 	e.fake.On("nmcli -t -f DEVICE,TYPE device status", host.Response{Out: "eth0:ethernet\n"})

@@ -261,7 +261,7 @@ var networkWiFiSetCmd = &cobra.Command{
 	Long: `Write the NetworkManager profile care-pi-wifi, connect, check the routes, and apply.
 --failover: Wi-Fi carries the traffic only when ethernet is down (route metric 600, ethernet 100).
 Without --failover, Wi-Fi is the main network (route metric 50).
-The passphrase is in /etc/care-pi/secrets/wifi.json and in the keyfile of NetworkManager (both 0600, root).`,
+The passphrase is only in the keyfile of NetworkManager (0600, root), not in /etc/care-pi.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		if connFlags.ssid == "" || !connFlags.pskStdin {

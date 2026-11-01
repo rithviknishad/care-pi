@@ -983,15 +983,15 @@ export interface paths {
          * Add or change the Wi-Fi network
          * @description Phase 6 (S35, design note section 15.4). The agent writes the NetworkManager profile `care-pi-wifi` (a secondary
          *     connection beside ethernet, not a bond), connects, checks the route metrics, and applies: the pod publishes on the
-         *     Wi-Fi address too. With `failover`, ethernet keeps the default route while it is up. The passphrase goes to
-         *     `/etc/care-pi/secrets/wifi.json` and the keyfile of NetworkManager (both 0600, root), never to `config.yaml`, a
-         *     command line, or a log. Ethernet stays required until the setup is finished. The result is a job (`network-wifi`).
+         *     Wi-Fi address too. With `failover`, ethernet keeps the default route while it is up. The passphrase goes only to
+         *     the keyfile of NetworkManager (0600, root), never to `/etc/care-pi` (so never to a backup), a command line, or a
+         *     log. Ethernet stays required until the setup is finished. The result is a job (`network-wifi`).
          */
         put: operations["setWifi"];
         post?: never;
         /**
          * Remove the Wi-Fi network of care-pi
-         * @description Phase 6. The agent deletes the profile `care-pi-wifi`, `secrets/wifi.json`, and `network.wifi`, then applies.
+         * @description Phase 6. The agent deletes the profile `care-pi-wifi` and `network.wifi`, then applies.
          *     Other Wi-Fi profiles (for example the network of the Imager settings) stay. The result is a job (`network-wifi`).
          */
         delete: operations["removeWifi"];
@@ -6126,8 +6126,8 @@ export interface components {
             ssid: string;
             /**
              * Format: password
-             * @description The WPA passphrase (printable ASCII). The agent stores it in `/etc/care-pi/secrets/wifi.json` and in the
-             *     keyfile of NetworkManager (both 0600, root). It never goes to `config.yaml`, a command line, or a log.
+             * @description The WPA passphrase (printable ASCII). The agent stores it only in the keyfile of NetworkManager (0600, root).
+             *     It never goes to `/etc/care-pi` (so never to a backup), a command line, or a log.
              * @example a wifi passphrase
              */
             psk: string;
