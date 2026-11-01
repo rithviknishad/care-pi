@@ -5,7 +5,7 @@ import http from "node:http";
 import type net from "node:net";
 import path from "node:path";
 import tls from "node:tls";
-import { expect, type Page, type TestInfo } from "@playwright/test";
+import { expect, type Locator, type Page, type TestInfo } from "@playwright/test";
 
 const e = process.env;
 
@@ -50,6 +50,15 @@ export async function saveState(page: Page, name: string): Promise<void> {
 export async function shot(page: Page, info: TestInfo, name: string): Promise<void> {
   fs.mkdirSync(env.shotsDir, { recursive: true });
   await page.screenshot({ path: path.join(env.shotsDir, `${info.project.name}-${name}.png`), fullPage: true });
+}
+
+// visibleWithin waits up to ms for an optional element (a dialog that comes after a response). locator.isVisible()
+// does not wait: its timeout option is ignored.
+export async function visibleWithin(locator: Locator, ms: number): Promise<boolean> {
+  return locator.waitFor({ state: "visible", timeout: ms }).then(
+    () => true,
+    () => false,
+  );
 }
 
 // note appends a line to <SHOTS_DIR>/<project>-journey.log and prints it.

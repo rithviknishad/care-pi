@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../fixtures";
-import { cardBoxes, env, note, shot } from "./real";
+import { cardBoxes, env, note, shot, visibleWithin } from "./real";
 
 // Phase 4 on a real device: the Updates page, an update with the maintenance banner, a rollback with the PITR
 // offer, and a plug switch. Each part changes the device, so each part is opt-in (README.md in this directory):
@@ -116,7 +116,7 @@ test("install the target with the maintenance banner; the history gets a row", a
   await page.getByTestId("update-apply").click();
   await page.getByTestId("apply-confirm").click();
   const anyway = page.getByTestId("apply-anyway");
-  if (await anyway.isVisible({ timeout: 5_000 }).catch(() => false)) {
+  if (await visibleWithin(anyway, 5_000)) {
     note(info, "the window is closed: Install anyway");
     await anyway.click();
   }
@@ -140,7 +140,7 @@ test("roll back; the PITR offer links to the Restore page", async ({ page }, inf
   await page.getByTestId("update-rollback").click();
   await page.getByTestId("rollback-confirm").click();
   const reauth = page.getByRole("dialog", { name: "Enter your password again" });
-  if (await reauth.isVisible({ timeout: 5_000 }).catch(() => false)) {
+  if (await visibleWithin(reauth, 5_000)) {
     await reauth.getByLabel("Console password").fill(env.consolePassword);
     await reauth.getByRole("button", { name: "Confirm" }).click();
   }

@@ -1,6 +1,6 @@
 import { expect, test } from "../fixtures";
 import { addDestination, backupEnv } from "./backups-journey";
-import { cardBoxes, env, note, pageWidth, shot } from "./real";
+import { cardBoxes, env, note, pageWidth, shot, visibleWithin } from "./real";
 
 // The Backups and Restore pages on a real device that is ready (Phase 3): the read-only checks run on the desktop
 // and on the phone; the jobs run only on the desktop and only with their variable (e2e/real/README.md):
@@ -29,7 +29,7 @@ async function open(page: import("@playwright/test").Page, path: string, project
 
 async function password(page: import("@playwright/test").Page) {
   const dialog = page.getByRole("dialog", { name: "Enter your password again" });
-  if (await dialog.isVisible({ timeout: 3000 }).catch(() => false)) {
+  if (await visibleWithin(dialog, 3000)) {
     await dialog.getByLabel("Console password").fill(env.consolePassword);
     await page.getByRole("button", { name: "Confirm", exact: true }).click();
   }
