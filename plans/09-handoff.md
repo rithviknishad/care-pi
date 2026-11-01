@@ -541,3 +541,36 @@ shared list, table, switch, and section (Phase 3 first). The semantic changes be
   files (lock v2, `care-additional-plugs`, the update timers); `custom-build` has the Phase 3 backup units.
 
 Next step: unchanged — the Phase 4 exit test on lumine (`08-spike-log.md`, "Phase 4 exit test — plan"), now on the merged binary.
+
+### 8j. Phase 4 exit test result (wave 6b, 2026-11-01)
+
+**PASS (3 of 3) on lumine, with 8 fixes** (`a85395e` … `137057a`, one signed commit each, with tests). The record is
+`08-spike-log.md`, "Phase 4 exit test — lumine, 2026-11-01". The merged agent (Phases 3 and 4, F1 to F9) runs on lumine.
+
+- **Criterion 1.** The window timer updated 2026.11.0 → 2026.11.1 at 10:05:32 (window 09:57–10:57). The maintenance page
+  was on for 65.2 s and showed the live step text (checkpoint, migrate, start, verify); `/_care-pi/status` had
+  `maintenance{}`. Both FE plugs load from the device (`/plugs/<slug>/<sha12>/`). No stale `activating` marker (F3).
+- **Criterion 2.** The broken image failed in `migrate`; the agent rolled back to 2026.11.1 and gave the PITR offer.
+  The test took the offer through `POST /restore` (68 s job): the data before the checkpoint stays, the data after the
+  rollback goes, Care is healthy. The manual rollback, `systemctl stop care-update-apply.service` in `migrate` (F6),
+  and the return to 2026.11.1 work.
+- **Criterion 3.** `PUT /plugs/{id}`: an FE plug off and on in 4.2 s (the `PlugConfig` row goes and comes back; the
+  browser loads the plug only when it is on); a backend plug on (`cutover`, 63 s) and off (`restart`, 60 s). A
+  plug-change cutover stopped with SIGTERM writes `config.yaml` back and renders the plug set of the previous lock (F4).
+- **Phase 3 after the merge.** Run and verify of the 4 destinations pass; 14 timers active; the console journeys of
+  `backups.spec.ts` pass. Reboot: Care answers after 113 s; `multi-user.target` 9.2 s.
+
+The fixes: `make-lock.sh --plug-bundle` (built FE plug bundles in a dev lock); `restic unlock` of stale locks before
+forget, prune, and check, also in the timer run (an SFTP run that lost its connection left a lock, and `mac` stayed
+`degraded`); the path of an update target is `cutover` (the console said "Care keeps running"); `config set` removes
+the quotes of a quoted env value; a `--lock-file` lock is not `latest`/`available` when an index exists; two spec
+fixes of `e2e/real` (the login of `backups.spec.ts`, the optional dialogs of `updates.spec.ts`).
+
+Images: the ghcr packages are private and the `gh` token has no `read:packages`, so the test built the solution image
+(same inputs as run 41271422028) and the broken image on the Mac and loaded them into podman on lumine under their
+ghcr names; the locks name them by the digest that podman recorded. The dist is `file:///var/lib/care-pi-dist/`.
+
+Open after Phase 4 (the owner decides; `08` has the list): public images (or a pull credential) and public release
+assets (`docs/solutions.md` open point 1); a maintenance page for the path `restart` (56 s of API break); the staging
+of a failed `--lock-file` update; `care-api` at 487 of 512 MiB; `agent-too-old` with a tagged build; `update --os --now`
+and F5; F1 on a device. Next phase: Phase 5 (the image).

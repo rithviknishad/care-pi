@@ -902,8 +902,11 @@ after `update --os` (F5).
 
 ## Phase 4 exit test — plan (wave 6a; run after the merge of Phase 3 and Phase 4)
 
-Status: **not run**. Wave 6a did not use lumine (wave 6a rule: a Phase 3 agent owned it). Run this plan after the
-merge. Keep the raw output in `local/wave6-exit/` (S39).
+Status: **run on lumine 2026-11-01 — PASS (3 of 3), with 8 fixes** (the result is the section "Phase 4 exit test —
+lumine, 2026-11-01" below). The plan text stays as written; the run deviated from it in the points that the result
+lists (the solution image built on the Mac, built FE plug bundles, `CARE_PI_TEST_FAIL_MIGRATE=1` without quotes,
+`.configs[]` of `plug_config`). Wave 6a did not use lumine (wave 6a rule: a Phase 3 agent owned it). Keep the raw
+output in `local/wave6-exit/` (S39).
 
 Exit criteria (`06` Phase 4):
 
@@ -1116,3 +1119,108 @@ Assert after each step:
   agent marks the job `interrupted` and runs `update-rollback` (`reason: recovery <job id>`).
 
 Write the results as the section "Phase 4 exit test" below this plan, and update `09` §8h.
+
+## Phase 4 exit test — lumine, 2026-11-01 — **PASS (3 of 3), with 8 fixes and follow-ups**
+
+Wave 6b. The merged tree (`4dd6ae3`, Phases 3 and 4 and the review fixes F1 to F9) on lumine, from the Phase 3 stack
+`ready` (a restore from backup of wave 5a). One agent ran the test; it was the only agent on lumine. The agent binary
+is `make build-linux` (with the console); each fix went to lumine before the next step (last binary `137057a`).
+Scripts and raw output: `local/wave6-exit/` (S39).
+
+**Images and dist (deviations from the plan).** The ghcr package `ghcr.io/rithviknishad/care-pi/care` is private
+(an anonymous token gives 401), and the `gh` token of the Mac has no `read:packages` scope (`docker login` works, a
+pull gives "denied"). So neither the Pi nor the Mac can pull the image of run 41271422028 (`solution-image.yml`,
+`version=2026.11.0`, success). The test built the same image on the Mac (`images/care/Containerfile`; `BASE` the
+upstream digest `77fe743e…`; the superset install list of the workflow: `care_multihost_files_be@main`,
+`care_filly@develop`; `ADDITIONAL_PLUGS=[]`), and the broken image on top of it, then `docker save | gzip | ssh lumine
+sudo podman load` (2 min 36 s). The names stay `ghcr.io/rithviknishad/care-pi/care:…`. Each lock names
+`ghcr.io/rithviknishad/care-pi/care@<digest that podman recorded at the load>` (`992c1a56…`, broken `835e394e…`):
+`podman image exists REPO@digest` is true, so `stage-pull` pulls nothing and the units run the images by digest,
+as with a public image. The base images `postgres` and `caddy` stay the local images of Phase 1 (`images.*` of
+`config.yaml`). The two FE plugs are built bundles (Node 22 in Docker, `--base /plugs/<slug>/<sha12>/`, as
+`plug-bundle.yml`), with the new `make-lock.sh --plug-bundle` (fix 1). The dist is `file:///var/lib/care-pi-dist/`
+(`updates.index_url`).
+
+| # | Criterion | Result |
+|---|---|---|
+| 0 | Preconditions | **PASS** — `go test -race ./...`, `golangci-lint` (0 issues), `make build-linux` |
+| — | Step 1: the merged agent; the version 1 lock | **PASS** — `update status`: `current.version: null`, `track: stable`. The plan of the apply was as expected (the secret `care-additional-plugs`, `backend.env`, the 4 timer files, a restart of beat, worker, api, `plug-config`, `write-lock`) and an FE build for the superset env (`114c8add61551748`): **1 min 39 s**, not 15 min (warm npm cache). Apply 2 min 44 s. `lock.yaml` version 2 with `history.previous`; both update timers active; `TimeoutStartSec=infinity`, `TimeoutStopSec=15min` (F6) |
+| — | Step 2: lock N (2026.11.0) | **PASS** — `make-lock.sh` gave the build id of lumine (`114c8add61551748`). Check: `update_available: true`, target 2026.11.0. `update apply --now`: the steps of section 8.1, job 66 s, downtime 65.9 s; `solution.version: 2026.11.0`, `source: lock`; api, worker, beat run `…care@sha256:992c1a56…` |
+| 1 | N → N+1 inside the window, with the maintenance page | **PASS** — window Sun 09:57–10:57, `updates.auto: true`. The check staged N+1 at once (0.17 s; path `cutover` after fix 3). `care-update-apply.timer` fired at 10:05:32 (random delay 8 min 32 s); job `update-apply`, `source: timer`, succeeded, the steps of section 8.1. Page on → off **65.2 s** (stop 0.7 s, checkpoint 2.4 s, activate 0.04 s, migrate 32.0 s, start 25.3 s, plug-config 3.4 s, verify 1.5 s). `lock.yaml` 2026.11.1, `history.previous` = the file of 2026.11.0. `plug_config`: both FE plugs with `https://lumine.local/plugs/<slug>/<sha12>/assets/remoteEntry.js`, each 200. The checkpoint: incremental `…-043533I` with `care-pi-reason: before update-apply <job>`; the history entry has `backup_label` and `restore_point: null`; `restore points` lists it with `job_kind: update-apply`. `state/updates.json` has no cutover and no `activating` after the job (F3). Chromium on the Mac (tunnel and proxy) logs in to Care: both plugs load (200), no `PluginEngine` error; the onboarding plug opens "Clinic setup" |
+| 1b | The maintenance page from the Mac | **PASS** — Chromium stayed on `https://lumine.local/`; `#step` changed "Make a backup point of the database" → "Update the database" → "Start Care" → "Make sure that Care works", then Care (5 HTML snapshots and screenshots, `maint-c1/`). `GET /_care-pi/status` had `maintenance{active, kind: update-apply, job_id, step, started_at}` with the step of the job |
+| 2 | A forced migration failure rolls back to N and offers PITR | **PASS** (second attempt) — `CARE_PI_TEST_FAIL_MIGRATE=1`, then `update apply --lock-file` (2026.11.2, the broken image): checkpoint, activate, migrate failed after 8.2 s (the beat journal: "care-pi test: forced migration failure"), rollback 58.9 s, maintenance-off; job 70.3 s. `error.type …/migration-failed` with `pitr_offer {available: true, checkpoint_at, target_time, restore_point: null, restore: {kind: pitr, time}}`; `last_result.outcome: rolled-back` with the same offer. `lock.yaml` stayed 2026.11.1; the units run the image of N+1; `/ping/` 200; the page is off. The first attempt used the value `"1"` of the plan: the quotes went into `backend.env` (fix 4), the hook did not fire, and 2026.11.2 installed; a manual rollback (63.8 s) went back to 2026.11.1 |
+| 2b | Take the PITR offer through the API | **PASS** — a login (the reauthentication), then `POST /restore` with `pitr_offer.restore`: job `restore-pitr` 68.1 s, downtime 64.8 s (`/ping/` not 200 for about 61 s), timeline 6 → 7. The marker user made before the update stays; the marker made after the rollback is gone (the offer says so); both patients and the file row are there; Care healthy |
+| 2c | Manual rollback (section 9) and back | **PASS** — `update rollback --to <lock of 2026.11.0>`: 63.1 s, the offer of the update that installed the running lock; then `update_available: true` on `stable`. `systemctl stop care-update-apply.service` during `migrate` of the window run (F6): SIGTERM → rollback → page off → "stopped by a signal: no more work in this window"; the stop returned after 60 s; the lock stayed 2026.11.0. `update apply --version 2026.11.1 --now` returned to N+1 |
+| 3 | Plug switches give a working Care (through `PUT /plugs/{id}`, dry run, then apply) | **PASS** — `care_fasterappointments_fe` off: path `plug-config`, job 4.2 s, no downtime, the `PlugConfig` row is gone (API and `manage.py shell`); on: path `plug-config`, 4.2 s, the row is back, `/plugs/care_fasterappointments_fe/72a3625655d8/assets/remoteEntry.js` 200. Chromium: the plug loads when it is on and is not requested when it is off. `care_multihost_files_be` on: path `cutover`, 63.3 s, downtime 62.5 s; `ADDITIONAL_PLUGS` and `additional-plugs.json` list it (no secret); no `ModuleNotFoundError`. Off (`null`): path `restart`, 60.3 s, API down 56.5 s without the page. Back to the solution value: path `none`, no job. F4: `plugs set care_multihost_files_be --enabled=true --apply`, SIGTERM during `migrate`: rollback; `config.yaml` has no `solution.plugs` entry again, `ADDITIONAL_PLUGS` empty, the lock has the plug off, outcome `rolled-back` |
+| — | Phase 3 after the merge | **PASS** — `backup run --scope all` 62 s, `backup verify --scope all` 94 s, the 4 destinations `ok` (the `mac` destination was `degraded` at the start: fixes 2 and 5), 14 timers active (12 backup, 2 update). Console journeys of `backups.spec.ts` (desktop and phone; `BACKUP_JOBS=1`: Back up now, Verify, the drill) pass |
+| — | Real-device Playwright specs | **PASS** after 2 spec fixes (6 and 8) — `desktop.login`, `phone.ready` (TOTP on and off), `backups` (desktop, phone, and the jobs), `updates` (`UPDATES_TEST=1` with `UPDATES_PLUG=care_fasterappointments_fe`; then `UPDATES_APPLY=1 UPDATES_ROLLBACK=1`: "Install anyway" after the window, the banner steps, the public `maintenance`, the history row, the rollback with the password and the link `/restore?time=…`) |
+| — | Reboot | **PASS** — SSH back in 33 s, Care `/ping/` 200 after 113 s, boot finished 1 min 39 s, `multi-user.target` 9.2 s (`w5-s3` waits for `network-online`). Each care unit, `care-pi.service`, `care-backup.target`, the 14 timers active; lock 2026.11.1. The `usb` timer run failed at boot (the loop device is not attached again; known); after `losetup` it is `ok` |
+
+### Fixes (each is one signed commit with a test)
+
+| # | Symptom on lumine | Cause | Fix | Commit |
+|---|---|---|---|---|
+| 1 | A dev lock could not use a built FE plug bundle; the FE plugs pointed at `github.io`/`pages.dev` | `make-lock.sh` wrote only external FE plugs | `--plug-bundle ID=FILE` copies a bundle of `plug-bundle.yml` to `plug-<slug>-<sha12>/` and writes `source: built`; `e2e-local.sh` uses it | `a85395e` |
+| 2 | `mac` `degraded` since 04:55: each `forget` failed with "lock was created … (4h45m ago)" | an SFTP run lost its connection (ssh exit 255) and left its restic lock; an exclusive operation fails on it | `restic unlock` (stale locks only) under the destination lock before `forget`, the verify, and the removal of an old repository | `0f11657` |
+| 3 | The check of N+1 gave the path `plug-config` and `estimated_downtime_s: 0` ("Care keeps running"); the update stopped Care for 65 s | `update-apply` always runs the cutover, but `pathOf` returned the path of the plan | the path of an update target is `cutover` (or `build-and-cutover`, or `none`) | `46497b7` |
+| 4 | `config set env.backend.KEY='"1"'` put `KEY="1"` (with the quotes) into `backend.env`; the forced failure did not fire | `SetKey` keeps the raw text of an env value | a quoted YAML scalar gives its string; other env values keep their text (`1.10`, `0123`) | `4ed023f` |
+| 5 | After fix 2 the timer runs of `mac` still failed their `forget` | the timer run (snapshot, then forget) calls `forgetLocked` directly | `restic unlock` before the forget of a timer run too; checked on lumine with a restic that got SIGKILL | `436d847` |
+| 6 | `backups.spec.ts` failed on both projects at once | `open()` checked the URL before the SPA went to `/login` | the first page of a test logs in through `/login?next=` | `e2a6776` |
+| 7 | After the `--lock-file` test, `GET /updates` gave `latest: 2026.11.2`, `available: [2026.11.2]`; the console showed the TEST ONLY lock as the newest | each lock of `--lock-file` is cached, and the overview merged the cache into the index | with an index that lists the solution, `latest` and `available` are the index locks | `2f30b82` |
+| 8 | `updates.spec.ts` did not press "Install anyway" after the window closed | `locator.isVisible({timeout})` does not wait | `visibleWithin` (`locator.waitFor`) for the optional dialogs | `137057a` |
+
+### Timings
+
+| Event | Time |
+|---|---|
+| Solution image on the Mac / transfer to lumine (both images) | about 1 min (cached layers) / 2 min 36 s |
+| Step 1 apply with the FE build of the superset env | 2 min 44 s (FE build 1 min 39 s) |
+| Stage of N+1 after the check (images present, one 72 KB plug bundle) | 0.17 s |
+| Cutover N → N+1 (timer): page on → off | 65.2 s (`/ping/` 503 from 10:05:33 to 10:06:37) |
+| — stop / checkpoint / migrate / start / plug-config / verify | 0.7 s / 2.4 s / 32.0 s / 25.3 s / 3.4 s / 1.5 s |
+| Forced migration failure: job / migrate to the failure / rollback / downtime | 70.3 s / 8.2 s / 58.9 s / 70.1 s |
+| PITR to the offer (API): job / downtime | 68.1 s / 64.8 s |
+| Manual rollback (cutover) | 63–64 s |
+| Plug switch FE (path `plug-config`), each way | 4.2 s, no downtime |
+| Plug switch BE on (`cutover`) / off (`restart`) | 63.3 s (downtime 62.5 s) / 60.3 s (API down 56.5 s, no page) |
+| `backup run --scope all` / `backup verify --scope all` | 62 s / 94 s |
+| Reboot: SSH / Care `/ping/` 200 / boot finished | 33 s / 113 s / 1 min 39 s |
+
+### Memory (`MemoryPeak`; cap in brackets)
+
+| Unit | Peak |
+|---|---|
+| `care-pi.service` (the agent, after the cutover of criterion 1) | 72.5 MiB (128M) |
+| `care-update-apply.service` (the CLI of the window run) | 41.3 MiB; 43.5 MiB with the F6 stop |
+| `care-beat` after a cutover / after the boot | 262 MiB / 372 MiB (512M) |
+| `care-db` | 225 MiB (384M) |
+| `care-api` | 487 MiB (512M) |
+| `care-worker` | 333 MiB (384M) |
+| `care-caddy` | 110.6 MiB (128M) |
+| A destination unit (restic, `care-backup-db@mac`) | 65 MiB |
+
+### Follow-ups (not fixed; the owner decides)
+
+1. **The images on ghcr are private.** The release flow of `docs/solutions.md` needs them public (S43), or a device
+   needs a pull credential. The test used images built on the Mac with the same inputs.
+2. **The path `restart` has no maintenance page**, but the API was down for 56 s (beat, then worker and api). Section
+   12.1 says "seconds of API break". Show the page, or say "about 1 minute".
+3. **A failed `--lock-file` update leaves its staging** (`state: staged`, the target of the lock file) until the next
+   check or stage. Only the CLI test path makes it.
+4. **`care-api` reached 487 MiB of its 512M cap** and `care-caddy` 110.6 of 128M. Watch both on a 2 GB Pi.
+5. **`agent-too-old` was not tested**: the binary has no tag, so it passes with a warning (section 7.4). Test it with a
+   tagged build.
+6. **OS updates**: only the read-only check ran (13 packages can upgrade; the 6 held packages stay `keep`).
+   `update --os --now` and the F5 check of `apt-mark showhold` after it need the owner's approval.
+7. **F1** (a rotation with destinations) was not run in this wave.
+8. **The public status endpoint has 60 requests each minute for each address.** Two 1-second watchers through one
+   tunnel address got `429`; the maintenance page itself polls each 5 s. Not a defect; a note for the next tests.
+9. **Test operator error, repaired**: a `podman untag` of a probe tag without a name removed each name of the image,
+   also `localhost/care-pi/caddy:2` (the running container kept it). `images_present: false` of the rollback card
+   showed it. The tag was set again before the reboot.
+
+Leftovers on lumine (test only): `/var/lib/care-pi-dist/` (the dist of locks 2026.11.0 and 2026.11.1, the FE bundle,
+2 plug bundles), `updates.index_url: file:///var/lib/care-pi-dist/index/index.json`, the images
+`ghcr.io/rithviknishad/care-pi/care:care-clinic-2026.11.0` and `…:care-clinic-test-broken-migrate`,
+`~/wave6/` (scripts, `p4-broken.lock.yaml`, `api.py`), and the cached TEST ONLY lock 2026.11.2 in
+`state/update-cache/locks/`. The leftovers of wave 5a stay (`w5-s3`, the loop device, `/srv/care-backups`).

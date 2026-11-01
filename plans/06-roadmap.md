@@ -138,7 +138,7 @@ Headscale option; documentation site for operators (per solution) and developers
 | Operator loses recovery key and device | data loss | low but severe | confirmation ceremony; persistent banner; printable sheet |
 | Let's Encrypt rate limits as clinic count grows | enrolment failures | low early | PSL application; rate-limit increase request |
 
-## Status (2026-10-31, after the Phase 3 exit test)
+## Status (2026-11-01, after the Phase 4 exit test)
 
 Phase 0: SP1–SP6 are done (results in `08-spike-log.md`, folded back into `01`/`02`/`03`/`05`);
 SP7–SP11 are pending. All proposals in `00` §B are accepted (S37, S40); S41–S43 were added
@@ -153,6 +153,12 @@ units table, the progress texts) and a first-contact test on the same LAN (SP7) 
 **Phase 3 server code is complete and its exit test passed on lumine** (wave 5a, 2026-10-31: the golden path of `05` §7
 with a local, a USB, an SFTP, and an S3 destination; PITR and its undo; files restore; drill; outage isolation; a purge and
 a restore from backup with only the claim, the recovery key, and one destination, in 8 min 46 s; `08-spike-log.md` "Phase 3
-exit test", `09-handoff.md` §8g). The Phase 3 console (wave 5b) needs its device e2e; DR on a second Pi is still to do.
+exit test", `09-handoff.md` §8g). The Phase 3 console journeys (`backups.spec.ts`) passed on lumine in wave 6b; DR on a
+second Pi is still to do. **Phases 3 and 4 are merged, and the Phase 4 exit test passed on lumine** (wave 6b, 2026-11-01:
+an update N → N+1 by the window timer with the maintenance page, 65 s; a forced migration failure rolled back and the PITR
+offer restored the database through the API; FE and backend plug switches; Phase 3 run, verify, and reboot after the merge;
+8 fixes; `08-spike-log.md` "Phase 4 exit test", `09-handoff.md` §8j). Open for Phase 4: public images and release assets
+(`docs/solutions.md` open point 1), a maintenance page for the path `restart`, `agent-too-old` with a tagged build,
+`update --os --now` on a device, and the follow-ups in `08`. Next: Phase 5 (the image).
 The remaining open questions (`00` §C: O4, O6 plug set, O7 upstream PR timing, O9, O11, O12,
 O13, O16, O17) each become blocking only in the phase noted there.
