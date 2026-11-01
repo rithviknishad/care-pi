@@ -38,6 +38,7 @@ func Default() *Config {
 				DBIncr: "daily 02:00",
 				Files:  "daily 02:30",
 				Verify: "Sat 03:00",
+				Drill:  "*-*-01 04:00",
 			},
 			Retention: BackupRetention{
 				DBFull:          2,
@@ -45,6 +46,8 @@ func Default() *Config {
 				FilesKeepDaily:  14,
 				FilesKeepWeekly: 8,
 			},
+			AlertAfterHours: 24,
+			DrillEnabled:    true,
 		},
 		Updates: Updates{
 			Auto: false,

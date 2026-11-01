@@ -1,0 +1,4 @@
+version: 1
+backups:
+  destinations:
+    - {id: usb, type: posix, path: /mnt/care-backup, disk_label: care-usb1}

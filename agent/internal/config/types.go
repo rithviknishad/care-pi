@@ -107,11 +107,15 @@ type Clock struct {
 }
 
 // Backups holds the backup settings. Phase 1 uses only WALArchiveTimeoutMin and Retention.DBFull.
+// Phase 3 uses the other keys (docs/config.md, docs/api/README.md section 13).
 type Backups struct {
 	WALArchiveTimeoutMin int                 `yaml:"wal_archive_timeout_min" json:"wal_archive_timeout_min"`
 	Schedule             BackupSchedule      `yaml:"schedule" json:"schedule"`
 	Retention            BackupRetention     `yaml:"retention" json:"retention"`
 	Destinations         []BackupDestination `yaml:"destinations,omitempty" json:"destinations,omitempty"`
+	Paused               bool                `yaml:"paused" json:"paused"`
+	AlertAfterHours      int                 `yaml:"alert_after_hours" json:"alert_after_hours"`
+	DrillEnabled         bool                `yaml:"drill_enabled" json:"drill_enabled"`
 }
 
 // BackupSchedule holds systemd calendar expressions (Phase 3).
@@ -120,6 +124,7 @@ type BackupSchedule struct {
 	DBIncr string `yaml:"db_incr" json:"db_incr"`
 	Files  string `yaml:"files" json:"files"`
 	Verify string `yaml:"verify" json:"verify"`
+	Drill  string `yaml:"drill" json:"drill"`
 }
 
 // BackupRetention holds the retention counts.
@@ -141,6 +146,21 @@ type BackupDestination struct {
 	Endpoint string `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
 	Bucket   string `yaml:"bucket,omitempty" json:"bucket,omitempty"`
 	Region   string `yaml:"region,omitempty" json:"region,omitempty"`
+	// Phase 3 keys.
+	DiskLabel   string                `yaml:"disk_label,omitempty" json:"disk_label,omitempty"`
+	HostKey     string                `yaml:"host_key,omitempty" json:"host_key,omitempty"`
+	Prefix      string                `yaml:"prefix,omitempty" json:"prefix,omitempty"`
+	IntervalMin int                   `yaml:"interval_min,omitempty" json:"interval_min,omitempty"`
+	Retention   *DestinationRetention `yaml:"retention,omitempty" json:"retention,omitempty"`
+}
+
+// DestinationRetention is the restic forget policy of one destination.
+// A nil value gets the default of docs/config.md. Pointers keep an explicit 0.
+type DestinationRetention struct {
+	KeepWithinDays *int `yaml:"keep_within_days,omitempty" json:"keep_within_days,omitempty"`
+	KeepDaily      *int `yaml:"keep_daily,omitempty" json:"keep_daily,omitempty"`
+	KeepWeekly     *int `yaml:"keep_weekly,omitempty" json:"keep_weekly,omitempty"`
+	KeepMonthly    *int `yaml:"keep_monthly,omitempty" json:"keep_monthly,omitempty"`
 }
 
 // Updates holds the update settings (Phase 4).
