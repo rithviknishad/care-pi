@@ -79,6 +79,8 @@ Never use --insecure-dev on a clinic device.`,
 		svc.Log = log
 		svc.Auth = auth.New(auth.Options{Paths: p, OS: auth.Shadow{Paths: p}, Log: log})
 		svc.Jobs = &jobs.Manager{Paths: p, Log: log}
+		// SIGTERM stops serve; the jobs of the daemon do not take a failure path of their own.
+		svc.StopOnSignal = false
 		svc.Host = host.New(host.Transient{})
 		if global.verbose {
 			svc.Host = host.New(host.Transient{Exec: host.Exec{Log: cmd.ErrOrStderr()}})
@@ -106,11 +108,7 @@ Never use --insecure-dev on a clinic device.`,
 			log.Warn("jobs were interrupted by a stop of their process", "ids", ids)
 		}
 		// Phase 4: an update that a power loss interrupted (docs/solutions.md, section 8.6).
-		if j, err := svc.RecoverUpdates(cmd.Context()); err != nil {
-			log.Error("cannot recover the interrupted update", "error", err)
-		} else if j != nil {
-			log.Warn("recovery of an interrupted update", "job", j.ID)
-		}
+		recoverUpdate(cmd.Context(), svc.RecoverUpdates, log)
 		dist, err := fs.Sub(console.Dist, "dist")
 		if err != nil {
 			return err
@@ -121,6 +119,10 @@ Never use --insecure-dev on a clinic device.`,
 		if svc.Internet != nil {
 			go svc.Internet.Run(ctx)
 		}
+		// Also a CLI job of a timer that stopped inside a cutover: check each minute, not only at the start.
+		recoveryTicker := time.NewTicker(recoveryInterval)
+		defer recoveryTicker.Stop()
+		go recoverUpdates(ctx, recoveryTicker.C, svc.RecoverUpdates, log)
 		log.Info("care-pi serve: ready", "listen", l.Addr().String(), "dev", f.insecureDev, "setup_state", svc.SetupStateName())
 		if err := server.Notify("READY=1"); err != nil {
 			log.Warn("sd_notify failed", "error", err)
@@ -136,6 +138,29 @@ Never use --insecure-dev on a clinic device.`,
 		log.Info("care-pi serve: stopped")
 		return err
 	},
+}
+
+// recoveryInterval is the period of the check for an interrupted update (docs/solutions.md, section 8.6).
+const recoveryInterval = time.Minute
+
+// recoverUpdates runs the recovery of an interrupted update at each tick until ctx ends.
+func recoverUpdates(ctx context.Context, tick <-chan time.Time, run func(context.Context) (*jobs.Job, error), log *slog.Logger) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick:
+			recoverUpdate(ctx, run, log)
+		}
+	}
+}
+
+func recoverUpdate(ctx context.Context, run func(context.Context) (*jobs.Job, error), log *slog.Logger) {
+	if j, err := run(ctx); err != nil {
+		log.Error("cannot recover the interrupted update", "error", err)
+	} else if j != nil {
+		log.Warn("recovery of an interrupted update", "job", j.ID)
+	}
 }
 
 // checkServeFlags checks the flags of serve: the dev flags need --insecure-dev, --insecure-dev

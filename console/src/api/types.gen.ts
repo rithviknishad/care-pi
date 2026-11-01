@@ -1931,6 +1931,8 @@ export interface paths {
          *     - `version` on `stable`: only the newest lock (else `422 invalid-request`; pin the track to install another one).
          *       On `pinned`: any lock of the solution; the agent writes `solution.pin`. On `custom`: the base lock.
          *     - Outside the update window, `409 update-window-closed` with `next_window_at`, unless `now` is `true`.
+         *       Without `now`, the job checks the window again before its cutover: when less than 10 minutes of the window
+         *       remain, the job fails with `update-window-closed` (no change; the target stays staged).
          *     - `409 agent-too-old` when the lock needs a newer agent. `404 lock-not-found` for an unknown version.
          */
         post: operations["startUpdate"];

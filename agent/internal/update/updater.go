@@ -5,12 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"go.yaml.in/yaml/v3"
@@ -65,6 +68,50 @@ type Updater struct {
 	AgentVersion string
 	// Ready reports whether the setup state is ready. nil: the apply phase of the host is full.
 	Ready func() bool
+	// StopOnSignal makes SIGTERM and SIGINT end the context of an update, rollback, plug change, or OS
+	// update (a CLI process: systemd stops care-update-apply.service, or Ctrl-C). The job then takes its
+	// failure path, and the signal does not stop the process. care-pi serve leaves it false.
+	StopOnSignal bool
+	// CutoverMargin is the time of the window that must remain to start a cutover (DefaultCutoverMargin when 0).
+	CutoverMargin time.Duration
+}
+
+// DefaultCutoverMargin is the part of the update window that a cutover needs: a measured cutover takes about
+// 6 minutes on a Pi 5 (stop, checkpoint, migrate, start, verify), plus a margin.
+const DefaultCutoverMargin = 10 * time.Minute
+
+// ErrInterrupted tells that SIGTERM or SIGINT ended the job (Updater.StopOnSignal).
+var ErrInterrupted = errors.New("interrupted: the command got SIGTERM or SIGINT")
+
+// signalContext returns ctx that SIGTERM and SIGINT end, when StopOnSignal is set.
+func (u *Updater) signalContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if !u.StopOnSignal {
+		return ctx, func() {}
+	}
+	return signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+}
+
+// interrupted returns ErrInterrupted after the end of ctx: the next step of the job does not start.
+func interrupted(ctx context.Context) error {
+	if ctx.Err() != nil {
+		return ErrInterrupted
+	}
+	return nil
+}
+
+// stopped marks the error of a step that a signal ended as ErrInterrupted: the step is failed, not cancelled.
+func stopped(ctx context.Context, err error) error {
+	if err != nil && ctx.Err() != nil && !errors.Is(err, ErrInterrupted) {
+		return fmt.Errorf("%w: %v", ErrInterrupted, err)
+	}
+	return err
+}
+
+func (u *Updater) cutoverMargin() time.Duration {
+	if u.CutoverMargin > 0 {
+		return u.CutoverMargin
+	}
+	return DefaultCutoverMargin
 }
 
 func (u *Updater) ready() bool {
@@ -169,6 +216,26 @@ func (u *Updater) WindowClosed(cfg *config.Config) error {
 	w := windowOf(cfg)
 	p := problem.Newf(problem.UpdateWindowClosed, "The window opens on %s at %s (%s). Send now=true to update now.",
 		strings.Join(w.Days, ", "), w.Start, u.tzName())
+	if !next.IsZero() {
+		t := next.UTC()
+		p.NextWindowAt = &t
+	}
+	return p
+}
+
+// CutoverWindow returns update-window-closed when the window is closed or closes before the cutover margin
+// ends: a job of the window does not start a cutover that the end of the window could cut.
+func (u *Updater) CutoverWindow(cfg *config.Config) error {
+	if err := u.WindowClosed(cfg); err != nil {
+		return err
+	}
+	_, closes, next := u.WindowOpen(cfg)
+	left := closes.Sub(u.now())
+	if left >= u.cutoverMargin() {
+		return nil
+	}
+	p := problem.Newf(problem.UpdateWindowClosed, "The update window closes in %s; a cutover needs %s. The target stays staged for the next window. Send now=true to update now.",
+		left.Round(time.Second), u.cutoverMargin())
 	if !next.IsZero() {
 		t := next.UTC()
 		p.NextWindowAt = &t

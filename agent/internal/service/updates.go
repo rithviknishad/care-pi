@@ -26,7 +26,7 @@ func (s *Service) Updater() *update.Updater {
 		loc = time.Local
 	}
 	u := &update.Updater{Paths: s.Paths, ConfigPath: s.configPath(), SolutionsDir: s.SolutionsDir, Host: s.Host, IPs: s.IPs,
-		S3: s.S3, Chown: s.Chown, Now: s.Now, Location: loc, Timezone: tz, ApplyHook: s.ApplyHook,
+		S3: s.S3, Chown: s.Chown, Now: s.Now, Location: loc, Timezone: tz, ApplyHook: s.ApplyHook, StopOnSignal: s.StopOnSignal,
 		Ready:           func() bool { return s.SetupStateName() == setup.Ready },
 		NewCheckpointer: s.checkpointer}
 	if s.UpdateHook != nil {
@@ -211,7 +211,7 @@ func (s *Service) StartUpdateApply(ctx context.Context, req UpdateRequest, sourc
 	return s.Jobs.Start(ctx, jobs.Spec{Kind: jobs.KindUpdateApply, Source: source, Reason: req.Reason, Lock: true},
 		func(ctx context.Context, rec *jobs.Recorder) (any, error) {
 			r, err := s.Updater().Apply(ctx, rec, update.ApplyOptions{StageOptions: update.StageOptions{Version: req.Version, LockFile: req.LockFile},
-				Now: true, Source: source, Reason: req.Reason})
+				Now: req.Now, Source: source, Reason: req.Reason})
 			if err != nil {
 				return nil, toProblem(err)
 			}
@@ -486,17 +486,28 @@ func (s *Service) SolutionLock(ctx context.Context, name, version string) (any, 
 }
 
 // RecoverUpdates starts the recovery of an interrupted cutover (docs/solutions.md, section 8.6).
-// The agent calls it at the start, after jobs.MarkInterrupted.
+// The agent calls it at the start, after jobs.MarkInterrupted, and then each minute: a job of a CLI
+// process (a timer) that stopped inside a cutover is recovered without a restart of the agent.
+// While a process holds the apply lock, nothing is interrupted yet: it does nothing. It handles each
+// cutover job one time in a process (a recovery that fails waits for the next start of the agent).
 func (s *Service) RecoverUpdates(ctx context.Context) (*jobs.Job, error) {
+	if s.recovering.Load() || applock.Held(s.Paths) {
+		return nil, nil
+	}
 	u := s.Updater()
 	r := u.PendingRecovery()
 	if r == nil {
 		return nil, nil
 	}
+	if _, done := s.recovered.LoadOrStore(r.JobID, true); done {
+		return nil, nil
+	}
 	if r.Restart {
 		// The interruption came before activate: the previous tree is on disk. Start it, then turn the page off.
 		o := s.applyOptions(apply.Options{LockHeld: true})
+		s.recovering.Store(true)
 		go func() {
+			defer s.recovering.Store(false)
 			ctx := context.Background()
 			release, err := applock.Acquire(ctx, s.Paths, time.Minute, nil)
 			if err != nil {

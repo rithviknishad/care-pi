@@ -366,6 +366,8 @@ type ApplyOptions struct {
 
 // Apply runs an update-apply job: the stage steps when the target is not staged, then the cutover.
 func (u *Updater) Apply(ctx context.Context, rec *jobs.Recorder, o ApplyOptions) (*ApplyResult, error) {
+	ctx, stop := u.signalContext(ctx)
+	defer stop()
 	started := u.now()
 	cfg, err := u.Config()
 	if err != nil {
@@ -383,6 +385,16 @@ func (u *Updater) Apply(ctx context.Context, rec *jobs.Recorder, o ApplyOptions)
 	st, err := u.stage(ctx, rec, o.StageOptions)
 	if err != nil {
 		return nil, err
+	}
+	if err := interrupted(ctx); err != nil {
+		return nil, err
+	}
+	// A job of the window (now false) starts the cutover only when the window stays open long enough for it.
+	if !o.Now {
+		if err := u.CutoverWindow(cfg); err != nil {
+			rec.Logf("no cutover now: %v", err)
+			return nil, err
+		}
 	}
 	if st.target.Lock != nil && cfg.Solution.Track == "pinned" && o.Version != "" &&
 		solution.CompareLockVersions(cfg.Solution.Pin, st.target.Version()) != 0 {
@@ -474,12 +486,29 @@ func (u *Updater) cutover(ctx context.Context, rec *jobs.Recorder, s cutoverSpec
 			}
 		})
 	}
+	// A signal (StopOnSignal) ends ctx: no new step starts, and the failure path runs with bg.
+	bg := context.WithoutCancel(ctx)
+	cstep := func(action, name string, fn func() error) error {
+		return step(rec, action, name, func() error {
+			if err := interrupted(ctx); err != nil {
+				return err
+			}
+			return stopped(ctx, fn())
+		})
+	}
+	why := func(cause error) error {
+		if ctx.Err() != nil && !errors.Is(cause, ErrInterrupted) {
+			return fmt.Errorf("%w: %v", ErrInterrupted, cause)
+		}
+		return cause
+	}
 	// restoreOld starts the old units after a failure before activate: nothing changed.
 	restoreOld := func(cause error, slug string) (cutoverResult, error) {
+		cause = why(cause)
 		if s.beforeRollback != nil {
 			s.beforeRollback()
 		}
-		_ = step(rec, "rollback", "start the running version again", func() error { return apply.StartTarget(ctx, ao) })
+		_ = step(rec, "rollback", "start the running version again", func() error { return apply.StartTarget(bg, ao) })
 		_ = step(rec, "maintenance-off", "", func() error { return apply.MaintenanceOff(u.Paths) })
 		_ = UpdateState(u.Paths, func(st *State) { st.Cutover = nil })
 		res.outcome, res.offer = OutcomeRolledBack, s.offer
@@ -490,14 +519,14 @@ func (u *Updater) cutover(ctx context.Context, rec *jobs.Recorder, s cutoverSpec
 		}
 		return res, p
 	}
-	if err := step(rec, "cutover-maintenance-on", "", func() error {
+	if err := cstep("cutover-maintenance-on", "", func() error {
 		mark("cutover-maintenance-on", nil)
 		return apply.MaintenanceOn(u.Paths, apply.MaintenanceInfo{JobID: rec.ID(), Kind: s.kind, StartedAt: pageOn.Truncate(time.Second)})
 	}); err != nil {
 		_ = apply.MaintenanceOff(u.Paths)
 		return res, err
 	}
-	if err := step(rec, "stop", strings.Join(apply.AppUnits, " "), func() error {
+	if err := cstep("stop", strings.Join(apply.AppUnits, " "), func() error {
 		mark("stop", nil)
 		if err := h.Systemd.Stop(ctx, apply.AppUnits...); err != nil {
 			return err
@@ -506,7 +535,7 @@ func (u *Updater) cutover(ctx context.Context, rec *jobs.Recorder, s cutoverSpec
 	}); err != nil {
 		return restoreOld(err, problem.VerifyFailed)
 	}
-	if err := step(rec, "checkpoint", "", func() error {
+	if err := cstep("checkpoint", "", func() error {
 		mark("checkpoint", nil)
 		ref, err := u.checkpointer(rec.ID()).Checkpoint(ctx)
 		if err != nil {
@@ -529,6 +558,7 @@ func (u *Updater) cutover(ctx context.Context, rec *jobs.Recorder, s cutoverSpec
 		offer = s.offer
 	}
 	fail := func(slug string, cause error, migrated bool) (cutoverResult, error) {
+		cause = why(cause)
 		pitr := s.offer
 		if migrated {
 			pitr = offer
@@ -537,7 +567,7 @@ func (u *Updater) cutover(ctx context.Context, rec *jobs.Recorder, s cutoverSpec
 		if s.beforeRollback != nil {
 			s.beforeRollback()
 		}
-		rerr := u.rollbackTo(ctx, rec, s.prev, s.lockPlugs)
+		rerr := u.rollbackTo(bg, rec, s.prev, s.lockPlugs)
 		res.downtime = u.now().Sub(pageOn)
 		if rerr != nil {
 			res.outcome = OutcomeRollbackFailed
@@ -552,7 +582,7 @@ func (u *Updater) cutover(ctx context.Context, rec *jobs.Recorder, s cutoverSpec
 		p.PitrOffer = pitr
 		return res, p
 	}
-	if err := step(rec, "activate", s.targetID, func() error {
+	if err := cstep("activate", s.targetID, func() error {
 		// The marker comes before the first write: a recovery after an interruption inside this step
 		// cannot know how much of the target tree is on disk, so it rolls back (section 8.6).
 		if err := UpdateState(u.Paths, func(st *State) {
@@ -588,7 +618,7 @@ func (u *Updater) cutover(ctx context.Context, rec *jobs.Recorder, s cutoverSpec
 	}); err != nil {
 		return fail(problem.VerifyFailed, fmt.Errorf("the activation failed: %w", err), false)
 	}
-	if err := step(rec, "migrate", "care-beat.service", func() error {
+	if err := cstep("migrate", "care-beat.service", func() error {
 		mark("migrate", nil)
 		mctx, cancel := context.WithTimeout(ctx, u.migrateTimeout())
 		defer cancel()
@@ -603,7 +633,7 @@ func (u *Updater) cutover(ctx context.Context, rec *jobs.Recorder, s cutoverSpec
 	}); err != nil {
 		return fail(problem.MigrationFailed, err, true)
 	}
-	if err := step(rec, "start", "care-worker.service care-api.service", func() error {
+	if err := cstep("start", "care-worker.service care-api.service", func() error {
 		mark("start", nil)
 		sctx, cancel := context.WithTimeout(ctx, u.startTimeout())
 		defer cancel()
@@ -615,14 +645,14 @@ func (u *Updater) cutover(ctx context.Context, rec *jobs.Recorder, s cutoverSpec
 		return fail(problem.VerifyFailed, fmt.Errorf("care-worker or care-api did not start: %w", err), true)
 	}
 	rows := plugcfg.Desired(s.target.Config, s.target.Desire.Plugs, s.target.Lock)
-	if err := step(rec, "plug-config", fmt.Sprintf("%d row(s)", len(rows)), func() error {
+	if err := cstep("plug-config", fmt.Sprintf("%d row(s)", len(rows)), func() error {
 		mark("plug-config", nil)
 		_, err := plugcfg.Sync(ctx, h, u.Paths, rows, u.now())
 		return err
 	}); err != nil {
 		return fail(problem.VerifyFailed, err, true)
 	}
-	if err := step(rec, "verify", "", func() error {
+	if err := cstep("verify", "", func() error {
 		mark("verify", nil)
 		return u.verifier().Verify(ctx, u.verifyTarget(s.target, rows))
 	}); err != nil {
@@ -779,6 +809,8 @@ func (u *Updater) RollbackTarget(toLock string) (string, *lock.Lock, error) {
 
 // Rollback runs an update-rollback job (docs/solutions.md, section 9).
 func (u *Updater) Rollback(ctx context.Context, rec *jobs.Recorder, o RollbackOptions) (*RollbackResult, error) {
+	ctx, stop := u.signalContext(ctx)
+	defer stop()
 	started := u.now()
 	cur, err := lock.Load(u.Paths)
 	if err != nil {

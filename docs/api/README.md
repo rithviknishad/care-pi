@@ -1395,14 +1395,17 @@ The maintenance page:
 - Daylight saving time: the agent computes in local wall time. A `start` or `end` in the skipped hour moves one hour later;
   in a repeated hour, the agent uses the first occurrence. The window is then one hour shorter or longer.
 - The window applies to the timer and to `POST /updates/apply` and `POST /updates/os/apply`. Outside it they give
-  `409 update-window-closed` with `next_window_at`; `now: true` runs at once. `POST /updates/check`, `POST /updates/stage`,
+  `409 update-window-closed` with `next_window_at`; `now: true` runs at once. A job `update-apply` without `now`
+  checks the window again before its cutover: with less than 10 minutes of the window left (a cutover takes about
+  6 minutes on a Pi 5), the job fails with `update-window-closed`, changes nothing, and the target stays staged. `POST /updates/check`, `POST /updates/stage`,
   and `PUT /plugs/{plug_id}` do not check the window: the console shows the plan (`maintenance`, `estimated_downtime_s`)
   and the operator confirms.
 - Timers (rendered when the setup state is `ready`): `care-update-check.timer` (daily, 12:00 plus a random delay up to
   4 h; `care-pi update check --scheduled`) and `care-update-apply.timer` (each window opening, `Persistent=true`;
   `care-pi update apply --scheduled`). The scheduled run: leave when the window is closed; check when the last check is
-  older than 1 hour; install the target when `updates.auto` is `true`, nothing blocks it, and 30 minutes of the window remain;
-  then `os-update` when `updates.os_full` is `true`; then reboot when `/run/reboot-required` exists and `updates.os_reboot`
+  older than 1 hour; install the target when `updates.auto` is `true`, nothing blocks it, and 30 minutes of the window remain
+  (the job itself starts the cutover only while 10 minutes remain); then `os-update` when `updates.os_full` is `true` and
+  10 minutes of the window remain; then reboot when `/run/reboot-required` exists and `updates.os_reboot`
   is `true` (or a reboot is scheduled), no job runs, and the window is still open.
 - `GET /updates` gives `next_check_at`, `next_apply_at` (the next opening with work, else `null`), `window.open`,
   `window.next_open_at`, and `window.closes_at`.

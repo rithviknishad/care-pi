@@ -84,6 +84,12 @@ func aptGet(args ...string) host.Cmd {
 	return AptRun("care-pi-apt", append(base, args...)...)
 }
 
+// aptMark returns "apt-mark hold|unhold PKG..." in a transient unit. It waits for the dpkg lock like
+// apt-get: after a signal, an apt-get of the job can still run in its unit.
+func aptMark(verb string, pkgs ...string) host.Cmd {
+	return AptRun("care-pi-apt-mark", append([]string{"apt-mark", "-o", "DPkg::Lock::Timeout=600", verb}, pkgs...)...)
+}
+
 func readDistro(p paths.Paths) Distro {
 	d := Distro{ID: "debian", Codename: "unknown", PrettyName: "unknown"}
 	data, err := os.ReadFile(p.Abs("/etc/os-release"))
@@ -347,6 +353,8 @@ type OSOptions struct {
 
 // OSUpdate runs an os-update job (docs/solutions.md, section 11).
 func (u *Updater) OSUpdate(ctx context.Context, rec *jobs.Recorder, o OSOptions) (res *OSUpdateResult, err error) {
+	ctx, stop := u.signalContext(ctx)
+	defer stop()
 	start := u.now()
 	cfg, err := u.Config()
 	if err != nil {
@@ -373,7 +381,16 @@ func (u *Updater) OSUpdate(ctx context.Context, rec *jobs.Recorder, o OSOptions)
 		rec.Logf("warning: %v", err)
 	}
 	before := u.installed(ctx)
-	if err := step(rec, "os-refresh", "apt-get update", func() error {
+	// ostep starts no step after a signal (StopOnSignal); os-hold runs anyway.
+	ostep := func(action, name string, fn func() error) error {
+		return step(rec, action, name, func() error {
+			if err := interrupted(ctx); err != nil {
+				return err
+			}
+			return stopped(ctx, fn())
+		})
+	}
+	if err := ostep("os-refresh", "apt-get update", func() error {
 		_, err := r.Run(ctx, aptGet("update"))
 		if err == nil {
 			now := u.now().Truncate(time.Second)
@@ -385,13 +402,13 @@ func (u *Updater) OSUpdate(ctx context.Context, rec *jobs.Recorder, o OSOptions)
 	}
 	// The full upgrade runs with the holds in place: it never moves a held package to an untested
 	// candidate. Then each held package with a newer tested version goes to exactly that version.
-	upErr := step(rec, "os-upgrade", "apt-get -y full-upgrade", func() error {
+	upErr := ostep("os-upgrade", "apt-get -y full-upgrade", func() error {
 		_, err := r.Run(ctx, aptGet("-y", "full-upgrade"))
 		return err
 	})
 	var unhold []HeldPackage
 	if upErr == nil {
-		upErr = step(rec, "os-unhold", "", func() error {
+		upErr = ostep("os-unhold", "", func() error {
 			held, err := u.held(ctx, readDistro(u.Paths).Codename)
 			if err != nil {
 				return err
@@ -410,7 +427,7 @@ func (u *Updater) OSUpdate(ctx context.Context, rec *jobs.Recorder, o OSOptions)
 				return nil
 			}
 			rec.SetDetail(strings.Join(names, " "))
-			_, err = r.Run(ctx, AptRun("care-pi-apt-mark", append([]string{"apt-mark", "unhold"}, names...)...))
+			_, err = r.Run(ctx, aptMark("unhold", names...))
 			return err
 		})
 	}
@@ -419,14 +436,14 @@ func (u *Updater) OSUpdate(ctx context.Context, rec *jobs.Recorder, o OSOptions)
 		for _, h := range unhold {
 			args = append(args, h.Name+"="+*h.Tested)
 		}
-		upErr = step(rec, "os-upgrade", "apt-get "+strings.Join(args, " "), func() error {
+		upErr = ostep("os-upgrade", "apt-get "+strings.Join(args, " "), func() error {
 			_, err := r.Run(ctx, aptGet(args...))
 			return err
 		})
 	}
-	// os-hold runs also after a failure.
+	// os-hold runs also after a failure and after a signal (StopOnSignal).
 	holdErr := step(rec, "os-hold", strings.Join(HoldPackages, " "), func() error {
-		_, err := r.Run(ctx, AptRun("care-pi-apt-mark", append([]string{"apt-mark", "hold"}, HoldPackages...)...))
+		_, err := r.Run(context.WithoutCancel(ctx), aptMark("hold", HoldPackages...))
 		return err
 	})
 	if upErr != nil {
@@ -434,6 +451,9 @@ func (u *Updater) OSUpdate(ctx context.Context, rec *jobs.Recorder, o OSOptions)
 	}
 	if holdErr != nil {
 		return nil, failed(holdErr)
+	}
+	if err := interrupted(ctx); err != nil {
+		return nil, failed(err)
 	}
 	after := u.installed(ctx)
 	for _, n := range sortedKeys(after) {
@@ -453,7 +473,8 @@ func (u *Updater) OSUpdate(ctx context.Context, rec *jobs.Recorder, o OSOptions)
 		}
 	}
 	if len(res.HeldChanged) > 0 {
-		if err := u.cycle(ctx, rec); err != nil {
+		// The cycle is short (stop, start): once it starts, a signal does not leave Care stopped.
+		if err := u.cycle(context.WithoutCancel(ctx), rec); err != nil {
 			return nil, err
 		}
 		res.CareRestarted = true

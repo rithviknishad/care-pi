@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rithviknishad/care-pi/agent/internal/apply"
@@ -64,6 +65,8 @@ type Service struct {
 	BackupTester *backup.Tester
 	// UpdateHook changes the update machine of each call (Phase 4). Tests set the verifier and the checkpoint.
 	UpdateHook func(*update.Updater)
+	// StopOnSignal is update.Updater.StopOnSignal: a CLI process sets it, care-pi serve does not.
+	StopOnSignal bool
 
 	mu           sync.Mutex
 	carePassword string
@@ -74,6 +77,10 @@ type Service struct {
 	backupsCache cached[*BackupsOverview]
 	probe        *DiskProbe
 	configMu     sync.Mutex
+	// recovering is true while the restart of an interrupted cutover runs (RecoverUpdates).
+	recovering atomic.Bool
+	// recovered holds the ids of the cutover jobs that RecoverUpdates handled: one try in each process.
+	recovered sync.Map
 }
 
 type cached[T any] struct {

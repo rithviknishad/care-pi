@@ -715,7 +715,10 @@ units, the env files), and `activated: true` at its end. A cutover record with t
 the lock on disk is safe in both cases.
 
 Wave 6a does not resume an update after a successful `migrate`. It rolls back, and the next window installs the target again.
-`care-pi serve` runs the recovery at start (`service.RecoverUpdates`), after it marks the interrupted jobs.
+`care-pi serve` runs the recovery at start (`service.RecoverUpdates`), after it marks the interrupted jobs, and then
+each minute: a CLI job of a timer that stopped inside a cutover (SIGKILL, an out-of-memory kill) is recovered
+without a restart of the agent. While a process holds the apply lock, nothing is interrupted, and the check waits.
+The agent handles each interrupted cutover one time in each run of `care-pi serve`.
 
 A boot during a cutover starts `care.target` with the tree on disk. The checkpoint comes before `activate`, so each
 tree on disk has a checkpoint.
@@ -768,21 +771,32 @@ The track does not change. On `stable`, the next window installs the newest lock
 | Unit | Content |
 |---|---|
 | `care-update-check.timer` | `OnCalendar=*-*-* 12:00:00`, `RandomizedDelaySec=4h`, `Persistent=true`. A daily check at a random time in the afternoon, when a clinic usually has internet. |
-| `care-update-check.service` | `Type=oneshot`, `ExecStart=/usr/local/bin/care-pi update check --scheduled`. After the check, it stages a target that needs no local build (section 8.2). |
+| `care-update-check.service` | `Type=oneshot`, `ExecStart=/usr/local/bin/care-pi update check --scheduled`, `TimeoutStartSec=infinity`. After the check, it stages a target that needs no local build (section 8.2). |
 | `care-update-apply.timer` | One `OnCalendar=<Day> *-*-* <start>:00` line for each day of the window. `RandomizedDelaySec=` the smaller of 10 minutes and a quarter of the window. `Persistent=true`: a device that boots inside a window runs the missed slot. |
-| `care-update-apply.service` | `Type=oneshot`, `ExecStart=/usr/local/bin/care-pi update apply --scheduled`, `TimeoutStartSec=` the window length. |
+| `care-update-apply.service` | `Type=oneshot`, `ExecStart=/usr/local/bin/care-pi update apply --scheduled`, `TimeoutStartSec=infinity`, `TimeoutStopSec=15min`. A start timeout would stop a cutover in the middle; the jobs enforce the window. |
 
 `care-pi update apply --scheduled` does these steps, in this order:
 
 1. Stop with exit code 0 when the window is closed (a `Persistent=` run outside the window).
 2. Check (section 7) when the last check is older than 1 hour or failed.
 3. When `updates.auto` is `true`, an update is available and not blocked, and at least 30 minutes of the window remain:
-   a job `update-apply` (`source: timer`). It includes the staging that is not done.
-4. When `updates.os_full` is `true` and step 3 did not fail: a job `os-update` (section 11).
+   a job `update-apply` (`source: timer`). It includes the staging that is not done. After the staging, the job
+   starts the cutover only when at least 10 minutes of the window remain (`update.DefaultCutoverMargin`: a cutover
+   takes about 6 minutes on a Pi 5); else it fails with `update-window-closed`, and the staged target waits for the
+   next window. `POST /updates/apply` without `now` does the same.
+4. When `updates.os_full` is `true`, step 3 did not fail, and at least 10 minutes of the window remain: a job
+   `os-update` (section 11).
 5. When `/run/reboot-required` exists, `updates.os_reboot` is `true` (or an operator scheduled a reboot), no job runs,
    and the window is still open: reboot.
 
 `next_apply_at` in `GET /updates` is the next window opening when step 3, 4, or 5 has work. Else it is `null`.
+
+**A stop of the command.** `care-pi update apply`, `update rollback`, `update --os`, and `plugs set --apply` handle
+SIGTERM (`systemctl stop`, a shutdown) and SIGINT (Ctrl-C): the job starts no new step and takes its failure path.
+A cutover rolls back (section 8.5; before `activate`, it starts the old units again); an OS update holds the
+packages again (`os-hold`). The process ends after the job. The scheduled run starts no other job after a signal.
+`TimeoutStopSec=15min` of `care-update-apply.service` gives the rollback the time. `care-pi serve` keeps its own
+behaviour: its jobs end with the process, and the recovery of section 8.6 handles them.
 
 ## 11. OS updates
 

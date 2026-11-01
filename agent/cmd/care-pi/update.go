@@ -3,6 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -212,9 +215,13 @@ var updateApplyCmd = &cobra.Command{
 }
 
 // scheduledApply is "care-pi update apply --scheduled" (docs/solutions.md, section 10.2).
+// care-update-apply.service has no start timeout: the jobs enforce the window. SIGTERM or SIGINT ends
+// the run: the job that runs takes its failure path (service.Service.StopOnSignal), and no other job starts.
 func scheduledApply(cmd *cobra.Command, svc *service.Service) error {
 	w := cmd.OutOrStdout()
 	ctx := cmd.Context()
+	sig, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	u := svc.Updater()
 	sp, err := u.Scheduled(ctx, applock.Held(svc.Paths))
 	if err != nil {
@@ -234,8 +241,9 @@ func scheduledApply(cmd *cobra.Command, svc *service.Service) error {
 			_, _ = fmt.Fprintln(w, "warning: the check failed:", err)
 		}
 	}
-	if sp.Update && u.UpdateReady(ctx) {
-		j, err := svc.StartUpdateApply(ctx, service.UpdateRequest{Now: true, Reason: "update window"}, jobs.SourceTimer)
+	if sp.Update && sig.Err() == nil && u.UpdateReady(ctx) {
+		// now false: the job starts the cutover only when the window stays open long enough for it.
+		j, err := svc.StartUpdateApply(ctx, service.UpdateRequest{Reason: "update window"}, jobs.SourceTimer)
 		if err == nil {
 			err = follow(cmd, svc, j)
 		}
@@ -244,14 +252,27 @@ func scheduledApply(cmd *cobra.Command, svc *service.Service) error {
 			_, _ = fmt.Fprintln(w, "the update failed:", err)
 		}
 	}
-	if sp.OS && failed == nil {
-		j, err := svc.StartOSUpdate(ctx, service.OSRequest{Now: true, Reason: "update window"}, jobs.SourceTimer)
-		if err == nil {
-			err = follow(cmd, svc, j)
-		}
-		if err != nil {
+	if sp.OS && failed == nil && sig.Err() == nil {
+		if cfg, err := svc.Config(); err != nil {
 			failed = err
+		} else if err := u.CutoverWindow(cfg); err != nil {
+			_, _ = fmt.Fprintln(w, "no OS update now:", err)
+		} else {
+			j, err := svc.StartOSUpdate(ctx, service.OSRequest{Now: true, Reason: "update window"}, jobs.SourceTimer)
+			if err == nil {
+				err = follow(cmd, svc, j)
+			}
+			if err != nil {
+				failed = err
+			}
 		}
+	}
+	if sig.Err() != nil {
+		_, _ = fmt.Fprintln(w, "stopped by a signal: no more work in this window")
+		if failed == nil {
+			failed = update.ErrInterrupted
+		}
+		return failed
 	}
 	sp, err = u.Scheduled(ctx, applock.Held(svc.Paths))
 	if err == nil && sp.WindowOpen && sp.Reboot {

@@ -250,9 +250,10 @@ func TestPlugChangeRollbackRestoresConfig(t *testing.T) {
 	}
 }
 
-// TestOSUpdateCommands: the steps and the apt commands of an os-update job; os-hold runs also after a failure.
-func TestOSUpdateCommands(t *testing.T) {
-	e := newTEnv(t, "stable", "")
+// osFixture is a trixie host with podman 5.4.2+ds1-1 installed and 5.4.2+ds1-2 tested (the index of the check).
+func (e *tenv) osFixture() {
+	t := e.t
+	t.Helper()
 	if err := os.MkdirAll(e.p.Abs("/etc"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -269,6 +270,12 @@ func TestOSUpdateCommands(t *testing.T) {
 	// Cmd.String trims the trailing newline of the format.
 	e.fake.On("dpkg-query -W -f=${Package}\t${Version}", host.Response{Out: "libc6\t2.41-12\npodman\t5.4.2+ds1-1\n"}, host.Response{Out: "libc6\t2.41-12+deb13u1\npodman\t5.4.2+ds1-2\n"})
 	e.fake.On("systemctl show -p ActiveState care.target", host.Response{Out: "ActiveState=active\n"})
+}
+
+// TestOSUpdateCommands: the steps and the apt commands of an os-update job; os-hold runs also after a failure.
+func TestOSUpdateCommands(t *testing.T) {
+	e := newTEnv(t, "stable", "")
+	e.osFixture()
 	o, err := e.u.OS(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -277,7 +284,7 @@ func TestOSUpdateCommands(t *testing.T) {
 		t.Fatalf("os %+v held %+v", o, o.Held)
 	}
 	e.fake.Calls = nil
-	rec = e.job(jobs.KindOSUpdate)
+	rec := e.job(jobs.KindOSUpdate)
 	res, err := e.u.OSUpdate(context.Background(), rec, OSOptions{Source: jobs.SourceCLI})
 	if err != nil {
 		t.Fatal(err)
@@ -289,7 +296,7 @@ func TestOSUpdateCommands(t *testing.T) {
 	}
 	const run = "systemd-run --wait --collect --pipe --quiet "
 	const aptGet = run + "--unit=care-pi-apt -p MemoryMax=512M --setenv=DEBIAN_FRONTEND=noninteractive -- apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "
-	const aptMark = run + "--unit=care-pi-apt-mark -p MemoryMax=512M --setenv=DEBIAN_FRONTEND=noninteractive -- apt-mark "
+	const aptMark = run + "--unit=care-pi-apt-mark -p MemoryMax=512M --setenv=DEBIAN_FRONTEND=noninteractive -- apt-mark -o DPkg::Lock::Timeout=600 "
 	wantApt := []string{run + "--unit=care-pi-apt-conf -p MemoryMax=512M --setenv=DEBIAN_FRONTEND=noninteractive -- tee /etc/apt/apt.conf.d/52care-pi.conf",
 		aptGet + "update", aptGet + "-y full-upgrade", aptMark + "unhold podman", aptGet + "-y install podman=5.4.2+ds1-2",
 		aptMark + "hold podman crun netavark aardvark-dns conmon skopeo"}

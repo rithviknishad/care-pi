@@ -685,6 +685,8 @@ func deleteKey(m *yaml.Node, key string) {
 
 // RunPlugChange runs a plug-change job: the path of the plan with the config that is on disk now.
 func (u *Updater) RunPlugChange(ctx context.Context, rec *jobs.Recorder, o PlugChangeOptions) (*PlugChangeJobResult, error) {
+	ctx, stop := u.signalContext(ctx)
+	defer stop()
 	started := u.now()
 	cur, err := lock.Load(u.Paths)
 	if err != nil {

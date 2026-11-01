@@ -9,4 +9,4 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/care-pi update check --scheduled
-TimeoutStartSec=1h
+TimeoutStartSec=infinity

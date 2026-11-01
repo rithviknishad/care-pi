@@ -43,6 +43,8 @@ func newService(cmd *cobra.Command) *service.Service {
 		Jobs:       &jobs.Manager{Paths: p, LockWait: lockTimeout},
 		StartedAt:  time.Now(),
 		Chown:      os.Geteuid() == 0,
+		// A SIGTERM or Ctrl-C during an update of this process runs the failure path of the job.
+		StopOnSignal: true,
 	}
 }
 

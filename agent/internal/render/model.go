@@ -184,7 +184,6 @@ type Timers struct {
 	CheckRandomDelay string
 	ApplyCalendars   []string
 	ApplyRandomDelay string
-	ApplyTimeout     string
 }
 
 // CareBuild is a local image build of care (docs/solutions.md, section 13.1).
@@ -563,7 +562,7 @@ func NewModel(in Input) (*Model, error) {
 	if !in.Bootstrap {
 		w := window.Window{Days: cfg.Updates.Window.Days, Start: cfg.Updates.Window.Start, End: cfg.Updates.Window.End}
 		m.Timers = Timers{CheckCalendar: "*-*-* 12:00:00", CheckRandomDelay: "4h",
-			ApplyCalendars: w.Calendars(), ApplyRandomDelay: window.Seconds(w.RandomDelay()), ApplyTimeout: window.Seconds(w.Length())}
+			ApplyCalendars: w.Calendars(), ApplyRandomDelay: window.Seconds(w.RandomDelay())}
 		m.PlugBuild = cfg.Solution.Track == "custom" && cfg.FE.Provider == "local" && customFrontendRefs(cfg)
 	}
 	return m, nil

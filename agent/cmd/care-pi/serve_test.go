@@ -1,15 +1,26 @@
 package main
 
 import (
+	"context"
+	"log/slog"
 	"net"
 	"os"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/rithviknishad/care-pi/agent/internal/applock"
+	"github.com/rithviknishad/care-pi/agent/internal/apply"
 	"github.com/rithviknishad/care-pi/agent/internal/auth"
 	"github.com/rithviknishad/care-pi/agent/internal/exitcode"
+	"github.com/rithviknishad/care-pi/agent/internal/host"
+	"github.com/rithviknishad/care-pi/agent/internal/jobs"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
+	"github.com/rithviknishad/care-pi/agent/internal/service"
+	"github.com/rithviknishad/care-pi/agent/internal/setup"
+	"github.com/rithviknishad/care-pi/agent/internal/update"
 )
 
 // TestServeChecksFlagsBeforeListen: a wrong flag never removes the socket of a running agent.
@@ -101,5 +112,66 @@ func TestBootstrapClaimHint(t *testing.T) {
 	}
 	if _, err := os.Stat(p.Abs(auth.ClaimHintFile)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestRecoverUpdatesEachTick: serve looks for an interrupted update at each tick (a fake clock), not only at its
+// start. A timer job of the CLI that stopped inside its cutover before activate gets the previous tree started
+// again and the maintenance page turned off, one time.
+func TestRecoverUpdatesEachTick(t *testing.T) {
+	p := paths.New(t.TempDir())
+	fake := host.NewFake()
+	svc := &service.Service{Paths: p, Host: host.New(fake), Jobs: &jobs.Manager{Paths: p}, Setup: &setup.Store{Paths: p}}
+	var calls atomic.Int32
+	check := func(ctx context.Context) (*jobs.Job, error) {
+		calls.Add(1)
+		return svc.RecoverUpdates(ctx)
+	}
+	tick := make(chan time.Time)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		recoverUpdates(ctx, tick, check, slog.New(slog.DiscardHandler))
+		close(done)
+	}()
+	tick <- time.Now()
+	if err := update.UpdateState(p, func(s *update.State) {
+		s.Cutover = &update.CutoverRecord{JobID: "20261122T020300.000Z-update-apply", Kind: jobs.KindUpdateApply, Step: "stop"}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := apply.MaintenanceOn(p, apply.MaintenanceInfo{JobID: "20261122T020300.000Z-update-apply", Kind: jobs.KindUpdateApply}); err != nil {
+		t.Fatal(err)
+	}
+	// While a process holds the apply lock, its cutover is not interrupted.
+	release, err := applock.Acquire(context.Background(), p, time.Second, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tick <- time.Now()
+	tick <- time.Now()
+	if got := fake.Filter("systemctl start"); len(got) != 0 {
+		t.Fatalf("a recovery under the apply lock: %q", got)
+	}
+	release()
+	tick <- time.Now()
+	deadline := time.Now().Add(5 * time.Second)
+	for update.ReadState(p).Cutover != nil {
+		if time.Now().After(deadline) {
+			t.Fatal("no recovery after the tick")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	tick <- time.Now()
+	cancel()
+	<-done
+	if got := fake.Filter("systemctl start"); !reflect.DeepEqual(got, []string{"systemctl start care.target"}) {
+		t.Fatalf("recovery commands %q", got)
+	}
+	if _, on := apply.ReadMaintenance(p); on {
+		t.Fatal("the maintenance page stays on")
+	}
+	if n := calls.Load(); n != 5 {
+		t.Fatalf("%d checks for 5 ticks", n)
 	}
 }
