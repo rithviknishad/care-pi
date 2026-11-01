@@ -1202,7 +1202,8 @@ Phase 4 refers to it by this name.
 - What: an incremental pgBackRest backup to the local repository. The backup ends with `pg_backup_stop`, which switches the WAL
   segment, and pgBackRest waits until `archive-push` stored that segment (`archive-check=y`). So the checkpoint is also the archive push.
 - API form: `POST /backups/run` with `{scope: local-db, type: incr, reason}`. The job kind is `backup-run`; the result is
-  `BackupRunResult.local` (`label`, `undo_point`, `timeline`).
+  `BackupRunResult.local` (`label`, `undo_point`, `timeline`). The daily incremental backup of the timer
+  (`care-pi backup run --from-timer`) is not a checkpoint: it is not in `RestorePoints.checkpoints`.
 - Inside another job: the step action `checkpoint`. The job then records a `Checkpoint` (`label`, `undo_point`, `timeline`,
   `job_id`, `job_kind`, `reason`) in `RestorePoints.checkpoints`. Phase 4 adds `update-apply`, `update-rollback`, `plug-change`,
   and `apply` (the plan action `cutover`) as a `job_kind` (section 14.5).

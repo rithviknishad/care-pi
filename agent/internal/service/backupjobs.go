@@ -156,7 +156,9 @@ func (s *Service) runBackup(ctx context.Context, rec *jobs.Recorder, cfg *config
 			return nil, err
 		}
 		res.Local = lr
-		if r.Type == "incr" && r.Reason != "" && r.Scope == ScopeLocalDB {
+		// A checkpoint is a run with a reason (POST /backups/run, the checkpoint of section 13.11), not the
+		// daily incremental backup of the timer (its reason is "timer").
+		if r.Type == "incr" && r.Reason != "" && r.Scope == ScopeLocalDB && !r.FromTimer {
 			reason := r.Reason
 			_ = o.State().AddCheckpoint(backup.Checkpoint{Label: lr.Label, UndoPoint: lr.UndoPoint, Timeline: lr.Timeline, Reason: &reason})
 		}

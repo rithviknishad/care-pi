@@ -19,6 +19,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/host"
 	"github.com/rithviknishad/care-pi/agent/internal/jobs"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
+	"github.com/rithviknishad/care-pi/agent/internal/service"
 	"github.com/rithviknishad/care-pi/agent/internal/setup"
 )
 
@@ -374,6 +375,33 @@ func readyBackupEnv(t *testing.T) (*env, []string, []int) {
 	_, _, err := e.svc.CreateRecoveryKey(context.Background())
 	must(t, err)
 	return e, words, pos
+}
+
+// TestTimerBackupNoCheckpoint: the incremental backup of the timer (reason "timer") is not a checkpoint in
+// RestorePoints.checkpoints; a run with a reason is.
+func TestTimerBackupNoCheckpoint(t *testing.T) {
+	e, _, _ := readyBackupEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	e.svc.Jobs.Shutdown(ctx)
+	st := backup.State{Paths: e.p}
+	n := len(st.Checkpoints())
+	j, err := e.svc.StartBackupRun(ctx, service.BackupRunRequest{Scope: service.ScopeLocalDB, Type: "incr", Reason: "timer", FromTimer: true}, jobs.SourceTimer)
+	must(t, err)
+	if j = e.waitJob(j.ID); j.State != jobs.StateSucceeded {
+		t.Fatalf("%s %+v", j.State, j.Error)
+	}
+	if cps := st.Checkpoints(); len(cps) != n {
+		t.Fatalf("the timer run added a checkpoint: %+v", cps)
+	}
+	j, err = e.svc.StartBackupRun(ctx, service.BackupRunRequest{Scope: service.ScopeLocalDB, Type: "incr", Reason: "before the import"}, jobs.SourceConsole)
+	must(t, err)
+	if j = e.waitJob(j.ID); j.State != jobs.StateSucceeded {
+		t.Fatalf("%s %+v", j.State, j.Error)
+	}
+	if cps := st.Checkpoints(); len(cps) != n+1 || cps[0].Reason == nil || *cps[0].Reason != "before the import" {
+		t.Fatalf("checkpoints %+v", cps)
+	}
 }
 
 // TestBackupsReady: the jobs of a ready device, the problems, and the reauthentication.
