@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -179,7 +180,7 @@ var tlsShowCmd = &cobra.Command{
 	Short: "Show the TLS modes and the root CA",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		t := newService(cmd).TLS()
+		t := newService(cmd).TLS(cmd.Context())
 		w := cmd.OutOrStdout()
 		if opsFlags.json {
 			return printJSON(w, t)
@@ -187,10 +188,33 @@ var tlsShowCmd = &cobra.Command{
 		_, _ = fmt.Fprintf(w, "local CA: %v\n", t.LocalCA.Enabled)
 		if r := t.LocalCA.Root; r != nil {
 			_, _ = fmt.Fprintf(w, "  root:        %s\n  fingerprint: %s\n  valid until: %s\n", r.Subject, r.FingerprintColon, r.NotAfter.Format(time.RFC3339))
+			if c := r.NameConstraints; c != nil {
+				_, _ = fmt.Fprintf(w, "  permitted:   %s %s\n", strings.Join(c.DNS, " "), strings.Join(c.IPs, " "))
+			} else {
+				_, _ = fmt.Fprintln(w, "  permitted:   each name (the root of Caddy; the next apply makes the root of the agent)")
+			}
 		} else {
-			_, _ = fmt.Fprintln(w, "  root: none yet (Caddy makes it at its first start)")
+			_, _ = fmt.Fprintln(w, "  root: none yet (the first apply makes it)")
 		}
-		_, _ = fmt.Fprintf(w, "  names: %v\npublic: %v\ntailscale: %v\n", t.LocalCA.Hostnames, t.Public.Enabled, t.Tailscale.Enabled)
+		if t.LocalCA.CAChangedAt != nil {
+			_, _ = fmt.Fprintf(w, "  the root changed at %s: install the new root on each device\n", t.LocalCA.CAChangedAt.Format(time.RFC3339))
+		}
+		if len(t.LocalCA.Uncovered) > 0 {
+			_, _ = fmt.Fprintf(w, "  outside the name constraints: %s\n", strings.Join(t.LocalCA.Uncovered, " "))
+		}
+		_, _ = fmt.Fprintf(w, "  names: %v\n", t.LocalCA.Hostnames)
+		pub := "off"
+		if t.Public.Hostname != nil {
+			pub = *t.Public.Hostname
+			if t.Public.Certificate != nil {
+				pub += " (certificate " + t.Public.Certificate.State + ")"
+			}
+		}
+		ts := "off"
+		if t.Tailscale.Hostname != nil {
+			ts = *t.Tailscale.Hostname
+		}
+		_, _ = fmt.Fprintf(w, "public: %s\ntailscale: %s\n", pub, ts)
 		return nil
 	},
 }

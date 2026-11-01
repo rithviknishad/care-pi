@@ -45,6 +45,9 @@ func newService(cmd *cobra.Command) *service.Service {
 		Chown:      os.Geteuid() == 0,
 		// A SIGTERM or Ctrl-C during an update of this process runs the failure path of the job.
 		StopOnSignal: true,
+		// The DNS/ACME service (docs/connectivity.md). Empty: https://care-pi.rithviknishad.dev. A test sets another
+		// deployment with a drop-in of care-pi.service and of care-dns-update.service (Environment=CARE_PI_DNS_URL=…).
+		DNSURL: os.Getenv("CARE_PI_DNS_URL"),
 	}
 }
 

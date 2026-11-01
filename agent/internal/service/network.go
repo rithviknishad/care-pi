@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/netip"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -58,8 +59,14 @@ type Network struct {
 		CheckedAt *time.Time `json:"checked_at"`
 	} `json:"internet"`
 	DHCPHint *DHCPHint `json:"dhcp_hint"`
-	URLs     []string  `json:"urls"`
-	WiFi     any       `json:"wifi"`
+	// DHCPHints has one hint for each interface with a DHCP address: ethernet, and Wi-Fi (Phase 6).
+	DHCPHints []DHCPHint `json:"dhcp_hints"`
+	// DefaultInterface is the interface of the default route with the lowest metric (Phase 6).
+	DefaultInterface *string `json:"default_interface"`
+	// Tailscale is the address of tailscale0 (Phase 6), or null.
+	Tailscale *string     `json:"tailscale_address"`
+	URLs      []string    `json:"urls"`
+	WiFi      *WiFiStatus `json:"wifi"`
 }
 
 type ipAddr struct {
@@ -129,24 +136,28 @@ func (s *Service) interfaces(ctx context.Context) []NetworkInterface {
 	return out
 }
 
-func (s *Service) gateway(ctx context.Context) *string {
+// gateway returns the IPv4 gateway and the interface of the default route with the lowest metric.
+func (s *Service) gateway(ctx context.Context) (*string, *string) {
 	raw, err := s.Host.Runner.Run(ctx, hostCmd("ip", "-json", "route", "show", "default"))
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	var routes []struct {
 		Gateway string `json:"gateway"`
+		Dev     string `json:"dev"`
+		Metric  int    `json:"metric"`
 	}
 	if json.Unmarshal(raw, &routes) != nil {
-		return nil
+		return nil, nil
 	}
+	sort.SliceStable(routes, func(i, j int) bool { return routes[i].Metric < routes[j].Metric })
 	for _, r := range routes {
 		if a, err := netip.ParseAddr(r.Gateway); err == nil && a.Is4() {
 			g := r.Gateway
-			return &g
+			return &g, strPtr(r.Dev)
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func (s *Service) dnsServers() []string {
@@ -171,7 +182,14 @@ func (s *Service) Network(ctx context.Context) *Network {
 		cfg = config.Default()
 	}
 	n := &Network{Hostname: cfg.Identity.Hostname, Addresses: s.Addresses(), Published: s.Published(),
-		Interfaces: s.interfaces(ctx), Gateway: s.gateway(ctx), DNSServers: s.dnsServers(), URLs: s.CareURLs()}
+		Interfaces: s.interfaces(ctx), DNSServers: s.dnsServers(), URLs: s.CareURLs(), DHCPHints: []DHCPHint{}}
+	n.Gateway, n.DefaultInterface = s.gateway(ctx)
+	n.Tailscale = strPtr(netinfo.TailscaleIPv4(s.IPs))
+	var wc *wifiCfg
+	if w := cfg.Network.WiFi; w != nil {
+		wc = &wifiCfg{SSID: w.SSID, Country: w.Country, Failover: w.Failover}
+	}
+	n.WiFi = s.wifiStatus(ctx, wc)
 	if h, err := os.Hostname(); err == nil {
 		n.OSHostname = strings.SplitN(h, ".", 2)[0]
 	}
@@ -188,17 +206,18 @@ func (s *Service) Network(ctx context.Context) *Network {
 		n.Internet.Reachable, n.Internet.CheckedAt = s.Internet.State()
 	}
 	for _, i := range n.Interfaces {
-		if i.Kind != "ethernet" || i.MAC == nil {
+		if (i.Kind != "ethernet" && i.Kind != "wifi") || i.MAC == nil {
 			continue
 		}
 		for _, a := range i.Addresses {
 			if a.Family == "ipv4" && a.Dynamic {
-				n.DHCPHint = &DHCPHint{Interface: i.Name, MAC: *i.MAC, Address: a.Address}
+				h := DHCPHint{Interface: i.Name, MAC: *i.MAC, Address: a.Address}
+				n.DHCPHints = append(n.DHCPHints, h)
+				if n.DHCPHint == nil && i.Kind == "ethernet" {
+					n.DHCPHint = &h
+				}
 				break
 			}
-		}
-		if n.DHCPHint != nil {
-			break
 		}
 	}
 	return n

@@ -77,6 +77,17 @@ const (
 	MigrationFailed      = "migration-failed"
 	RollbackFailed       = "rollback-failed"
 	OSUpdateFailed       = "os-update-failed"
+
+	// Phase 6 (docs/api/README.md section 15).
+	DNSServiceUnreachable  = "dns-service-unreachable"
+	DNSServiceRejected     = "dns-service-rejected"
+	ACMEPending            = "acme-pending"
+	TailscaleInstallFailed = "tailscale-install-failed"
+	TailscaleLoginRequired = "tailscale-login-required"
+	TailscaleHTTPSDisabled = "tailscale-https-disabled"
+	WiFiAuthFailed         = "wifi-auth-failed"
+	WiFiNoDevice           = "wifi-no-device"
+	WiFiFailed             = "wifi-failed"
 )
 
 type entry struct {
@@ -144,6 +155,16 @@ var catalogue = map[string]entry{
 	MigrationFailed:      {500, "A migration failed"},
 	RollbackFailed:       {500, "The rollback failed"},
 	OSUpdateFailed:       {500, "The OS update failed"},
+
+	DNSServiceUnreachable:  {502, "The DNS service does not answer"},
+	DNSServiceRejected:     {502, "The DNS service refused the request"},
+	ACMEPending:            {504, "The certificate is not issued yet"},
+	TailscaleInstallFailed: {500, "Tailscale did not install"},
+	TailscaleLoginRequired: {409, "Tailscale needs a login"},
+	TailscaleHTTPSDisabled: {409, "The tailnet gives no HTTPS certificates"},
+	WiFiAuthFailed:         {422, "The Wi-Fi network refused the passphrase"},
+	WiFiNoDevice:           {409, "This device has no Wi-Fi"},
+	WiFiFailed:             {500, "The Wi-Fi connection failed"},
 }
 
 // Known reports whether slug is in the catalogue.

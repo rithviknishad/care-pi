@@ -103,13 +103,15 @@ func (s *Server) table() []*route {
 	add(get, "/support-bundle/{bundle_id}", s.downloadBundle)
 
 	add(get, "/network", s.network)
-	add(put, "/network/wifi", notImplemented, phase(6))
+	add(put, "/network/wifi", s.putWiFi, credBody)
+	add(del, "/network/wifi", s.deleteWiFi)
+	add(get, "/network/wifi/scan", s.scanWiFi)
 	add(get, "/tls", s.tls)
 	add(get, "/tls/root-ca", s.rootCA, publicRead, both)
 	add(get, "/tls/root-ca/mobileconfig", s.mobileconfig, publicRead, both)
 	add(get, "/tls/instructions/{os}", s.instructions, publicRead, both)
-	add(put, "/tls/public", notImplemented, phase(6))
-	add(put, "/tls/tailscale", notImplemented, reauth, phase(6))
+	add(put, "/tls/public", s.putPublic)
+	add(put, "/tls/tailscale", s.putTailscale, reauth, credBody)
 	add(post, "/tls/local-ca/rotate", notImplemented, reauth, phase(7))
 
 	add(get, "/fe", s.fe)
@@ -899,7 +901,108 @@ func (s *Server) network(c *reqCtx) error {
 }
 
 func (s *Server) tls(c *reqCtx) error {
-	s.json(c.w, http.StatusOK, s.svc.TLS())
+	s.json(c.w, http.StatusOK, s.svc.TLS(c.r.Context()))
+	return nil
+}
+
+// ---- Phase 6: the public name, Tailscale, and Wi-Fi (docs/api/README.md section 15) ----
+
+func (s *Server) putPublic(c *reqCtx) error {
+	var req struct {
+		Enabled      *bool   `json:"enabled"`
+		HostnameHint *string `json:"hostname_hint"`
+		ACMECA       *string `json:"acme_ca"`
+		Reason       *string `json:"reason"`
+	}
+	if err := c.decode(&req, true); err != nil {
+		return err
+	}
+	if req.Enabled == nil {
+		return problem.Invalid("/enabled", "the member enabled is required", "required")
+	}
+	if req.HostnameHint != nil {
+		if err := lengthOK("/hostname_hint", *req.HostnameHint, 1, 63); err != nil {
+			return err
+		}
+	}
+	if req.Reason != nil {
+		if err := lengthOK("/reason", *req.Reason, 0, 200); err != nil {
+			return err
+		}
+	}
+	j, err := s.svc.StartPublic(c.r.Context(), service.PublicRequest{Enabled: *req.Enabled, HostnameHint: deref(req.HostnameHint),
+		ACMECA: req.ACMECA, Reason: deref(req.Reason)}, jobs.SourceConsole)
+	return s.accepted(c, j, err)
+}
+
+func (s *Server) putTailscale(c *reqCtx) error {
+	var req struct {
+		Enabled *bool   `json:"enabled"`
+		AuthKey *string `json:"auth_key"`
+		Reason  *string `json:"reason"`
+	}
+	if err := c.decode(&req, true); err != nil {
+		return err
+	}
+	if req.Enabled == nil {
+		return problem.Invalid("/enabled", "the member enabled is required", "required")
+	}
+	if req.AuthKey != nil {
+		if err := lengthOK("/auth_key", *req.AuthKey, 1, 200); err != nil {
+			return err
+		}
+	}
+	j, err := s.svc.StartTailscale(c.r.Context(), service.TailscaleRequest{Enabled: *req.Enabled, AuthKey: deref(req.AuthKey),
+		Reason: deref(req.Reason)}, jobs.SourceConsole)
+	return s.accepted(c, j, err)
+}
+
+func (s *Server) putWiFi(c *reqCtx) error {
+	var req struct {
+		SSID     *string `json:"ssid"`
+		PSK      *string `json:"psk"`
+		Country  *string `json:"country"`
+		Failover *bool   `json:"failover"`
+		Reason   *string `json:"reason"`
+	}
+	if err := c.decode(&req, true); err != nil {
+		return err
+	}
+	switch {
+	case req.SSID == nil:
+		return problem.Invalid("/ssid", "the member ssid is required", "required")
+	case req.PSK == nil:
+		return problem.Invalid("/psk", "the member psk is required", "required")
+	case req.Failover == nil:
+		return problem.Invalid("/failover", "the member failover is required", "required")
+	}
+	if err := lengthOK("/ssid", *req.SSID, 1, 32); err != nil {
+		return err
+	}
+	if err := lengthOK("/psk", *req.PSK, 8, 63); err != nil {
+		return err
+	}
+	if req.Country != nil && !countryRE.MatchString(*req.Country) {
+		return problem.Invalid("/country", "use an ISO 3166-1 alpha-2 code, for example IN", "pattern")
+	}
+	j, err := s.svc.StartWiFi(c.r.Context(), service.WiFiRequest{SSID: *req.SSID, PSK: *req.PSK, Country: deref(req.Country),
+		Failover: *req.Failover, Reason: deref(req.Reason)}, jobs.SourceConsole)
+	return s.accepted(c, j, err)
+}
+
+var countryRE = regexp.MustCompile(`^[A-Z]{2}$`)
+
+func (s *Server) deleteWiFi(c *reqCtx) error {
+	j, err := s.svc.StartWiFiRemove(c.r.Context(), "", jobs.SourceConsole)
+	return s.accepted(c, j, err)
+}
+
+func (s *Server) scanWiFi(c *reqCtx) error {
+	out, err := s.svc.ScanWiFi(c.r.Context())
+	if err != nil {
+		return err
+	}
+	s.json(c.w, http.StatusOK, out)
 	return nil
 }
 

@@ -67,6 +67,13 @@ type Service struct {
 	UpdateHook func(*update.Updater)
 	// StopOnSignal is update.Updater.StopOnSignal: a CLI process sets it, care-pi serve does not.
 	StopOnSignal bool
+	// Phase 6 (docs/connectivity.md). DNSURL is the DNS/ACME service ("" is dnsclient.DefaultBaseURL); DNSBackoff
+	// is the first wait of its retries. CertWait bounds the wait for the public certificate in the enrol job, and
+	// LoginWait the wait for the Tailscale login. Tests set them.
+	DNSURL     string
+	DNSBackoff time.Duration
+	CertWait   time.Duration
+	LoginWait  time.Duration
 
 	mu           sync.Mutex
 	carePassword string
@@ -165,14 +172,16 @@ func unsupported(cfg *config.Config, base string) *problem.Problem {
 	if base == "/tls" {
 		tls = ""
 	}
-	if cfg.TLS.Public.Enabled {
-		items = append(items, item{tls + "/public/enabled", "the public certificate mode comes in Phase 6", 6})
+	// The setup step turns on only the local CA mode. The public name and Tailscale need their enrol jobs
+	// (PUT /tls/public, PUT /tls/tailscale) after the setup.
+	if base == "/tls" && cfg.TLS.Public.Enabled {
+		items = append(items, item{tls + "/public/enabled", "turn on the public name after the setup, in Settings > Connectivity", 0})
 	}
-	if cfg.TLS.Tailscale.Enabled {
-		items = append(items, item{tls + "/tailscale/enabled", "the Tailscale mode comes in Phase 6", 6})
+	if base == "/tls" && cfg.TLS.Tailscale.Enabled {
+		items = append(items, item{tls + "/tailscale/enabled", "turn on Tailscale after the setup, in Settings > Connectivity", 0})
 	}
 	if !cfg.TLS.LocalCA.Enabled {
-		items = append(items, item{tls + "/local_ca/enabled", "this version serves only the local CA mode; another mode comes in Phase 6", 6})
+		items = append(items, item{tls + "/local_ca/enabled", "the local CA mode stays on: it serves the LAN addresses and works offline (S36)", 7})
 	}
 	if base == "" {
 		if cfg.Clock.Policy == "rtc" {
@@ -185,7 +194,11 @@ func unsupported(cfg *config.Config, base string) *problem.Problem {
 	p := problem.New(problem.UnsupportedConfig, items[0].msg+".")
 	p.Phase = items[0].phase
 	for _, it := range items {
-		p.Errors = append(p.Errors, problem.FieldError{Pointer: it.ptr, Message: it.msg, Code: "phase"})
+		code := "phase"
+		if it.phase == 0 {
+			code = "enrol"
+		}
+		p.Errors = append(p.Errors, problem.FieldError{Pointer: it.ptr, Message: it.msg, Code: code})
 		p.Phase = max(p.Phase, it.phase)
 	}
 	return p
@@ -351,6 +364,10 @@ func (s *Service) applyOptions(o apply.Options) apply.Options {
 	// Phase 4: the plan action cutover takes the checkpoint of Phase 3 (docs/api/README.md section 13.11).
 	if o.Checkpoint == nil {
 		o.Checkpoint = s.Checkpoint
+	}
+	// Phase 6: the plan action update-dns sends a new LAN address to the DNS service.
+	if o.DNSAddress == nil {
+		o.DNSAddress = s.UpdateDNSAddress
 	}
 	if s.ApplyHook != nil {
 		s.ApplyHook(&o)

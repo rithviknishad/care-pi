@@ -1,65 +1,58 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
-	"fmt"
 	"html"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/rithviknishad/care-pi/agent/internal/ca"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
-	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/problem"
+	"github.com/rithviknishad/care-pi/agent/internal/render"
 )
 
 // CARoot is the root CA of the local CA (schema CaRoot).
 type CARoot struct {
-	Subject           string    `json:"subject"`
-	FingerprintSHA256 string    `json:"fingerprint_sha256"`
-	FingerprintColon  string    `json:"fingerprint_sha256_colon"`
-	NotBefore         time.Time `json:"not_before"`
-	NotAfter          time.Time `json:"not_after"`
-	NameConstraints   any       `json:"name_constraints"`
+	Subject           string          `json:"subject"`
+	FingerprintSHA256 string          `json:"fingerprint_sha256"`
+	FingerprintColon  string          `json:"fingerprint_sha256_colon"`
+	NotBefore         time.Time       `json:"not_before"`
+	NotAfter          time.Time       `json:"not_after"`
+	NameConstraints   *ca.Constraints `json:"name_constraints"`
+}
+
+// LocalCATLS is the local CA mode in GET /tls.
+type LocalCATLS struct {
+	Enabled   bool     `json:"enabled"`
+	Root      *CARoot  `json:"root"`
+	Hostnames []string `json:"hostnames"`
+	// Uncovered lists the names and addresses that the name constraints of the root do not permit (a new /24).
+	Uncovered []string `json:"uncovered"`
+	// CAChangedAt is the time of the switch from the root of Caddy to the root of the agent (07 §4.1).
+	// Each device of the clinic must then install the new root. PreviousFingerprint is the old root.
+	CAChangedAt         *time.Time `json:"ca_changed_at"`
+	PreviousFingerprint *string    `json:"previous_fingerprint_sha256"`
+	// CertPageURL is the page that offers the root from the fragment of a QR code (07 §4.4).
+	CertPageURL string `json:"cert_page_url"`
 }
 
 // TLSState is the TLS modes (schema TlsState).
 type TLSState struct {
-	LocalCA struct {
-		Enabled   bool     `json:"enabled"`
-		Root      *CARoot  `json:"root"`
-		Hostnames []string `json:"hostnames"`
-	} `json:"local_ca"`
-	Public struct {
-		Enabled  bool    `json:"enabled"`
-		ClinicID *string `json:"clinic_id"`
-		Hostname *string `json:"hostname"`
-	} `json:"public"`
-	Tailscale struct {
-		Enabled  bool    `json:"enabled"`
-		Hostname *string `json:"hostname"`
-	} `json:"tailscale"`
+	LocalCA   LocalCATLS   `json:"local_ca"`
+	Public    PublicTLS    `json:"public"`
+	Tailscale TailscaleTLS `json:"tailscale"`
 }
 
-// rootCA reads the root certificate of the local CA of Caddy.
+// rootCA reads the root that the clinic devices trust: the root of the agent, or the root of Caddy before the switch.
 func (s *Service) rootCA() (*x509.Certificate, []byte, error) {
-	data, err := os.ReadFile(s.Paths.Abs(paths.CaddyRootCA))
-	if err != nil {
-		return nil, nil, err
-	}
-	block, _ := pem.Decode(data)
-	if block == nil || block.Type != "CERTIFICATE" {
-		return nil, nil, fmt.Errorf("%s has no PEM certificate", paths.CaddyRootCA)
-	}
-	cert, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return nil, nil, fmt.Errorf("cannot parse %s: %w", paths.CaddyRootCA, err)
-	}
-	return cert, block.Bytes, nil
+	cert, der, _, err := ca.Trusted(s.Paths)
+	return cert, der, err
 }
 
 func fingerprints(der []byte) (string, string) {
@@ -75,24 +68,37 @@ func fingerprints(der []byte) (string, string) {
 func caRoot(cert *x509.Certificate, der []byte) *CARoot {
 	fp, colon := fingerprints(der)
 	return &CARoot{Subject: cert.Subject.String(), FingerprintSHA256: fp, FingerprintColon: colon,
-		NotBefore: cert.NotBefore.UTC(), NotAfter: cert.NotAfter.UTC()}
+		NotBefore: cert.NotBefore.UTC(), NotAfter: cert.NotAfter.UTC(), NameConstraints: ca.ConstraintsOf(cert)}
 }
 
 // TLS returns the TLS modes and the root CA.
-func (s *Service) TLS() *TLSState {
+func (s *Service) TLS(ctx context.Context) *TLSState {
 	cfg, err := config.Load(s.configPath())
 	if err != nil {
 		cfg = config.Default()
 	}
 	t := &TLSState{}
 	t.LocalCA.Enabled = cfg.TLS.LocalCA.Enabled
-	t.LocalCA.Hostnames = append(s.Hostnames(), s.Addresses()...)
+	t.LocalCA.Hostnames = append(render.LocalHostnames(cfg), s.Addresses()...)
+	if t.LocalCA.Hostnames == nil {
+		t.LocalCA.Hostnames = []string{}
+	}
+	t.LocalCA.Uncovered = []string{}
+	t.LocalCA.CertPageURL = CertPageURL
 	if cert, der, err := s.rootCA(); err == nil {
 		t.LocalCA.Root = caRoot(cert, der)
+		if c := t.LocalCA.Root.NameConstraints; c != nil {
+			if m := c.Missing(t.LocalCA.Hostnames, nil); m != nil {
+				t.LocalCA.Uncovered = m
+			}
+		}
 	}
-	t.Public.Enabled = cfg.TLS.Public.Enabled
-	t.Public.ClinicID = strPtr(cfg.TLS.Public.ClinicID)
-	t.Tailscale.Enabled = cfg.TLS.Tailscale.Enabled
+	if st := ca.ReadState(s.Paths); st.ChangedAt != nil {
+		t.LocalCA.CAChangedAt = st.ChangedAt
+		t.LocalCA.PreviousFingerprint = strPtr(st.PreviousFingerprint)
+	}
+	t.Public = s.publicTLS(ctx, cfg.TLS.Public.Enabled, cfg.TLS.Public.ClinicID, cfg.TLS.Public.ACMECA)
+	t.Tailscale = s.tailscaleTLS(ctx, cfg.TLS.Tailscale.Enabled, cfg.TLS.Tailscale.Hostname)
 	return t
 }
 
@@ -114,7 +120,7 @@ func (s *Service) loadRoot() (*x509.Certificate, []byte, error) {
 	}
 	cert, der, err := s.rootCA()
 	if err != nil {
-		return nil, nil, problem.New(problem.NotFound, "The local CA does not exist yet. Caddy makes it at its first start.")
+		return nil, nil, problem.New(problem.NotFound, "The local CA does not exist yet. The first apply makes it.")
 	}
 	return cert, der, nil
 }
