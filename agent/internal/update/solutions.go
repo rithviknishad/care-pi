@@ -245,7 +245,7 @@ func (u *Updater) Recover(ctx context.Context, rec *jobs.Recorder, r *Recovery) 
 	if cur != nil {
 		hist.FromVersion, hist.ToVersion = strp(cur.Solution.Version), strp(cur.Solution.Version)
 	}
-	err = u.rollbackTo(ctx, rec, cur)
+	err = u.rollbackTo(ctx, rec, cur, false)
 	hist.FinishedAt = u.now()
 	if err != nil {
 		hist.Outcome = OutcomeRollbackFailed

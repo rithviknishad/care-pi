@@ -180,6 +180,76 @@ func TestPlugChangeRestart(t *testing.T) {
 	}
 }
 
+// TestPlugChangeRollbackRestoresConfig: a plug change whose migrations fail writes solution.plugs.<id> and the
+// secret file of before the change back, and the rollback renders ADDITIONAL_PLUGS without the plug.
+func TestPlugChangeRollbackRestoresConfig(t *testing.T) {
+	e := newTEnv(t, "pinned", "2026.11.0")
+	e.install()
+	const id = "care_multihost_files_be"
+	before, err := os.ReadFile(e.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// PUT /plugs/care_multihost_files_be: the service writes the choice and a secret file, then starts the job.
+	cfgText := strings.Replace(string(before), "  pin: \"2026.11.0\"\n", "  pin: \"2026.11.0\"\n  plugs:\n    "+id+":\n      enabled: true\n", 1)
+	if err := os.WriteFile(e.cfg, []byte(cfgText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := secrets.Store{Paths: e.p}
+	if err := store.WritePlug(id, map[string]any{"TOKEN": "new"}); err != nil {
+		t.Fatal(err)
+	}
+	var plugsIn []string
+	e.fake.Hook = func(c host.Cmd, in []byte) (host.Response, bool) {
+		if c.String() == "podman secret create --replace care-additional-plugs -" {
+			plugsIn = append(plugsIn, string(in))
+		}
+		return host.PlugConfigHook(c, in)
+	}
+	e.fake.On("systemctl start care-beat.service", host.Response{Code: 1, Out: "Job for care-beat.service failed"}, host.Response{})
+	rec := e.job(jobs.KindPlugChange)
+	_, err = e.u.RunPlugChange(context.Background(), rec, PlugChangeOptions{ID: id, Path: PathCutover, Previous: &PlugSnapshot{}})
+	if !problem.Is(err, problem.MigrationFailed) {
+		t.Fatalf("want migration-failed after a rollback that succeeded, got %v", err)
+	}
+	if got := actions(rec); got[len(got)-2] != "rollback" || got[len(got)-1] != "maintenance-off" {
+		t.Fatalf("steps %v", got)
+	}
+	if cfg := mustConfig(t, e.cfg); len(cfg.Solution.Plugs) != 0 {
+		t.Fatalf("solution.plugs after the rollback %+v", cfg.Solution.Plugs)
+	}
+	if _, err := os.Stat(store.Path(secrets.PlugFile(id))); !os.IsNotExist(err) {
+		t.Fatalf("the secret file of the change stays: %v", err)
+	}
+	if len(plugsIn) != 2 || !strings.Contains(plugsIn[0], id) || strings.Contains(plugsIn[1], id) {
+		t.Fatalf("ADDITIONAL_PLUGS of the cutover, then of the rollback: %q", plugsIn)
+	}
+	rendered, _ := os.ReadFile(e.p.Abs(paths.RenderedCare + "/additional-plugs.json"))
+	if strings.Contains(string(rendered), id) {
+		t.Fatalf("additional-plugs.json after the rollback %s", rendered)
+	}
+	if l := e.running(); l.Components.Plugs[id].Enabled {
+		t.Fatal("the lock has the plug on after the rollback")
+	}
+
+	// A choice and a secret file of before the change come back as they were.
+	if err := os.WriteFile(e.cfg, []byte(cfgText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snap := &PlugSnapshot{Choice: map[string]any{"enabled": false, "settings": map[string]any{"backend": map[string]any{"ALLOWED_HOSTS": []any{"*.lan"}}}},
+		Secrets: []byte("{\"TOKEN\": \"old\"}\n")}
+	if err := e.u.restorePlug(id, snap); err != nil {
+		t.Fatal(err)
+	}
+	ch := mustConfig(t, e.cfg).Solution.Plugs[id]
+	if ch.Enabled == nil || *ch.Enabled || ch.Settings == nil || !reflect.DeepEqual(ch.Settings.Backend["ALLOWED_HOSTS"], []any{"*.lan"}) {
+		t.Fatalf("restored choice %+v", ch)
+	}
+	if v, _ := store.ReadPlug(id); v["TOKEN"] != "old" {
+		t.Fatalf("restored secrets %v", v)
+	}
+}
+
 // TestOSUpdateCommands: the steps and the apt commands of an os-update job; os-hold runs also after a failure.
 func TestOSUpdateCommands(t *testing.T) {
 	e := newTEnv(t, "stable", "")

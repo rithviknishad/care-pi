@@ -441,6 +441,11 @@ type cutoverSpec struct {
 	optionalCheckpoint bool
 	// offer is the PITR offer of a failure before the migrations of this cutover (a rollback).
 	offer *PitrOffer
+	// beforeRollback runs after a failure, before the old tree starts again (a plug change writes back
+	// config.yaml).
+	beforeRollback func()
+	// lockPlugs renders the automatic rollback with the plug set of the previous lock, not of config.yaml.
+	lockPlugs bool
 }
 
 type cutoverResult struct {
@@ -471,6 +476,9 @@ func (u *Updater) cutover(ctx context.Context, rec *jobs.Recorder, s cutoverSpec
 	}
 	// restoreOld starts the old units after a failure before activate: nothing changed.
 	restoreOld := func(cause error, slug string) (cutoverResult, error) {
+		if s.beforeRollback != nil {
+			s.beforeRollback()
+		}
 		_ = step(rec, "rollback", "start the running version again", func() error { return apply.StartTarget(ctx, ao) })
 		_ = step(rec, "maintenance-off", "", func() error { return apply.MaintenanceOff(u.Paths) })
 		_ = UpdateState(u.Paths, func(st *State) { st.Cutover = nil })
@@ -526,7 +534,10 @@ func (u *Updater) cutover(ctx context.Context, rec *jobs.Recorder, s cutoverSpec
 			pitr = offer
 		}
 		res.offer = pitr
-		rerr := u.rollbackTo(ctx, rec, s.prev)
+		if s.beforeRollback != nil {
+			s.beforeRollback()
+		}
+		rerr := u.rollbackTo(ctx, rec, s.prev, s.lockPlugs)
 		res.downtime = u.now().Sub(pageOn)
 		if rerr != nil {
 			res.outcome = OutcomeRollbackFailed
@@ -679,7 +690,8 @@ func (u *Updater) verifyTarget(pr *apply.Prepared, rows []plugcfg.Row) VerifyTar
 
 // rollbackTo installs a previous on-device lock as it is: the step rollback, then maintenance-off.
 // The database keeps the migrations that ran; the PITR offer undoes them.
-func (u *Updater) rollbackTo(ctx context.Context, rec *jobs.Recorder, prev *lock.Lock) error {
+// lockPlugs renders the plug set of prev (a failed plug change), not the plug set of config.yaml.
+func (u *Updater) rollbackTo(ctx context.Context, rec *jobs.Recorder, prev *lock.Lock, lockPlugs bool) error {
 	if prev == nil {
 		err := errors.New("no previous lock exists")
 		_ = step(rec, "rollback", "", func() error { return err })
@@ -694,7 +706,7 @@ func (u *Updater) rollbackTo(ctx context.Context, rec *jobs.Recorder, prev *lock
 		_ = apply.WaitInactive(ctx, ao, apply.AppUnits)
 		var err error
 		pr, err = apply.Prepare(ctx, apply.PrepareOptions{Paths: u.Paths, ConfigPath: u.configPath(), SolutionsDir: u.SolutionsDir,
-			Host: u.Host, IPs: u.IPs, Phase: "full", Offline: true, PinnedLock: prev, Warn: out})
+			Host: u.Host, IPs: u.IPs, Phase: "full", Offline: true, PinnedLock: prev, PlugsFromLock: lockPlugs, Warn: out})
 		if err != nil {
 			return err
 		}

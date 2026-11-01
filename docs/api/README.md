@@ -1472,6 +1472,10 @@ loads it at the next page load). A secret goes to `/etc/care-pi/secrets/plug-<id
 | `build-and-cutover` | A backend plug on that the image does not contain (track `custom`). |
 | `none` | The change has no effect now. For example a setting (backend or frontend, also a secret) of a plug that is off: the agent stores the value, and it counts when the plug turns on. |
 
+A `cutover` or `build-and-cutover` that fails writes `solution.plugs.<plug_id>` and the secret file of before the change
+back to `config.yaml`, then rolls back with the plug set of the previous lock. `GET /config` and `GET /plugs` then show
+the values that run.
+
 `enabled: null` removes the operator choice: the solution default and the `auto` rule apply again (`Plug.source`).
 `care_multihost_files_be` has `auto: when_multihost`: it turns on when Caddy serves more than one host name. Phase 4 serves
 one name, so it stays off (`auto_active: false`).

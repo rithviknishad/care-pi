@@ -1,13 +1,18 @@
 package update
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"reflect"
 	"sort"
 	"time"
+
+	"go.yaml.in/yaml/v3"
 
 	"github.com/rithviknishad/care-pi/agent/internal/apply"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
@@ -592,6 +597,90 @@ type PlugChangeOptions struct {
 	Path   string
 	Source string
 	Reason string
+	// Previous is solution.plugs.<id> and the secret file before PUT /plugs wrote them. A failed
+	// cutover writes them back before its rollback. nil: no restore.
+	Previous *PlugSnapshot
+}
+
+// PlugSnapshot is the operator choice and the secret file of one plug before a change.
+type PlugSnapshot struct {
+	// Choice is the value of solution.plugs.<id> in config.yaml; nil when the key was absent.
+	Choice any
+	// Secrets is the content of secrets/plug-<id>.json; nil when the file was absent.
+	Secrets []byte
+}
+
+// restorePlug writes solution.plugs.<id> of the snapshot into config.yaml (the other keys and the
+// comments stay) and puts the secret file back.
+func (u *Updater) restorePlug(id string, snap *PlugSnapshot) error {
+	path := u.configPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return err
+	}
+	if len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return fmt.Errorf("config.yaml is not a mapping")
+	}
+	root := doc.Content[0]
+	sol := mapValue(root, "solution")
+	if sol == nil && snap.Choice != nil {
+		sol = &yaml.Node{Kind: yaml.MappingNode}
+		root.Content = append(root.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "solution"}, sol)
+	}
+	if sol != nil {
+		plugs := mapValue(sol, "plugs")
+		if plugs == nil && snap.Choice != nil {
+			plugs = &yaml.Node{Kind: yaml.MappingNode}
+			sol.Content = append(sol.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: "plugs"}, plugs)
+		}
+		if plugs != nil {
+			deleteKey(plugs, id)
+			if snap.Choice != nil {
+				var v yaml.Node
+				if err := v.Encode(snap.Choice); err != nil {
+					return err
+				}
+				plugs.Content = append(plugs.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: id}, &v)
+			}
+			if len(plugs.Content) == 0 {
+				deleteKey(sol, "plugs")
+			}
+		}
+	}
+	var b bytes.Buffer
+	enc := yaml.NewEncoder(&b)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return err
+	}
+	_ = enc.Close()
+	if _, err := config.Parse(b.Bytes(), "config.yaml"); err != nil {
+		return err
+	}
+	if err := lock.WriteFileAtomic(path, b.Bytes(), 0o600); err != nil {
+		return err
+	}
+	file := secrets.Store{Paths: u.Paths}.Path(secrets.PlugFile(id))
+	if snap.Secrets == nil {
+		if err := os.Remove(file); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		return nil
+	}
+	return lock.WriteFileAtomic(file, snap.Secrets, 0o600)
+}
+
+func deleteKey(m *yaml.Node, key string) {
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			m.Content = append(m.Content[:i], m.Content[i+2:]...)
+			return
+		}
+	}
 }
 
 // RunPlugChange runs a plug-change job: the path of the plan with the config that is on disk now.
@@ -620,7 +709,25 @@ func (u *Updater) RunPlugChange(ctx context.Context, rec *jobs.Recorder, o PlugC
 	if cur != nil {
 		hist.FromVersion, hist.ToVersion = strp(cur.Solution.Version), strp(cur.Solution.Version)
 	}
+	cutover := o.Path == PathCutover || o.Path == PathBuildAndCutover
+	restored := false
+	// restore writes the choice before the change back, so that the rollback renders the previous plug set
+	// and config.yaml matches the lock that runs again.
+	restore := func() {
+		if restored || o.Previous == nil || !cutover {
+			return
+		}
+		restored = true
+		if err := u.restorePlug(o.ID, o.Previous); err != nil {
+			rec.Logf("warning: cannot write solution.plugs.%s of before the change back: %v", o.ID, err)
+			return
+		}
+		rec.Logf("solution.plugs.%s and its secret file have their values of before the change again", o.ID)
+	}
 	finish := func(err error) (*PlugChangeJobResult, error) {
+		if err != nil {
+			restore()
+		}
 		hist.FinishedAt = u.now()
 		if err != nil {
 			hist.Outcome, hist.Problem = OutcomeFailed, errorsAs(err)
@@ -653,7 +760,8 @@ func (u *Updater) RunPlugChange(ctx context.Context, rec *jobs.Recorder, o PlugC
 		if err := step(rec, "render", id, func() error { return writeStaging(u.Paths, id, pr) }); err != nil {
 			return finish(err)
 		}
-		r, err := u.cutover(ctx, rec, cutoverSpec{kind: jobs.KindPlugChange, target: pr, targetID: id, prev: cur, path: o.Path})
+		r, err := u.cutover(ctx, rec, cutoverSpec{kind: jobs.KindPlugChange, target: pr, targetID: id, prev: cur, path: o.Path,
+			beforeRollback: restore, lockPlugs: true})
 		res.Checkpoint, hist.Checkpoint, hist.PitrOffer = r.checkpoint, r.checkpoint, r.offer
 		d := r.downtime.Seconds()
 		res.DowntimeS, hist.DowntimeS = &d, &d

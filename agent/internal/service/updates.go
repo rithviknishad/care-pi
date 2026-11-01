@@ -397,6 +397,13 @@ func (s *Service) SetPlug(ctx context.Context, w PlugWrite) (*PlugChangeResult, 
 	if plugs == nil {
 		plugs = map[string]any{}
 	}
+	// The values before the change: a cutover that fails writes them back before its rollback.
+	prev := &update.PlugSnapshot{Choice: plugs[w.ID]}
+	if data, err := os.ReadFile((secrets.Store{Paths: s.Paths}).Path(secrets.PlugFile(w.ID))); err == nil {
+		prev.Secrets = data
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	if c := out.Choice; c.Enabled == nil && c.Settings == nil {
 		delete(plugs, w.ID)
 	} else {
@@ -443,7 +450,8 @@ func (s *Service) SetPlug(ctx context.Context, w PlugWrite) (*PlugChangeResult, 
 		path := out.Plan.Path
 		j, err := s.Jobs.Start(ctx, jobs.Spec{Kind: jobs.KindPlugChange, Source: w.Source, Reason: w.Change.Reason, Lock: true},
 			func(ctx context.Context, rec *jobs.Recorder) (any, error) {
-				r, err := s.Updater().RunPlugChange(ctx, rec, update.PlugChangeOptions{ID: w.ID, Path: path, Source: w.Source, Reason: w.Change.Reason})
+				r, err := s.Updater().RunPlugChange(ctx, rec, update.PlugChangeOptions{ID: w.ID, Path: path, Source: w.Source, Reason: w.Change.Reason,
+					Previous: prev})
 				if err != nil {
 					return nil, toProblem(err)
 				}

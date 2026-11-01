@@ -67,6 +67,9 @@ type PrepareOptions struct {
 	SolutionLock *solution.Lock
 	// PinnedLock is an on-device lock to install as it is, for a rollback. Nothing resolves.
 	PinnedLock *lock.Lock
+	// PlugsFromLock turns each plug on or off as components.plugs of PinnedLock says, whatever
+	// solution.plugs of config.yaml says (the rollback of a failed plug change).
+	PlugsFromLock bool
 }
 
 // Prepare loads the config, the solution, and the lock, resolves refs, and renders the tree.
@@ -78,6 +81,16 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 	prev, err := lock.Load(o.Paths)
 	if err != nil {
 		return nil, err
+	}
+	if o.PinnedLock != nil && o.PlugsFromLock {
+		for id, c := range o.PinnedLock.Components.Plugs {
+			if cfg.Solution.Plugs == nil {
+				cfg.Solution.Plugs = map[string]config.PlugChoice{}
+			}
+			ch, on := cfg.Solution.Plugs[id], c.Enabled
+			ch.Enabled = &on
+			cfg.Solution.Plugs[id] = ch
+		}
 	}
 	if o.Phase == "" {
 		o.Phase = setup.Phase(o.Paths)

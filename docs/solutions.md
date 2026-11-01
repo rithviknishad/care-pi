@@ -827,6 +827,11 @@ With the path `none`, `apply=true` starts no job: the response is `200` with `jo
 `ADDITIONAL_PLUGS` entry and no `plug_config` row, so its settings have no runtime effect. When the plug turns on, the
 plan of that change uses the stored values (and a required value must be there, else `plug-settings-invalid`).
 
+A `cutover` or `build-and-cutover` that fails puts `solution.plugs.<id>` of `config.yaml` and the secret file back to
+their values before `PUT /plugs` (the service gives the job a snapshot of both), before the rollback. The rollback
+renders `ADDITIONAL_PLUGS` with the plug set of the previous lock (`components.plugs`), so the old image does not get
+the new plug.
+
 A plug change changes the on-device lock (`components.plugs.<id>.enabled`). A switch of a plug of the solution
 needs no image build and no FE build (section 1.5). Outside the window, the operator confirms the path in the console;
 `PUT /plugs` does not check the window.
