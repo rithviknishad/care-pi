@@ -246,6 +246,7 @@ A new recovery key gives a new directory. docs/api/README.md section 13 tells th
 | `updates.os_reboot` | boolean | `true` | Phase 4 | Reboot inside the window when `/run/reboot-required` exists and no job runs. |
 | `updates.os_full` | boolean | `false` | Phase 4 | Run `care-pi update --os` (apt `full-upgrade`, and the tested versions of the held container packages) inside the window, after the Care update. |
 | `updates.index_url` | `https://` or `file:///` URL, or `null` | `null` | Phase 4 | The URL of `index.json`. `null`: the default of the agent release, `https://github.com/rithviknishad/care-pi/releases/download/index/index.json`. A `file:///` URL lets a device update from a USB drive. |
+| `updates.require_signed` | boolean | `false` | Phase 7 | Accept `index.json` and a solution lock only with a valid minisign signature (`<file>.minisig`) of a trusted key (`solutions/keys/*.pub` of the agent, `/etc/care-pi/keys/*.pub`). Else `lock-signature-invalid`. `docs/solutions.md` section 18. |
 
 `docs/solutions.md` describes the window, the timers, and the update steps (sections 8 to 11).
 

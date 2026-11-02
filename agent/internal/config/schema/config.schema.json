@@ -252,6 +252,10 @@
           "description": "Phase 4. The URL of index.json (https:// or file://). null: the default URL of this agent release.",
           "type": ["string", "null"],
           "pattern": "^(https://|file:///)[^\\s]+$"
+        },
+        "require_signed": {
+          "description": "Phase 7. Accept index.json and a solution lock only with a valid minisign signature (<file>.minisig) of a trusted key: the keys of the agent (solutions/keys) and /etc/care-pi/keys/*.pub. Default false.",
+          "type": "boolean"
         }
       }
     },

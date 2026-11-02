@@ -228,6 +228,7 @@ export function effectiveConfig(state) {
       os_reboot: true,
       os_full: false,
       index_url: null,
+      require_signed: false,
       ...f.updates,
       window: { days: ["Sun"], start: "02:00", end: "05:00", ...f.updates?.window },
     },

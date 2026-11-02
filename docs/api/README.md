@@ -523,6 +523,7 @@ An operation with a session can also return `csrf` (403); see §3.
 | `build-required-offline` | 409 | Phase 4. The change needs a download or a local build, and the host has no internet. |
 | `index-unavailable` | 502 | Phase 4. The agent cannot fetch or read `index.json`. |
 | `artefact-invalid` | 502 | Phase 4. A downloaded lock or bundle is missing (HTTP 404), has another SHA-256, or fails its schema. |
+| `lock-signature-invalid` | 502 | Phase 7. `updates.require_signed` is on, and `index.json` or a lock has no valid minisign signature of a trusted key. |
 | `rollback-unavailable` | 409 | Phase 4. No previous lock exists. |
 | `checkpoint-failed` | 500 | Phase 4, job error. The checkpoint before the migrations failed. Nothing changed. |
 | `migration-failed` | 500 | Phase 4, job error. `care-beat` did not become healthy. The previous lock runs again; `pitr_offer` is set. |
@@ -1730,6 +1731,13 @@ or the device has no root of its own yet. After it, `TlsState.local_ca` has `cha
 `ca_changed_at`, `previous_fingerprint_sha256`, and for 7 days `previous_root` (a `CaRoot`). The console shows the
 warning of the certificate page with both fingerprints (`docs/connectivity.md` section 2.5).
 
+### 17.4 Signed index and locks
+
+`updates.require_signed` (config, default `false`) makes the agent check a minisign signature (`<url>.minisig`) of
+`index.json` and of each lock before it accepts them. A failure is `502 lock-signature-invalid` in the update jobs and
+in `GET /solutions/{name}/locks/{version}`; the cache stays. CLI: `care-pi solution verify FILE`. The keys, CI, and the
+key ceremony: `docs/solutions.md` section 18.
+
 ### 17.9 Changes of contract 0.8.0
 
 All changes are additive.
@@ -1739,3 +1747,4 @@ All changes are additive.
   `security.firewall.policy` and `security.ssh.allow` (section 17.2).
 - `POST /tls/local-ca/rotate` is implemented (no `x-phase`); the job kind `tls-local-ca-rotate` and
   `TlsLocalCaRotateResult`; `TlsState.local_ca.change_reason` and `TlsState.local_ca.previous_root` (section 17.3).
+- The config key `updates.require_signed` and the problem type `lock-signature-invalid` (section 17.4).

@@ -12,7 +12,9 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/rithviknishad/care-pi/agent/internal/exitcode"
+	"github.com/rithviknishad/care-pi/agent/internal/minisign"
 	"github.com/rithviknishad/care-pi/agent/internal/solution"
+	"github.com/rithviknishad/care-pi/agent/internal/update"
 )
 
 var solutionFlags struct {
@@ -27,6 +29,8 @@ var solutionFlags struct {
 	agentURL  string
 	generated string
 	changelog string
+	sig       string
+	key       string
 }
 
 var solutionCmd = &cobra.Command{
@@ -113,6 +117,51 @@ var solutionValidateCmd = &cobra.Command{
 			return printJSON(cmd.OutOrStdout(), doc)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: a valid %s document\n", args[0], kind)
+		return nil
+	},
+}
+
+var solutionVerifyCmd = &cobra.Command{
+	Use:   "verify FILE [--sig FILE.minisig] [--key KEY.pub]",
+	Short: "Check the minisign signature of an index.json or a solution lock (Phase 7)",
+	Long: `verify checks FILE with its signature (default FILE.minisig) and the trusted keys: the keys of this agent
+build (solutions/keys/*.pub) and /etc/care-pi/keys/*.pub, or only the key of --key. It prints the key id and the
+trusted comment. updates.require_signed makes the agent run the same check before it accepts an index or a lock
+(docs/solutions.md section 18). Exit code 1: no valid signature.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		data, err := os.ReadFile(args[0])
+		if err != nil {
+			return exitcode.With(exitcode.BadInput, err)
+		}
+		sigFile := solutionFlags.sig
+		if sigFile == "" {
+			sigFile = args[0] + update.SigSuffix
+		}
+		sig, err := os.ReadFile(sigFile)
+		if err != nil {
+			return exitcode.With(exitcode.BadInput, err)
+		}
+		var keys minisign.Keys
+		if solutionFlags.key != "" {
+			kd, err := os.ReadFile(solutionFlags.key)
+			if err != nil {
+				return exitcode.With(exitcode.BadInput, err)
+			}
+			k, err := minisign.ParsePublicKey(kd)
+			if err != nil {
+				return exitcode.With(exitcode.BadInput, err)
+			}
+			keys = minisign.Keys{k}
+		} else if keys, err = update.TrustedKeys(rootPaths()); err != nil {
+			return err
+		}
+		k, err := update.VerifyFile(keys, data, sig, args[0])
+		if err != nil {
+			return cliError(err)
+		}
+		s, _ := minisign.ParseSignature(sig)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s: signature valid (key %s; trusted comment: %s)\n", args[0], k.KeyID(), s.TrustedComment)
 		return nil
 	},
 }
@@ -225,6 +274,8 @@ func init() {
 	f.StringVar(&solutionFlags.agentURL, "agent-url", "", "the release page of that agent")
 	f.StringVar(&solutionFlags.generated, "generated-at", "", "generated_at (default: now)")
 	f.StringVar(&solutionFlags.changelog, "changelog-base", "", "the base of the release pages, for example https://github.com/OWNER/REPO/releases/tag")
-	solutionCmd.AddCommand(solutionListCmd, solutionShowCmd, solutionValidateCmd, solutionLockCmd, solutionIndexCmd)
+	solutionVerifyCmd.Flags().StringVar(&solutionFlags.sig, "sig", "", "the signature file (default: FILE.minisig)")
+	solutionVerifyCmd.Flags().StringVar(&solutionFlags.key, "key", "", "trust only this minisign public key file")
+	solutionCmd.AddCommand(solutionListCmd, solutionShowCmd, solutionValidateCmd, solutionVerifyCmd, solutionLockCmd, solutionIndexCmd)
 	rootCmd.AddCommand(solutionCmd)
 }

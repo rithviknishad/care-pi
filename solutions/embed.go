@@ -8,3 +8,8 @@ import "embed"
 //
 //go:embed */solution.yaml schema/*.schema.json */locks
 var FS embed.FS
+
+// Keys holds the minisign public keys that the agent trusts (keys/*.pub, Phase 7, docs/solutions.md section 18).
+//
+//go:embed keys
+var Keys embed.FS

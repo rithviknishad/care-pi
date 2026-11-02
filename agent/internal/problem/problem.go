@@ -72,6 +72,8 @@ const (
 	BuildRequiredOffline = "build-required-offline"
 	IndexUnavailable     = "index-unavailable"
 	ArtefactInvalid      = "artefact-invalid"
+	// LockSignatureInvalid (Phase 7): updates.require_signed is on, and index.json or a lock has no valid signature.
+	LockSignatureInvalid = "lock-signature-invalid"
 	RollbackUnavailable  = "rollback-unavailable"
 	CheckpointFailed     = "checkpoint-failed"
 	MigrationFailed      = "migration-failed"
@@ -150,6 +152,7 @@ var catalogue = map[string]entry{
 	BuildRequiredOffline: {409, "The change needs the internet"},
 	IndexUnavailable:     {502, "The index is not available"},
 	ArtefactInvalid:      {502, "A downloaded file is not valid"},
+	LockSignatureInvalid: {502, "The signature of a downloaded file is not valid"},
 	RollbackUnavailable:  {409, "No previous lock exists"},
 	CheckpointFailed:     {500, "The checkpoint failed"},
 	MigrationFailed:      {500, "A migration failed"},

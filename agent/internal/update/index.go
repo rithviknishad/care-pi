@@ -15,6 +15,7 @@ import (
 
 	"github.com/rithviknishad/care-pi/agent/internal/buildinfo"
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
+	"github.com/rithviknishad/care-pi/agent/internal/minisign"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/problem"
 	"github.com/rithviknishad/care-pi/agent/internal/solution"
@@ -42,6 +43,10 @@ type Client struct {
 	Paths paths.Paths
 	HTTP  *http.Client
 	Now   func() time.Time
+	// RequireSigned accepts index.json and a lock only with a valid signature of one of Keys (updates.require_signed,
+	// Phase 7).
+	RequireSigned bool
+	Keys          minisign.Keys
 }
 
 func (c Client) http() *http.Client {
@@ -108,7 +113,8 @@ func (c Client) FetchIndex(ctx context.Context, url string) (*solution.Index, er
 	h := http.Header{}
 	cached, _ := solution.CachedIndex(c.Paths)
 	// file:// has a resolution of 1 s for If-Modified-Since: a USB copy can change in the same second.
-	if meta.URL == url && cached != nil && !strings.HasPrefix(url, "file://") {
+	// With signatures, each check downloads and verifies the index (the cache can be from before require_signed).
+	if meta.URL == url && cached != nil && !strings.HasPrefix(url, "file://") && !c.RequireSigned {
 		if meta.ETag != "" {
 			h.Set("If-None-Match", meta.ETag)
 		}
@@ -127,6 +133,9 @@ func (c Client) FetchIndex(ctx context.Context, url string) (*solution.Index, er
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, indexProblem("GET %s gave HTTP %d.", url, resp.StatusCode)
+	}
+	if err := c.verifyRemote(ctx, url, data); err != nil {
+		return nil, err
 	}
 	ix, err := solution.ParseIndex(data)
 	if err != nil {
@@ -168,6 +177,9 @@ func (c Client) FetchLock(ctx context.Context, ix *solution.Index, name string, 
 	if resp.StatusCode != http.StatusOK {
 		return nil, problem.Newf(problem.ArtefactInvalid, "GET %s gave HTTP %d.", url, resp.StatusCode)
 	}
+	if err := c.verifyRemote(ctx, url, data); err != nil {
+		return nil, err
+	}
 	return c.Accept(data, name, entry.Version, entry.SHA256)
 }
 
@@ -205,6 +217,10 @@ const LocalIndexURL = "file://" + paths.LocalDist + "/index/index.json"
 func (c Client) ImportLocalDist(dir string) (*solution.Index, error) {
 	data, err := os.ReadFile(c.Paths.Abs(dir + "/index/index.json"))
 	if err != nil {
+		return nil, err
+	}
+	// The index has the SHA-256 of each lock, so its signature covers the locks of the snapshot.
+	if err := c.verifyLocal(c.Paths.Abs(dir+"/index/index.json"), data); err != nil {
 		return nil, err
 	}
 	ix, err := solution.ParseIndex(data)

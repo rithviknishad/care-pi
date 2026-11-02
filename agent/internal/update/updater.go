@@ -149,7 +149,16 @@ func (u *Updater) configPath() string {
 	return u.Paths.Abs(paths.ConfigFile)
 }
 
-func (u *Updater) client() Client { return Client{Paths: u.Paths, HTTP: u.HTTP, Now: u.Now} }
+func (u *Updater) client() Client {
+	c := Client{Paths: u.Paths, HTTP: u.HTTP, Now: u.Now}
+	// updates.require_signed (Phase 7). A config that does not load requires nothing here: each job reads the
+	// config itself and fails on it.
+	if cfg, err := u.Config(); err == nil && cfg.Updates.RequireSigned {
+		c.RequireSigned = true
+		c.Keys, _ = TrustedKeys(u.Paths)
+	}
+	return c
+}
 
 func (u *Updater) store() solution.LockStore {
 	return solution.LockStore{Paths: u.Paths, Dir: u.SolutionsDir}
@@ -331,7 +340,11 @@ func (u *Updater) ResolveTarget(ctx context.Context, cfg *config.Config, version
 		if err != nil {
 			return nil, problem.Newf(problem.LockNotFound, "Cannot read %s: %v", lockFile, err)
 		}
-		l, err := u.client().Accept(data, name, "", "")
+		c := u.client()
+		if err := c.verifyLocal(lockFile, data); err != nil {
+			return nil, err
+		}
+		l, err := c.Accept(data, name, "", "")
 		if err != nil {
 			return nil, err
 		}

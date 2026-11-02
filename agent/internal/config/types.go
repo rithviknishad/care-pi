@@ -217,6 +217,9 @@ type Updates struct {
 	OSFull bool `yaml:"os_full" json:"os_full"`
 	// IndexURL overrides the URL of index.json. Empty is the default of the agent release.
 	IndexURL string `yaml:"index_url,omitempty" json:"index_url,omitempty"`
+	// RequireSigned accepts index.json and a lock only with a valid minisign signature (Phase 7, docs/solutions.md
+	// section 15). The planned default after the key ceremony; false now.
+	RequireSigned bool `yaml:"require_signed" json:"require_signed"`
 }
 
 // UpdateWindow is the time window for automatic updates.

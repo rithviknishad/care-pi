@@ -3734,7 +3734,7 @@ paths:
         and checks its SHA-256 (`502 index-unavailable` or `502 artefact-invalid` on a failure).
       x-phase: 4
       x-cli: care-pi solution show NAME --lock VERSION --json
-      x-problems: [not-authenticated, not-found, lock-not-found, index-unavailable, artefact-invalid, not-implemented-in-this-version]
+      x-problems: [not-authenticated, not-found, lock-not-found, index-unavailable, artefact-invalid, lock-signature-invalid, not-implemented-in-this-version]
       parameters:
         - name: name
           in: path
@@ -4461,7 +4461,7 @@ components:
                     code: dry-run-apply
                     parameter: apply
     UpdatesBadGateway:
-      description: 'Phase 4. `index-unavailable` or `artefact-invalid`: a download from the dist base failed.'
+      description: 'Phase 4. `index-unavailable` or `artefact-invalid`: a download from the dist base failed. Phase 7: `lock-signature-invalid`.'
       content:
         application/problem+json:
           schema:
@@ -4662,6 +4662,7 @@ components:
         - https://care-pi.rithviknishad.dev/problems/build-required-offline
         - https://care-pi.rithviknishad.dev/problems/index-unavailable
         - https://care-pi.rithviknishad.dev/problems/artefact-invalid
+        - https://care-pi.rithviknishad.dev/problems/lock-signature-invalid
         - https://care-pi.rithviknishad.dev/problems/rollback-unavailable
         - https://care-pi.rithviknishad.dev/problems/checkpoint-failed
         - https://care-pi.rithviknishad.dev/problems/migration-failed

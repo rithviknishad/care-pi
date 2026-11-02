@@ -106,6 +106,8 @@ const (
 	FirewallFile         = "/etc/care-pi/rendered/firewall/care-pi.nft"
 	// FirewallState records the policy of the last load and the rollback timer (Phase 7, S42 default-drop).
 	FirewallState = "/var/lib/care-pi/state/firewall.json"
+	// KeysDir holds the minisign public keys that this host trusts in addition to the keys of the agent (Phase 7).
+	KeysDir = "/etc/care-pi/keys"
 	// SysctlFile sets net.ipv4.ip_nonlocal_bind=1: the pod can publish on an address that is not there yet
 	// (tailscale0, a second LAN address). The installer and apply write it; systemd-sysctl.service loads it.
 	SysctlFile = "/etc/sysctl.d/50-care-pi.conf"

@@ -61,6 +61,8 @@ const problems: Record<ProblemSlug, string> = {
   "build-required-offline": "This change needs the internet, and the device has no connection.",
   "index-unavailable": "The device cannot download the list of versions.",
   "artefact-invalid": "A downloaded file is not correct. The device did not use it.",
+  "lock-signature-invalid":
+    "The signature of the update list or of a version is missing or not valid. The device did not use it. Ask the maintainer.",
   "rollback-unavailable": "No previous version is on the device.",
   "checkpoint-failed": "The backup point of the database failed. Nothing changed.",
   "migration-failed": "The database update failed. The previous version runs again.",

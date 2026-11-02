@@ -58,6 +58,7 @@ export type ProblemSlug =
   | "build-required-offline"
   | "index-unavailable"
   | "artefact-invalid"
+  | "lock-signature-invalid"
   | "rollback-unavailable"
   | "checkpoint-failed"
   | "migration-failed"

@@ -1064,3 +1064,47 @@ make e2e-local
 The Phase 4 exit test on a Pi is a plan in `plans/08-spike-log.md`, "Phase 4 exit test — plan". It uses
 `images/care-test/Containerfile.broken-migrate` (TEST ONLY) to force a migration failure.
 
+## 18. Signatures of the index and the locks (Phase 7, optional)
+
+P20 and S24 said "no artefact signing" for v1: the agent trusts TLS to the release origin and the SHA-256 values of
+`index.json`. Phase 7 adds optional [minisign](https://jedisct1.github.io/minisign/) signatures. They protect against a
+changed release asset (a stolen token of the repository, a changed mirror, a `file://` index on a USB drive of somebody
+else).
+
+**What CI signs.** `solution-lock.yml` signs each lock (`<solution>-<version>.lock.yaml.minisig`, trusted comment
+`care-pi lock <solution> <version> run <id>`); `solution-index.yml` signs `index.json` (`index.json.minisig`). Both
+upload the `.minisig` next to the file. The index has the SHA-256 of each lock, so the signature of the index also
+covers the locks that the agent gets through it; the signature of a lock covers a lock that comes alone
+(`care-pi update --lock-file`). Without the repository secret `MINISIGN_KEY`, CI signs nothing and writes a notice.
+
+**What the agent checks.** `updates.require_signed: true` (default `false`; the planned default after the key
+ceremony and one release with signatures):
+
+- `GET <index_url>.minisig` before the agent accepts `index.json`; each check downloads the index again (no
+  `If-None-Match`), because a cached index can be from before the setting.
+- `GET <lock url>.minisig` before it accepts a lock of the index.
+- `<file>.minisig` next to `care-pi update --lock-file <file>`, and `index/index.json.minisig` of a dist snapshot.
+- The trusted keys: `solutions/keys/*.pub` of the agent build (embedded) and `/etc/care-pi/keys/*.pub` of the host
+  (for example the key of a self-hosted index). The signature names its key id; the agent uses the key with that id.
+- A missing, changed, or unknown-key signature gives `502 lock-signature-invalid`; the agent keeps the cache and
+  installs nothing. The locks embedded in the agent and the locks of the cache that an earlier check accepted need no
+  signature.
+
+`care-pi solution verify FILE [--sig FILE.minisig] [--key KEY.pub]` runs the same check by hand.
+
+**The key ceremony** (the owner, once, on a trusted computer):
+
+1. `minisign -G -W -p solutions/keys/care-pi.pub -s care-pi.minisign.key` (`-W`: no password, so CI can sign
+   without a prompt; the secret of the repository protects the key).
+2. `gh secret set MINISIGN_KEY < care-pi.minisign.key` in the repository.
+3. Keep an offline copy of `care-pi.minisign.key` (a USB drive in a safe), then delete the file on the computer.
+4. Commit `solutions/keys/care-pi.pub`. The next agent release embeds it. Run `solution-lock.yml` (or
+   `solution-index.yml`): the release assets get `.minisig` files. `care-pi solution verify` checks them.
+
+**Rotation.** Make a new key pair (`care-pi-2027.pub`), commit it **beside** the old public key, and release an
+agent. When the devices run that agent, replace the secret `MINISIGN_KEY` with the new key, run `solution-index.yml`
+and sign the newest locks again, then remove the old public key in a later release. A lost or stolen private key:
+replace the secret at once, release an agent without the old key, and tell the operators to update the agent first.
+A device with `require_signed` and only the old key refuses each new index until the agent update: its operator can
+turn `require_signed` off for that update.
+
