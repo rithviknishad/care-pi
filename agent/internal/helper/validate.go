@@ -143,10 +143,13 @@ func init() {
 		"sh":          oneOf([]string{"-c", "command -v raspi-config"}),
 		"sftp":        sftp,
 		paths.Binary:  carePiSelf,
-		"nft":         oneOf([]string{"list", "ruleset"}, []string{"chain inet care-pi input { policy accept ; }"}),
+		"nft":         oneOf([]string{"list", "ruleset"}, []string{"chain inet care-pi input { policy accept ; }"}, firewallLoadPending),
 		"ss":          oneOf([]string{"-ltnpH"}, []string{"-ltnupH"}),
 	}
 }
+
+// firewallLoadPending is firewall.LoadPendingCmd: the drop table of a trial (docs/console-server.md, section 13).
+var firewallLoadPending = []string{"-f", paths.FirewallPendingFile}
 
 func oneOf(wants ...[]string) rule {
 	return func(args []string) error {

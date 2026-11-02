@@ -129,9 +129,26 @@ var firewallRollbackCmd = &cobra.Command{
 	},
 }
 
+var firewallBootCheckCmd = &cobra.Command{
+	Use:    "boot-check",
+	Short:  "End a policy drop that waits for its confirmation (ExecStartPre of care-pi-firewall.service)",
+	Hidden: true,
+	Args:   cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		stale, err := newService(cmd).FirewallBootCheck()
+		if err != nil {
+			return cliError(err)
+		}
+		if stale {
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "the policy drop was not confirmed: the firewall policy is accept")
+		}
+		return nil
+	},
+}
+
 func init() {
 	firewallStatusCmd.Flags().BoolVar(&firewallFlags.json, "json", false, "print JSON (schema FirewallState)")
 	firewallRollbackCmd.Flags().StringVar(&firewallFlags.reason, "reason", "manual", "timeout or manual (state/firewall.json)")
-	firewallCmd.AddCommand(firewallStatusCmd, firewallPolicyCmd, firewallAllowSSHCmd, firewallConfirmCmd, firewallRollbackCmd)
+	firewallCmd.AddCommand(firewallStatusCmd, firewallPolicyCmd, firewallAllowSSHCmd, firewallConfirmCmd, firewallRollbackCmd, firewallBootCheckCmd)
 	rootCmd.AddCommand(firewallCmd)
 }

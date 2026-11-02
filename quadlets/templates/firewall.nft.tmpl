@@ -2,7 +2,13 @@
 # {{.Header}}
 # The table inet care-pi (docs/console-server.md, section 13). {{.FirewallUnit}} loads this file
 # ({{.FirewallDropInFile}}). It changes only this table: the tables of podman (netavark) and Tailscale stay.
+{{- if .Firewall.Waits}}
+# security.firewall.policy: drop, not confirmed. The boot loads this file, so it keeps the policy accept: the apply
+# loaded care-pi.pending.nft (drop) for the trial, and "care-pi firewall confirm" moves it over this file.
+# security.ssh.allow: {{.Firewall.SSH}}.
+{{- else}}
 # security.firewall.policy: {{.Firewall.Policy}}. security.ssh.allow: {{.Firewall.SSH}}.
+{{- end}}
 # The first two commands make "nft -f" idempotent: create the table when it is missing, then delete it.
 table inet care-pi
 delete table inet care-pi

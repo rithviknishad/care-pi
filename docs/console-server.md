@@ -525,22 +525,31 @@ it runs on a terminal without `--yes`). The image keeps `accept`: nobody can con
 
 **The rollback timer.** When the apply loads a `drop` table after an `accept` table (the plan action `reload-firewall`):
 
+0. The apply renders the `drop` table to `/etc/care-pi/rendered/firewall/care-pi.pending.nft`. The boot file
+   `care-pi.nft`, which the unit loads at the boot, keeps the confirmed policy (`accept`) until the confirmation.
 1. The agent starts the transient timer `care-pi-firewall-rollback.timer` (`systemd-run --on-active=90s`) first. Its
    service runs `care-pi firewall rollback --reason timeout`. When `systemd-run` fails, the agent does not load the table.
-2. The agent loads the table (`systemctl try-reload-or-restart care-pi-firewall.service`) and writes
-   `/var/lib/care-pi/state/firewall.json` (`policy`, `pending_until`).
+2. The agent loads the pending table (`nft -f …/care-pi.pending.nft`) and writes `/var/lib/care-pi/state/firewall.json`
+   (`policy`, `pending_until`).
 3. The operator checks a **new** SSH session and the console, then confirms: `care-pi firewall confirm`, or
-   Security > Firewall > Keep (`POST /security/firewall/confirm`). The confirmation stops the timer.
+   Security > Firewall > Keep (`POST /security/firewall/confirm`). The confirmation stops the timer and moves the
+   pending file over `care-pi.nft`: from then on, the boot loads `drop`. The confirmation refuses (`409 state-conflict`)
+   after `pending_until`, and when the pending file is not there.
 4. Without the confirmation, the rollback sets the live policy to `accept` with one `nft` command, then sets
-   `security.firewall.policy: accept` in `config.yaml` and writes the `accept` table, without a full apply (it works while
-   a job holds the apply lock). The next apply renders the same table. `GET /security/firewall` shows `rolled_back_at` and
-   `rollback_reason: timeout`.
+   `security.firewall.policy: accept` in `config.yaml`, writes the `accept` table, and deletes the pending file, without
+   a full apply (it works while a job holds the apply lock). The next apply renders the same files.
+   `GET /security/firewall` shows `rolled_back_at` and `rollback_reason: timeout`.
+5. The timer is transient, so a reboot in the window stops it. The boot loads `care-pi.nft` (`accept`). Before the
+   load, the drop-in runs `care-pi firewall boot-check` (`ExecStartPre=-`): it ends the trial as the rollback does
+   (`config.yaml`, the pending file, `rollback_reason: timeout`). It also runs at a restart of the unit; a reload does
+   not run it.
 
-The agent does not start the timer when the unit is not active (the table is not loaded then), or for a later load of a
-`drop` table (for example a new Tailscale rule). A switch back to `accept` stops a running timer.
+The agent does not start the timer when the unit is not active (the table is not loaded then). A later apply in the
+window (for example a new Tailscale rule) loads the pending table again and keeps the timer. A later load of a
+confirmed `drop` table loads `care-pi.nft` and starts no timer. A switch back to `accept` stops a running timer.
 
 **CLI.** `care-pi firewall status [--json]`, `policy accept|drop`, `allow-ssh true|false` (each writes `config.yaml` and
-applies, as `care-pi config set … --apply`), `confirm`, `rollback`.
+applies, as `care-pi config set … --apply`), `confirm`, `rollback`, and `boot-check` (hidden; the drop-in runs it).
 
 ## 14. Phase 7: the privileged helper (`04` §2)
 

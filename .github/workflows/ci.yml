@@ -72,7 +72,7 @@ jobs:
       - name: Check the firewall tables of the golden cases with nft -c (Phase 7)
         run: |
           sudo apt-get install -y -qq nftables >/dev/null
-          for f in agent/internal/render/testdata/golden/*/etc/care-pi/rendered/firewall/care-pi.nft; do
+          for f in agent/internal/render/testdata/golden/*/etc/care-pi/rendered/firewall/care-pi*.nft; do
             sudo nft -c -f "$f"
           done
       - name: Run shellcheck on the solution scripts

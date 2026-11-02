@@ -4,7 +4,11 @@
 # reload-firewall reloads the unit after a change. Without the unit (install.sh --no-firewall, or ufw or firewalld),
 # this file does nothing.
 
+# A start (the boot) first runs "care-pi firewall boot-check": a policy drop that waited for its confirmation goes
+# back to accept, so the boot loads the confirmed table. The "-" keeps the load when the check fails.
+
 [Service]
+ExecStartPre=-{{path "Binary"}} firewall boot-check
 ExecStart=
 ExecStart=/usr/sbin/nft -f {{.FirewallFile}}
 ExecReload=

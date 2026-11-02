@@ -218,6 +218,9 @@ type Model struct {
 	Firewall           FirewallModel
 	FirewallFile       string
 	FirewallDropInFile string
+	// FirewallDropConfirmed is true when the live policy is a confirmed drop (state/firewall.json). Without it, the
+	// policy drop of config.yaml goes to paths.FirewallPendingFile, and FirewallFile, which the boot loads, keeps accept.
+	FirewallDropConfirmed bool
 	// WAF is the Coraza WAF on the @api routes (Phase 7).
 	WAF WAFModel
 	// Telemetry is the opt-in telemetry (Phase 7, docs/telemetry.md): vmagent and node_exporter.
@@ -260,6 +263,9 @@ type WAFModel struct {
 type FirewallModel struct {
 	Policy string
 	SSH    bool
+	// Waits is true in the boot file while the policy drop of config.yaml waits for its confirmation: the file
+	// then has the policy accept.
+	Waits bool
 }
 
 // ACMEDNSSecret is the podman secret with secrets/acme_dns.json (the acmedns module of Caddy reads it as a file).
@@ -353,6 +359,8 @@ type Input struct {
 	TailscaleIP string
 	// TelemetryPassword is true when secrets/telemetry_password exists (Phase 7).
 	TelemetryPassword bool
+	// FirewallDropConfirmed is true when the live policy is a confirmed drop (firewall.State.DropConfirmed).
+	FirewallDropConfirmed bool
 }
 
 // Hostnames returns the DNS names that the config serves, the canonical name first (docs/connectivity.md):
@@ -766,6 +774,7 @@ func connectivity(m *Model, cfg *config.Config, in Input) error {
 	m.Firewall = FirewallOf(cfg)
 	m.FirewallFile = paths.FirewallFile
 	m.FirewallDropInFile = paths.FirewallDropIn
+	m.FirewallDropConfirmed = in.FirewallDropConfirmed
 	m.WaitAddressTimeout = "30s"
 	m.TailscaleSocketDir = paths.TailscaleSocketDir
 	if in.CARoot {

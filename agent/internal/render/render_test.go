@@ -355,3 +355,43 @@ func TestACMEDirectoryInCaddyUnit(t *testing.T) {
 		t.Fatalf("staging:\n%s\nproduction:\n%s", staging, prod)
 	}
 }
+
+// TestFirewallPendingFile (M1 of the Phase 7 review): a policy drop before its confirmation goes to the pending file,
+// and the boot file keeps accept, so a reboot in the window loads accept. After the confirmation, the boot file is
+// the text of the pending file (firewall.Confirm moves it), so the next apply changes nothing.
+func TestFirewallPendingFile(t *testing.T) {
+	tree, _ := fixture(t, "hardened")
+	boot, pending := string(tree[paths.FirewallFile].Content), string(tree[paths.FirewallPendingFile].Content)
+	if !strings.Contains(boot, "policy accept;") || strings.Contains(boot, "policy drop;") || !strings.Contains(boot, "not confirmed") {
+		t.Fatalf("the boot file must keep accept:\n%s", boot)
+	}
+	if !strings.Contains(pending, "policy drop;") {
+		t.Fatalf("pending:\n%s", pending)
+	}
+	if tree, _ := fixture(t, "small-clinic"); len(tree[paths.FirewallPendingFile].Content) != 0 {
+		t.Fatal("the policy accept has no pending file")
+	}
+	tmpl, err := templates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ts := range []bool{false, true} {
+		m := &Model{Header: Header, Firewall: FirewallModel{Policy: "drop", SSH: true}, FirewallUnit: paths.FirewallUnit,
+			FirewallFile: paths.FirewallFile, FirewallDropInFile: paths.FirewallDropIn, ConsolePort: paths.ConsolePort, FirewallTailscale: ts}
+		trial := Tree{}
+		if err := renderFirewall(tmpl, m, trial); err != nil {
+			t.Fatal(err)
+		}
+		m.FirewallDropConfirmed = true
+		confirmed := Tree{}
+		if err := renderFirewall(tmpl, m, confirmed); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := confirmed[paths.FirewallPendingFile]; ok || len(confirmed) != 1 {
+			t.Fatalf("a confirmed drop has no pending file: %v", confirmed.Paths())
+		}
+		if !bytes.Equal(confirmed[paths.FirewallFile].Content, trial[paths.FirewallPendingFile].Content) {
+			t.Fatalf("the confirmed boot file differs from the pending file:\n%s\n---\n%s", confirmed[paths.FirewallFile].Content, trial[paths.FirewallPendingFile].Content)
+		}
+	}
+}

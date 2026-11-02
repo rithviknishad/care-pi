@@ -83,8 +83,8 @@ var outputs = []output{
 	{"fe-build.sh.tmpl", paths.RenderedFE + "/" + FEBuildScriptName, 0o700, 0, feBuild},
 	// Phase 6 (docs/connectivity.md, section 4.2): a publish on an absent optional address does not stop the pod.
 	{"sysctl.conf.tmpl", paths.SysctlFile, 0o644, 0, always},
-	// Phase 7 (docs/console-server.md, section 13): the table of the agent and the drop-in that loads it.
-	{"firewall.nft.tmpl", paths.FirewallFile, 0o644, 0, always},
+	// Phase 7 (docs/console-server.md, section 13): the drop-in that loads the table of the agent. renderFirewall
+	// writes the table.
 	{"firewall.conf.tmpl", paths.FirewallDropIn, 0o644, 0, always},
 }
 
@@ -218,6 +218,9 @@ func Render(m *Model) (Tree, error) {
 		}
 		tree[p] = File{Path: p, Content: tidy(b.Bytes()), Mode: o.mode, GID: o.gid}
 	}
+	if err := renderFirewall(t, m, tree); err != nil {
+		return nil, err
+	}
 	if careBuild(m) {
 		cf := paths.RenderedBuild + "/Containerfile"
 		tree[cf] = File{Path: cf, Content: carebuild.Containerfile, Mode: 0o644}
@@ -230,6 +233,29 @@ func Render(m *Model) (Tree, error) {
 		}
 	}
 	return tree, nil
+}
+
+// renderFirewall writes the table inet care-pi. The boot file (paths.FirewallFile) has the confirmed policy: a
+// policy drop of config.yaml that waits for its confirmation goes to paths.FirewallPendingFile, which the apply loads
+// for the trial and "care-pi firewall confirm" moves over the boot file. A reboot before the confirmation loads
+// accept. The pending file is the same text as the boot file after the confirmation.
+func renderFirewall(t *template.Template, m *Model, tree Tree) error {
+	put := func(p string, x *Model) error {
+		var b bytes.Buffer
+		if err := t.ExecuteTemplate(&b, "firewall.nft.tmpl", x); err != nil {
+			return fmt.Errorf("render: firewall.nft.tmpl: %w", err)
+		}
+		tree[p] = File{Path: p, Content: tidy(b.Bytes()), Mode: 0o644}
+		return nil
+	}
+	boot := *m
+	if m.Firewall.Policy == "drop" && !m.FirewallDropConfirmed {
+		if err := put(paths.FirewallPendingFile, m); err != nil {
+			return err
+		}
+		boot.Firewall = FirewallModel{Policy: "accept", SSH: m.Firewall.SSH, Waits: true}
+	}
+	return put(paths.FirewallFile, &boot)
 }
 
 // tidy removes trailing spaces and collapses runs of blank lines that template actions leave.

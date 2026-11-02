@@ -104,6 +104,9 @@ const (
 	FirewallDropInLegacy = "/etc/systemd/system/care-pi-firewall.service.d/50-care-pi-tailscale.conf"
 	RenderedFirewall     = "/etc/care-pi/rendered/firewall"
 	FirewallFile         = "/etc/care-pi/rendered/firewall/care-pi.nft"
+	// FirewallPendingFile is the table with the policy drop before its confirmation. FirewallFile, which the boot
+	// loads, keeps the confirmed policy; "care-pi firewall confirm" moves this file over it.
+	FirewallPendingFile = "/etc/care-pi/rendered/firewall/care-pi.pending.nft"
 	// FirewallState records the policy of the last load and the rollback timer (Phase 7, S42 default-drop).
 	FirewallState = "/var/lib/care-pi/state/firewall.json"
 	// Telemetry (Phase 7, docs/telemetry.md). RenderedTelemetry holds the scrape configuration of vmagent;

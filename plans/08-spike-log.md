@@ -1802,6 +1802,7 @@ defects. Each fix is one signed commit with a test; nothing ran on lumine.
 | # | Defect | Fix | Commit |
 |---|---|---|---|
 | B1 | The helper refused `tailscale serve status --json` (the serve-port check of main), and `ServePorts` gave no ports on an error, so the check did not run | The helper accepts `tailscale serve status --json`; `ServePorts` returns the error, and the step `tailscale-login` stops with `internal` and the error of the command | B1 |
+| M1 | An unconfirmed policy `drop` survived a reboot: the apply wrote it to the boot file before the trial, the rollback timer is transient, nothing read `pending_until` at the boot, and `confirm` accepted a stale state | The boot file `care-pi.nft` keeps the confirmed policy; the trial table is `care-pi.pending.nft`, loaded with `nft -f`, and `confirm` moves it over the boot file (it refuses after `pending_until` or without the file); the rollback deletes it; `care-pi firewall boot-check` (`ExecStartPre=-` of the drop-in) ends a trial at a start of the unit as the rollback does. The helper accepts `nft -f <pending file>` only | M1 |
 
 ## Phase 6 exit test — lumine, 2026-11-02 — **PARTIAL: the CA switch and the public name PASS (6 fixes); the Tailscale mode is blocked by the owner's `tailscale serve`**
 

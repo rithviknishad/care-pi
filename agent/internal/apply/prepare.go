@@ -14,6 +14,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/buildinfo"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/exitcode"
+	"github.com/rithviknishad/care-pi/agent/internal/firewall"
 	"github.com/rithviknishad/care-pi/agent/internal/host"
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
 	"github.com/rithviknishad/care-pi/agent/internal/netinfo"
@@ -212,7 +213,7 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 	m, err := render.NewModel(render.Input{Config: cfg, Solution: sol, Lock: lk, IPs: ips, Bootstrap: bootstrap,
 		SolutionLock: sl, PlugSecrets: plugSecrets, CareBuild: cb,
 		CARoot: conn.caRoot, PublicIssued: conn.publicIssued, ACMEDNS: conn.acmeDNS != "", TailscaleIP: conn.tailscaleIP,
-		TelemetryPassword: telemetryPassword != ""})
+		TelemetryPassword: telemetryPassword != "", FirewallDropConfirmed: firewall.Read(o.Paths).DropConfirmed()})
 	if err != nil {
 		return nil, exitcode.With(exitcode.BadInput, err)
 	}

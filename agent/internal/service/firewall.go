@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -53,6 +54,9 @@ func (s *Service) FirewallConfirm(ctx context.Context, by string) (*FirewallStat
 		if errors.Is(err, firewall.ErrNothingPending) {
 			return nil, problem.New(problem.StateConflict, "No firewall change waits for a confirmation.")
 		}
+		if errors.Is(err, firewall.ErrWindowEnded) {
+			return nil, problem.New(problem.StateConflict, "The time to confirm ended: the policy goes back to accept.")
+		}
 		return nil, err
 	}
 	s.log().Info("firewall policy drop confirmed", "by", by)
@@ -64,10 +68,29 @@ func (s *Service) FirewallConfirm(ctx context.Context, by string) (*FirewallStat
 // while a job holds the apply lock: it changes only the firewall files, which the next apply renders the same.
 func (s *Service) FirewallRollback(ctx context.Context, reason string) error {
 	nowErr := firewall.AcceptNow(ctx, s.Host.Runner)
+	if err := s.firewallAcceptFiles(); err != nil {
+		return fmt.Errorf("the live policy is accept (%v), but the files did not change: %w", nowErr, err)
+	}
+	if fileExists(s.Paths.Abs(paths.FirewallDropIn)) {
+		_, err := s.Host.Runner.Run(ctx, hostCmd("systemctl", "try-reload-or-restart", paths.FirewallUnit))
+		if err != nil && nowErr != nil {
+			return fmt.Errorf("cannot load the policy accept: %v; %w", nowErr, err)
+		}
+	}
+	if _, err := firewall.MarkRolledBack(s.Paths, s.now(), reason); err != nil {
+		return err
+	}
+	s.log().Warn("firewall policy back to accept", "reason", reason)
+	return nil
+}
+
+// firewallAcceptFiles sets the policy accept in config.yaml, writes the accept table to the boot file, and deletes
+// the drop table of a trial. The next apply renders the same files.
+func (s *Service) firewallAcceptFiles() error {
 	if err := s.updateConfig(func(doc map[string]any) {
 		section(section(doc, "security"), "firewall")["policy"] = firewall.Accept
 	}); err != nil {
-		return fmt.Errorf("the live policy is accept (%v), but config.yaml did not change: %w", nowErr, err)
+		return err
 	}
 	cfg, err := s.Config()
 	if err != nil {
@@ -87,15 +110,28 @@ func (s *Service) FirewallRollback(ctx context.Context, reason string) error {
 	if err := os.Rename(f+".tmp", f); err != nil {
 		return err
 	}
-	if fileExists(s.Paths.Abs(paths.FirewallDropIn)) {
-		_, err := s.Host.Runner.Run(ctx, hostCmd("systemctl", "try-reload-or-restart", paths.FirewallUnit))
-		if err != nil && nowErr != nil {
-			return fmt.Errorf("cannot load the policy accept: %v; %w", nowErr, err)
-		}
-	}
-	if _, err := firewall.MarkRolledBack(s.Paths, s.now(), reason); err != nil {
+	if err := os.Remove(s.Paths.Abs(paths.FirewallPendingFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	s.log().Warn("firewall policy back to accept", "reason", reason)
 	return nil
+}
+
+// FirewallBootCheck runs before care-pi-firewall.service loads the boot file ("care-pi firewall boot-check", the
+// ExecStartPre of the drop-in). A policy drop that waits for its confirmation does not survive a start of the unit (a
+// reboot): the rollback timer is transient, and the boot file has the confirmed policy. So the check ends the trial
+// as the rollback does (config.yaml, the boot file, the pending file, state/firewall.json with the reason timeout).
+// It runs no host command: systemd waits for it before the load. It reports whether a trial ended.
+func (s *Service) FirewallBootCheck() (bool, error) {
+	stale, err := firewall.ClearPending(s.Paths)
+	if err != nil || !stale {
+		return stale, err
+	}
+	if err := s.firewallAcceptFiles(); err != nil {
+		return true, err
+	}
+	if _, err := firewall.MarkRolledBack(s.Paths, s.now(), "timeout"); err != nil {
+		return true, err
+	}
+	s.log().Warn("firewall policy back to accept: the policy drop was not confirmed before the start of " + paths.FirewallUnit)
+	return true, nil
 }
