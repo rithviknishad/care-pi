@@ -527,6 +527,30 @@ func TestFirewallAndDNSTimer(t *testing.T) {
 	}
 }
 
+// TestBackupDestinationRemoved: the timers of a removed destination stop and go out of the timers before their files
+// are deleted (on lumine they stayed failed: "Unit to trigger vanished").
+func TestBackupDestinationRemoved(t *testing.T) {
+	const db, files = "/etc/systemd/system/care-backup-db@nas.timer", "/etc/systemd/system/care-backup-files@nas.timer"
+	on := with(base(), db, "timer", files, "timer")
+	p := Build(Input{Desired: tree(base()), Current: current(on), TargetActive: true})
+	a, ok := p.Get(DisableUnits)
+	if !ok || !reflect.DeepEqual(a.Units, []string{"care-backup-db@nas.timer", "care-backup-files@nas.timer"}) {
+		t.Fatalf("disable %+v %v (plan %v)", a, ok, kinds(p))
+	}
+	if got := kinds(p); indexOf(got, DisableUnits) > indexOf(got, DeleteFiles) {
+		t.Fatalf("the timers must stop before their files go: %v", got)
+	}
+}
+
+func indexOf(ks []Kind, k Kind) int {
+	for i, x := range ks {
+		if x == k {
+			return i
+		}
+	}
+	return -1
+}
+
 // TestTailscaledDropIn: the drop-in of tailscaled (the Tailscale mode) needs daemon-reload only: never a restart of
 // tailscaled or of a unit of Care.
 func TestTailscaledDropIn(t *testing.T) {

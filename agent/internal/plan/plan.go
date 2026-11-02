@@ -315,6 +315,11 @@ func Build(in Input) *Plan {
 				} else if c.Kind != Modify || b == render.BackupTarget {
 					backupConf = true
 				}
+				// A removed destination: stop and disable its timers before the files go, else each one stays
+				// failed ("Unit to trigger vanished").
+				if path.Ext(b) == ".timer" && c.Kind == Delete {
+					disable = append(disable, b)
+				}
 			}
 			if (strings.HasPrefix(b, "care-update-") || strings.HasPrefix(b, "care-dns-update.")) && c.Kind != Delete {
 				timersChanged = true
