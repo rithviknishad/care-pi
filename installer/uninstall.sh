@@ -191,6 +191,9 @@ remove_firewall() {
   fi
   rm -f /etc/systemd/system/care-pi-firewall.service /etc/care-pi/firewall.nft
   rm -rf /etc/systemd/system/care-pi-firewall.service.d
+  # The drop-in of the Tailscale mode (RuntimeDirectoryPreserve of tailscaled); tailscaled itself stays.
+  rm -f /etc/systemd/system/tailscaled.service.d/50-care-pi.conf
+  rmdir /etc/systemd/system/tailscaled.service.d 2>/dev/null || true
   # An older install.sh wrote /etc/nftables.d/care-pi.nft and added an include
   # line (after a blank line and a comment) to the stock nftables.conf.
   rm -f /etc/nftables.d/care-pi.nft

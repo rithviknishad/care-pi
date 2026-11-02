@@ -325,6 +325,9 @@ func Build(in Input) *Plan {
 		case c.Path == paths.FirewallDropIn, c.Path == paths.FirewallDropInLegacy:
 			unitFiles = true
 			firewall = true
+		case c.Path == paths.TailscaledDropIn:
+			// Read at the next stop of tailscaled: daemon-reload only, never a restart of tailscaled.
+			unitFiles = true
 		case strings.HasPrefix(c.Path, paths.RenderedFirewall+"/"):
 			firewall = true
 		case strings.HasPrefix(c.Path, paths.RenderedTelemetry+"/"):

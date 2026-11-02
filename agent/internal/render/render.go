@@ -86,7 +86,11 @@ var outputs = []output{
 	// Phase 7 (docs/console-server.md, section 13): the drop-in that loads the table of the agent. renderFirewall
 	// writes the table.
 	{"firewall.conf.tmpl", paths.FirewallDropIn, 0o644, 0, always},
+	// The Tailscale mode (docs/connectivity.md, section 4.1): tailscaled keeps the directory of its socket.
+	{"tailscaled.conf.tmpl", paths.TailscaledDropIn, 0o644, 0, tailscaleOn},
 }
+
+func tailscaleOn(m *Model) bool { return m.TailscaleHost != "" }
 
 // phase4Outputs are the outputs of Phase 4 (docs/solutions.md).
 var phase4Outputs = []dynOutput{
@@ -309,11 +313,12 @@ func Owned(p string) bool {
 		p == systemd("care-update-apply.timer"), p == systemd("care-update-apply.service"):
 		return true
 	case p == systemd(DNSUpdateTimer), p == systemd("care-dns-update.service"), p == paths.FirewallDropIn,
-		p == paths.FirewallDropInLegacy, p == paths.SysctlFile:
+		p == paths.FirewallDropInLegacy, p == paths.SysctlFile, p == paths.TailscaledDropIn:
 		return true
 	}
 	return false
 }
 
 // OwnedDirs lists the directories that hold owned files. apply scans them for stale files.
-var OwnedDirs = []string{paths.QuadletDir, paths.SystemdDir, paths.RenderedDir, path.Dir(paths.FirewallDropIn), path.Dir(paths.SysctlFile)}
+var OwnedDirs = []string{paths.QuadletDir, paths.SystemdDir, paths.RenderedDir, path.Dir(paths.FirewallDropIn), path.Dir(paths.SysctlFile),
+	path.Dir(paths.TailscaledDropIn)}

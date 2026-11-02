@@ -212,6 +212,12 @@ Tailscale is strictly opt-in (S37). The installer never installs it. The enrol j
    `Self.TailscaleIPs`), and writes `tls.tailscale.hostname`.
 4. The apply renders the Tailscale site. Caddy gets the certificate from `tailscaled`
    (`tls { get_certificate tailscale }`, through `/run/tailscale/tailscaled.sock`). The site has HSTS.
+   `care-caddy` bind-mounts `/run/tailscale`. The apply also writes the drop-in
+   `/etc/systemd/system/tailscaled.service.d/50-care-pi.conf` (`RuntimeDirectoryPreserve=yes`, then only
+   `daemon-reload`): without it, systemd deletes the directory when `tailscaled` stops (a restart, an apt upgrade of
+   `tailscale`), and the mount of `care-caddy` keeps the deleted directory, so each TLS handshake of the Tailscale name
+   fails until `care-caddy` restarts (the final acceptance on lumine). The drop-in goes when the Tailscale mode turns
+   off.
 
 The tailnet must have HTTPS certificates on (admin console of Tailscale > DNS > HTTPS Certificates) and MagicDNS on.
 Without them, the job stops with `tailscale-https-disabled`.

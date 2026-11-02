@@ -527,6 +527,23 @@ func TestFirewallAndDNSTimer(t *testing.T) {
 	}
 }
 
+// TestTailscaledDropIn: the drop-in of tailscaled (the Tailscale mode) needs daemon-reload only: never a restart of
+// tailscaled or of a unit of Care.
+func TestTailscaledDropIn(t *testing.T) {
+	const dropIn = "/etc/systemd/system/tailscaled.service.d/50-care-pi.conf"
+	on := with(base(), dropIn, "drop-in")
+	p := Build(Input{Desired: tree(on), Current: current(base()), TargetActive: true})
+	want := []Kind{EnsureDirs, WriteFiles, DaemonReload}
+	if got := kinds(p); !reflect.DeepEqual(got, want) {
+		t.Fatalf("on: %v, want %v", got, want)
+	}
+	p = Build(Input{Desired: tree(base()), Current: current(on), TargetActive: true})
+	want = []Kind{EnsureDirs, DeleteFiles, DaemonReload}
+	if got := kinds(p); !reflect.DeepEqual(got, want) {
+		t.Fatalf("off: %v, want %v", got, want)
+	}
+}
+
 // TestTelemetry: the units of the opt-in telemetry (Phase 7) start, restart, and stop alone; the stack stays.
 func TestTelemetry(t *testing.T) {
 	const (

@@ -96,6 +96,9 @@ const (
 	WiFiSecretFile          = "/etc/care-pi/secrets/wifi.json"
 	// TailscaleSocketDir is the directory of the socket of tailscaled. care-caddy mounts it when Tailscale is on.
 	TailscaleSocketDir = "/run/tailscale"
+	// TailscaledDropIn keeps TailscaleSocketDir when tailscaled stops (RuntimeDirectoryPreserve): else a restart of
+	// tailscaled (an apt upgrade) makes a new directory, and the bind mount of care-caddy keeps the deleted one.
+	TailscaledDropIn = "/etc/systemd/system/tailscaled.service.d/50-care-pi.conf"
 	// FirewallUnit loads the table inet care-pi (the installer writes it). FirewallDropIn (Phase 7) makes it load
 	// FirewallFile, the table of the agent (security.firewall, security.ssh, tls.tailscale). FirewallDropInLegacy is
 	// the drop-in of Phase 6 (the Tailscale port only); apply deletes it.
