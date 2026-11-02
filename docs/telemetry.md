@@ -9,7 +9,7 @@ default), the device runs no telemetry container, writes no metrics file, and se
 
 | Unit | Image | Role | Cap |
 |---|---|---|---|
-| `care-node-exporter.service` | `quay.io/prometheus/node-exporter` (40 MB, arm64) | The metrics of the host from `/proc` and `/sys` (CPU, memory, load, file systems, disks, network, pressure, temperature), and the metrics of the agent from a text file. It listens on `127.0.0.1:9100` of the host only. | `MemoryMax=64M` |
+| `care-node-exporter.service` | `quay.io/prometheus/node-exporter` (40 MB, arm64) | The metrics of the host from `/proc` and `/sys` (CPU, memory, load, file systems, disks, network, pressure, temperature), and the metrics of the agent from a text file. It listens on `127.0.0.1:19100` of the host only (not 9100: a node_exporter of the host often has that port). | `MemoryMax=64M` |
 | `care-telemetry.service` | `docker.io/victoriametrics/vmagent` (44 MB, arm64) | It scrapes node_exporter each `interval_s` and sends the samples with remote write. It keeps a queue of at most 64 MB on disk (`/var/lib/care-pi/telemetry/vmagent`) when the receiver does not answer. It listens on `127.0.0.1:8429` only. | `MemoryMax=96M` |
 
 Both have `Network=host`, a read-only root file system, and `PartOf=care.target`. The `.image` quadlets

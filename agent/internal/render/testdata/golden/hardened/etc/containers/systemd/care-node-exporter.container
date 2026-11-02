@@ -14,7 +14,7 @@ Network=host
 ReadOnly=true
 Volume=/:/host:ro,rslave
 Volume=/var/lib/care-pi/telemetry/textfile:/textfile:ro
-Exec=--path.rootfs=/host --web.listen-address=127.0.0.1:9100 --collector.disable-defaults --collector.cpu --collector.meminfo --collector.loadavg --collector.filesystem --collector.diskstats --collector.netdev --collector.pressure --collector.thermal_zone --collector.hwmon --collector.time --collector.uname --collector.stat --collector.vmstat --collector.textfile --collector.textfile.directory=/textfile --collector.filesystem.mount-points-exclude=^/(dev|proc|run|sys|var/lib/containers/storage/.+)($|/)
+Exec=--path.rootfs=/host --web.listen-address=127.0.0.1:19100 --collector.disable-defaults --collector.cpu --collector.meminfo --collector.loadavg --collector.filesystem --collector.diskstats --collector.netdev --collector.pressure --collector.thermal_zone --collector.hwmon --collector.time --collector.uname --collector.stat --collector.vmstat --collector.textfile --collector.textfile.directory=/textfile --collector.filesystem.mount-points-exclude=^/(dev|proc|run|sys|var/lib/containers/storage/.+)($|/)
 
 [Service]
 ExecStartPre=/bin/mkdir -p /var/lib/care-pi/telemetry/textfile

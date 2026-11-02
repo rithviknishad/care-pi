@@ -92,6 +92,9 @@ var outputs = []output{
 
 func tailscaleOn(m *Model) bool { return m.TailscaleHost != "" }
 
+// TelemetryExporterPort is the port of care-node-exporter on 127.0.0.1 (docs/telemetry.md).
+const TelemetryExporterPort = 19100
+
 // phase4Outputs are the outputs of Phase 4 (docs/solutions.md).
 var phase4Outputs = []dynOutput{
 	{output{"additional-plugs.json.tmpl", paths.RenderedCare + "/additional-plugs.json", 0o600, 0, full}, nil},

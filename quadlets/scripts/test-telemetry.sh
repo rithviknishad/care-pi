@@ -49,7 +49,7 @@ docker run -d --name "$vm" --network "$net" "$vmimage" \
   -httpAuth.username=sunrise -httpAuth.password=secret-of-the-test -retentionPeriod=1d >/dev/null
 
 # The quadlets use the host network; here node_exporter has its own network namespace and vmagent shares it, so
-# 127.0.0.1:9100 is the same as on a Pi.
+# 127.0.0.1:19100 is the same as on a Pi.
 # shellcheck disable=SC2046
 docker run -d --name "$exporter" --network "$net" -v /:/host:ro -v "$work/textfile:/textfile:ro" \
   "$(image_of care-node-exporter)" $(exec_of care-node-exporter) >/dev/null

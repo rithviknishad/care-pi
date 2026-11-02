@@ -245,7 +245,9 @@ type TelemetryModel struct {
 	Interval string
 	Instance string
 	Version  string
-	// Ports on the loopback of the host.
+	// Ports on the loopback of the host. ExporterPort is not 9100: a node_exporter of the host often has that port
+	// (on lumine: prometheus-node-exporter on *:9100; care-node-exporter failed to bind, and vmagent scraped the other
+	// exporter without the care_pi_* metrics).
 	ExporterPort int
 	AgentPort    int
 	RenderedDir  string
@@ -626,7 +628,7 @@ func NewModel(in Input) (*Model, error) {
 		}
 		m.Telemetry = TelemetryModel{Enabled: true, RemoteWriteURL: t.RemoteWriteURL, Username: t.Username,
 			Interval: fmt.Sprintf("%ds", interval), Instance: cfg.Identity.Hostname, Version: buildinfo.Version,
-			ExporterPort: 9100, AgentPort: 8429, RenderedDir: paths.RenderedTelemetry, TextfileDir: paths.TelemetryTextfileDir,
+			ExporterPort: TelemetryExporterPort, AgentPort: 8429, RenderedDir: paths.RenderedTelemetry, TextfileDir: paths.TelemetryTextfileDir,
 			QueueDir: paths.TelemetryQueueDir}
 		if in.TelemetryPassword {
 			m.Telemetry.PasswordSecret = TelemetrySecret
