@@ -226,6 +226,8 @@ func (x *executor) run(ctx context.Context, a plan.Action) error {
 			if _, err := h.Runner.Run(ctx, host.Cmd{Name: "systemctl", Args: append([]string{"stop"}, a.Names...)}); err != nil {
 				_, _ = fmt.Fprintf(x.o.Out, "    warning: cannot stop %s: %v\n", strings.Join(a.Names, " "), err)
 			}
+			// node_exporter exits with 2 at the stop: without the reset, the unit (its file is deleted) stays failed.
+			_, _ = h.Runner.Run(ctx, host.Cmd{Name: "systemctl", Args: append([]string{"reset-failed"}, a.Names...)})
 		}
 		if len(a.Units) > 0 {
 			return h.Systemd.Restart(ctx, a.Units...)

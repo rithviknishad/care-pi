@@ -601,6 +601,30 @@ func TestUploadLimitReloadsCaddy(t *testing.T) {
 	}
 }
 
+// TestTelemetryOffResetsTheUnits: telemetry off stops the two units and resets them. node_exporter exits with 2 at the
+// stop, and the unit, whose file the apply deleted, stayed in "systemctl --failed" (final acceptance on lumine).
+func TestTelemetryOffResetsTheUnits(t *testing.T) {
+	e := applied(t)
+	for _, ref := range []string{"quay.io/prometheus/node-exporter:v1.10.2", "docker.io/victoriametrics/vmagent:v1.131.0"} {
+		e.fake.On("skopeo inspect --override-os linux --override-arch "+runtime.GOARCH+" --format {{.Digest}} docker://"+ref,
+			host.Response{Out: digest(ref) + "\n"})
+	}
+	e.writeConfig(smallClinic + "telemetry: {enabled: true, remote_write_url: \"http://192.168.1.20:8428/api/v1/write\"}\n")
+	if _, err := e.run(false); err != nil {
+		t.Fatal(err)
+	}
+	e.writeConfig(smallClinic + "telemetry: {enabled: false}\n")
+	e.fake.Calls = nil
+	if _, err := e.run(false); err != nil {
+		t.Fatal(err)
+	}
+	names := "care-node-exporter.service care-telemetry.service"
+	want := []string{"systemctl stop " + names, "systemctl reset-failed " + names}
+	if got := e.fake.Filter("systemctl stop care-node", "systemctl reset-failed care-node"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands:\n got  %q\n want %q", got, want)
+	}
+}
+
 func TestDryRunWritesNothing(t *testing.T) {
 	e := applied(t)
 	before, _ := os.ReadFile(e.p.Abs(paths.RenderedCare + "/backend.env"))
