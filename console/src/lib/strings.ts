@@ -73,45 +73,47 @@ const problems: Record<ProblemSlug, string> = {
 };
 
 // The texts of the install steps of the root CA (GET /tls/instructions/{os}).
-// The agent sends a key and parameters. A key that is not here shows as a general text.
+// The agent sends a key and parameters (the keys of InstructionTexts in agent/internal/service/tls.go; a Go test
+// checks that each one is here). A key that is not here shows as a general text.
 const tlsSteps: Record<string, string> = {
-  "tls.install.ios.download": "Tap Download. Safari asks to download a configuration profile. Tap Allow.",
-  "tls.install.ios.install-profile":
-    "Open Settings. Tap Profile Downloaded. Tap Install, enter your passcode, and tap Install again.",
+  "tls.install.compare-fingerprint":
+    "Compare the SHA-256 fingerprint of the certificate with {fingerprint}. If the two values are not the same, do not install the certificate.",
+  "tls.install.ios.download": "Open the download link in Safari. Tap Allow to download the configuration profile.",
+  "tls.install.ios.open-settings": "Open Settings. Tap Profile Downloaded.",
+  "tls.install.ios.install-profile": "Tap Install. Enter the passcode of the device. Tap Install again.",
   "tls.install.ios.trust-settings":
     "Open Settings > General > About > Certificate Trust Settings. Turn on full trust for {name}.",
-  "tls.install.android.download": "Tap Download. Keep the file on the phone.",
+  "tls.note.ios.ipados": "Use the same steps on an iPad.",
+  "tls.install.android.download": "Download the certificate file {filename}.",
   "tls.install.android.open-settings":
-    "Open Settings > Security > Encryption and credentials. The path can be different on your phone.",
-  "tls.install.android.install-ca": "Tap Install a certificate > CA certificate. Select the file that you downloaded.",
-  "tls.install.android.install-anyway": "Tap Install anyway. Enter your screen lock if the phone asks for it.",
-  "tls.install.windows.download": "Click Download. Open the file.",
-  "tls.install.windows.open-file": "Click Install Certificate. Select Current User. Click Next.",
-  "tls.install.windows.choose-store":
-    "Select Place all certificates in the following store. Click Browse and select Trusted Root Certification Authorities. Click Next, then Finish.",
-  "tls.install.windows.confirm-warning":
-    "Windows shows a security warning. Compare the fingerprint with the fingerprint on this page. Click Yes.",
-  "tls.install.macos.download": "Click Download. Open the file.",
-  "tls.install.macos.open-keychain": "Keychain Access opens. Add the certificate to the login keychain.",
-  "tls.install.macos.always-trust":
-    "Open {name} in Keychain Access. Expand Trust. Set When using this certificate to Always Trust. Enter your password.",
-  "tls.install.linux.download-pem": "Click Download PEM.",
-  "tls.install.linux.system-store":
-    "Copy the file to /usr/local/share/ca-certificates/ with the extension .crt. Run sudo update-ca-certificates.",
-  "tls.install.linux.browser-store":
-    "Some browsers use their own store. Import the file as an authority in the certificate settings of the browser.",
-  "tls.install.chromeos.download": "Click Download.",
-  "tls.install.chromeos.open-settings": "Open Settings > Privacy and security > Security > Manage certificates.",
-  "tls.install.chromeos.import-authority":
-    "Open Authorities. Click Import and select the file. Select Trust this certificate for identifying websites.",
-  "tls.note.android.firefox":
-    "Firefox on Android does not use the certificates of the phone. In Firefox, open about:config and set security.enterprise_roots.enabled to true.",
+    "Open Settings > Security > Encryption and credentials > Install a certificate > CA certificate.",
+  "tls.install.android.install-anyway": "Tap Install anyway. Select the file {filename}.",
   "tls.note.android.vendor-path":
-    "The path in Settings is different on some phones. Search for Install certificate in Settings.",
-  "tls.note.windows.firefox": "Firefox uses the Windows store. No more steps are necessary.",
-  "tls.note.macos.firefox": "Firefox uses the macOS keychain. No more steps are necessary.",
-  "tls.note.linux.distro":
-    "The commands are different on some distributions. Read the documentation of your distribution.",
+    'The path in Settings is different on some phones. Search the settings for "CA certificate".',
+  "tls.note.android.firefox":
+    "Firefox does not use the certificates of the device by default. In Firefox, open about:config and set security.enterprise_roots.enabled to true.",
+  "tls.install.windows.download": "Download the certificate file {filename}.",
+  "tls.install.windows.open": "Open the file. Click Install Certificate.",
+  "tls.install.windows.store":
+    'Select Current User. Select "Place all certificates in the following store". Click Browse. Select Trusted Root Certification Authorities.',
+  "tls.install.windows.confirm": "Click Finish. In the security warning, click Yes.",
+  "tls.note.windows.restart-browser": "Close the browser and open it again.",
+  "tls.install.macos.download": "Download the certificate file {filename}.",
+  "tls.install.macos.open": "Open the file. Keychain Access opens. Add the certificate to the login keychain.",
+  "tls.install.macos.trust":
+    'In Keychain Access, open the certificate {name}. Expand Trust. Set "When using this certificate" to Always Trust.',
+  "tls.install.macos.confirm": "Close the window. Enter your password to save the change.",
+  "tls.install.linux.download": "Download the certificate file {filename}.",
+  "tls.install.linux.system":
+    "On Debian or Ubuntu: copy the file to /usr/local/share/ca-certificates/ with the extension .crt. Then run: sudo update-ca-certificates",
+  "tls.install.linux.browser":
+    "Chrome and Firefox can use their own certificate stores. In the certificate settings of the browser, import the file as an authority.",
+  "tls.install.chromeos.download": "Download the certificate file {filename}.",
+  "tls.install.chromeos.open-settings":
+    "Open Settings > Privacy and security > Security > Manage certificates > Authorities.",
+  "tls.install.chromeos.import":
+    'Click Import. Select the file {filename}. Select "Trust this certificate for identifying websites". Click OK.',
+  "tls.note.common.one-certificate-per-pi": "Each care-pi device has its own root certificate.",
 };
 
 export const strings = {

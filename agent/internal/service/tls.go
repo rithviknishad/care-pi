@@ -245,7 +245,8 @@ type TLSInstructions struct {
 }
 
 // InstructionTexts are the English texts of the message keys, in ASD-STE100.
-// The console has its own text for each key; docs/console-server.md lists these texts.
+// The console has the same text for each key (tlsSteps in console/src/lib/strings.ts; TestNotImplementedAndPublic
+// checks that each key of GET /tls/instructions has a text in both).
 var InstructionTexts = map[string]string{
 	"tls.install.compare-fingerprint":        "Compare the SHA-256 fingerprint of the certificate with {fingerprint}. If the two values are not the same, do not install the certificate.",
 	"tls.install.ios.download":               "Open the download link in Safari. Tap Allow to download the configuration profile.",

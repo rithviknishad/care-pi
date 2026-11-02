@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -14,6 +16,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/jobs"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/server/contracttest"
+	"github.com/rithviknishad/care-pi/agent/internal/service"
 )
 
 // TestSetupFlow: claim, recovery codes, CSRF, each step, finish (the setup job runs apply on the
@@ -361,6 +364,9 @@ func TestConfigResource(t *testing.T) {
 func TestNotImplementedAndPublic(t *testing.T) {
 	e := newEnv(t)
 	writeRootCA(t, e.p)
+	data, err := os.ReadFile("../../../console/src/lib/strings.ts")
+	must(t, err)
+	consoleStrings := string(data)
 	for _, u := range []string{"/_care-pi/health", "/api/v1/health"} {
 		e.want(e.do("GET", u, nil), 200, "")
 	}
@@ -376,9 +382,20 @@ func TestNotImplementedAndPublic(t *testing.T) {
 		for _, os := range []string{"ios", "android", "windows", "macos", "linux", "chromeos"} {
 			r := e.do("GET", prefix+"/tls/instructions/"+os, nil)
 			e.want(r, 200, "")
-			root := r.json(t)["root"].(map[string]any)
+			body := r.json(t)
+			root := body["root"].(map[string]any)
 			if !strings.HasPrefix(root["download_path"].(string), prefix+"/tls/root-ca") {
 				t.Fatalf("download path %v", root)
+			}
+			// Each key has a text in the agent and in the console (on lumine the console showed "." and "Open."
+			// for the keys that it did not have).
+			for _, part := range []string{"steps", "notes"} {
+				for _, it := range body[part].([]any) {
+					key := it.(map[string]any)["key"].(string)
+					if service.InstructionTexts[key] == "" || !strings.Contains(consoleStrings, strconv.Quote(key)+":") {
+						t.Errorf("%s %s: the key %s has no text in InstructionTexts or in console/src/lib/strings.ts", os, part, key)
+					}
+				}
 			}
 		}
 		e.want(e.do("GET", prefix+"/tls/instructions/beos", nil, invalid), 422, "invalid-request")

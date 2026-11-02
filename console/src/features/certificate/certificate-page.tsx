@@ -70,14 +70,19 @@ function Steps({ os }: { os: ClientOs }) {
       </div>
     );
   }
-  const apple = os === "ios" || os === "macos";
+  // The agent chooses the file of each OS (an Apple profile only for iOS): the label follows the file.
+  const kind = data.root.filename.endsWith(".mobileconfig")
+    ? "profile"
+    : data.root.filename.endsWith(".pem")
+      ? "pem"
+      : "der";
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap gap-2">
         <Button asChild>
           <a href={data.root.download_path} download={data.root.filename} data-testid="ca-download">
             <DownloadIcon data-icon="inline-start" />
-            {apple ? c.downloadProfile : os === "linux" ? c.downloadPem : c.downloadDer}
+            {kind === "profile" ? c.downloadProfile : kind === "pem" ? c.downloadPem : c.downloadDer}
           </a>
         </Button>
       </div>
@@ -87,7 +92,7 @@ function Steps({ os }: { os: ClientOs }) {
             <span className="flex size-7 items-center justify-center rounded-full bg-primary-100 text-xs font-semibold text-primary-900 dark:bg-primary-400/15 dark:text-primary-300">
               {i + 1}
             </span>
-            <p className="pt-1 text-sm">{tlsStepText(step.key, step.params)}</p>
+            <p className="pt-1 text-sm break-words">{tlsStepText(step.key, step.params)}</p>
           </li>
         ))}
       </ol>

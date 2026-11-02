@@ -108,19 +108,47 @@ LjAsBgNVBAMTJWNhcmUtcGkgY2FyZS5sb2NhbCBSb290IENBIChtb2NrIG9ubHkp
 -----END CERTIFICATE-----
 `;
 
+// The keys, the order, and the parameters of the agent (agent/internal/service/tls.go, Instructions).
 const STEPS = {
-  ios: [["download"], ["install-profile"], ["trust-settings", { name: "care-pi care.local Root CA" }]],
-  android: [["download"], ["open-settings"], ["install-ca"], ["install-anyway"]],
-  windows: [["download"], ["open-file"], ["choose-store"], ["confirm-warning"]],
-  macos: [["download"], ["open-keychain"], ["always-trust", { name: "care-pi care.local Root CA" }]],
-  linux: [["download-pem"], ["system-store"], ["browser-store"]],
-  chromeos: [["download"], ["open-settings"], ["import-authority"]],
+  ios: [
+    ["ios.download"],
+    ["ios.open-settings"],
+    ["ios.install-profile"],
+    ["compare-fingerprint", "fingerprint"],
+    ["ios.trust-settings", "name"],
+  ],
+  android: [
+    ["android.download", "filename"],
+    ["compare-fingerprint", "fingerprint"],
+    ["android.open-settings"],
+    ["android.install-anyway", "filename"],
+  ],
+  windows: [
+    ["windows.download", "filename"],
+    ["compare-fingerprint", "fingerprint"],
+    ["windows.open"],
+    ["windows.store"],
+    ["windows.confirm"],
+  ],
+  macos: [
+    ["macos.download", "filename"],
+    ["compare-fingerprint", "fingerprint"],
+    ["macos.open"],
+    ["macos.trust", "name"],
+    ["macos.confirm"],
+  ],
+  linux: [["linux.download", "filename"], ["compare-fingerprint", "fingerprint"], ["linux.system"], ["linux.browser"]],
+  chromeos: [
+    ["chromeos.download", "filename"],
+    ["compare-fingerprint", "fingerprint"],
+    ["chromeos.open-settings"],
+    ["chromeos.import", "filename"],
+  ],
 };
 const NOTES = {
-  android: [["android.firefox"], ["android.vendor-path"]],
-  windows: [["windows.firefox"]],
-  macos: [["macos.firefox"]],
-  linux: [["linux.distro"]],
+  ios: [["ios.ipados"]],
+  android: [["android.vendor-path"], ["android.firefox"]],
+  windows: [["windows.restart-browser"]],
 };
 
 function instructions(prefix, os, state) {
@@ -128,19 +156,22 @@ function instructions(prefix, os, state) {
     throw new Problem("invalid-request", "Unknown OS.", {
       errors: [{ pointer: "", message: "not one of the OS values", code: "enum", parameter: "os" }],
     });
-  const apple = os === "ios" || os === "macos";
+  const apple = os === "ios";
   const pem = os === "linux";
   const now = currentRoot(state);
+  const filename = apple
+    ? "care-pi-care-root-ca.mobileconfig"
+    : pem
+      ? "care-pi-care-root-ca.pem"
+      : "care-pi-care-root-ca.crt";
+  const params = { name: "care-pi care.local Root CA", filename, fingerprint: now.colon };
+  const pick = (keys) => Object.fromEntries(keys.map((k) => [k, params[k]]));
   return {
     os,
     root: {
       fingerprint_sha256: now.fingerprint,
       fingerprint_sha256_colon: now.colon,
-      filename: apple
-        ? "care-pi-care-root-ca.mobileconfig"
-        : pem
-          ? "care-pi-care-root-ca.pem"
-          : "care-pi-care-root-ca.crt",
+      filename,
       download_path: apple
         ? `${prefix}/tls/root-ca/mobileconfig`
         : `${prefix}/tls/root-ca?format=${pem ? "pem" : "der"}`,
@@ -150,8 +181,11 @@ function instructions(prefix, os, state) {
           ? "application/x-pem-file"
           : "application/x-x509-ca-cert",
     },
-    steps: STEPS[os].map(([k, params = {}]) => ({ key: `tls.install.${os}.${k}`, params })),
-    notes: (NOTES[os] ?? []).map(([k, params = {}]) => ({ key: `tls.note.${k}`, params })),
+    steps: STEPS[os].map(([k, ...keys]) => ({ key: `tls.install.${k}`, params: pick(keys) })),
+    notes: [...(NOTES[os] ?? []), ["common.one-certificate-per-pi"]].map(([k]) => ({
+      key: `tls.note.${k}`,
+      params: {},
+    })),
   };
 }
 
