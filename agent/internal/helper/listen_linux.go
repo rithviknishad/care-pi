@@ -16,6 +16,11 @@ func PeerCheck(name string) func(net.Conn) (string, bool) {
 	if u, err := user.Lookup(name); err == nil {
 		uid, _ = strconv.Atoi(u.Uid)
 	}
+	return PeerCheckUID(uid)
+}
+
+// PeerCheckUID returns a check that allows root and one uid (-1: root only).
+func PeerCheckUID(uid int) func(net.Conn) (string, bool) {
 	return func(conn net.Conn) (string, bool) {
 		uc, ok := conn.(*net.UnixConn)
 		if !ok {

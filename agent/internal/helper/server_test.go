@@ -50,7 +50,9 @@ func startHelper(t *testing.T, f *host.Fake) (*host.HelperClient, *syncBuffer) {
 	}
 	logs := &syncBuffer{}
 	ctx, cancel := context.WithCancel(context.Background())
-	srv := &Server{Exec: f, Log: slog.New(slog.NewTextHandler(logs, nil)), Allowed: PeerCheck("care-pi")}
+	// The peer check allows root and one user name. The test process is that user, so the check runs
+	// for real on Linux (SO_PEERCRED) and the connection is accepted.
+	srv := &Server{Exec: f, Log: slog.New(slog.NewTextHandler(logs, nil)), Allowed: PeerCheckUID(os.Getuid())}
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(ctx, l) }()
 	t.Cleanup(func() {
