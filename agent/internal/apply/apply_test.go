@@ -62,6 +62,8 @@ type env struct {
 	rec *jobs.Recorder
 	// dnsAddress is Options.DNSAddress (Phase 6).
 	dnsAddress func(ctx context.Context, ipv4 string) error
+	// healthTimeout is Options.HealthTimeout (S62); 0 uses the default.
+	healthTimeout time.Duration
 }
 
 // gitRefs are the refs of the fake git. Tests can add a repository.
@@ -99,8 +101,12 @@ func (e *env) reset() {
 		e.fake.On("skopeo inspect --override-os linux --override-arch "+runtime.GOARCH+" --format {{.Digest}} docker://"+ref,
 			host.Response{Out: digest(ref) + "\n"})
 	}
+	e.fake.On(podHealth, host.Response{Out: "care-api\tUp 1 minute (healthy)\n"})
 	e.out.Reset()
 }
+
+// podHealth is the health read of the pod (WaitAPIHealthy, S62).
+const podHealth = "podman ps --all --filter pod=care --format {{.Names}}\t{{.Status}}"
 
 // targetState scripts the state of care.target. Each unit of the stack has the same state.
 func (e *env) targetState(s string) {
@@ -162,6 +168,7 @@ func (e *env) run(dry bool) (*Result, error) {
 		DBReadyTimeout: e.dbTimeout,
 		AddressWait:    e.addressWait,
 		DNSAddress:     e.dnsAddress,
+		HealthTimeout:  e.healthTimeout,
 	})
 }
 
@@ -172,6 +179,7 @@ func (e *env) mutating() []string {
 		switch {
 		case strings.HasPrefix(c, "systemctl show"),
 			strings.HasPrefix(c, "podman secret ls"),
+			c == podHealth,
 			strings.HasPrefix(c, "skopeo inspect"),
 			strings.HasPrefix(c, "podman image exists"),
 			c == pgIsReady:
@@ -426,6 +434,113 @@ func TestBackendEnvChangeRestartsCareUnitsOnly(t *testing.T) {
 	}
 }
 
+// maintenanceTrace records the restarts and the health reads with the state of the maintenance page (S62).
+func (e *env) maintenanceTrace() *[]string {
+	var seen []string
+	e.fake.Hook = func(c host.Cmd, in []byte) (host.Response, bool) {
+		if line := c.String(); strings.HasPrefix(line, "systemctl restart") || line == podHealth {
+			info, on := ReadMaintenance(e.p)
+			seen = append(seen, fmt.Sprintf("%s | page=%v kind=%s step=%s", line, on, info.Kind, info.Step))
+		}
+		return host.PlugConfigHook(c, in)
+	}
+	return &seen
+}
+
+func (e *env) pageOn() bool {
+	_, err := os.Stat(e.p.Abs(paths.ModeDir + "/" + paths.ModeMaintenance))
+	return err == nil
+}
+
+// TestRestartBehindMaintenancePage (S62): a restart of care-api shows the maintenance page. The order: the page on,
+// the restart, the wait until care-api is healthy, the page off.
+func TestRestartBehindMaintenancePage(t *testing.T) {
+	e := applied(t)
+	e.writeConfig(smallClinic + "env:\n  backend: {EMAIL_HOST: smtp.example.org}\n")
+	seen := e.maintenanceTrace()
+	if _, err := e.run(false); err != nil {
+		t.Fatalf("%v\n%s", err, e.out.String())
+	}
+	want := []string{
+		"systemctl restart care-beat.service care-worker.service care-api.service | page=true kind=apply step=restart",
+		podHealth + " | page=true kind=apply step=restart",
+	}
+	if !reflect.DeepEqual(*seen, want) {
+		t.Fatalf("trace:\n got  %q\n want %q", *seen, want)
+	}
+	if e.pageOn() {
+		t.Fatal("the maintenance page must be off after the restart")
+	}
+	out := e.out.String()
+	if !strings.Contains(out, "maintenance page on; restart") || !strings.Contains(out, "care-api is healthy; maintenance page off") {
+		t.Fatalf("output:\n%s", out)
+	}
+}
+
+// TestRestartWithoutAPIHasNoPage: a restart without care-api (for example care-caddy) does not show the page.
+func TestRestartWithoutAPIHasNoPage(t *testing.T) {
+	e := newEnv(t, smallClinic)
+	seen := e.maintenanceTrace()
+	o := Options{Paths: e.p, Host: host.New(e.fake), PollInterval: time.Millisecond}
+	if err := RestartBehindPage(context.Background(), o, MaintenanceInfo{JobID: "j", Kind: "apply"}, "care-caddy.service"); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"systemctl restart care-caddy.service | page=false kind= step="}; !reflect.DeepEqual(*seen, want) {
+		t.Fatalf("trace %q", *seen)
+	}
+}
+
+// TestRestartFailureTurnsThePageOff: a failed restart or a care-api that does not become healthy turns the page off
+// too (S62). A page that a cutover or a restore turned on stays on.
+func TestRestartFailureTurnsThePageOff(t *testing.T) {
+	restart := "systemctl restart care-beat.service care-worker.service care-api.service"
+	t.Run("restart fails", func(t *testing.T) {
+		e := applied(t)
+		e.writeConfig(smallClinic + "env:\n  backend: {EMAIL_HOST: smtp.example.org}\n")
+		e.fake.On(restart, host.Response{Code: 1, Out: "Job for care-api.service failed."})
+		seen := e.maintenanceTrace()
+		if _, err := e.run(false); err == nil {
+			t.Fatal("want an error")
+		}
+		if len(*seen) != 1 || !strings.Contains((*seen)[0], "page=true") {
+			t.Fatalf("trace %q", *seen)
+		}
+		if e.pageOn() {
+			t.Fatal("a failed restart must turn the page off")
+		}
+	})
+	t.Run("not healthy", func(t *testing.T) {
+		e := applied(t)
+		e.writeConfig(smallClinic + "env:\n  backend: {EMAIL_HOST: smtp.example.org}\n")
+		e.fake.Set(podHealth, host.Response{Out: "care-api\tUp 5 seconds (starting)\n"})
+		e.healthTimeout = 20 * time.Millisecond
+		_, err := e.run(false)
+		if err == nil || !strings.Contains(err.Error(), "did not become healthy") {
+			t.Fatalf("want the health timeout, got %v", err)
+		}
+		if e.pageOn() {
+			t.Fatal("a care-api that is not healthy must turn the page off")
+		}
+	})
+	t.Run("page of another job", func(t *testing.T) {
+		e := applied(t)
+		e.writeConfig(smallClinic + "env:\n  backend: {EMAIL_HOST: smtp.example.org}\n")
+		if err := MaintenanceOn(e.p, MaintenanceInfo{JobID: "restore", Kind: "restore-pitr"}); err != nil {
+			t.Fatal(err)
+		}
+		seen := e.maintenanceTrace()
+		if _, err := e.run(false); err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{restart + " | page=true kind=restore-pitr step="}; !reflect.DeepEqual(*seen, want) {
+			t.Fatalf("trace %q", *seen)
+		}
+		if info, on := ReadMaintenance(e.p); !on || info.JobID != "restore" {
+			t.Fatal("the page of the other job must stay")
+		}
+	})
+}
+
 func TestPresetChangeWithDatabaseIsFullCycle(t *testing.T) {
 	e := applied(t)
 	e.writeConfig(strings.Replace(smallClinic, "small-clinic", "busy-counter", 1))
@@ -499,6 +614,9 @@ func TestDryRunWritesNothing(t *testing.T) {
 	}
 	if got := e.mutating(); len(got) != 0 {
 		t.Fatalf("dry run ran %q", got)
+	}
+	if e.pageOn() {
+		t.Fatal("a dry run must not show the maintenance page")
 	}
 	out := e.out.String()
 	if !strings.Contains(out, "+EMAIL_HOST=smtp.example.org") || !strings.Contains(out, "restart: care-beat.service") {

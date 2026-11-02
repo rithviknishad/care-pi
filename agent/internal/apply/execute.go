@@ -131,7 +131,8 @@ func (x *executor) run(ctx context.Context, a plan.Action) error {
 	case plan.StartTarget:
 		return x.recordPod(x.startTarget(ctx))
 	case plan.Restart:
-		return h.Systemd.Restart(ctx, a.Units...)
+		id, kind := x.jobRef()
+		return RestartBehindPage(ctx, x.o, MaintenanceInfo{JobID: id, Kind: kind}, a.Units...)
 	case plan.ReloadCaddy:
 		_, err := h.Podman.Exec(ctx, "care-caddy", "", "caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile")
 		if err != nil {

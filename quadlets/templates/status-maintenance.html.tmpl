@@ -18,10 +18,12 @@
     {{printf "%q" $k}}: {{printf "%q" $v}},
 {{- end}}
   };
+  // A restart of care-api behind this page (S62): the step restart.
+  var restart = {{printf "%q" .MaintenanceRestart}};
   function show(m) {
     var step = document.getElementById("step"), since = document.getElementById("since");
     if (m && m.active) {
-      step.textContent = (m.step && steps[m.step]) || "Wait a few minutes. This page opens CARE again when the maintenance is complete.";
+      step.textContent = (m.step === "restart" && restart) || (m.step && steps[m.step]) || "Wait a few minutes. This page opens CARE again when the maintenance is complete.";
       if (m.started_at) {
         var t = new Date(m.started_at);
         since.textContent = "Maintenance since " + t.toLocaleTimeString() + ".";

@@ -54,6 +54,8 @@ type Options struct {
 	PollInterval time.Duration
 	// DBReadyTimeout bounds the wait for care-db before the stanza step.
 	DBReadyTimeout time.Duration
+	// HealthTimeout bounds the wait for care-api after a restart behind the maintenance page (S62).
+	HealthTimeout time.Duration
 	// LockTimeout bounds the wait for the apply lock (applock). 0 waits without a limit.
 	LockTimeout time.Duration
 	// LockHeld tells that the caller holds the apply lock, for example bootstrap.
@@ -423,6 +425,9 @@ func (o *Options) defaults() {
 	}
 	if o.DBReadyTimeout == 0 {
 		o.DBReadyTimeout = 5 * time.Minute
+	}
+	if o.HealthTimeout == 0 {
+		o.HealthTimeout = 5 * time.Minute
 	}
 	if o.S3Endpoint == "" {
 		o.S3Endpoint = "127.0.0.1:17070"

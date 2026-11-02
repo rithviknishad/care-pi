@@ -150,7 +150,7 @@ describe("the texts of the plugs", () => {
       "This changes the frontend plug list. Care keeps running. Browsers use the change at the next page load.",
     );
     expect(planEffect({ path: "restart", estimated_downtime_s: 20 })).toBe(
-      "This restarts the Care services (api, worker, beat). The API stops for about 20 s.",
+      "This restarts the Care services (api, worker, beat) behind the maintenance page. Care stops for about 20 s.",
     );
     expect(planEffect({ path: "cutover", estimated_downtime_s: 120 })).toContain("Care stops for about 2 min.");
     expect(planEffect({ path: "cutover", estimated_downtime_s: null })).toContain("about 1 min");

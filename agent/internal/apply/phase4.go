@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,6 +28,9 @@ type MaintenanceInfo struct {
 	JobID     string    `json:"job_id"`
 	Kind      string    `json:"kind"`
 	StartedAt time.Time `json:"started_at"`
+	// Step is the action that turned the page on, when it is not a step of the job (S62: restart). The running step of
+	// the job wins in GET /_care-pi/status.
+	Step string `json:"step,omitempty"`
 }
 
 // MaintenanceOn creates the flag file of the maintenance page and maintenance.json. Caddy then serves
@@ -52,6 +56,69 @@ func MaintenanceOff(p paths.Paths) error {
 	return err
 }
 
+// maintenanceActive reports whether the flag file of the maintenance page exists.
+func maintenanceActive(p paths.Paths) bool {
+	_, err := os.Stat(p.Abs(paths.ModeDir + "/" + paths.ModeMaintenance))
+	return err == nil
+}
+
+// APIUnit is the unit of the API of Care.
+const APIUnit = "care-api.service"
+
+// RestartBehindPage restarts units. When they include care-api, Caddy shows the maintenance page during the restart
+// (S62): the page on, the restart, the wait until care-api is healthy (wait-healthy), the page off. A failure also
+// turns the page off. When the page is already on (a cutover or a restore), its owner keeps it: the restart then does
+// not change the page and does not wait. info names the job in maintenance.json.
+func RestartBehindPage(ctx context.Context, o Options, info MaintenanceInfo, units ...string) error {
+	o.defaults()
+	h := o.Host
+	if !slices.Contains(units, APIUnit) || maintenanceActive(o.Paths) {
+		return h.Systemd.Restart(ctx, units...)
+	}
+	info.Step = "restart"
+	if info.StartedAt.IsZero() {
+		info.StartedAt = o.Now().UTC().Truncate(time.Second)
+	}
+	if err := MaintenanceOn(o.Paths, info); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(o.Out, "    maintenance page on; restart, then wait until care-api is healthy")
+	err := h.Systemd.Restart(ctx, units...)
+	if err == nil {
+		err = WaitAPIHealthy(ctx, o)
+	}
+	if offErr := MaintenanceOff(o.Paths); err == nil {
+		err = offErr
+	}
+	if err == nil {
+		_, _ = fmt.Fprintln(o.Out, "    care-api is healthy; maintenance page off")
+	}
+	return err
+}
+
+// WaitAPIHealthy polls until the health check of care-api passes (the step wait-healthy), at most HealthTimeout.
+func WaitAPIHealthy(ctx context.Context, o Options) error {
+	o.defaults()
+	deadline := time.Now().Add(o.HealthTimeout)
+	for {
+		health, err := o.Host.Podman.Health(ctx, "care")
+		if err == nil && health["care-api"] == "healthy" {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				return fmt.Errorf("care-api did not become healthy within %s: %w", o.HealthTimeout, err)
+			}
+			return fmt.Errorf("care-api did not become healthy within %s (health %q)", o.HealthTimeout, health["care-api"])
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(o.PollInterval):
+		}
+	}
+}
+
 // ReadMaintenance returns maintenance.json, and false when the page is off or the file is missing.
 func ReadMaintenance(p paths.Paths) (MaintenanceInfo, bool) {
 	var m MaintenanceInfo
@@ -70,15 +137,7 @@ func ReadMaintenance(p paths.Paths) (MaintenanceInfo, bool) {
 // migrations first), and the page off. A failure leaves the page on: run care-pi update rollback.
 func (x *executor) cutover(ctx context.Context, a plan.Action) error {
 	h := x.o.Host
-	id, kind := x.o.JobID, x.o.JobKind
-	if id == "" {
-		if r, ok := x.journal.(interface{ ID() string }); ok {
-			id = r.ID()
-		}
-	}
-	if kind == "" {
-		kind = jobs.KindApply
-	}
+	id, kind := x.jobRef()
 	if err := MaintenanceOn(x.o.Paths, MaintenanceInfo{JobID: id, Kind: kind, StartedAt: x.o.Now().UTC().Truncate(time.Second)}); err != nil {
 		return err
 	}
@@ -107,6 +166,20 @@ func (x *executor) cutover(ctx context.Context, a plan.Action) error {
 		return fmt.Errorf("care.target did not start after the cutover; the maintenance page stays. Run care-pi update rollback: %w", err)
 	}
 	return MaintenanceOff(x.o.Paths)
+}
+
+// jobRef returns the id and the kind of the job of the run, for maintenance.json.
+func (x *executor) jobRef() (id, kind string) {
+	id, kind = x.o.JobID, x.o.JobKind
+	if id == "" {
+		if r, ok := x.journal.(interface{ ID() string }); ok {
+			id = r.ID()
+		}
+	}
+	if kind == "" {
+		kind = jobs.KindApply
+	}
+	return id, kind
 }
 
 // WaitInactive polls until each unit is inactive or failed.

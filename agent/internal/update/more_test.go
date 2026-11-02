@@ -3,6 +3,7 @@ package update
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rithviknishad/care-pi/agent/internal/apply"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/host"
 	"github.com/rithviknishad/care-pi/agent/internal/jobs"
@@ -120,7 +122,7 @@ func TestPlugPlans(t *testing.T) {
 	// A backend plug that is on and gets a new setting restarts api, worker, and beat.
 	cfg.Solution.Plugs = map[string]config.PlugChoice{"care_multihost_files_be": {Enabled: &on}}
 	out, err := e.u.PlanChange(context.Background(), cfg, "care_multihost_files_be", PlugChange{Backend: map[string]any{"ALLOWED_HOSTS": []any{"*.lan"}}})
-	if err != nil || out.Plan.Path != PathRestart || len(out.Plan.Restarts) != 3 {
+	if err != nil || out.Plan.Path != PathRestart || len(out.Plan.Restarts) != 3 || !out.Plan.Maintenance || out.Plan.Checkpoint {
 		t.Fatalf("restart plan %+v %v", out, err)
 	}
 	// Secrets go to the secret file, not to the choice.
@@ -202,9 +204,27 @@ func TestPlugChangeRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.fake.Calls = nil
+	// S62: the restart runs behind the maintenance page until care-api is healthy.
+	var page []string
+	e.fake.Hook = func(c host.Cmd, in []byte) (host.Response, bool) {
+		if line := c.String(); strings.HasPrefix(line, "systemctl restart") || line == podHealth {
+			info, on := apply.ReadMaintenance(e.p)
+			page = append(page, fmt.Sprintf("%s | page=%v kind=%s step=%s", line, on, info.Kind, info.Step))
+		}
+		return host.PlugConfigHook(c, in)
+	}
 	rec = e.job(jobs.KindPlugChange)
 	if _, err := e.u.RunPlugChange(context.Background(), rec, PlugChangeOptions{ID: "care_filly", Path: PathRestart}); err != nil {
 		t.Fatal(err)
+	}
+	if want := []string{
+		"systemctl restart care-beat.service care-worker.service care-api.service | page=true kind=plug-change step=restart",
+		podHealth + " | page=true kind=plug-change step=restart",
+	}; !reflect.DeepEqual(page, want) {
+		t.Fatalf("maintenance page:\n got  %q\n want %q", page, want)
+	}
+	if _, on := apply.ReadMaintenance(e.p); on {
+		t.Fatal("the maintenance page must be off after the restart")
 	}
 	if got := actions(rec); !reflect.DeepEqual(got, []string{"plan", "activate", "restart", "plug-config"}) {
 		t.Fatalf("restart steps %v", got)

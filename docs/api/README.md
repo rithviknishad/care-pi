@@ -1417,6 +1417,10 @@ The maintenance page:
   shows the general text ("Wait a few minutes. This page opens CARE again when the maintenance is complete.").
   Rate limit: 60 public reads each minute for each address (section 4), so 12 each minute is safe.
 - The step `maintenance-off` deletes the flag file. A failed rollback leaves it (`state: failed`).
+- A restart of `care-api` (S62) shows the page too: the plan action `restart` of an apply (for example a new
+  `backend.env`, or a name on or off in Phase 6) and the plug path `restart`. The page turns on before the restart and
+  off when `care-api` is healthy again (`wait-healthy`), also after a failure. `maintenance` has the kind of the job and
+  `step: restart`; the page then shows "CARE restarts. This takes about 1 minute." (`docs/apply.md`, "Restart").
 
 ### 14.4 The update window and the timers
 
@@ -1493,8 +1497,8 @@ loads it at the next page load). A secret goes to `/etc/care-pi/secrets/plug-<id
 
 1. `PUT /plugs/{plug_id}?dry_run=true` with the change. The response has `plan` (`PlugChangePlan`): `path`, `maintenance`,
    `checkpoint`, `restarts`, `downloads`, `builds`, `needs_internet`, `estimated_downtime_s`, `steps`, `warnings`.
-2. The console shows the plan. For `cutover` and `build-and-cutover`, it says that Care shows the maintenance page and
-   for how long.
+2. The console shows the plan. For `restart`, `cutover`, and `build-and-cutover`, it says that Care shows the
+   maintenance page and for how long (`plan.maintenance` is `true` for the three paths since S62).
 3. `PUT /plugs/{plug_id}?apply=true` with the same body. `202` with `job` (kind `plug-change`). The console follows
    `GET /jobs/{job_id}/events`. With the path `none`, the agent writes and starts no job: `200` with `job: null`.
 

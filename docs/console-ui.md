@@ -592,7 +592,7 @@ for an external bundle "The browser loads the bundle from <url>. It is not pinne
 
 - **The switch.** It moves at once (optimistic) and sends `PUT /plugs/{id}?dry_run=true`. The plan dialog says what the
   change does: `plug-config` "This changes the frontend plug list. Care keeps running. …"; `restart` "This restarts the
-  Care services (api, worker, beat). The API stops for about 20 s."; `cutover` "This restarts Care behind the maintenance
+  Care services (api, worker, beat) behind the maintenance page. Care stops for about 20 s." (S62); `cutover` "This restarts Care behind the maintenance
   page. The device makes a backup point of the database first. Care stops for about 2 min."; `build-and-cutover` the build
   first. It lists the downloads, the restarts, the steps (operator sentences), and the warnings. Cancel puts the switch
   back. Apply sends `?apply=true` with `If-Match` on the ETag of the dry run, then the card shows the job.

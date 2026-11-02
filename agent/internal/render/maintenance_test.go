@@ -95,3 +95,22 @@ func TestMaintenancePageSteps(t *testing.T) {
 		t.Error("the page shows the raw step key")
 	}
 }
+
+// TestMaintenancePageRestart: a restart of care-api behind the page (S62, the step restart) shows the restart text,
+// not the sentence of the console for the step restart.
+func TestMaintenancePageRestart(t *testing.T) {
+	out, err := renderOne("status-maintenance.html.tmpl", &Model{Header: Header, DisplayName: "Sunrise Clinic",
+		MaintenanceSteps: MaintenanceSteps, MaintenanceRestart: MaintenanceRestart})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(out)
+	if MaintenanceRestart != "CARE restarts. This takes about 1 minute." {
+		t.Fatalf("restart text %q", MaintenanceRestart)
+	}
+	for _, want := range []string{"var restart = " + strconv.Quote(MaintenanceRestart) + ";", `(m.step === "restart" && restart)`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the page has no %s", want)
+		}
+	}
+}

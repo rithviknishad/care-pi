@@ -180,6 +180,8 @@ type Model struct {
 	SolutionName string
 	// MaintenanceSteps maps a job step action to the text of the maintenance page.
 	MaintenanceSteps map[string]string
+	// MaintenanceRestart is the text of the maintenance page for a restart of care-api (S62).
+	MaintenanceRestart string
 
 	// Phase 6 (docs/connectivity.md). LocalHosts are the names of the local CA mode; LocalSites adds the LAN addresses.
 	LocalHosts []string
@@ -565,18 +567,19 @@ func NewModel(in Input) (*Model, error) {
 	}
 	hosts := Hostnames(cfg)
 	m := &Model{
-		SolutionName:     cfg.Solution.Name,
-		CareBuild:        in.CareBuild,
-		MaintenanceSteps: MaintenanceSteps,
-		Header:           Header,
-		DisplayName:      cfg.Identity.DisplayName,
-		Hostnames:        hosts,
-		IPs:              append([]string(nil), in.IPs...),
-		Sizing:           cfg.Sizing(),
-		Images:           map[string]string{},
-		UploadMaxMB:      cfg.Uploads.MaxBodyMB,
-		FEProvider:       cfg.FE.Provider,
-		Stanza:           StanzaName,
+		SolutionName:       cfg.Solution.Name,
+		CareBuild:          in.CareBuild,
+		MaintenanceSteps:   MaintenanceSteps,
+		MaintenanceRestart: MaintenanceRestart,
+		Header:             Header,
+		DisplayName:        cfg.Identity.DisplayName,
+		Hostnames:          hosts,
+		IPs:                append([]string(nil), in.IPs...),
+		Sizing:             cfg.Sizing(),
+		Images:             map[string]string{},
+		UploadMaxMB:        cfg.Uploads.MaxBodyMB,
+		FEProvider:         cfg.FE.Provider,
+		Stanza:             StanzaName,
 		Secrets: SecretNames{
 			DjangoSecretKey:  secrets.PodmanDjangoSecretKey,
 			JWKSBase64:       secrets.PodmanJWKSBase64,
@@ -933,6 +936,10 @@ func withDeviceHosts(v any, names []string) (out []any, ok bool) {
 	}
 	return out, true
 }
+
+// MaintenanceRestart is the text of the maintenance page while care-api restarts behind the page (S62, the step
+// restart). The console keeps its own sentence for the step restart, because the step also restarts other units.
+const MaintenanceRestart = "CARE restarts. This takes about 1 minute."
 
 // MaintenanceSteps are the texts of the maintenance page for each JobStep.action: a verbatim copy of
 // strings.steps.actions of the console (console/src/lib/strings.ts, docs/console-ui.md section 9), so the page,

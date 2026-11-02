@@ -842,7 +842,7 @@ plan. With `apply=true` it starts a job of kind `plug-change`. The path is the l
 | Change | Path | Maintenance page | Checkpoint | Effect on Care |
 |---|---|---|---|---|
 | FE plug on or off; FE settings | `plug-config`: download or build the bundle when it is missing; write or delete the row | no | no | none; the next page load in the browser uses the row |
-| BE plug off; BE settings | `restart`: render `ADDITIONAL_PLUGS`, restart beat, then worker and api | no | no | seconds of API break |
+| BE plug off; BE settings | `restart`: render `ADDITIONAL_PLUGS`, restart beat, then worker and api | yes (S62), until `care-api` is healthy | no | about 1 minute behind the maintenance page |
 | BE plug on, installed in the image | `cutover` (section 8): migrations of the plug can run | yes | yes | the cutover |
 | BE plug on, not installed (track `custom`) | `build-and-cutover`: local `.build` in staging, then the cutover | yes | yes | the build with 1 API worker, then the cutover |
 | A setting (backend, frontend, or secret) of a plug that is off | `none`: the agent stores the value (`config.yaml` or the secret file); no job | no | no | none now; the value counts when the plug turns on |

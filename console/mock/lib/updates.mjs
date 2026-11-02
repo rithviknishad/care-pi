@@ -807,6 +807,11 @@ function maintenanceHook(kind) {
       }
     }
     if (phase === "done" && step.action === "maintenance-off") u.maintenance = { ...OFF };
+    // S62: the plug path restart shows the page during the step restart, and turns it off after it (also on a failure).
+    if (step.action === "restart" && !(u.maintenance.active && u.maintenance.job_id !== job.id)) {
+      if (phase === "start") u.maintenance = { active: true, kind, job_id: job.id, step: "restart", started_at: now() };
+      else u.maintenance = { ...OFF };
+    }
   };
 }
 
@@ -1428,7 +1433,7 @@ function planOf(state, def, settingsChanged) {
     changed: path !== "none",
     path,
     lock_changed: onChange,
-    maintenance: path === "cutover",
+    maintenance: path === "cutover" || path === "restart",
     checkpoint: path === "cutover",
     restarts: path === "restart" || path === "cutover" ? UNITS : [],
     downloads,

@@ -260,6 +260,21 @@ A **cutover** (Phase 4) is the short part of an update (`docs/solutions.md` sect
 A failure in step 4 leaves the maintenance page on. Run `care-pi update rollback` to install the previous lock.
 The update jobs (`care-pi update apply`) use their own cutover with an automatic rollback (`docs/solutions.md` section 8.5).
 
+A **restart** of `care-api` (S62) also shows the maintenance page: a `restart` action of the plan with
+`care-api.service` (a change of `backend.env`, of a podman secret of Care, of the preset without a database change; the
+name set of Phase 6), and the plug path `restart` (`docs/solutions.md` section 12.1):
+
+1. Create `state/mode/maintenance` and `state/mode/maintenance.json` with `step: restart`. Caddy shows the maintenance
+   page with "CARE restarts. This takes about 1 minute."
+2. `systemctl restart` of the units (about 1 minute on a Pi 5).
+3. `wait-healthy`: poll the health of `care-api` (`podman ps`) until it is `healthy`, at most 5 minutes.
+4. Delete the flag files.
+
+A failure in step 2 or 3 also deletes the flag files: the apply fails, and Care gives the errors of Caddy (`502`), not a
+page that stays. When the page is already on (a cutover, a restore), the restart does not change it. A restart without
+`care-api` (for example `care-caddy`) shows no page. A dry run shows no page. The scale-down of an FE build
+(`fe.provider: local`) keeps 1 API worker up and shows no page.
+
 A cutover of the backend plugs only (no full-cycle reason) restarts only beat, worker, and api. The other changed units
 (`care-caddy`, `care-s3`) restart after the cutover, and a changed Caddyfile reloads after it (`restart`, `reload-caddy`).
 Example: the public name on changes the plug set, the Caddyfile, and the unit of `care-caddy` (the secret of acme-dns)
@@ -378,9 +393,10 @@ Why: Caddy starts before the clock gate. With a stale clock (`fake-hwclock`), Ca
 `tls internal` certificate (12 hours) as valid. After NTP sets the clock, Caddy serves that certificate
 until its next renewal check, about 10 minutes later. The reload checks the certificates at once.
 `--force` is necessary, because Caddy skips the reload of a config that did not change.
-The update flow of Phase 4 uses `maintenance`. With the flag, the agent writes `maintenance.json`
-(`{job_id, kind, started_at}`). The maintenance page reads `GET /_care-pi/status` each 5 s and shows
-`maintenance.step` and `maintenance.started_at`. When the site is `care` again, the page loads `/` again.
+The update flow of Phase 4 and the restart of `care-api` (S62) use `maintenance`. With the flag, the agent writes
+`maintenance.json` (`{job_id, kind, started_at}`, and `step: restart` for a restart). The maintenance page reads
+`GET /_care-pi/status` each 5 s and shows `maintenance.step` and `maintenance.started_at`. For the step `restart` it
+shows "CARE restarts. This takes about 1 minute." When the site is `care` again, the page loads `/` again.
 The API, bucket, and plug routes do not depend on the mode.
 
 The setup page reads `GET /_care-pi/status` and `GET /_care-pi/tls/instructions/<os>`. It shows the state of the

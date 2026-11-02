@@ -158,6 +158,10 @@ func Maintenance(p paths.Paths) MaintenanceState {
 			}
 		}
 	}
+	// A restart behind the page (S62) names its action in maintenance.json.
+	if info, ok := apply.ReadMaintenance(p); ok && m.Step == nil && info.Step != "" {
+		m.Step = strp(info.Step)
+	}
 	return m
 }
 

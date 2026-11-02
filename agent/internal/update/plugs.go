@@ -578,8 +578,8 @@ func planChange(pc *plugsContext, before, after *solution.EffectivePlug, cfg, ne
 	}
 	p.Changed = p.Path != PathNone
 	p.LockChanged = onChanged
-	p.Maintenance = p.Path == PathCutover || p.Path == PathBuildAndCutover
-	p.Checkpoint = p.Maintenance
+	p.Maintenance = p.Path == PathCutover || p.Path == PathBuildAndCutover || p.Path == PathRestart
+	p.Checkpoint = p.Path == PathCutover || p.Path == PathBuildAndCutover
 	if p.Path == PathRestart || p.Maintenance {
 		p.Restarts = []string{"care-beat.service", "care-worker.service", "care-api.service"}
 	}
@@ -789,8 +789,9 @@ func (u *Updater) RunPlugChange(ctx context.Context, rec *jobs.Recorder, o PlugC
 		if err := step(rec, "activate", "", func() error { _, err := apply.Activate(ctx, ao, pr); return err }); err != nil {
 			return finish(err)
 		}
+		// S62: Caddy shows the maintenance page until care-api is healthy again.
 		if err := step(rec, "restart", "care-beat.service care-worker.service care-api.service", func() error {
-			return u.Host.Systemd.Restart(ctx, apply.AppUnits...)
+			return apply.RestartBehindPage(ctx, ao, apply.MaintenanceInfo{JobID: rec.ID(), Kind: jobs.KindPlugChange}, apply.AppUnits...)
 		}); err != nil {
 			return finish(err)
 		}

@@ -1809,7 +1809,8 @@ export const strings = {
     paths: {
       "plug-config":
         "This changes the frontend plug list. Care keeps running. Browsers use the change at the next page load.",
-      restart: "This restarts the Care services (api, worker, beat). The API stops for about {time}.",
+      restart:
+        "This restarts the Care services (api, worker, beat) behind the maintenance page. Care stops for about {time}.",
       cutover:
         "This restarts Care behind the maintenance page. The device makes a backup point of the database first. Care stops for about {time}.",
       "build-and-cutover":

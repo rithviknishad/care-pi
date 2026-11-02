@@ -66,12 +66,16 @@ func (e *tenv) overview() *Overview {
 	return o
 }
 
+// podHealth is the health read of the pod (apply.WaitAPIHealthy, S62).
+const podHealth = "podman ps --all --filter pod=care --format {{.Names}}\t{{.Status}}"
+
 func newTEnv(t *testing.T, track, pin string) *tenv {
 	t.Helper()
 	root := t.TempDir()
 	p := paths.New(root)
 	e := &tenv{t: t, p: p, fake: host.NewFake(), clock: time.Date(2026, 11, 22, 2, 3, 0, 0, time.UTC)}
 	e.fake.Hook = host.PlugConfigHook
+	e.fake.On(podHealth, host.Response{Out: "care-api\tUp 1 minute (healthy)\n"})
 	cfgData, err := config.DefaultYAML("Sunrise Clinic", "care", "small-clinic", "artifact")
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +104,7 @@ func newTEnv(t *testing.T, track, pin string) *tenv {
 			e.vrfy = append(e.vrfy, vt)
 			return nil
 		}),
-		ApplyHook: func(o *apply.Options) { o.PollInterval = time.Millisecond },
+		ApplyHook: func(o *apply.Options) { o.PollInterval, o.HealthTimeout = time.Millisecond, time.Second },
 		Ready:     func() bool { return true }}
 	return e
 }
