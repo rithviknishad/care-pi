@@ -249,6 +249,48 @@ func TestPublicUpdateStagingCertificate(t *testing.T) {
 	}
 }
 
+// The switch from staging to production (the Phase 6 exit test): the staging certificate stays in the data of Caddy.
+// The enrol job must wait for a certificate of the production directory, not tell "issued" for the staging one.
+func TestPublicSwitchToProduction(t *testing.T) {
+	e, f := readyConnEnv(t)
+	writeRootCA(t, e.p)
+	e.svc.CertWait = 10 * time.Second
+	r := e.do("PUT", "/api/v1/tls/public", map[string]any{"enabled": true, "hostname_hint": "sunrise",
+		"acme_ca": "https://acme-staging-v02.api.letsencrypt.org/directory"})
+	var clinic dnsclient.FakeClinic
+	for ok := false; !ok; clinic, ok = f.Clinic("") {
+		time.Sleep(5 * time.Millisecond)
+	}
+	name := clinic.ID + ".care-pi.rithviknishad.dev"
+	writeACME(t, e.p, "acme-staging-v02.api.letsencrypt.org-directory", name, e.clock.now().Add(60*24*time.Hour))
+	e.jobOK(r)
+
+	e.svc.CertWait = 50 * time.Millisecond
+	e.clock.add(2 * time.Second) // a new timestamp: the service refuses a replayed request
+	id := e.jobOK(e.do("PUT", "/api/v1/tls/public", map[string]any{"enabled": true, "acme_ca": ""}))
+	if j, _ := jobs.Load(e.p, id); !strings.Contains(strings.ReplaceAll(string(j.Result), " ", ""), `"certificate":"pending"`) {
+		t.Fatalf("the staging certificate must not count after the switch to production: %s", j.Result)
+	}
+	if c, _ := f.Clinic(""); c.ID != clinic.ID {
+		t.Fatalf("the switch must keep the registration: %s, then %s", clinic.ID, c.ID)
+	}
+	caddy, _ := os.ReadFile(e.p.Abs(paths.RenderedCaddy + "/Caddyfile"))
+	if strings.Contains(string(caddy), "acme-staging") || strings.Contains(string(caddy), "redir https://"+name) {
+		t.Fatalf("Caddyfile after the switch:\n%s", caddy)
+	}
+	// Caddy gets the production certificate; the timer then sends port 80 to the name.
+	writeIssued(t, e.p, name)
+	res, err := e.svc.PublicUpdate(t.Context(), func(string) {})
+	must(t, err)
+	if !res.Applied {
+		t.Fatal("the production certificate must make an apply")
+	}
+	caddy, _ = os.ReadFile(e.p.Abs(paths.RenderedCaddy + "/Caddyfile"))
+	if !strings.Contains(string(caddy), "redir https://"+name+"{uri} 302") {
+		t.Fatal("port 80 must go to the public name with the production certificate")
+	}
+}
+
 // m1: "care-pi tls public rotate --new-key" whose answer is lost. The agent stores the new key before the request
 // (secrets/dns_client.key.pending), so it is not locked out: a later request signs with the pending key and promotes it.
 func TestPublicRotateLostAnswer(t *testing.T) {
@@ -442,6 +484,90 @@ func TestTailscaleHeadscale(t *testing.T) {
 	if len(up) != 1 || !strings.Contains(up[0], "--reset --login-server=https://hs.example.org --auth-key=file:") {
 		t.Fatalf("up %v", up)
 	}
+}
+
+// TestTailscaleUnmanaged: tls.tailscale.manage_daemon false (the Phase 6 exit test on lumine reuses the login of the
+// owner). The enrol job never installs tailscale and never runs "tailscale up"; the off job never runs
+// "tailscale down" or "tailscale logout".
+func TestTailscaleUnmanaged(t *testing.T) {
+	e, _ := readyConnEnv(t)
+	r := e.do("GET", "/api/v1/config", nil)
+	e.want(e.do("PATCH", "/api/v1/config", map[string]any{"tls": map[string]any{"tailscale": map[string]any{"manage_daemon": false}}},
+		header("Content-Type", "application/merge-patch+json"), header("If-Match", r.header.Get("ETag"))), 200, "")
+	e.svc.IPs = netinfoTailscale("192.168.1.10", "100.101.102.103")
+	e.fake.On("tailscale version", host.Response{Out: "1.104.1\n"})
+	e.fake.On("tailscale status --json", host.Response{Out: tailscale.StatusJSON(tailscale.StateNeedsLogin, ""), Code: 1})
+
+	// tailscaled is not connected: the job stops, and runs no tailscale up.
+	r = e.do("PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": true, "auth_key": nil})
+	e.want(r, 202, "")
+	j := e.waitJob(r.json(t)["id"].(string))
+	if j.State != jobs.StateFailed || !strings.HasSuffix(j.Error.Type(), "state-conflict") || !strings.Contains(j.Error.Detail, "manage_daemon") {
+		t.Fatalf("job %s %+v", j.State, j.Error)
+	}
+	if got := e.fake.Filter("systemd-run --wait --collect --pipe --quiet --unit=care-pi-tailscale-install", "systemd-run --collect --quiet --unit=care-pi-tailscale-up", "tailscale up"); len(got) != 0 {
+		t.Fatalf("an unmanaged tailscaled needs no install and no up: %v", got)
+	}
+
+	// Connected: the job uses it as it is.
+	e.fake.Set("tailscale status --json", host.Response{Out: tailscale.StatusJSON(tailscale.StateRunning, "")})
+	e.jobOK(e.do("PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": true, "auth_key": nil}))
+	if got := e.fake.Filter("systemd-run --wait --collect --pipe --quiet --unit=care-pi-tailscale-install", "systemd-run --collect --quiet --unit=care-pi-tailscale-up", "tailscale up"); len(got) != 0 {
+		t.Fatalf("an unmanaged tailscaled needs no install and no up: %v", got)
+	}
+	cfg, _ := config.Load(e.p.Abs(paths.ConfigFile))
+	if !cfg.TLS.Tailscale.Enabled || cfg.TLS.Tailscale.Hostname != "care.tail1234.ts.net" || cfg.TLS.Tailscale.DaemonManaged() {
+		t.Fatalf("config %+v", cfg.TLS.Tailscale)
+	}
+	pod, _ := os.ReadFile(e.p.Abs(paths.QuadletDir + "/care.pod"))
+	if !strings.Contains(string(pod), "PublishPort=100.101.102.103:443:443") {
+		t.Fatalf("the pod does not publish on the Tailscale address:\n%s", pod)
+	}
+
+	// Off: the site, the publish, and the drop-in go; tailscaled stays connected.
+	e.jobOK(e.do("PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": false}))
+	if got := e.fake.Filter("tailscale down", "tailscale logout"); len(got) != 0 {
+		t.Fatalf("an unmanaged tailscaled stays connected: %v", got)
+	}
+	cfg, _ = config.Load(e.p.Abs(paths.ConfigFile))
+	if cfg.TLS.Tailscale.Enabled || cfg.TLS.Tailscale.DaemonManaged() {
+		t.Fatalf("config %+v", cfg.TLS.Tailscale)
+	}
+	if nft, _ := os.ReadFile(e.p.Abs(paths.FirewallFile)); strings.Contains(string(nft), "41641") {
+		t.Fatal("the firewall still accepts 41641/udp")
+	}
+	pod, _ = os.ReadFile(e.p.Abs(paths.QuadletDir + "/care.pod"))
+	if strings.Contains(string(pod), "100.101.102.103") {
+		t.Fatalf("the pod still publishes on the Tailscale address:\n%s", pod)
+	}
+}
+
+// TestTailscaleServePort: "tailscale serve" uses port 443 of the node (lumine in the Phase 6 exit test). tailscaled
+// listens on 100.x:443, so a pod that publishes there fails to start, and all of Care with it. The job stops before
+// the config changes.
+func TestTailscaleServePort(t *testing.T) {
+	e, _ := readyConnEnv(t)
+	e.svc.IPs = netinfoTailscale("192.168.1.10", "100.101.102.103")
+	e.fake.On("tailscale version", host.Response{Out: "1.104.1\n"})
+	e.fake.On("tailscale status --json", host.Response{Out: tailscale.StatusJSON(tailscale.StateRunning, "")})
+	e.fake.On("tailscale serve status --json", host.Response{Out: `{"TCP":{"443":{"HTTPS":true},"10000":{}},"Web":{"care.tail1234.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3000"}}}}}`})
+	r := e.do("PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": true, "auth_key": nil})
+	e.want(r, 202, "")
+	j := e.waitJob(r.json(t)["id"].(string))
+	if j.State != jobs.StateFailed || !strings.HasSuffix(j.Error.Type(), "state-conflict") || !strings.Contains(j.Error.Detail, "port 443 of 100.101.102.103") {
+		t.Fatalf("job %s %+v", j.State, j.Error)
+	}
+	cfg, _ := config.Load(e.p.Abs(paths.ConfigFile))
+	if cfg.TLS.Tailscale.Enabled {
+		t.Fatal("the mode must stay off")
+	}
+	pod, _ := os.ReadFile(e.p.Abs(paths.QuadletDir + "/care.pod"))
+	if strings.Contains(string(pod), "100.101.102.103") {
+		t.Fatalf("the pod must not publish on the Tailscale address:\n%s", pod)
+	}
+	// Without the serve configuration, the same request succeeds.
+	e.fake.Set("tailscale serve status --json", host.Response{Out: `{}`})
+	e.jobOK(e.do("PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": true, "auth_key": nil}))
 }
 
 // TestWiFi: scan, set, and remove (section 15.4).

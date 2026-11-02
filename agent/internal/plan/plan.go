@@ -192,6 +192,9 @@ var restartOrder = []string{"care-s3", "care-caddy", "care-beat", "care-worker",
 // care-db and care-redis: SP6 finding 6 (a single restart leaves dependents failed).
 var cycleUnits = map[string]bool{"care-db": true, "care-redis": true}
 
+// Units that a cutover of the backend plugs stops and starts (apply.AppUnits).
+var cutoverUnits = map[string]bool{"care-beat": true, "care-worker": true, "care-api": true}
+
 // Images that do not belong to a running unit.
 var transientImages = map[string]bool{"node": true, "vmagent": true, "node-exporter": true}
 
@@ -433,6 +436,23 @@ func Build(in Input) *Plan {
 		}
 		add(Action{Kind: Cutover, Units: []string{"care.target"}, Reason: strings.Join(dedupe(reasons), "; ")})
 		started = true
+		if len(cycle) == 0 {
+			// This cutover stops and starts only beat, worker, and api (apply.AppUnits); care-caddy serves the
+			// maintenance page meanwhile. The other changed units restart after it, and a new Caddyfile loads:
+			// a new name changes the backend plugs, the Caddyfile, and the unit of care-caddy together (Phase 6).
+			var units []string
+			for _, u := range restartOrder {
+				if restart[u] && !cutoverUnits[u] {
+					units = append(units, u+".service")
+				}
+			}
+			if len(units) > 0 {
+				add(Action{Kind: Restart, Units: units})
+			}
+			if caddyConf && !restart["care-caddy"] {
+				add(Action{Kind: ReloadCaddy, Units: []string{"care-caddy.service"}})
+			}
+		}
 	case len(cycle) > 0:
 		if len(stackImages) > 0 {
 			add(Action{Kind: PullImages, Names: in.StackImages, Reason: "image changed"})

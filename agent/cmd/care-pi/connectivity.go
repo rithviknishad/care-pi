@@ -215,7 +215,7 @@ the Tailscale service. Without the flag, the value of tls.tailscale.control_url 
 
 var tlsTailscaleDisableCmd = &cobra.Command{
 	Use:   "disable",
-	Short: "Turn off the Tailscale name, then run tailscale down and tailscale logout (the package stays)",
+	Short: "Turn off the Tailscale name, then run tailscale down and tailscale logout (the package stays; not with tls.tailscale.manage_daemon false)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		svc := newService(cmd)

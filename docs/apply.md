@@ -245,6 +245,7 @@ These rules implement the table in `plans/03-solutions-releases-updates.md` sect
 | Phase 6: a new LAN address with the public mode (or the last update is older than 6 hours) | `update-dns` before `write-lock`: send the address to the DNS service. A failure is a warning; the timer tries again. |
 | Phase 6: the name set (public name or Tailscale name on or off) | the Caddyfile (reload) and `backend.env` (restart). When the count of names crosses 1, the plug `care_multihost_files_be` (`auto: when_multihost`) turns on or off: a `cutover`, and `plug-config` for the new canonical host |
 | Phase 6: `secrets/acme_dns.json` | set the podman secret `care-pi-acme-dns`, restart `care-caddy` |
+| Phase 6: `tls.public.acme_ca` (for example staging to production) | the Caddyfile and the label `care-pi.acme-ca` of `care-caddy.container` change: restart `care-caddy`. A reload keeps the certificate of the old directory in the cache of Caddy, and Caddy then asks the new directory for nothing (Phase 6 exit test). |
 
 A **cutover** (Phase 4) is the short part of an update (`docs/solutions.md` section 8.3):
 
@@ -257,6 +258,11 @@ A **cutover** (Phase 4) is the short part of an update (`docs/solutions.md` sect
 
 A failure in step 4 leaves the maintenance page on. Run `care-pi update rollback` to install the previous lock.
 The update jobs (`care-pi update apply`) use their own cutover with an automatic rollback (`docs/solutions.md` section 8.5).
+
+A cutover of the backend plugs only (no full-cycle reason) restarts only beat, worker, and api. The other changed units
+(`care-caddy`, `care-s3`) restart after the cutover, and a changed Caddyfile reloads after it (`restart`, `reload-caddy`).
+Example: the public name on changes the plug set, the Caddyfile, and the unit of `care-caddy` (the secret of acme-dns)
+together. Before this rule, Caddy kept the old configuration and never asked for the certificate (Phase 6 exit test).
 
 A **full cycle** is:
 

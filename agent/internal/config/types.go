@@ -152,7 +152,13 @@ type TLSTailscale struct {
 	Hostname string `yaml:"hostname,omitempty" json:"hostname,omitempty"`
 	// ControlURL is the URL of a self-hosted control server, for example Headscale (Phase 7, O4). Empty: Tailscale.
 	ControlURL string `yaml:"control_url,omitempty" json:"control_url,omitempty"`
+	// ManageDaemon false: the operator runs tailscaled. The enrol job then never installs tailscale and never
+	// runs "tailscale up", and the off job never runs "tailscale down" or "tailscale logout". nil means true.
+	ManageDaemon *bool `yaml:"manage_daemon,omitempty" json:"manage_daemon,omitempty"`
 }
+
+// DaemonManaged reports whether care-pi installs, connects, and disconnects tailscaled (manage_daemon, default true).
+func (t TLSTailscale) DaemonManaged() bool { return t.ManageDaemon == nil || *t.ManageDaemon }
 
 // Clock selects the clock gate policy.
 type Clock struct {

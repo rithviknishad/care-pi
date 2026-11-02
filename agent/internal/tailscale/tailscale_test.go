@@ -139,3 +139,44 @@ func TestUpArgsControlURL(t *testing.T) {
 		t.Fatalf("start login %q", got)
 	}
 }
+
+// serveJSON is "tailscale serve status --json" of lumine (tailscale 1.104): a serve on 443 of the node, and a
+// Tailscale Service with its own address. Only the TCP map of the node counts.
+const serveJSON = `{"TCP":{"443":{"HTTPS":true}},"Web":{"lumine.orthrus-bass.ts.net:443":{"Handlers":{"/":{"Proxy":"http://10.43.99.23:8080"}}}},
+"Services":{"svc:care-box":{"TCP":{"443":{"HTTPS":true}},"Web":{"care-box.orthrus-bass.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8080"}}}}}}}`
+
+func TestServePorts(t *testing.T) {
+	cases := map[string][]int{
+		serveJSON:                                {443},
+		`{"TCP":{"8443":{},"80":{},"10000":{}}}`: {80, 8443, 10000},
+		`{}`:                                     nil,
+		``:                                       nil,
+		`No serve config`:                        nil,
+	}
+	for in, want := range cases {
+		if got := ParseServePorts([]byte(in)); !equalInts(got, want) {
+			t.Errorf("%q: got %v, want %v", in, got, want)
+		}
+	}
+	f := host.NewFake()
+	f.On("tailscale serve status --json", host.Response{Out: serveJSON})
+	if got := (Client{Runner: f}).ServePorts(context.Background()); !equalInts(got, []int{443}) {
+		t.Fatalf("client %v", got)
+	}
+	f.Set("tailscale serve status --json", host.Response{Code: 1})
+	if got := (Client{Runner: f}).ServePorts(context.Background()); got != nil {
+		t.Fatalf("a failed command gives no ports, got %v", got)
+	}
+}
+
+func equalInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

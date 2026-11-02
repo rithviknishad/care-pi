@@ -469,6 +469,11 @@ func (s *Service) Status(ctx context.Context) (*Status, error) {
 	default:
 		st.State = "ok"
 	}
+	// A request that ended early (the browser closed or navigated away) killed the commands of the read: such a
+	// result has false problems, and the next client must not get it from the cache.
+	if ctx.Err() != nil {
+		return st, nil
+	}
 	s.mu.Lock()
 	s.statusCache.set(s.now(), st)
 	s.mu.Unlock()
@@ -584,6 +589,9 @@ func (s *Service) PublicStatus(ctx context.Context) *PublicStatus {
 			jp.StartedAt = *j.StartedAt
 		}
 		p.Job = jp
+	}
+	if ctx.Err() != nil {
+		return p
 	}
 	s.mu.Lock()
 	s.publicCache.set(s.now(), p)

@@ -142,7 +142,7 @@ API: `PUT /tls/public {"enabled": true, "hostname_hint": "sunrise"}`. The job is
 | `dns-address` | Send the LAN address. |
 | `write-config` | Set `tls.public.enabled`, `tls.public.clinic_id`, and `tls.public.acme_ca`. |
 | apply steps | Render the public site, set the secret, enable `care-dns-update.timer`, cycle the pod. The plug `care_multihost_files_be` turns on (a cutover). |
-| `wait-certificate` | Wait up to 5 minutes for the certificate in the data of Caddy. |
+| `wait-certificate` | Wait up to 5 minutes for the certificate in the data of Caddy. Without a staging directory, a staging certificate does not count (it stays in the data of Caddy after the switch to production). |
 | apply steps | When the certificate is there: the redirect of port 80 goes to the public name. A certificate of a staging directory (section 3.4) does not move the redirect. |
 
 When the certificate is not there after 5 minutes, the job succeeds with `certificate: pending`. Caddy tries again.
@@ -170,8 +170,11 @@ A renewal does not count. For a test, use the staging directory first:
 care-pi tls public enable --hostname-hint test --acme-ca https://acme-staging-v02.api.letsencrypt.org/directory
 ```
 
-Browsers do not trust a staging certificate. When the test is good, turn the public name off and on again without
-`--acme-ca` (or `care-pi config set tls.public.acme_ca=null --apply`).
+Browsers do not trust a staging certificate. When the test is good, switch the same name to Let's Encrypt:
+`care-pi tls public enable --acme-ca ""` (the job keeps the id and waits for the new certificate), or
+`care-pi config set tls.public.acme_ca=null --apply`. The switch restarts care-caddy (the unit has the label
+`care-pi.acme-ca`): a reload keeps the staging certificate in the cache of Caddy. The staging certificate stays in the
+data of Caddy until it expires; it does not count for port 80 or for the enrol job.
 
 ### 3.5 Turn it off
 
@@ -240,6 +243,8 @@ next apply deletes it.)
 Console: Settings > Connectivity > Tailscale. CLI: `care-pi tls tailscale enable [--auth-key-stdin] [--control-url URL]`.
 API: `PUT /tls/tailscale {"enabled": true, "auth_key": "tskey-…"}` (needs a recent password check).
 The job is `tls-tailscale-enrol` (steps `tailscale-install`, `tailscale-up`, `tailscale-login`, `write-config`, apply steps).
+The step `tailscale-login` stops the job when `tailscale serve` (or `funnel`) uses port 80, 443, or 8443 of the node
+(section 9).
 
 Off: `care-pi tls tailscale disable`, or `PUT /tls/tailscale {"enabled": false}`. The job sets the config, applies
 (the site and the drop-in go), runs `tailscale down` and `tailscale logout`. The package stays installed and
@@ -267,6 +272,13 @@ Phase 7 (O4): the Tailscale service is the default; a self-hosted control server
 - The login link (no key) comes from the control server, as with the Tailscale service.
 
 ### 4.5 Use it
+A `tailscaled` that is already connected (`BackendState: Running`) stays as it is: the job does not install and does
+not run `tailscale up` (`--reset` would change the settings of the operator). Set `tls.tailscale.manage_daemon: false`
+when the operator manages `tailscaled` (for example a host that was in a tailnet before care-pi): then the job never
+installs or connects (it needs `Running`), and the off job never runs `tailscale down` or `tailscale logout`.
+`care-pi config set tls.tailscale.manage_daemon=false` before the first enable.
+
+### 4.4 Use it
 
 Install the Tailscale app on the phone or the laptop, and log in to the tailnet of the clinic.
 Open `https://<host>.<tailnet>.ts.net`. There is no certificate warning and no root CA install.
@@ -389,6 +401,7 @@ The Wi-Fi settings of the Raspberry Pi Imager are NetworkManager profiles too (f
 | All devices show a warning after the update to Phase 6. | The one-time CA switch (section 2.3). | Install the new root on each device. Compare the fingerprint. |
 | `tailscale-https-disabled` | The tailnet has no HTTPS certificates. | Turn on MagicDNS and HTTPS Certificates in the admin console of Tailscale. Then turn Tailscale on again. |
 | `tailscale-login-required` | The login link expired, or nobody logged in within 15 minutes. | Turn Tailscale on again, or use an auth key. |
+| The Tailscale job stops: `tailscale serve (or funnel) uses the port 443 …` (`state-conflict`) | `tailscale serve` or `tailscale funnel` of the host uses port 80, 443, or 8443 of the node. `tailscaled` then listens on that port of the Tailscale address, and a pod that publishes there does not start (all of Care stops). | `tailscale serve status`. Remove that configuration (`tailscale serve reset`), or move it to another port. Then turn Tailscale on again. |
 | The Tailscale name stops working after months. | The key of the device expired. | Turn off the key expiry of the device in the admin console of Tailscale. |
 | `wifi-auth-failed` | The passphrase is wrong. | Type the passphrase again. |
 | `wifi-no-device` | The device has no Wi-Fi (or the radio is blocked: `rfkill`). | Use ethernet. |

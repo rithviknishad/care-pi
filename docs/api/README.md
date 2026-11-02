@@ -1587,7 +1587,7 @@ The CLI has the same operations (`x-cli`): `care-pi tls public enable|disable|st
 | Kind | Started by | Steps (`JobStep.action`) | Result |
 |---|---|---|---|
 | `tls-public-enrol` | `PUT /tls/public` | on: `dns-register`, `dns-address`, `write-config`, the apply steps, `wait-certificate`, and the apply steps again when the certificate is issued. Off: `write-config`, the apply steps, `dns-delete`. | `TlsPublicResult`: `hostname`, `certificate` (`issued`, `pending`, or `none`). |
-| `tls-tailscale-enrol` | `PUT /tls/tailscale` | on: `tailscale-install`, `tailscale-up` (auth key) or `tailscale-login` (login link), `write-config`, the apply steps. Off: `write-config`, the apply steps, `tailscale-down`, `tailscale-logout`. | `TlsTailscaleResult`: `hostname`, `tailnet`. |
+| `tls-tailscale-enrol` | `PUT /tls/tailscale` | on: `tailscale-install`, `tailscale-up` (auth key) or `tailscale-login` (login link), `write-config`, the apply steps. Off: `write-config`, the apply steps, `tailscale-down`, `tailscale-logout` (not with `tls.tailscale.manage_daemon: false`). | `TlsTailscaleResult`: `hostname`, `tailnet`. |
 | `network-wifi` | `PUT /network/wifi`, `DELETE /network/wifi` | Set: `wifi-radio`, `wifi-profile`, `wifi-connect`, `wifi-verify`, `write-config`, the apply steps. Remove: `wifi-remove`, `write-config`, the apply steps. | `NetworkWifiResult`: `ssid`, `connected`, `address`. |
 
 Each kind holds the apply lock. The apply steps are the steps of section 6 (an `apply` inside the job).
@@ -1636,7 +1636,7 @@ The new problem types are in the table of section 7.
 | Operation | Phase 6 types |
 |---|---|
 | `PUT /tls/public` | `dns-service-unreachable`, `dns-service-rejected` (as the job error), `state-conflict` (`enabled: false` when the public name is off). The job never fails for `acme-pending`: it succeeds with `certificate: pending`. |
-| `PUT /tls/tailscale` | `tailscale-install-failed`, `tailscale-login-required`, `tailscale-https-disabled` (as the job error), `state-conflict` (`enabled: false` when Tailscale is off). |
+| `PUT /tls/tailscale` | `tailscale-install-failed`, `tailscale-login-required`, `tailscale-https-disabled` (as the job error), `state-conflict` (`enabled: false` when Tailscale is off; as the job error: `tailscale serve` uses port 80, 443, or 8443 of the node, or `manage_daemon: false` and tailscaled is not connected). |
 | `GET /network/wifi/scan` | `wifi-no-device`, `wifi-failed`. |
 | `PUT /network/wifi` | `wifi-auth-failed`, `wifi-no-device`, `wifi-failed` (as the job error). |
 
