@@ -140,7 +140,7 @@ Memory caps for each unit (`MemoryMax` / `MemorySwapMax`), measured in spike SP3
 
 | Unit | `solo` | `small-clinic` | `busy-counter` | `custom` |
 |---|---|---|---|---|
-| `care-api` | 320M / 64M | 512M / 128M | 768M / 128M | 4 or more workers: 64M + 200M for each worker, rounded up to 128M / 128M |
+| `care-api` | 320M / 64M | 576M / 128M | 832M / 128M | 4 or more workers: 64M + 200M for each worker, rounded up to 128M / 128M |
 | `care-worker` | 384M / 128M | 384M / 128M | 512M / 128M | 3 or more: 512M + 192M for each child above 2 / 128M |
 | `care-beat` | 512M / 128M | 512M / 128M | 512M / 128M | 512M / 128M |
 | `care-db` | 384M / 0 | 384M / 0 | 512M / 0 | up to 192 MB buffers: 384M; up to 256 MB: 512M; above: buffers + 256M, rounded up to 128M |
@@ -150,6 +150,9 @@ Memory caps for each unit (`MemoryMax` / `MemorySwapMax`), measured in spike SP3
 
 The `care-beat` cap is the same for each preset. care-beat runs `migrate` at each start.
 In the Phase 1 exit test, `migrate` on an empty database used 382 MiB of the old 384M cap and 85 MiB of swap.
+
+The `care-api` caps of `small-clinic` and `busy-counter` are 64M + 256M for each worker (S63). With 2 workers, care-api
+used 487 to 491 MiB of the old 512M cap in the Phase 1 and Phase 4 exit tests. `solo` (1 worker) keeps 320M / 64M.
 
 Postgres always gets `max_connections=40` and `work_mem=4MB`.
 

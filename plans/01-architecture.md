@@ -261,9 +261,9 @@ clients. Caddy and pgBackRest are still estimates (SP6/SP7/Phase 1). The agent i
 | Redis 8 | 16–20 MB | 36 MB | 96M / 0 |
 | versitygw | 24 MB | 34 MB | 128M / 0 |
 | celery beat (runs `migrate`/`sync_*` at start) | 111–148 MB | 314 MB (during `migrate`); **382 MiB + 85 MiB swap** on an empty DB (measured in the Phase 1 exit test) | 512M / 128M (was 384M / 128M; raised after the Phase 1 exit test; same for each preset) |
-| gunicorn, per sync worker | 128 MB cold → ~175 MB warm, + 34 MB master | — | ≈ 64M + 200M × workers |
+| gunicorn, per sync worker | 128 MB cold → ~175 MB warm, + 34 MB master | 487–491 MiB with 2 workers at the old 512M cap (Phase 1 and Phase 4 exit tests) | 320M / 64M (1 worker), **576M / 128M (2), 832M / 128M (3)**: 64M + 256M × workers (S63; was 512M and 768M); 4 or more: 64M + 200M × workers |
 | celery worker, per prefork child | ~160–180 MB, + ~180 MB parent | — | 384M / 128M (c=1), 512M / 128M (c=2) |
-| Caddy | 25 MB (measured) | 96 MB (at the cap, Phase 2 exit test) | 128M / 0 |
+| Caddy | 25 MB (measured) | 96 MB (at the cap, Phase 2 exit test); 115.8 MiB with 3 names (wave 8-ts; follow-up in `09` §8k) | 128M / 0 |
 | agent (`care-pi serve`, with its child processes) | 7.5–12 MiB (measured, Phase 2 exit test) | cgroup 97–128 MiB, agent RSS ≤ 77 MiB, swap 0 under 8 logins + `GET /status` + skopeo; children `skopeo` 30 MiB, `podman` 41 MiB, `podman exec` 27 MiB (measured, waves 4c/4d, `08`) | **128M / 32M** (measured; 64M / 32M until wave 4d). Go GC soft limit = half of `MemoryMax` |
 | pgBackRest during backup | 0 | 80–150 MB *(estimate, process-max=1)* | inside db cap |
 

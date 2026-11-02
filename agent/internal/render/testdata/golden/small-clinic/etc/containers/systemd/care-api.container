@@ -30,7 +30,7 @@ HealthRetries=6
 Notify=healthy
 
 [Service]
-MemoryMax=512M
+MemoryMax=576M
 MemorySwapMax=128M
 Restart=always
 RestartSec=10

@@ -75,16 +75,17 @@ func roundUp(v, step int) int {
 }
 
 // MemAPI returns the caps for gunicorn with the given worker count.
-// The measured values are 320M, 512M and 768M for 1, 2 and 3 workers.
+// The caps are 320M, 576M and 832M for 1, 2 and 3 workers (64M + 256M per worker, S63): with 2 workers, care-api
+// used 487 to 491 MiB of the old 512M cap in the Phase 1 and Phase 4 exit tests.
 // Above 3 workers the cap is 64M + 200M per worker, rounded up to 128M.
 func MemAPI(workers int) Mem {
 	switch {
 	case workers <= 1:
 		return Mem{MaxMB: 320, SwapMB: 64}
 	case workers == 2:
-		return Mem{MaxMB: 512, SwapMB: 128}
+		return Mem{MaxMB: 576, SwapMB: 128}
 	case workers == 3:
-		return Mem{MaxMB: 768, SwapMB: 128}
+		return Mem{MaxMB: 832, SwapMB: 128}
 	default:
 		return Mem{MaxMB: roundUp(64+200*workers, 128), SwapMB: 128}
 	}

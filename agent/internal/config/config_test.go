@@ -190,8 +190,9 @@ func TestMemoryCaps(t *testing.T) {
 		want Mem
 	}{
 		{MemAPI(1), Mem{320, 64}},
-		{MemAPI(2), Mem{512, 128}},
-		{MemAPI(3), Mem{768, 128}},
+		{MemAPI(2), Mem{576, 128}},
+		{MemAPI(3), Mem{832, 128}},
+		{MemAPI(4), Mem{896, 128}},
 		{MemWorker(1), Mem{384, 128}},
 		{MemWorker(2), Mem{512, 128}},
 		{MemDB(128), Mem{384, 0}},
