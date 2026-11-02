@@ -31,6 +31,11 @@ Volume={{path "CADir"}}:{{path "CACaddyDir"}}:ro
 # The credentials of the acmedns module (public mode), as a file: {{.ACMEDNSFile}}.
 Secret={{.ACMEDNSSecret}},type=mount,mode=0400
 {{- end}}
+{{- if .PublicACMECA}}
+# The ACME directory of the public name. A change of it restarts care-caddy: a reload keeps the certificate of the old
+# directory in the cache of Caddy, and Caddy then asks the new directory for nothing.
+Label=care-pi.acme-ca={{.PublicACMECA}}
+{{- end}}
 {{- if .TailscaleHost}}
 # The socket of tailscaled: Caddy gets the certificate of {{.TailscaleHost}} through it.
 Volume={{.TailscaleSocketDir}}:{{.TailscaleSocketDir}}

@@ -186,6 +186,36 @@ func TestPlanTable(t *testing.T) {
 			reasonIn: "backend plugs changed",
 		},
 		{
+			// Phase 6 exit test: the public name on changed the plug set, the Caddyfile, and the unit of care-caddy (the
+			// secret of acme-dns). The cutover kept the old Caddy, so Caddy never served the new name.
+			name: "Phase 6: a cutover of the plugs with a new caddy unit restarts care-caddy after the cutover",
+			in: Input{
+				Desired: tree(with(base(), backend, "env v2", caddy, "caddy v2", caddyCfg, "caddyfile v2")),
+				Current: current(base()), TargetActive: true, LockChanged: true, Cutover: true,
+				SecretsChanged: []string{"care-pi-acme-dns"}, SecretUnits: map[string][]string{"care-pi-acme-dns": {"care-caddy"}},
+			},
+			want:     []Kind{EnsureDirs, SetSecrets, WriteFiles, DaemonReload, Cutover, Restart, EnsureBucket, EnsureStanza, WriteLock},
+			restart:  []string{"care-caddy.service"},
+			reasonIn: "backend plugs changed",
+		},
+		{
+			name: "Phase 6: a cutover of the plugs with a new Caddyfile only reloads Caddy after the cutover",
+			in: Input{
+				Desired: tree(with(base(), backend, "env v2", caddyCfg, "caddyfile v2")),
+				Current: current(base()), TargetActive: true, LockChanged: true, Cutover: true,
+			},
+			want: []Kind{EnsureDirs, WriteFiles, Cutover, ReloadCaddy, EnsureBucket, EnsureStanza, WriteLock},
+		},
+		{
+			name: "a cutover with a full stop (pod changed) restarts each unit: no extra restart",
+			in: Input{
+				Desired: tree(with(base(), pod, "pod v2", caddy, "caddy v2", caddyCfg, "caddyfile v2")),
+				Current: current(base()), TargetActive: true, LockChanged: true, Cutover: true,
+			},
+			want:     []Kind{EnsureDirs, WriteFiles, DaemonReload, Cutover, EnsureBucket, EnsureStanza, WriteLock},
+			reasonIn: "pod changed",
+		},
+		{
 			name: "Phase 4: an FE plug change writes only the plug_config rows",
 			in:   Input{Desired: tree(base()), Current: current(base()), TargetActive: true, PlugConfig: true, LockChanged: true},
 			want: []Kind{PlugConfig, WriteLock},

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -254,6 +255,37 @@ func (c Client) WaitFor(ctx context.Context, timeout time.Duration, each func(*S
 		case <-time.After(poll):
 		}
 	}
+}
+
+// ServePorts returns the TCP ports of the node that "tailscale serve" or "tailscale funnel" uses (the TCP map of
+// "tailscale serve status --json"). tailscaled listens on these ports of the Tailscale address itself, so the pod
+// cannot publish on them: a publish on a port in use stops the pod, and then all of Care. A host without a serve
+// configuration, or a version without the JSON output, gives no ports.
+func (c Client) ServePorts(ctx context.Context) []int {
+	out, err := c.run(ctx, "serve", "status", "--json")
+	if err != nil {
+		return nil
+	}
+	return ParseServePorts(out)
+}
+
+// ParseServePorts reads the TCP ports of "tailscale serve status --json" (ipn.ServeConfig), in increasing order.
+func ParseServePorts(data []byte) []int {
+	var cfg struct {
+		TCP map[string]json.RawMessage `json:"TCP"`
+	}
+	if json.Unmarshal(data, &cfg) != nil {
+		return nil
+	}
+	var ports []int
+	for k := range cfg.TCP {
+		var p int
+		if _, err := fmt.Sscanf(k, "%d", &p); err == nil && p > 0 {
+			ports = append(ports, p)
+		}
+	}
+	sort.Ints(ports)
+	return ports
 }
 
 // Down disconnects the host from the tailnet; Logout removes the node key. The package stays installed.

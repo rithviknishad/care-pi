@@ -48,14 +48,17 @@ var testBuild = &CareBuild{ID: "5c0ffee15c0ffee1", Base: "ghcr.io/ohcnetwork/car
 	ContainerfileSHA256: strings.Repeat("cd", 32), BaseImage: "ghcr.io/ohcnetwork/care", BaseRef: "latest", BaseDigest: "sha256:" + strings.Repeat("ab", 32)}
 
 // fixture renders one golden case. A name with the suffix -bootstrap renders setup mode, the suffix
-// -build a local image build of care.
-func fixture(t *testing.T, name string) (Tree, *lock.Lock) {
+// -build a local image build of care. Each mutate function changes the config before the render.
+func fixture(t *testing.T, name string, mutate ...func(*config.Config)) (Tree, *lock.Lock) {
 	t.Helper()
 	name, build := strings.CutSuffix(name, "-build")
 	cfgName, boot := strings.CutSuffix(name, "-bootstrap")
 	cfg, err := config.Load(filepath.Join("testdata", "config-"+cfgName+".yaml"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, m := range mutate {
+		m(cfg)
 	}
 	sol, err := solution.Load("care-clinic", "testdata/solutions")
 	if err != nil {
@@ -333,5 +336,22 @@ func TestGitHubSlug(t *testing.T) {
 		if got := GitHubSlug(in); got != want {
 			t.Errorf("GitHubSlug(%s) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// The Phase 6 exit test: a switch of tls.public.acme_ca (staging to production) changed only the Caddyfile, so apply
+// reloaded Caddy, and Caddy kept the staging certificate in its cache. The directory is in the unit of care-caddy, so a
+// switch changes the unit, and the plan restarts care-caddy.
+func TestACMEDirectoryInCaddyUnit(t *testing.T) {
+	unit := func(ca string) string {
+		tree, _ := fixture(t, "public", func(c *config.Config) { c.TLS.Public.ACMECA = ca })
+		return string(tree["/etc/containers/systemd/care-caddy.container"].Content)
+	}
+	staging, prod := unit("https://acme-staging-v02.api.letsencrypt.org/directory"), unit("")
+	if staging == prod {
+		t.Fatal("the unit of care-caddy must change with the ACME directory")
+	}
+	if !strings.Contains(staging, "Label=care-pi.acme-ca=https://acme-staging-v02.api.letsencrypt.org/directory") || strings.Contains(prod, "acme-ca") {
+		t.Fatalf("staging:\n%s\nproduction:\n%s", staging, prod)
 	}
 }

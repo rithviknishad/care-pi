@@ -187,7 +187,7 @@ The tailnet must have MagicDNS and HTTPS Certificates on (the DNS page of the Ta
 
 var tlsTailscaleDisableCmd = &cobra.Command{
 	Use:   "disable",
-	Short: "Turn off the Tailscale name, then run tailscale down and tailscale logout (the package stays)",
+	Short: "Turn off the Tailscale name, then run tailscale down and tailscale logout (the package stays; not with tls.tailscale.manage_daemon false)",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		svc := newService(cmd)

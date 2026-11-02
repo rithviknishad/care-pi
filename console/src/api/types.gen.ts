@@ -1155,6 +1155,9 @@ export interface paths {
          *     Caddy gets the certificate of the name from tailscaled, the pod publishes on the Tailscale address (a full cycle),
          *     the firewall accepts 41641/udp, and the name gets HSTS. The tailnet must have MagicDNS and HTTPS Certificates on.
          *     Off: the agent removes the name, applies, and runs `tailscale down` and `tailscale logout`. The package stays.
+         *     A connected tailscaled stays as it is (no `tailscale up`). With `tls.tailscale.manage_daemon: false` the agent never
+         *     installs, connects, or disconnects tailscaled. The job fails with `state-conflict` when `tailscale serve` uses
+         *     port 80, 443, or 8443 of the node.
          *     The result is a job (`tls-tailscale-enrol`).
          */
         put: operations["enrolTailscale"];
@@ -12089,6 +12092,7 @@ export interface components {
             tailscale?: {
                 enabled?: boolean;
                 hostname?: string | null;
+                manage_daemon?: boolean;
             } & unknown;
         };
         size: {
@@ -12236,6 +12240,7 @@ export interface components {
                 tailscale?: {
                     enabled?: boolean;
                     hostname?: string | null;
+                    manage_daemon?: boolean;
                 } & unknown;
             };
             clock?: {

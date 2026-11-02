@@ -27,6 +27,9 @@ Volume=/run/care-pi:/run/care-pi
 Volume=/var/lib/care-pi/ca:/etc/care-pi-ca:ro
 # The credentials of the acmedns module (public mode), as a file: /run/secrets/care-pi-acme-dns.
 Secret=care-pi-acme-dns,type=mount,mode=0400
+# The ACME directory of the public name. A change of it restarts care-caddy: a reload keeps the certificate of the old
+# directory in the cache of Caddy, and Caddy then asks the new directory for nothing.
+Label=care-pi.acme-ca=https://acme-staging-v02.api.letsencrypt.org/directory
 # The socket of tailscaled: Caddy gets the certificate of care.tail1234.ts.net through it.
 Volume=/run/tailscale:/run/tailscale
 

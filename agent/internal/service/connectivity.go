@@ -371,11 +371,22 @@ func (s *Service) publicEnable(ctx context.Context, rec *jobs.Recorder, req Publ
 	if wait == 0 {
 		wait = defaultCertWait
 	}
+	// The certificate of the configured directory: after a switch from staging to production, the staging certificate
+	// stays in the data of Caddy, and it must not count.
+	staging := false
+	if cfg, err := s.Config(); err == nil {
+		staging = ca.StagingIssuer(cfg.TLS.Public.ACMECA)
+	}
 	_ = step(rec, "wait-certificate: wait for the certificate of "+host, func() error {
 		deadline := time.Now().Add(wait)
 		for {
-			// A staging certificate counts here (a test of the issuance), but port 80 does not use it (ValidCert).
-			if c, _ := ca.IssuedCert(s.Paths, host); c != nil && s.now().Before(c.NotAfter) {
+			// A staging certificate counts only with a staging directory (a test of the issuance); port 80 never uses
+			// it (ValidCert).
+			if c, _ := ca.IssuedCert(s.Paths, host); staging && c != nil && s.now().Before(c.NotAfter) {
+				certificate = "issued"
+				return nil
+			}
+			if !staging && ca.ValidCert(s.Paths, host, s.now()) != nil {
 				certificate = "issued"
 				return nil
 			}
@@ -676,9 +687,9 @@ func (s *Service) StartTailscale(ctx context.Context, req TailscaleRequest, sour
 	return s.Jobs.Start(ctx, jobs.Spec{Kind: jobs.KindTLSTailscaleEnrol, Source: source, Reason: req.Reason, Lock: true, Cancellable: true},
 		func(ctx context.Context, rec *jobs.Recorder) (any, error) {
 			if req.Enabled {
-				return s.tailscaleEnable(ctx, rec, req, cfg.Identity.Hostname)
+				return s.tailscaleEnable(ctx, rec, req, cfg.Identity.Hostname, cfg.TLS.Tailscale.DaemonManaged())
 			}
-			return s.tailscaleDisable(ctx, rec)
+			return s.tailscaleDisable(ctx, rec, cfg.TLS.Tailscale.DaemonManaged())
 		})
 }
 
@@ -691,9 +702,19 @@ func (s *Service) saveTailscale(st *tailscale.Status) {
 	_ = writeJSONFile(s.Paths.Abs(paths.TailscaleState), ts)
 }
 
-func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req TailscaleRequest, hostname string) (any, error) {
+// unmanagedNote is the end of the messages when tls.tailscale.manage_daemon is false.
+const unmanagedNote = "tls.tailscale.manage_daemon is false: care-pi does not install, connect, or disconnect tailscaled"
+
+func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req TailscaleRequest, hostname string, managed bool) (any, error) {
 	tc := s.tailscaleClient()
 	if err := step(rec, "tailscale-install: install tailscale from the repository of Tailscale", func() error {
+		if !managed {
+			if st, _ := tc.Status(ctx); st == nil || !st.Installed {
+				return problem.New(problem.StateConflict, "Tailscale is not installed, and "+unmanagedNote+". Install and connect tailscale, or remove tls.tailscale.manage_daemon.")
+			}
+			rec.Logf("tailscale is installed; %s", unmanagedNote)
+			return nil
+		}
 		did, err := tc.Install(ctx)
 		if err != nil {
 			return problem.New(problem.TailscaleInstallFailed, err.Error())
@@ -709,6 +730,13 @@ func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req T
 	}
 	cur, _ := tc.Status(ctx)
 	if cur == nil || cur.BackendState != tailscale.StateRunning {
+		if !managed {
+			state := "not running"
+			if cur != nil && cur.BackendState != "" {
+				state = cur.BackendState
+			}
+			return nil, problem.New(problem.StateConflict, "tailscaled is "+state+", and "+unmanagedNote+". Run tailscale up, then turn Tailscale on again.")
+		}
 		if err := step(rec, "tailscale-up: connect to the tailnet", func() error {
 			if req.AuthKey != "" {
 				return tc.UpWithKey(ctx, hostname, req.AuthKey)
@@ -717,6 +745,9 @@ func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req T
 		}); err != nil {
 			return nil, err
 		}
+	} else {
+		// A connected tailscaled keeps its settings and its login: "tailscale up --reset" would change them.
+		rec.Logf("tailscaled is connected (%s); no tailscale up", cur.DNSName)
 	}
 	timeout := s.LoginWait
 	if timeout == 0 {
@@ -744,6 +775,18 @@ func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req T
 			return problem.New(problem.TailscaleHTTPSDisabled, "Turn on MagicDNS and HTTPS Certificates in the DNS page of the Tailscale admin console, then turn Tailscale on again.")
 		}
 		rec.Logf("the device is %s in the tailnet %s", st.DNSName, st.Tailnet)
+		// tailscaled listens on the ports of "tailscale serve" (and funnel) of the Tailscale address: the pod cannot
+		// publish on them, and a pod that fails to publish stops all of Care.
+		var used []string
+		for _, p := range tc.ServePorts(ctx) {
+			if p == 80 || p == 443 || p == paths.ConsolePort {
+				used = append(used, fmt.Sprint(p))
+			}
+		}
+		if len(used) > 0 {
+			return problem.New(problem.StateConflict, "tailscale serve (or funnel) uses the port "+strings.Join(used, ", ")+
+				" of "+st.IPv4+", so Care cannot use it. Check: tailscale serve status. Remove that serve configuration (tailscale serve reset), then turn Tailscale on again.")
+		}
 		return nil
 	}); err != nil {
 		return nil, err
@@ -763,7 +806,7 @@ func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req T
 	return jobs.TLSTailscaleResult{Kind: jobs.KindTLSTailscaleEnrol, Enabled: true, Hostname: strPtr(st.DNSName), Tailnet: strPtr(st.Tailnet)}, nil
 }
 
-func (s *Service) tailscaleDisable(ctx context.Context, rec *jobs.Recorder) (any, error) {
+func (s *Service) tailscaleDisable(ctx context.Context, rec *jobs.Recorder, managed bool) (any, error) {
 	tc := s.tailscaleClient()
 	if err := step(rec, "write-config: tls.tailscale off", func() error {
 		return s.updateConfig(func(doc map[string]any) {
@@ -777,7 +820,9 @@ func (s *Service) tailscaleDisable(ctx context.Context, rec *jobs.Recorder) (any
 	if err := s.runApply(ctx, rec, "tailscale off"); err != nil {
 		return nil, err
 	}
-	if st, _ := tc.Status(ctx); st != nil && st.Installed {
+	if !managed {
+		rec.Logf("tailscaled stays connected; %s", unmanagedNote)
+	} else if st, _ := tc.Status(ctx); st != nil && st.Installed {
 		if err := step(rec, "tailscale-down: disconnect from the tailnet", func() error { return tc.Down(ctx) }); err != nil {
 			return nil, err
 		}
