@@ -442,7 +442,7 @@ The script:
    It disables and stops `care-backup.target` and the `care-backup-*` units, and stops the mount units of the backup disks,
 3. waits until every `care-*` unit is inactive (except `care-pi-firewall.service`, which step 4 stops),
 4. runs `systemctl disable --now care-pi-firewall.service`. The stop deletes the table `inet care-pi`,
-5. removes the quadlets (`/etc/containers/systemd/care*`), the unit files (also `care-pi.service`, `care-backup.target`, and the mount units of the backup disks), the NetworkManager hook, `/etc/sysctl.d/50-care-pi.conf` (the setting stays until the next boot), `/etc/care-pi/firewall.nft`, the files of an older install.sh, and the agent binary,
+5. removes the quadlets (`/etc/containers/systemd/care*`), the unit files (also `care-pi.service`, `care-backup.target`, and the mount units of the backup disks), the NetworkManager hook, `/etc/sysctl.d/50-care-pi.conf` (the setting stays until the next boot), `/etc/care-pi/firewall.nft`, the drop-in `tailscaled.service.d/50-care-pi.conf` of the Tailscale mode (`tailscaled` stays), the files of an older install.sh, and the agent binary,
 6. removes a leftover pod `care` with `podman pod rm -f`,
 7. removes the system user and group `care-pi` (Phase 7).
 

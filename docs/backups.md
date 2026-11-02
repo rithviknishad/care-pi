@@ -208,6 +208,8 @@ daemon: each run has its own unit, its own memory cap (`MemoryMax=512M`, `Memory
 - systemd does not accept `daily HH:MM`. `apply` writes `*-*-* HH:MM` for it.
 - Each timer is `PartOf=care-backup.target`. A stop of the target stops each timer. The restore jobs and `backups.paused` use this.
   With `backups.paused: true`, the target wants no timer.
+- When a destination goes out of `config.yaml`, the apply stops and disables its two timers (`disable-units`) before it
+  deletes their files. The repository at the destination stays.
 - A destination timer writes no job journal: 96 runs each day for each destination would push the other jobs out of the journal.
   The agent keeps the last 10 runs of each destination in `/var/lib/care-pi/state/backups/destinations/<id>.json` (`recent_runs`).
   The other timers write a job with `source: timer`.
