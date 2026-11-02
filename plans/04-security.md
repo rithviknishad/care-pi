@@ -4,7 +4,8 @@ Scope per your answers: Care's auth wall + RBAC is the primary control; physical
 attacks, disk encryption and compliance regimes are out of scope for now (S19,
 S21). What remains in scope: transport security on untrusted LANs, the agent as a
 root-privileged control plane, secrets at rest on the box, update integrity
-without signing, and backup confidentiality off-site.
+(optional signing since Phase 7, S55), and backup confidentiality off-site.
+Section 9 lists what Phase 7 built and what is still later.
 
 ## 1. Transport
 
@@ -50,6 +51,17 @@ without signing, and backup confidentiality off-site.
   /etc/hostname /etc/systemd/system`. It must remain root because of podman and
   systemctl; splitting a privileged helper out behind a narrow socket API is a
   later hardening step.
+  *As built* (`docs/console-server.md` §2): `ProtectSystem=strict` with `ReadWritePaths`,
+  `ProtectHome=read-only`, `PrivateTmp`, `ProtectKernelTunables`, `RestrictAddressFamilies`,
+  `MemoryMax=128M`. `ProtectControlGroups` and `SystemCallFilter` are not set: `podman exec`
+  writes the cgroup of the container.
+- **Privileged helper (Phase 7, S53).** `care-pi helper` runs as root on
+  `/run/care-pi-helper/helper.sock` (0660 root:care-pi, socket activation) and runs only the
+  commands of an allow-list, each argument checked; it logs each request and refusal.
+  `care-pi serve --helper` sends every host command through it and runs with
+  `NoNewPrivileges=yes` and four file capabilities (installer `--helper`, opt-in). The daemon
+  still runs as uid 0 and writes its files itself; the switch to `User=care-pi` with an empty
+  `CapabilityBoundingSet=` needs typed file requests in the helper (`docs/console-server.md` §14).
 - Support bundle redacts secrets by key-name pattern and by value match against
   known secret files.
 
@@ -75,6 +87,11 @@ unit files (`Secret=` references only).
 - nftables default-deny inbound; allow 80/443 TCP, 5353 UDP, 22 TCP only when SSH
   is enabled, 41641 UDP when Tailscale is on. Outbound unrestricted (updates,
   backups, Tailscale).
+  *As built* (S42, S54): the table `inet care-pi` has this allow-list (also 8443/tcp, ICMP and
+  ICMPv6 with neighbour discovery, DHCP and DHCPv6 replies). Its policy is `accept` by default
+  on every host; `security.firewall.policy: drop` is opt-in, with a 90 s rollback timer that
+  the operator stops from a second session (`care-pi firewall confirm`). `security.ssh.allow`
+  closes 22/tcp. On Fedora, firewalld keeps its own policy (S57).
 - SSH: disabled unless enabled in Raspberry Pi Imager customisation or in the
   console; password auth disabled when the agent enables it (key only, shown as a
   paste box). Default Pi OS user is whatever Imager created — the console warns
@@ -84,14 +101,22 @@ unit files (`Secret=` references only).
   on the pod's loopback.
 - Optional Coraza WAF (OWASP CRS) on `/api/*`, off by default on 2 GB (CRS rule
   compilation costs memory); offered in advanced settings for 4 GB boxes.
+  *As built* (S58): `security.waf` (off by default; `detect` or `block`; paranoia 1 to 4), the
+  CRS embedded in the module; `care-caddy` gets 256 MiB when it is on. Expect false positives on
+  file uploads; start with `detect`.
 
-## 5. Update integrity (no signing, S24)
+## 5. Update integrity (no signing, S24; optional signing, S55)
 
 - Registry/GitHub over TLS; everything pinned by digest or sha in locks produced by
   our CI; the agent refuses a lock whose digests don't match what it pulled.
 - `index.json` and locks are fetched from a single origin we control; the agent
   pins that origin's hostname and verifies TLS normally. Adding minisign later is a
   small change (one public key in the agent, one signature per lock).
+- *Phase 7* (S55): CI signs `index.json` and each lock with minisign when the secret
+  `MINISIGN_KEY` is set. With `updates.require_signed: true`, the agent verifies the `.minisig`
+  of each index and lock (also `--lock-file` and the dist snapshot of the image) against the
+  embedded keys and `/etc/care-pi/keys/*.pub`, and refuses with `lock-signature-invalid`. The
+  default is `false` until the owner makes the key (`docs/solutions.md` §18).
 
 ## 6. Backups
 
@@ -117,3 +142,20 @@ can observe hostnames and attempt logins (rate-limited; Care's own lockout
 applies); the first-visit interstitial is a one-time MITM window for the local-CA
 root download (mitigated by the displayed fingerprint and by using the Pi's
 ethernet LAN rather than public Wi-Fi for setup).
+
+## 9. Phase 7 status (2026-11-02)
+
+| Item | State | Where |
+|---|---|---|
+| Privileged helper | Built; opt-in (`--helper`); daemon still uid 0 | S53, `docs/console-server.md` §14 |
+| Default-drop firewall | Built; opt-in, with the rollback timer | S54, `docs/console-server.md` §13 |
+| Local-CA rotation | Built (`POST /tls/local-ca/rotate`) | S60, `docs/connectivity.md` §2.5 |
+| Lock signing | Built; opt-in (`updates.require_signed`); no key yet | S55, `docs/solutions.md` §18 |
+| Coraza WAF | Built; off by default | S58, `docs/console-server.md` §15 |
+| Telemetry | Built; off by default; nothing leaves the box when off | S56, `docs/telemetry.md` |
+| `care-pi doctor`, support bundle | Built; the bundle redacts secrets, env values, Tailscale keys and peers | `docs/console-server.md` §16 |
+
+Still later: the daemon as `User=care-pi` with an empty `CapabilityBoundingSet=` (typed file requests in
+the helper), `ProtectControlGroups` and `SystemCallFilter` for the daemon, `PUT /security/ssh` (the SSH
+switch of the console; `501` today; `security.ssh.allow` closes the port only), SELinux labels for Fedora
+enforcing, `require_signed: true` as the default after the key ceremony, and an RTC policy (SP9).
