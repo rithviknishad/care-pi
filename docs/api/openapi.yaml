@@ -1523,6 +1523,31 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+  /doctor:
+    get:
+      tags: [status]
+      operationId: getDoctor
+      summary: Run the health checks of care-pi doctor
+      description: |
+        Phase 7. The agent runs the checks of `care-pi doctor` and gives each with its status and a fix hint: the host
+        check, the ports of the pod (another program on 80, 443, or 8443 of a published address, for example
+        `tailscale serve`), the mDNS name (a collision), the clock, the memory and zram, each disk, the units of Care, the
+        certificates (14 days before the end), each backup destination (the last snapshot against
+        `backups.alert_after_hours`), the firewall, a pending reboot, and the updates. The checks change nothing; a run
+        takes about 1 s. The failed checks come first.
+      x-cli: care-pi doctor --json
+      x-problems: [not-authenticated]
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DoctorReport'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
   /metrics:
     get:
       tags: [status]
@@ -5620,6 +5645,77 @@ components:
           $ref: '#/components/schemas/TotpCode'
       examples:
         - code: '492039'
+    DoctorReport:
+      x-phase: 7
+      type: object
+      additionalProperties: false
+      description: The result of `care-pi doctor` (Phase 7).
+      required: [generated_at, status, checks]
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+          description: The time of the run.
+        status:
+          $ref: '#/components/schemas/DoctorStatus'
+        checks:
+          type: array
+          description: The checks, the failed ones first, then the warnings.
+          items:
+            $ref: '#/components/schemas/DoctorCheck'
+      examples:
+        - generated_at: '2026-11-02T10:00:00Z'
+          status: warn
+          checks:
+            - id: backup-usb
+              title: Backup usb (posix)
+              status: warn
+              detail: no snapshot yet
+              fix: sudo care-pi backup run --destination usb
+            - id: ports
+              title: Ports 80, 443, 8443
+              status: ok
+              detail: no other program listens on a port of the pod
+              fix: null
+    DoctorStatus:
+      x-phase: 7
+      type: string
+      enum: [ok, warn, fail, skip]
+      description: |
+        `ok`; `warn` (works, but needs attention); `fail` (a part of Care does not work or is at risk); `skip` (the check
+        could not run). The status of a report is the worst status of its checks.
+      examples: [warn]
+    DoctorCheck:
+      x-phase: 7
+      type: object
+      additionalProperties: false
+      description: One check of `care-pi doctor`.
+      required: [id, title, status, detail, fix]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]*$'
+          description: |
+            A stable id, for example `ports`, `mdns`, `clock`, `memory`, `zram`, `disk-root`, `units`, `cert-local`,
+            `cert-public`, `backup-<destination id>`, `backups`, `firewall`, `reboot`, `updates`, `host-<check name>`.
+          examples: [ports]
+        title:
+          type: string
+          description: The name of the check for a person.
+        status:
+          $ref: '#/components/schemas/DoctorStatus'
+        detail:
+          type: string
+          description: What the check found.
+        fix:
+          type: [string, 'null']
+          description: What to do, often a command. `null` when the check passed.
+      examples:
+        - id: ports
+          title: Ports 80, 443, 8443
+          status: fail
+          detail: tailscaled on 100.101.102.103:443
+          fix: 'Stop the other program on the port (for tailscaled: tailscale serve reset), then: sudo care-pi apply'
     FirewallState:
       x-phase: 7
       type: object

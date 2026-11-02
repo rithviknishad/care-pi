@@ -1207,6 +1207,14 @@ export const strings = {
     kind: "Kind",
     state: "State",
     source: "Source",
+    doctor: {
+      title: "Health checks",
+      intro:
+        "The device checks its ports, name, clock, memory, disks, units, certificates, backups, firewall, and updates. Each problem has a fix. The checks change nothing.",
+      run: "Run again",
+      summary: "{fail} failed, {warn} warnings, {ok} passed. Run at {time}.",
+      statuses: { ok: "OK", warn: "Warning", fail: "Failed", skip: "Skipped" } as Record<string, string>,
+    },
   },
   backupsPage: {
     title: "Backups",

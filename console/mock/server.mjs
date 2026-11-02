@@ -38,6 +38,7 @@ function fresh(options) {
   s.u = freshUpdates(options);
   s.conn = freshConnectivity(options);
   s.sec = freshSecurity(options);
+  s.doctorFail = options.doctor === "fail";
   return s;
 }
 

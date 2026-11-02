@@ -291,6 +291,47 @@ func (s *Service) collect(ctx context.Context, b *bundleWriter, rec *jobs.Record
 			}
 			return b.add("units.txt", out)
 		},
+		// Phase 7: the result of care-pi doctor, the rendered tree, the firewall, Tailscale, the containers, and the
+		// memory peaks of the cgroups.
+		func() error {
+			rep, err := s.Doctor(ctx)
+			if err != nil {
+				return b.add("doctor.error.txt", []byte(err.Error()+"\n"))
+			}
+			return b.add("doctor.json", jsonOf(rep))
+		},
+		func() error { return s.collectRendered(b) },
+		func() error {
+			for name, c := range map[string][]string{
+				"nft-ruleset.txt":       {"nft", "list", "ruleset"},
+				"podman-ps.txt":         {"podman", "ps", "--all", "--format", "{{.Names}}\t{{.Image}}\t{{.Status}}"},
+				"tailscale-status.json": {"tailscale", "status", "--json"},
+				"memory-peaks.txt":      {"systemctl", "show", "-p", "Id", "-p", "MemoryPeak", "-p", "MemorySwapPeak", "-p", "MemoryMax", "care-*.service", "care-pi*.service"},
+				"firewall-state.json":   nil,
+				"listening-sockets.txt": {"ss", "-ltnupH"},
+			} {
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				var out []byte
+				if c == nil {
+					out = jsonOf(firewallStateOf(s))
+				} else {
+					var err error
+					out, err = s.Host.Runner.Run(ctx, hostCmd(c[0], c[1:]...))
+					if err != nil {
+						out = append(out, []byte("\nerror: "+err.Error()+"\n")...)
+					}
+				}
+				if name == "tailscale-status.json" {
+					out = redactTailscale(out)
+				}
+				if err := b.add(name, out); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
 		func() error {
 			since := "@" + strconv.FormatInt(s.now().Add(-time.Duration(req.SinceHours)*time.Hour).Unix(), 10)
 			for _, u := range LogUnits {
@@ -370,4 +411,82 @@ func CopyBundle(src, dst string) error {
 		return fmt.Errorf("cannot write %s: %w", dst, err)
 	}
 	return nil
+}
+
+// collectRendered adds the rendered tree (the quadlets, the units, rendered/) to the bundle. env files lose their
+// secret values; a file with a secret mode (0600) that is not an env file or the Caddyfile is left out.
+func (s *Service) collectRendered(b *bundleWriter) error {
+	for _, dir := range []string{paths.QuadletDir, paths.RenderedDir} {
+		root := s.Paths.Abs(dir)
+		err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			rel, _ := filepath.Rel(root, p)
+			if dir == paths.QuadletDir && !strings.HasPrefix(filepath.Base(p), "care") {
+				return nil
+			}
+			// The plug configs of Care can have secret settings (the podman secret care-additional-plugs).
+			if filepath.Base(p) == "additional-plugs.json" {
+				return nil
+			}
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return nil
+			}
+			if strings.HasSuffix(p, ".env") {
+				data = redactEnv(data)
+			}
+			return b.add("rendered-tree"+dir+"/"+filepath.ToSlash(rel), data)
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// firewallStateOf is the firewall state for the bundle (nil on an error).
+func firewallStateOf(s *Service) any {
+	st, err := s.Firewall(context.Background())
+	if err != nil {
+		return map[string]string{"error": err.Error()}
+	}
+	return st
+}
+
+// tailscaleRedact lists the members of "tailscale status --json" that the bundle hides: the keys and the addresses
+// and names of the other devices of the tailnet.
+var tailscaleRedact = map[string]bool{"PublicKey": true, "PrivateKey": true, "NodeKey": true, "MachineKey": true,
+	"Peer": true, "User": true, "AuthURL": true, "ClientVersion": true}
+
+// redactTailscale hides the keys and the peers of "tailscale status --json"; text that is not JSON stays.
+func redactTailscale(data []byte) []byte {
+	var doc map[string]any
+	if json.Unmarshal(data, &doc) != nil {
+		return data
+	}
+	var walk func(v any) any
+	walk = func(v any) any {
+		switch t := v.(type) {
+		case map[string]any:
+			for k, val := range t {
+				if tailscaleRedact[k] {
+					t[k] = "<redacted>"
+					continue
+				}
+				t[k] = walk(val)
+			}
+		case []any:
+			for i := range t {
+				t[i] = walk(t[i])
+			}
+		}
+		return v
+	}
+	out, err := json.MarshalIndent(walk(doc), "", "  ")
+	if err != nil {
+		return data
+	}
+	return append(out, '\n')
 }

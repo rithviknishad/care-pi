@@ -1750,6 +1750,12 @@ restarts, or stops only its units.
 `security.waf.{enabled, mode, paranoia}` (config) turns on the Coraza WAF on the Care API routes of port 443
 (`docs/console-server.md` section 15). The console API (port 8443) has no WAF. No operation changes.
 
+### 17.7 Doctor
+
+`GET /doctor` (session) runs the checks of `care-pi doctor` and gives `DoctorReport` (`status`, `checks[]` with `id`,
+`title`, `status`, `detail`, `fix`). The console shows it on the Support page with a "Run again" button. The support
+bundle has `doctor.json` and the other sections of `docs/console-server.md` section 16.
+
 ### 17.9 Changes of contract 0.8.0
 
 All changes are additive.
@@ -1763,3 +1769,4 @@ All changes are additive.
 - `GET /metrics`; the plan action kind and the step key `ensure-telemetry`; the config keys `telemetry.username` and
   `telemetry.interval_s` (section 17.5).
 - The config keys `security.waf.enabled`, `security.waf.mode`, `security.waf.paranoia` (section 17.6).
+- `GET /doctor`, the schemas `DoctorReport`, `DoctorCheck`, `DoctorStatus` (section 17.7).

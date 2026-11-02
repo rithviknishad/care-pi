@@ -15,6 +15,7 @@ export const qk = {
   config: (view: "file" | "effective") => ["config", view] as const,
   security: ["security"] as const,
   firewall: ["security", "firewall"] as const,
+  doctor: ["doctor"] as const,
   sessions: ["sessions"] as const,
   logUnits: ["log-units"] as const,
   logs: (unit: LogUnit, n: number) => ["logs", unit, n] as const,

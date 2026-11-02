@@ -574,3 +574,33 @@ security:
   mode, 200 with the audit line of the CRS rule 942100 in detect mode. It passed with Caddy 2.11.7 and coraza-caddy
   2.6.2 (arm64).
 
+## 16. Phase 7: `care-pi doctor` and the support bundle
+
+`care-pi doctor [--json]`, `GET /api/v1/doctor` (session), and Support > Health checks in the console run the same checks.
+They change nothing; each problem has a fix hint (a command or a page). The failed checks come first; the status of the
+report is the worst status (`ok`, `warn`, `fail`, `skip`). The CLI exits with code 1 when a check failed. The checks
+follow the pitfalls of `plans/09-handoff.md` section 3:
+
+| Id | Check | `warn` / `fail` |
+|---|---|---|
+| `host-*` | The host check of the installer (the memory controller, podman 5.4, …) | `fail` for a required item |
+| `ports` | `ss -ltnpH`: another program than conmon on 80, 443, or 8443 of a published address or of all addresses (SP5: `tailscale serve` on 443 of the Tailscale address) | `fail` |
+| `mdns` | avahi announces another name than `<hostname>.local` (a collision: `care-2.local`) or none | `warn` |
+| `clock` | NTP synchronized; the browser time of S52 | `warn` (browser), `fail` (none) |
+| `memory`, `zram` | `MemAvailable` below 256 MiB; no `/dev/zram` in `/proc/swaps` | `warn` |
+| `disk-*` | less than 2 GiB or 10 % free | `warn` |
+| `units` | a unit of Care `failed`; `inactive` after the setup | `fail`, `warn` |
+| `cert-local`, `cert-public` | the end of the local root or of the public certificate in less than 14 days; a LAN address outside the name constraints | `warn`, `fail` (expired) |
+| `backup-<id>`, `backups` | the last snapshot of a destination is older than `backups.alert_after_hours`; no snapshot; no destination | `fail`, `warn` |
+| `firewall` | `care-pi-firewall.service` not active; a policy `drop` that waits for its confirmation; a loaded policy that differs from `config.yaml` | `warn` |
+| `reboot` | `/run/reboot-required` | `warn` |
+| `updates` | a newer lock on the track | `warn` |
+
+**The support bundle** (Support > Make a support bundle, `care-pi support-bundle`) also has, since Phase 7:
+`doctor.json`; `rendered-tree/etc/containers/systemd/care*` and `rendered-tree/etc/care-pi/rendered/**` (env files
+without the values of secret keys; `additional-plugs.json` left out, because plug settings can be secret);
+`nft-ruleset.txt` (`nft list ruleset`); `listening-sockets.txt` (`ss -ltnupH`); `podman-ps.txt`;
+`tailscale-status.json` (`tailscale status --json` without the keys, the peers, and the users); `memory-peaks.txt`
+(`MemoryPeak`, `MemorySwapPeak`, `MemoryMax` of the units `care-*` and `care-pi*`); `firewall-state.json`. The values of
+the secret files are replaced with `<redacted>` in each section, as before.
+

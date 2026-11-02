@@ -420,6 +420,10 @@ The container images stay in the podman storage, so a new install does not downl
 
 ## If the script fails
 
+First run `sudo care-pi doctor`: it checks the ports, the mDNS name, the clock, the memory controller, zram, the disks,
+the units, the certificates, the backups, and the firewall, and prints a fix for each problem
+(`docs/console-server.md` section 16).
+
 Read the last lines of the output.
 They name the step that failed.
 The full output is in `/var/log/care-pi-install.log`.

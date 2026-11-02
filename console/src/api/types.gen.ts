@@ -911,6 +911,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/doctor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run the health checks of care-pi doctor
+         * @description Phase 7. The agent runs the checks of `care-pi doctor` and gives each with its status and a fix hint: the host
+         *     check, the ports of the pod (another program on 80, 443, or 8443 of a published address, for example
+         *     `tailscale serve`), the mDNS name (a collision), the clock, the memory and zram, each disk, the units of Care, the
+         *     certificates (14 days before the end), each backup destination (the last snapshot against
+         *     `backups.alert_after_hours`), the firewall, a pending reboot, and the updates. The checks change nothing; a run
+         *     takes about 1 s. The failed checks come first.
+         */
+        get: operations["getDoctor"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/metrics": {
         parameters: {
             query?: never;
@@ -3371,6 +3396,71 @@ export interface components {
          */
         TotpVerifyRequest: {
             code: components["schemas"]["TotpCode"];
+        };
+        /**
+         * @description The result of `care-pi doctor` (Phase 7).
+         * @example {
+         *       "generated_at": "2026-11-02T10:00:00Z",
+         *       "status": "warn",
+         *       "checks": [
+         *         {
+         *           "id": "backup-usb",
+         *           "title": "Backup usb (posix)",
+         *           "status": "warn",
+         *           "detail": "no snapshot yet",
+         *           "fix": "sudo care-pi backup run --destination usb"
+         *         },
+         *         {
+         *           "id": "ports",
+         *           "title": "Ports 80, 443, 8443",
+         *           "status": "ok",
+         *           "detail": "no other program listens on a port of the pod",
+         *           "fix": null
+         *         }
+         *       ]
+         *     }
+         */
+        DoctorReport: {
+            /**
+             * Format: date-time
+             * @description The time of the run.
+             */
+            generated_at: string;
+            status: components["schemas"]["DoctorStatus"];
+            /** @description The checks, the failed ones first, then the warnings. */
+            checks: components["schemas"]["DoctorCheck"][];
+        };
+        /**
+         * @description `ok`; `warn` (works, but needs attention); `fail` (a part of Care does not work or is at risk); `skip` (the check
+         *     could not run). The status of a report is the worst status of its checks.
+         * @example warn
+         * @enum {string}
+         */
+        DoctorStatus: "ok" | "warn" | "fail" | "skip";
+        /**
+         * @description One check of `care-pi doctor`.
+         * @example {
+         *       "id": "ports",
+         *       "title": "Ports 80, 443, 8443",
+         *       "status": "fail",
+         *       "detail": "tailscaled on 100.101.102.103:443",
+         *       "fix": "Stop the other program on the port (for tailscaled: tailscale serve reset), then: sudo care-pi apply"
+         *     }
+         */
+        DoctorCheck: {
+            /**
+             * @description A stable id, for example `ports`, `mdns`, `clock`, `memory`, `zram`, `disk-root`, `units`, `cert-local`,
+             *     `cert-public`, `backup-<destination id>`, `backups`, `firewall`, `reboot`, `updates`, `host-<check name>`.
+             * @example ports
+             */
+            id: string;
+            /** @description The name of the check for a person. */
+            title: string;
+            status: components["schemas"]["DoctorStatus"];
+            /** @description What the check found. */
+            detail: string;
+            /** @description What to do, often a command. `null` when the check passed. */
+            fix: string | null;
         };
         /**
          * @description The firewall table `inet care-pi` (Phase 7, `docs/console-server.md` section 13).
@@ -14731,6 +14821,28 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            default: components["responses"]["UnexpectedProblem"];
+        };
+    };
+    getDoctor: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DoctorReport"];
+                };
+            };
+            401: components["responses"]["NotAuthenticated"];
             default: components["responses"]["UnexpectedProblem"];
         };
     };

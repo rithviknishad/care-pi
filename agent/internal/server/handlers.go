@@ -101,6 +101,7 @@ func (s *Server) table() []*route {
 	add(post, "/jobs/{job_id}/cancel", s.cancelJob)
 
 	add(get, "/metrics", s.metrics)
+	add(get, "/doctor", s.doctor)
 	add(get, "/logs", s.logUnits)
 	add(get, "/logs/{unit}", s.logs)
 	add(post, "/support-bundle", s.supportBundle)
@@ -1062,6 +1063,15 @@ func (s *Server) sendFile(c *reqCtx, f *service.RootCAFile) error {
 	h.Set("Content-Length", strconv.Itoa(len(f.Data)))
 	_, err := c.w.Write(f.Data)
 	return err
+}
+
+func (s *Server) doctor(c *reqCtx) error {
+	rep, err := s.svc.Doctor(c.r.Context())
+	if err != nil {
+		return err
+	}
+	s.json(c.w, http.StatusOK, rep)
+	return nil
 }
 
 func (s *Server) metrics(c *reqCtx) error {
