@@ -231,6 +231,57 @@ func TestEnsureNewHost(t *testing.T) {
 	}
 }
 
+// TestRotate: a new key and a new root for the addresses of now; the old root stays for the page for 7 days.
+func TestRotate(t *testing.T) {
+	p := paths.New(t.TempDir())
+	if _, err := Rotate(p, []string{"care.local"}, []string{"192.168.1.10"}, "", now); err == nil {
+		t.Fatal("a rotation without a root must fail")
+	}
+	first, err := Ensure(p, []string{"care.local"}, []string{"192.168.1.10"}, "", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Caddy made an intermediate below the first root.
+	if err := os.MkdirAll(p.Abs(paths.CaddyCA), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.Abs(paths.CaddyCA+"/intermediate.crt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	later := now.Add(48 * time.Hour)
+	res, err := Rotate(p, []string{"care.local"}, []string{"10.0.0.5"}, "care-pi care.local Root CA", later)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Created || !res.Replaced || res.Root.Fingerprint() == first.Root.Fingerprint() {
+		t.Fatalf("rotate: %+v", res)
+	}
+	if res.Root.Key.Equal(first.Root.Key) {
+		t.Fatal("the new root has the old key")
+	}
+	if got := res.State.Constraints.IPs; !reflect.DeepEqual(got, []string{"10.0.0.0/24"}) {
+		t.Fatalf("constraints %v", got)
+	}
+	if _, err := os.Stat(p.Abs(paths.CaddyCA + "/intermediate.crt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the intermediate of Caddy is still there")
+	}
+	st := ReadState(p)
+	if st.Reason != ReasonRotation || st.PreviousFingerprint != first.Root.Fingerprint() || st.ChangedAt == nil || !st.ChangedAt.Equal(later) {
+		t.Fatalf("state %+v", st)
+	}
+	loaded, err := Load(p)
+	if err != nil || loaded.Fingerprint() != res.Root.Fingerprint() {
+		t.Fatalf("load %v", err)
+	}
+	prev, der := Previous(p, later.Add(6*24*time.Hour))
+	if prev == nil || Fingerprint(der) != first.Root.Fingerprint() {
+		t.Fatal("no previous root within 7 days")
+	}
+	if prev, _ := Previous(p, later.Add(8*24*time.Hour)); prev != nil {
+		t.Fatal("the previous root shows after 7 days")
+	}
+}
+
 // writeACMECert writes a certificate of name as Caddy stores an ACME certificate of the issuer directory dir.
 func writeACMECert(t *testing.T, p paths.Paths, dir, name string, notAfter time.Time) {
 	t.Helper()

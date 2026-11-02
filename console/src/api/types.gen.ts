@@ -1221,7 +1221,10 @@ export interface paths {
         put?: never;
         /**
          * Make a new root CA
-         * @description Phase 7. Each device must then install the new root CA (07 §4.5).
+         * @description Phase 7. The job `tls-local-ca-rotate` makes a new root CA (a new key) with the name constraints of the names and
+         *     LAN addresses of now (so `local_ca.uncovered` becomes empty), keeps the old root for 7 days
+         *     (`local_ca.previous_root`), and restarts `care-caddy` for a new intermediate. Each device must then install the
+         *     new root CA (07 §4.5). `409 state-conflict` when the local CA mode is off or the device has no root of its own yet.
          */
         post: operations["rotateLocalCa"];
         delete?: never;
@@ -5182,12 +5185,13 @@ export interface components {
          *     `recovery-key-rotate`, `restore-drill` (design note section 13.8). Phase 4 makes `update-check` (no apply lock),
          *     `update-stage`, `update-apply`, `update-rollback`, `os-update`, `plug-change` (design note section 14.2). Phase 6 makes
          *     `tls-public-enrol`, `tls-tailscale-enrol`, and `network-wifi` (design note section 15); version 0.7.0 replaced the reserved kind `tls`.
+         *     Phase 7 makes `tls-local-ca-rotate` (apply lock; design note section 17).
          *     Version 0.4.0 replaced the reserved kinds `backup`, `verify`, and `restore` with the kinds of Phase 3; version 0.5.0
          *     replaced the reserved kinds `update` and `rollback`, which no agent made, with `update-apply` and `update-rollback`.
          * @example apply
          * @enum {string}
          */
-        JobKind: "apply" | "setup" | "fe-build" | "fe-prune" | "support-bundle" | "backup-run" | "backup-verify" | "restore-pitr" | "restore-files" | "restore-dr" | "disk-prepare" | "recovery-key-rotate" | "restore-drill" | "update-check" | "update-stage" | "update-apply" | "update-rollback" | "os-update" | "plug-change" | "tls-public-enrol" | "tls-tailscale-enrol" | "network-wifi";
+        JobKind: "apply" | "setup" | "fe-build" | "fe-prune" | "support-bundle" | "backup-run" | "backup-verify" | "restore-pitr" | "restore-files" | "restore-dr" | "disk-prepare" | "recovery-key-rotate" | "restore-drill" | "update-check" | "update-stage" | "update-apply" | "update-rollback" | "os-update" | "plug-change" | "tls-public-enrol" | "tls-tailscale-enrol" | "network-wifi" | "tls-local-ca-rotate";
         /**
          * @description `queued`: the job waits for the apply lock (5 s at most) or for a free worker. `running`: a step runs.
          *     `succeeded`, `failed`, `cancelled`: the job ended.
@@ -5241,6 +5245,7 @@ export interface components {
              *     Phase 6 keys (design note section 15): `ensure-ca`, `disable-units`, `reload-firewall`, `update-dns`, `write-config`,
              *     `dns-register`, `dns-address`, `dns-delete`, `wait-certificate`, `tailscale-install`, `tailscale-up`, `tailscale-login`,
              *     `tailscale-down`, `tailscale-logout`, `wifi-radio`, `wifi-profile`, `wifi-connect`, `wifi-verify`, `wifi-remove`.
+             *     Phase 7 keys (design note section 17): `ca-rotate`, `restart-caddy`.
              *     `null` for a journal of Phase 1 when the name does not start with a known key.
              * @example restart
              */
@@ -5430,7 +5435,7 @@ export interface components {
          *       ]
          *     }
          */
-        JobResult: components["schemas"]["ApplyResult"] | components["schemas"]["SetupResult"] | components["schemas"]["FeBuildResult"] | components["schemas"]["FePruneResult"] | components["schemas"]["SupportBundleResult"] | components["schemas"]["BackupRunResult"] | components["schemas"]["BackupVerifyResult"] | components["schemas"]["RestorePitrResult"] | components["schemas"]["RestoreFilesResult"] | components["schemas"]["RestoreDrResult"] | components["schemas"]["DiskPrepareResult"] | components["schemas"]["RecoveryKeyRotateResult"] | components["schemas"]["RestoreDrillResult"] | components["schemas"]["UpdateCheckResult"] | components["schemas"]["UpdateStageResult"] | components["schemas"]["UpdateApplyResult"] | components["schemas"]["UpdateRollbackResult"] | components["schemas"]["OsUpdateResult"] | components["schemas"]["PlugChangeJobResult"] | components["schemas"]["TlsPublicResult"] | components["schemas"]["TlsTailscaleResult"] | components["schemas"]["NetworkWifiResult"];
+        JobResult: components["schemas"]["ApplyResult"] | components["schemas"]["SetupResult"] | components["schemas"]["FeBuildResult"] | components["schemas"]["FePruneResult"] | components["schemas"]["SupportBundleResult"] | components["schemas"]["BackupRunResult"] | components["schemas"]["BackupVerifyResult"] | components["schemas"]["RestorePitrResult"] | components["schemas"]["RestoreFilesResult"] | components["schemas"]["RestoreDrResult"] | components["schemas"]["DiskPrepareResult"] | components["schemas"]["RecoveryKeyRotateResult"] | components["schemas"]["RestoreDrillResult"] | components["schemas"]["UpdateCheckResult"] | components["schemas"]["UpdateStageResult"] | components["schemas"]["UpdateApplyResult"] | components["schemas"]["UpdateRollbackResult"] | components["schemas"]["OsUpdateResult"] | components["schemas"]["PlugChangeJobResult"] | components["schemas"]["TlsPublicResult"] | components["schemas"]["TlsTailscaleResult"] | components["schemas"]["NetworkWifiResult"] | components["schemas"]["TlsLocalCaRotateResult"];
         /**
          * @description The result of an apply job.
          * @example {
@@ -6475,7 +6480,9 @@ export interface components {
          *         "uncovered": [],
          *         "ca_changed_at": "2026-11-01T10:00:00Z",
          *         "previous_fingerprint_sha256": "9a1d6c0e5a2b9e4d7c8f1a0b2c3d4e5f60718293a4b5c6d7e8f9011223344500",
-         *         "cert_page_url": "https://care-pi.rithviknishad.dev/cert"
+         *         "cert_page_url": "https://care-pi.rithviknishad.dev/cert",
+         *         "change_reason": "migration",
+         *         "previous_root": null
          *       },
          *       "public": {
          *         "enabled": true,
@@ -6550,6 +6557,17 @@ export interface components {
                  * @example https://care-pi.rithviknishad.dev/cert
                  */
                 cert_page_url: string;
+                /**
+                 * @description The cause of `ca_changed_at`: `migration` (the one-time switch from the root of Caddy, Phase 6) or `rotation`
+                 *     (`POST /tls/local-ca/rotate`). `null` without a change.
+                 * @enum {string|null}
+                 */
+                change_reason: "migration" | "rotation" | null;
+                /**
+                 * @description The root before the last rotation, for 7 days after `ca_changed_at`, so that the operator can compare the
+                 *     old and the new fingerprint on each device. `null` after 7 days, after a migration, or without a rotation.
+                 */
+                previous_root: components["schemas"]["CaRoot"] | null;
             };
             public: components["schemas"]["TlsPublic"];
             tailscale: components["schemas"]["TlsTailscale"];
@@ -9466,6 +9484,23 @@ export interface components {
              * @example 192.168.1.23
              */
             address: string | null;
+        };
+        /**
+         * @description The result of a `tls-local-ca-rotate` job that succeeded.
+         * @example {
+         *       "kind": "tls-local-ca-rotate",
+         *       "fingerprint_sha256": "3f1d6c0e5a2b9e4d7c8f1a0b2c3d4e5f60718293a4b5c6d7e8f9011223344556",
+         *       "previous_fingerprint_sha256": "9a1d6c0e5a2b9e4d7c8f1a0b2c3d4e5f60718293a4b5c6d7e8f9011223344500"
+         *     }
+         */
+        TlsLocalCaRotateResult: {
+            /**
+             * @description The job kind. (enum property replaced by openapi-typescript)
+             * @enum {string}
+             */
+            kind: "tls-local-ca-rotate";
+            fingerprint_sha256: components["schemas"]["Sha256Hex"];
+            previous_fingerprint_sha256: components["schemas"]["Sha256Hex"];
         };
         /**
          * @description The result of a `plug-change` job that succeeded.
@@ -15009,7 +15044,6 @@ export interface operations {
             401: components["responses"]["NotAuthenticated"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
-            501: components["responses"]["NotImplemented"];
             default: components["responses"]["UnexpectedProblem"];
         };
     };

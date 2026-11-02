@@ -159,6 +159,27 @@ var tlsPublicRotateCmd = &cobra.Command{
 
 // ---- tls tailscale ----
 
+var tlsLocalCACmd = &cobra.Command{
+	Use:   "local-ca",
+	Short: "The local CA: the root CA of this device for the .local names and the LAN addresses",
+}
+
+var tlsLocalCARotateCmd = &cobra.Command{
+	Use:   "rotate",
+	Short: "Make a new root CA with a new key (POST /tls/local-ca/rotate); each device must install it again",
+	Long: `rotate makes a new root CA for the names and the LAN addresses of now, keeps the old root for the
+Certificate page for 7 days (/var/lib/care-pi/ca/root.prev.crt), and restarts care-caddy for a new intermediate.
+Use it when a LAN address is outside the name constraints (GET /tls: local_ca.uncovered) or when the clinic no
+longer trusts the old root. Each device of the clinic must then install the new root CA: the browsers show a
+certificate warning until then.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		svc := newService(cmd)
+		j, err := svc.StartLocalCARotate(cmd.Context(), connFlags.reason, jobs.SourceCLI)
+		return printConnJob(cmd, svc, j, err)
+	},
+}
+
 var tlsTailscaleCmd = &cobra.Command{
 	Use:   "tailscale",
 	Short: "The Tailscale mode: the MagicDNS name with the certificate of tailscaled (PUT /tls/tailscale)",
@@ -341,7 +362,7 @@ var networkWaitAddressCmd = &cobra.Command{
 
 func init() {
 	for _, c := range []*cobra.Command{tlsPublicEnableCmd, tlsPublicDisableCmd, tlsTailscaleEnableCmd, tlsTailscaleDisableCmd,
-		networkWiFiSetCmd, networkWiFiRemoveCmd} {
+		networkWiFiSetCmd, networkWiFiRemoveCmd, tlsLocalCARotateCmd} {
 		c.Flags().StringVar(&connFlags.reason, "reason", "", "the reason in the job journal")
 		c.Flags().BoolVar(&connFlags.json, "json", false, "print the result as JSON")
 	}
@@ -363,7 +384,8 @@ func init() {
 	tlsPublicRotateCmd.Flags().BoolVar(&connFlags.newKey, "new-key", false, "also replace the Ed25519 key of the device")
 	tlsPublicCmd.AddCommand(tlsPublicEnableCmd, tlsPublicDisableCmd, tlsPublicStatusCmd, tlsPublicUpdateCmd, tlsPublicRotateCmd)
 	tlsTailscaleCmd.AddCommand(tlsTailscaleEnableCmd, tlsTailscaleDisableCmd, tlsTailscaleStatusCmd)
-	tlsCmd.AddCommand(tlsPublicCmd, tlsTailscaleCmd)
+	tlsLocalCACmd.AddCommand(tlsLocalCARotateCmd)
+	tlsCmd.AddCommand(tlsPublicCmd, tlsTailscaleCmd, tlsLocalCACmd)
 	networkWiFiCmd.AddCommand(networkWiFiScanCmd, networkWiFiSetCmd, networkWiFiRemoveCmd, networkWiFiStatusCmd)
 	networkCmd.AddCommand(networkWiFiCmd, networkWaitAddressCmd)
 	rootCmd.AddCommand(networkCmd)

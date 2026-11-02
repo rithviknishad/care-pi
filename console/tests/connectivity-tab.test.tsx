@@ -29,6 +29,8 @@ function tls(over: Partial<TlsState> = {}): TlsState {
       ca_changed_at: null,
       previous_fingerprint_sha256: null,
       cert_page_url: "https://care-pi.rithviknishad.dev/cert",
+      change_reason: null,
+      previous_root: null,
     },
     public: {
       enabled: false,

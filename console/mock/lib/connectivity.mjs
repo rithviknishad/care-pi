@@ -14,6 +14,9 @@ import { ADDRESS, FINGERPRINT, FINGERPRINT_COLON, now } from "./state.mjs";
 
 export const ZONE = "care-pi.rithviknishad.dev";
 const PREVIOUS = "9a1d6c0e5a2b9e4d7c8f1a0b2c3d4e5f60718293a4b5c6d7e8f9011223344500";
+// The root after POST /tls/local-ca/rotate (Phase 7).
+const ROTATED = "7b2e4f9a1c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7";
+const colon = (fp) => fp.toUpperCase().match(/../g).join(":");
 const TS_NAME = "care.tail1234.ts.net";
 const TS_IP = "100.101.102.103";
 const WIFI_ADDRESS = "192.168.1.23";
@@ -24,6 +27,7 @@ export function freshConnectivity(options = {}) {
   const c = {
     scenario,
     caChangedAt: scenario === "migrated" ? "2026-11-01T10:00:00Z" : null,
+    caRotated: false,
     public: { enabled: false, clinicId: null, acmeCa: null, cert: null, address: null, updatedAt: null },
     tailscale: { enabled: false, installed: false, state: null, loginUrl: null, hostname: null, polls: 0 },
     wifiDevice: options.wifi_device !== false,
@@ -46,6 +50,12 @@ export function freshConnectivity(options = {}) {
     c.tailscale = { enabled: true, installed: true, state: "Running", loginUrl: null, hostname: TS_NAME, polls: 0 };
   }
   return c;
+}
+
+// The root CA that the devices must trust now: the rotated root after POST /tls/local-ca/rotate (Phase 7).
+export function currentRoot(state) {
+  const fp = state?.conn?.caRotated ? ROTATED : FINGERPRINT;
+  return { fingerprint: fp, colon: fp === FINGERPRINT ? FINGERPRINT_COLON : colon(fp) };
 }
 
 function conn(state) {
@@ -112,25 +122,28 @@ function tlsState(state) {
   const pub = c.public;
   const host = publicHost(state);
   const ts = c.tailscale;
+  const root = (fp, notBefore) => ({
+    subject: "CN=care-pi care.local Root CA,O=care-pi",
+    fingerprint_sha256: fp,
+    fingerprint_sha256_colon: fp === FINGERPRINT ? FINGERPRINT_COLON : colon(fp),
+    not_before: notBefore,
+    not_after: "2036-10-30T10:00:00Z",
+    name_constraints: {
+      permitted_dns_domains: [".local", `.${ZONE}`],
+      permitted_ip_ranges: ["192.168.1.0/24"],
+    },
+  });
   return {
     local_ca: {
       enabled: true,
-      root: {
-        subject: "CN=care-pi care.local Root CA,O=care-pi",
-        fingerprint_sha256: FINGERPRINT,
-        fingerprint_sha256_colon: FINGERPRINT_COLON,
-        not_before: "2026-11-01T10:00:00Z",
-        not_after: "2036-10-30T10:00:00Z",
-        name_constraints: {
-          permitted_dns_domains: [".local", `.${ZONE}`],
-          permitted_ip_ranges: ["192.168.1.0/24"],
-        },
-      },
+      root: c.caRotated ? root(ROTATED, c.caChangedAt) : root(FINGERPRINT, "2026-11-01T10:00:00Z"),
       hostnames: [`${state.appliedHostname}.local`, ...networkExtras(state).addresses],
       uncovered: [],
       ca_changed_at: c.caChangedAt,
-      previous_fingerprint_sha256: c.caChangedAt ? PREVIOUS : null,
+      previous_fingerprint_sha256: c.caRotated ? FINGERPRINT : c.caChangedAt ? PREVIOUS : null,
       cert_page_url: `https://${ZONE}/cert`,
+      change_reason: c.caRotated ? "rotation" : c.caChangedAt ? "migration" : null,
+      previous_root: c.caRotated ? root(FINGERPRINT, "2026-11-01T10:00:00Z") : null,
     },
     public: {
       enabled: pub.enabled,
@@ -447,7 +460,38 @@ function scanWifi({ res, state }) {
   });
 }
 
+// POST /tls/local-ca/rotate (Phase 7): a new root; the old one shows for 7 days.
+function rotateLocalCa({ res, state }) {
+  ready(state);
+  busy(state);
+  const c = conn(state);
+  const job = startJob(state, {
+    kind: "tls-local-ca-rotate",
+    steps: [
+      [
+        "ca-rotate",
+        "ca-rotate: make a new root CA",
+        { lines: ["install the new root CA on each device of the clinic: Certificate page, or care-pi tls root-ca"] },
+      ],
+      ["restart-caddy", "restart-caddy: care-caddy.service makes a new intermediate"],
+    ],
+    onStep: (_s, step, phase) => {
+      if (phase === "done" && step.action === "ca-rotate") {
+        c.caRotated = true;
+        c.caChangedAt = now();
+      }
+    },
+    result: () => ({
+      kind: "tls-local-ca-rotate",
+      fingerprint_sha256: ROTATED,
+      previous_fingerprint_sha256: FINGERPRINT,
+    }),
+  });
+  accepted(res, job);
+}
+
 export const connectivityRoutes = [
+  { method: "POST", path: "/api/v1/tls/local-ca/rotate", reauth: true, handler: rotateLocalCa },
   { method: "GET", path: "/api/v1/tls", handler: ({ res, state }) => sendJson(res, 200, tlsState(state)) },
   { method: "PUT", path: "/api/v1/tls/public", handler: putPublic },
   { method: "PUT", path: "/api/v1/tls/tailscale", reauth: true, handler: putTailscale },

@@ -409,7 +409,6 @@ func TestNotImplementedAndPublic(t *testing.T) {
 	}
 	for _, l := range []later{
 		{"PUT", "/api/v1/security/ssh", map[string]any{"enabled": false, "authorized_keys": []any{}}},
-		{"POST", "/api/v1/tls/local-ca/rotate", nil},
 		// Phase 3 implements /backups and /restore (backups_test.go); Phase 4 (wave 6a) implements /updates,
 		// /plugs, and /solutions (updates_test.go).
 	} {

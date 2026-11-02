@@ -60,11 +60,16 @@ const (
 	KindNetworkWiFi       = "network-wifi"
 )
 
+// Kinds that Phase 7 makes (docs/api/README.md, section 17).
+const (
+	KindTLSLocalCARotate = "tls-local-ca-rotate"
+)
+
 // Kinds lists each job kind of the schema JobKind.
 var Kinds = []string{KindApply, KindSetup, KindFEBuild, KindFEPrune, KindSupportBundle,
 	KindBackupRun, KindBackupVerify, KindRestorePITR, KindRestoreFiles, KindRestoreDR, KindDiskPrepare, KindRecoveryKeyRotate, KindRestoreDrill,
 	KindUpdateCheck, KindUpdateStage, KindUpdateApply, KindUpdateRollback, KindOSUpdate, KindPlugChange,
-	KindTLSPublicEnrol, KindTLSTailscaleEnrol, KindNetworkWiFi}
+	KindTLSPublicEnrol, KindTLSTailscaleEnrol, KindNetworkWiFi, KindTLSLocalCARotate}
 
 // RestoreKinds stop the backups while they run: a backup kind gives job-running then.
 var RestoreKinds = map[string]bool{KindRestorePITR: true, KindRestoreFiles: true, KindRestoreDR: true, KindRecoveryKeyRotate: true}
@@ -106,7 +111,7 @@ const (
 
 // LockKinds hold the apply lock.
 var LockKinds = map[string]bool{KindApply: true, KindSetup: true, KindFEBuild: true, KindFEPrune: true,
-	"update": true, "rollback": true, KindTLSPublicEnrol: true, KindTLSTailscaleEnrol: true, KindNetworkWiFi: true, KindRestorePITR: true, KindRestoreFiles: true, KindRestoreDR: true,
+	"update": true, "rollback": true, KindTLSPublicEnrol: true, KindTLSTailscaleEnrol: true, KindNetworkWiFi: true, KindTLSLocalCARotate: true, KindRestorePITR: true, KindRestoreFiles: true, KindRestoreDR: true,
 	KindDiskPrepare: true, KindRecoveryKeyRotate: true,
 	KindUpdateStage: true, KindUpdateApply: true, KindUpdateRollback: true, KindOSUpdate: true, KindPlugChange: true}
 
@@ -142,6 +147,8 @@ var actionKeys = map[string]bool{
 	"dns-register": true, "dns-address": true, "dns-delete": true, "wait-certificate": true,
 	"tailscale-install": true, "tailscale-up": true, "tailscale-login": true, "tailscale-down": true, "tailscale-logout": true,
 	"wifi-radio": true, "wifi-profile": true, "wifi-connect": true, "wifi-verify": true, "wifi-remove": true,
+	// Phase 7 (docs/api/README.md section 17).
+	"ca-rotate": true, "restart-caddy": true,
 }
 
 // ActionOf returns the action key of a step name ("restart: care-api.service" gives "restart"), or "".

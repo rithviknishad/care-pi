@@ -114,7 +114,7 @@ func (s *Server) table() []*route {
 	add(get, "/tls/instructions/{os}", s.instructions, publicRead, both)
 	add(put, "/tls/public", s.putPublic)
 	add(put, "/tls/tailscale", s.putTailscale, reauth, credBody)
-	add(post, "/tls/local-ca/rotate", notImplemented, reauth, phase(7))
+	add(post, "/tls/local-ca/rotate", s.rotateLocalCA, reauth)
 
 	add(get, "/fe", s.fe)
 	add(post, "/fe/build", s.feBuild)
@@ -994,6 +994,11 @@ func (s *Server) putTailscale(c *reqCtx) error {
 	}
 	j, err := s.svc.StartTailscale(c.r.Context(), service.TailscaleRequest{Enabled: *req.Enabled, AuthKey: deref(req.AuthKey),
 		ControlURL: req.ControlURL, Reason: deref(req.Reason)}, jobs.SourceConsole)
+	return s.accepted(c, j, err)
+}
+
+func (s *Server) rotateLocalCA(c *reqCtx) error {
+	j, err := s.svc.StartLocalCARotate(c.r.Context(), "", jobs.SourceConsole)
 	return s.accepted(c, j, err)
 }
 

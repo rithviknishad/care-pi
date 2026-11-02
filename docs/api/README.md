@@ -1722,6 +1722,14 @@ MagicDNS name must end in `.ts.net`. A control server that gives no certificate 
 `rollback_reason`). The console sends the confirmation from Security > Firewall, so the request itself shows that the
 console works through the new rules. Detail: `docs/console-server.md` section 13.
 
+### 17.3 A new root CA
+
+`POST /tls/local-ca/rotate` (reauthentication; no longer `x-phase: 7`) starts the job `tls-local-ca-rotate` (apply lock;
+steps `ca-rotate`, `restart-caddy`; result `TlsLocalCaRotateResult`). `409 state-conflict` when the local CA mode is off
+or the device has no root of its own yet. After it, `TlsState.local_ca` has `change_reason: rotation`, the new root,
+`ca_changed_at`, `previous_fingerprint_sha256`, and for 7 days `previous_root` (a `CaRoot`). The console shows the
+warning of the certificate page with both fingerprints (`docs/connectivity.md` section 2.5).
+
 ### 17.9 Changes of contract 0.8.0
 
 All changes are additive.
@@ -1729,3 +1737,5 @@ All changes are additive.
 - `TailscaleRequest.control_url`, `TlsTailscale.control_url` (section 17.1).
 - `GET /security/firewall`, `POST /security/firewall/confirm`, the schema `FirewallState`; the config keys
   `security.firewall.policy` and `security.ssh.allow` (section 17.2).
+- `POST /tls/local-ca/rotate` is implemented (no `x-phase`); the job kind `tls-local-ca-rotate` and
+  `TlsLocalCaRotateResult`; `TlsState.local_ca.change_reason` and `TlsState.local_ca.previous_root` (section 17.3).

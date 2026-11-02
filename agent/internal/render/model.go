@@ -917,6 +917,9 @@ var MaintenanceSteps = map[string]string{
 	"wifi-connect":      "Connect to the Wi-Fi network",
 	"wifi-verify":       "Check the network routes",
 	"wifi-remove":       "Remove the Wi-Fi network",
+	// Phase 7 (docs/api/README.md section 17).
+	"ca-rotate":     "Make a new root certificate",
+	"restart-caddy": "Restart the web server for the new certificate",
 }
 
 // GitHubSlug returns OWNER/NAME for a https://github.com/OWNER/NAME URL, else "".

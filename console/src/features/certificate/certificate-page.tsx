@@ -21,6 +21,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fingerprintLines, formatDateTime } from "@/lib/format";
 import { CLIENT_OSES, detectOs, isClientOs } from "@/lib/os";
 import { fmt, strings, tlsStepText } from "@/lib/strings";
+import { RotateCard } from "./rotate-card";
 
 const c = strings.certificate;
 
@@ -223,17 +224,46 @@ function ChangedNotice({ tls }: { tls: TlsState }) {
   const fp = tls.local_ca.root?.fingerprint_sha256;
   const [dismissed, setDismissed] = useState(() => localStorage.getItem(CA_NOTICE_KEY));
   if (!caNoticeVisible(tls.local_ca.ca_changed_at, fp, dismissed)) return null;
+  const rotated = tls.local_ca.change_reason === "rotation";
+  const prev = tls.local_ca.previous_root;
   return (
-    <Alert variant="warning" data-testid="ca-changed">
-      <AlertTitle>{c.changedTitle}</AlertTitle>
+    <Alert variant="warning" data-testid="ca-changed" data-reason={tls.local_ca.change_reason ?? ""}>
+      <AlertTitle>{rotated ? c.rotatedTitle : c.changedTitle}</AlertTitle>
       <AlertDescription className="flex flex-col gap-2">
         <p>
-          {fmt(c.changed, {
-            time: formatDateTime(tls.local_ca.ca_changed_at),
-            fingerprint: fingerprintLines(fp ?? "")[0] ?? "",
-          })}
+          {rotated
+            ? fmt(c.rotated, { time: formatDateTime(tls.local_ca.ca_changed_at) })
+            : fmt(c.changed, {
+                time: formatDateTime(tls.local_ca.ca_changed_at),
+                fingerprint: fingerprintLines(fp ?? "")[0] ?? "",
+              })}
         </p>
-        {tls.local_ca.previous_fingerprint_sha256 ? (
+        {rotated && fp ? (
+          <dl className="grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2" data-testid="ca-fingerprints">
+            <div>
+              <dt className="font-semibold">{c.rotatedNew}</dt>
+              <dd>
+                {fingerprintLines(fp).map((l) => (
+                  <span key={l} className="block">
+                    {l}
+                  </span>
+                ))}
+              </dd>
+            </div>
+            {prev ? (
+              <div>
+                <dt className="font-semibold">{c.rotatedOld}</dt>
+                <dd className="text-soft-foreground">
+                  {fingerprintLines(prev.fingerprint_sha256).map((l) => (
+                    <span key={l} className="block">
+                      {l}
+                    </span>
+                  ))}
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        ) : tls.local_ca.previous_fingerprint_sha256 ? (
           <p className="text-xs">
             {fmt(c.changedOld, { fingerprint: fingerprintLines(tls.local_ca.previous_fingerprint_sha256)[0] ?? "" })}
           </p>
@@ -399,6 +429,7 @@ export default function CertificatePage() {
             </CardContent>
           </Card>
           {network.data ? <TrustCheck network={network.data} /> : null}
+          {tls.data && tls.data.local_ca.enabled ? <RotateCard tls={tls.data} /> : null}
         </div>
       </div>
     </div>

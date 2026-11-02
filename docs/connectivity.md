@@ -95,6 +95,24 @@ for a root with the name constraints of section 2.2 (private IPv4 ranges only); 
 constraints) and each other certificate. With no internet, use the other QR code: it has only the fingerprint, to
 compare on the device.
 
+### 2.5 A new root (rotation, Phase 7)
+
+`POST /tls/local-ca/rotate` (reauthentication), `care-pi tls local-ca rotate`, or Certificate > New root certificate in
+the console starts the job `tls-local-ca-rotate`:
+
+1. `ca-rotate`: a new ECDSA P-256 root with a new key and the name constraints of the names and LAN addresses of now (so
+   `local_ca.uncovered` becomes empty after a move to another network). The old certificate stays as
+   `/var/lib/care-pi/ca/root.prev.crt`; the intermediate and the local leaves of Caddy go; `state/ca.json` gets
+   `reason: rotation`, `changed_at`, and the old fingerprint.
+2. `restart-caddy`: 2 s later, `systemctl try-restart care-caddy.service`: Caddy makes a new intermediate below the new
+   root. The console loses its connection for some seconds.
+
+Then each device of the clinic shows a certificate warning until it has the new root. `GET /tls` gives
+`local_ca.change_reason: rotation` and, for 7 days, `local_ca.previous_root`; the Certificate page shows the warning
+"install it again on every device" with the old and the new fingerprint, until the operator closes it in that
+browser. Use the rotation when a device that trusts the root is lost or the root key could be known to another
+person, or when a LAN address is outside the constraints. The backups keep the new root (section 2.1).
+
 ## 3. The public name
 
 ### 3.1 How it works

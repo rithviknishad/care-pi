@@ -821,6 +821,8 @@ export const strings = {
       "wifi-connect": "Connect to the Wi-Fi network",
       "wifi-verify": "Check the network routes",
       "wifi-remove": "Remove the Wi-Fi network",
+      "ca-rotate": "Make a new root certificate",
+      "restart-caddy": "Restart the web server for the new certificate",
     } as Record<string, string>,
     // The text of a step in a job of one kind, when the key has a different meaning there.
     byKind: {
@@ -996,6 +998,23 @@ export const strings = {
       "On {time}, the device replaced its root certificate with a root certificate that has name limits. Install the new certificate again on each device of the clinic. The new fingerprint starts with {fingerprint}.",
     changedOld: "Old fingerprint: {fingerprint}",
     changedDismiss: "I installed it",
+    rotatedTitle: "New root certificate: install it again on every device",
+    rotated:
+      "On {time}, the device made a new root certificate. Each device of the clinic shows a warning until you install the new certificate on it. Compare the fingerprints on each device.",
+    rotatedNew: "New fingerprint",
+    rotatedOld: "Old fingerprint (shown for 7 days)",
+    rotate: {
+      title: "New root certificate",
+      intro:
+        "Make a new root certificate with a new key, for example when a device with the old certificate was lost. Each device of the clinic must then install the new certificate.",
+      introUncovered:
+        "These addresses are outside the limits of the root certificate: {names}. A new root certificate covers the addresses of now. Each device of the clinic must then install it.",
+      button: "Make a new root certificate",
+      confirmTitle: "Make a new root certificate?",
+      confirm:
+        "Each phone and computer of the clinic shows a certificate warning until you install the new certificate on it. The console restarts its web server for some seconds.",
+      running: "Making a new root certificate",
+    },
     qrMode: "The phone has",
     qrModes: { page: "Internet", fingerprint: "No internet", download: "Only this network" } as Record<string, string>,
     qrPage:
@@ -1941,6 +1960,7 @@ export const strings = {
       "tls-public-enrol": "Change the public name",
       "tls-tailscale-enrol": "Change Tailscale",
       "network-wifi": "Change the Wi-Fi",
+      "tls-local-ca-rotate": "Make a new root certificate",
     } as Record<string, string>,
   },
   qr: {
