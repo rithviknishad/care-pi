@@ -4153,7 +4153,7 @@ export interface components {
         StatusFlags: {
             /** @description The same value as `Status.degraded`. */
             degraded: boolean;
-            /** @description `addresses` differs from `published`. Run an apply. */
+            /** @description `addresses` differs from `published` without the Tailscale address (the Tailscale mode publishes on it too). Run an apply. */
             address_changed: boolean;
             /** @description The clock gate did not pass. Care does not start. */
             clock_wait: boolean;
@@ -6005,7 +6005,7 @@ export interface components {
             addresses: string[];
             /** @description The addresses in the rendered `care.pod`. */
             published: string[];
-            /** @description `addresses` differs from `published`. */
+            /** @description `addresses` differs from `published` without the Tailscale address (the Tailscale mode publishes on it too). */
             address_changed: boolean;
             /** @description The interfaces that care-pi does not ignore. */
             interfaces: components["schemas"]["NetworkInterface"][];

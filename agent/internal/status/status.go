@@ -44,17 +44,19 @@ type Report struct {
 	// Addresses are the LAN IPv4 addresses of the interfaces now.
 	Addresses []string `json:"addresses"`
 	// Published are the addresses in the rendered care.pod. They differ from Addresses
-	// after a DHCP change until the next apply.
-	Published []string   `json:"published"`
-	Units     []Unit     `json:"units"`
-	Images    []Image    `json:"images,omitempty"`
-	CareFESHA string     `json:"care_fe_sha,omitempty"`
-	FEBuildID string     `json:"fe_build_id,omitempty"`
-	Locked    string     `json:"locked_at,omitempty"`
-	Degraded  bool       `json:"degraded"`
-	Problems  []string   `json:"problems,omitempty"`
-	Mode      []string   `json:"mode,omitempty"`
-	Lock      *lock.Lock `json:"-"`
+	// after a DHCP change until the next apply. The Tailscale mode adds the Tailscale address.
+	Published []string `json:"published"`
+	// TailscaleIP is the IPv4 address of tailscale0 now, or "" (AddressChanged).
+	TailscaleIP string     `json:"-"`
+	Units       []Unit     `json:"units"`
+	Images      []Image    `json:"images,omitempty"`
+	CareFESHA   string     `json:"care_fe_sha,omitempty"`
+	FEBuildID   string     `json:"fe_build_id,omitempty"`
+	Locked      string     `json:"locked_at,omitempty"`
+	Degraded    bool       `json:"degraded"`
+	Problems    []string   `json:"problems,omitempty"`
+	Mode        []string   `json:"mode,omitempty"`
+	Lock        *lock.Lock `json:"-"`
 }
 
 // Units lists the units that status shows.
@@ -71,6 +73,7 @@ func Collect(ctx context.Context, h *host.Host, p paths.Paths, hostnames []strin
 		r.Problems = append(r.Problems, "cannot read the network interfaces: "+err.Error())
 	}
 	r.Published = PublishedIPs(p)
+	r.TailscaleIP = netinfo.TailscaleIPv4(ips)
 
 	units := Units()
 	props, err := h.Systemd.Show(ctx, units, "Id", "ActiveState", "SubState", "MemoryCurrent", "MemoryPeak", "MemoryMax", "NRestarts")
@@ -178,7 +181,7 @@ func (r *Report) WriteText(w io.Writer) {
 	_, _ = fmt.Fprintf(w, "names: %s\n", strings.Join(r.Hostnames, " "))
 	_, _ = fmt.Fprintf(w, "addresses now: %s\n", joinOr(r.Addresses, "(none)"))
 	_, _ = fmt.Fprintf(w, "addresses published: %s\n", joinOr(r.Published, "(none)"))
-	if !equalStrings(r.Addresses, r.Published) {
+	if AddressChanged(r.Addresses, r.Published, r.TailscaleIP) {
 		_, _ = fmt.Fprintln(w, "note: the addresses changed; run \"care-pi apply\" to publish the new addresses")
 	}
 	if len(r.Mode) > 0 {
@@ -228,6 +231,20 @@ func orDash(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// AddressChanged reports whether the LAN addresses differ from the addresses that the rendered care.pod publishes,
+// without the Tailscale address (tailscaleIP: the address of tailscale0 now, or ""). The Tailscale mode publishes on
+// it too, and LANIPv4 never gives it (wave 8-ts on lumine: "The IP address changed." each time the mode was on).
+// A Tailscale address that changed stays in published, so it still counts.
+func AddressChanged(addresses, published []string, tailscaleIP string) bool {
+	lan := make([]string, 0, len(published))
+	for _, a := range published {
+		if tailscaleIP == "" || a != tailscaleIP {
+			lan = append(lan, a)
+		}
+	}
+	return !equalStrings(addresses, lan)
 }
 
 func equalStrings(a, b []string) bool {

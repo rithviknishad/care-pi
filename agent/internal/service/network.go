@@ -12,6 +12,7 @@ import (
 
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/netinfo"
+	"github.com/rithviknishad/care-pi/agent/internal/status"
 )
 
 // InterfaceAddress is one address of an interface (schema InterfaceAddress).
@@ -184,7 +185,8 @@ func (s *Service) Network(ctx context.Context) *Network {
 	n := &Network{Hostname: cfg.Identity.Hostname, Addresses: s.Addresses(), Published: s.Published(),
 		Interfaces: s.interfaces(ctx), DNSServers: s.dnsServers(), URLs: s.CareURLs(), DHCPHints: []DHCPHint{}}
 	n.Gateway, n.DefaultInterface = s.gateway(ctx)
-	n.Tailscale = strPtr(netinfo.TailscaleIPv4(s.IPs))
+	tsIP := netinfo.TailscaleIPv4(s.IPs)
+	n.Tailscale = strPtr(tsIP)
 	var wc *wifiCfg
 	if w := cfg.Network.WiFi; w != nil {
 		wc = &wifiCfg{SSID: w.SSID, Country: w.Country, Failover: w.Failover}
@@ -201,7 +203,7 @@ func (s *Service) Network(ctx context.Context) *Network {
 	n.MDNS.Configured = netinfo.MDNSName(cfg.Identity.Hostname)
 	n.MDNS.Advertised = s.mdnsAdvertised(ctx)
 	n.MDNS.Collision = n.MDNS.Advertised != nil && *n.MDNS.Advertised != n.MDNS.Configured
-	n.AddressChanged = strings.Join(n.Addresses, " ") != strings.Join(n.Published, " ")
+	n.AddressChanged = status.AddressChanged(n.Addresses, n.Published, tsIP)
 	if s.Internet != nil {
 		n.Internet.Reachable, n.Internet.CheckedAt = s.Internet.State()
 	}

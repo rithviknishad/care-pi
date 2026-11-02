@@ -6223,7 +6223,7 @@ components:
           description: The same value as `Status.degraded`.
         address_changed:
           type: boolean
-          description: '`addresses` differs from `published`. Run an apply.'
+          description: '`addresses` differs from `published` without the Tailscale address (the Tailscale mode publishes on it too). Run an apply.'
         clock_wait:
           type: boolean
           description: The clock gate did not pass. Care does not start.
@@ -7966,7 +7966,7 @@ components:
             format: ipv4
         address_changed:
           type: boolean
-          description: '`addresses` differs from `published`.'
+          description: '`addresses` differs from `published` without the Tailscale address (the Tailscale mode publishes on it too).'
         interfaces:
           type: array
           description: The interfaces that care-pi does not ignore.

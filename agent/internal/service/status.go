@@ -422,7 +422,7 @@ func (s *Service) Status(ctx context.Context) (*Status, error) {
 
 	f := &st.Flags
 	f.Degraded = st.Degraded
-	f.AddressChanged = strings.Join(st.Addresses, " ") != strings.Join(st.Published, " ")
+	f.AddressChanged = status.AddressChanged(st.Addresses, st.Published, rep.TailscaleIP)
 	for _, m := range st.Mode {
 		f.ClockWait = f.ClockWait || m == paths.ModeClockWait
 		f.Maintenance = f.Maintenance || m == paths.ModeMaintenance
