@@ -759,3 +759,56 @@ Decisions (owner informed; override in `00` if wrong):
 Next step: a first boot of a fresh image on a Pi without internet: the claim, the setup, Care starts, and the banner;
 then internet: the banner goes within 15 s of the NTP synchronization (`timedatectl show -p NTPSynchronized`).
 
+
+### 8o. Phase 6 exit test result (wave 8, 2026-11-02)
+
+**PARTIAL on lumine, with 6 fixes.** The CA switch and the public name pass; the Tailscale mode is blocked by the
+`tailscale serve` of the owner on port 443 of the node. The record is `08-spike-log.md`, "Phase 6 exit test — lumine,
+2026-11-02"; the raw output is `local/wave8-p6/`. lumine runs `e130030` with the 6 fixes (`e130030-dirty`).
+
+- **CA switch (S36).** The first apply of the merged agent made the name-constrained root (critical: `.local`,
+  `.care-pi.rithviknishad.dev`, `192.168.165.0/24`) in 1 s, and restarted only care-caddy; Care kept running. The console
+  shows the one-time warning with the new fingerprint; the old root fails. Root: `D5:12:73:DB:9D:55:F0:A4:…:1A:44`.
+- **Public name.** The live DNS service registered `lumine-ooyb`, then (after off and on) `lumine-shaj`. Staging first,
+  then the switch of the same name to production: the Let's Encrypt chain (`YE2` ← `ISRG Root X2`/`X1`) verifies with the
+  system store. Port 80 of `lumine.local` gives `302` with `Cache-Control: no-store` only with the production certificate
+  (`308` with staging, M2). Chromium without a care-pi root loads the console on the public name with no warning
+  (`connectivity.spec.ts`, `desktop.login.spec.ts`; `phone.ready.spec.ts` in WebKit). Registration → certificate 79 s;
+  the switch staging → production 17 s; each name change is a cutover of the multihost plug (Care down 57–61 s).
+- **Files.** With the public zone in `ALLOWED_HOSTS` of `care_multihost_files_be`, each link names the host of the
+  request, and a file uploaded through one name opens through the other. The lock of lumine (2026.11.1, made before
+  Phase 6) lacked the zone; lumine has it as an operator setting now.
+- **Tailscale.** With `tls.tailscale.manage_daemon: false` the job reuses the owner's login (no install, no `up`), and
+  then refuses the mode: tailscaled holds `100.67.15.72:443` for the serve of the owner, and a pod that publishes there
+  would not start. A probe with the Caddy image of care-pi (`get_certificate tailscale` on `100.67.15.72:8443`) gave the
+  Mac on the tailnet a valid certificate of `lumine.orthrus-bass.ts.net` without `-k`. Step 5 (the phone, simulated)
+  did not run.
+- **Disable, reboot, regression.** Tailscale off leaves tailscaled `Running`. Public off deletes the registration
+  (`NXDOMAIN` within 1 min), turns the plug off, and sends port 80 back to `lumine.local`. Reboot with the public name on:
+  Care on both names after 114 s. Phase 1–5: backup run and verify of the 4 destinations, update check, FE status, a dry
+  run with no changes.
+
+The fixes (staged; 1Password refused each signature; one patch for each in `local/wave8-p6/patches/`, in this order;
+to commit them: `git stash push --staged`, `git am -S local/wave8-p6/patches/000*.patch`, `git stash drop`):
+
+1. `plan`: a cutover of the backend plugs restarts the other changed units (care-caddy) and reloads a changed Caddyfile.
+   Without it, Caddy never got the public site.
+2. `tls.tailscale.manage_daemon` (default `true`): `false` never installs, connects, or disconnects tailscaled.
+3. The Tailscale job stops with `state-conflict` when `tailscale serve`/`funnel` uses 80, 443, or 8443 of the node.
+4. `wait-certificate` waits for a certificate of the configured directory (not the staging one after the switch).
+5. `care-caddy.container` has the label `care-pi.acme-ca`: a switch of the ACME directory restarts Caddy (a reload kept
+   the staging certificate).
+6. The agent does not keep the status read of a cancelled request (false problems for 2 s; `phone.ready` failed).
+
+Decisions of wave 8 (owner informed; override in `00` if wrong):
+
+- To keep 1 production certificate and end with a re-registered id in production, the re-registration ran with staging,
+  and the production switch came after it.
+- `manage_daemon: false` stays in the `config.yaml` of lumine, so a later test cannot log the owner's device out.
+- A Tailscale serve conflict is `state-conflict` with a message (no new problem type, no contract change).
+
+Next steps: (1) the owner decides the Tailscale front (remove the serve of lumine for the test, or the design of `08`
+follow-up 2), then steps 4 and 5 and the second half of both exit criteria; (2) commit the 6 fixes signed; (3) the agent
+adds the names of the device to `ALLOWED_HOSTS` of the multihost plug (follow-up 1); (4) the console names the local name
+of the device on the public card (follow-up 3); (5) Wi-Fi and the cable pull, the offline fallback, a fresh device in
+public mode, F7, when the owner wants them.
