@@ -26,6 +26,8 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test ./...
+      - name: Contract tests through the privileged helper (allow-list check)
+        run: CARE_PI_TEST_HELPER=1 go test ./agent/internal/server
       - name: Phase 4 end-to-end test with make-lock.sh (fake host, offline)
         run: solutions/scripts/e2e-local.sh "${RUNNER_TEMP}/e2e-local"
       - uses: golangci/golangci-lint-action@v9

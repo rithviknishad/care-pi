@@ -369,12 +369,14 @@ func writeFile(p paths.Paths, f render.File, chown bool) error {
 // writeSysctl writes the sysctl file of the pod (docs/connectivity.md, section 4.2) and loads it: systemd-sysctl.service
 // loads each file of /etc/sysctl.d again. care-pi.service cannot write /etc/sysctl.d (ProtectSystem=strict), so there
 // the file goes through a transient unit. The installer writes the same file, so the agent seldom writes it.
+// SysctlScript writes the file $1 from stdin (0644). The helper allows only this script, for paths.SysctlFile.
+const SysctlScript = `set -eu; f="$1"; mkdir -p "${f%/*}"; cat > "$f.tmp"; chmod 0644 "$f.tmp"; mv "$f.tmp" "$f"`
+
 func (x *executor) writeSysctl(ctx context.Context, f render.File) error {
 	err := writeFile(x.o.Paths, f, x.o.Chown)
 	if err != nil && (errors.Is(err, syscall.EROFS) || errors.Is(err, fs.ErrPermission)) {
-		script := `set -eu; f="$1"; mkdir -p "${f%/*}"; cat > "$f.tmp"; chmod 0644 "$f.tmp"; mv "$f.tmp" "$f"`
 		_, err = x.o.Host.Runner.Run(ctx, host.Cmd{Name: "systemd-run", Args: []string{"--wait", "--collect", "--pipe", "--quiet",
-			"--unit=care-pi-sysctl", "--", "/bin/sh", "-c", script, "sh", x.o.Paths.Abs(f.Path)}, Stdin: bytes.NewReader(f.Content)})
+			"--unit=care-pi-sysctl", "--", "/bin/sh", "-c", SysctlScript, "sh", x.o.Paths.Abs(f.Path)}, Stdin: bytes.NewReader(f.Content)})
 		if err != nil {
 			err = fmt.Errorf("cannot write %s: %w", f.Path, err)
 		}

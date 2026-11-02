@@ -56,8 +56,9 @@ Options:
 
 The script keeps the packages and the host settings that install.sh made
 (kernel command line, zram, avahi, journald, host name, apt holds, upgrades).
-It removes the care-pi firewall unit and its nftables table, and the sysctl file
-/etc/sysctl.d/50-care-pi.conf (the setting stays until the next boot).
+It removes the care-pi firewall unit and its nftables table, the privileged
+helper (care-pi-helper.socket and .service) and the system user care-pi, and the
+sysctl file /etc/sysctl.d/50-care-pi.conf (the setting stays until the next boot).
 It keeps tailscale, the Wi-Fi profile care-pi-wifi, and the public name. Before
 the uninstall, run "care-pi tls tailscale disable", "care-pi network wifi remove",
 and "care-pi tls public disable" to remove them.
@@ -113,6 +114,9 @@ stop_care() {
   log "Stop care-pi.service (the console agent)."
   systemctl disable --now care-pi.service 2>/dev/null || true
   rm -f /run/care-pi/api.sock
+  log "Stop the privileged helper (care-pi-helper.socket and care-pi-helper.service)."
+  systemctl disable --now care-pi-helper.socket 2>/dev/null || true
+  systemctl stop care-pi-helper.service 2>/dev/null || true
   log "Stop care.target and care-clock.service."
   systemctl stop care.target care-clock.service 2>/dev/null || true
   # The agent stops the containers through care.target. Wait until each care-*
@@ -149,6 +153,7 @@ remove_units() {
   rm -rf /etc/containers/systemd/care*
   rm -f /etc/systemd/system/care.target /etc/systemd/system/care-clock.service /etc/systemd/system/care-start.service
   rm -f /etc/systemd/system/care-*.timer /etc/systemd/system/care-*.service /etc/systemd/system/care-backup.target
+  rm -f /etc/systemd/system/care-*.socket
   rm -f /etc/systemd/system/var-lib-care*pi-disks-*.mount /etc/systemd/system/var-lib-care*pi-disks-*.automount
   rm -rf /etc/systemd/system/care.target.d /etc/systemd/system/care-*.d
   for link in /etc/systemd/system/*.wants/care*; do
@@ -223,6 +228,18 @@ remove_binary() {
   rm -f /usr/local/bin/care-pi /usr/local/bin/care-pi.new
 }
 
+# remove_user deletes the system user and group care-pi of the privileged helper
+# (Phase 7). It owns no files: the group only opens the socket of the helper.
+remove_user() {
+  if getent passwd care-pi >/dev/null 2>&1; then
+    log "Remove the system user care-pi."
+    userdel care-pi 2>/dev/null || warn "userdel could not remove the user care-pi."
+  fi
+  if getent group care-pi >/dev/null 2>&1; then
+    groupdel care-pi 2>/dev/null || warn "groupdel could not remove the group care-pi."
+  fi
+}
+
 purge_data() {
   log "Delete /etc/care-pi and /var/lib/care-pi."
   # --one-file-system: a backup disk that is still mounted below /var/lib/care-pi/disks keeps its data.
@@ -294,6 +311,7 @@ main() {
   remove_pod
   remove_hooks
   remove_binary
+  remove_user
   if [ "$PURGE" = 1 ]; then
     purge_data
   else

@@ -44,6 +44,12 @@ FIREWALL_UNIT="care-pi-firewall.service"
 FIREWALL_UNIT_FILE="/etc/systemd/system/$FIREWALL_UNIT"
 AGENT_UNIT="care-pi.service"
 AGENT_UNIT_FILE="/etc/systemd/system/$AGENT_UNIT"
+# Phase 7: the privileged helper (docs/console-server.md section 14).
+AGENT_USER="care-pi"
+HELPER_UNIT="care-pi-helper.service"
+HELPER_SOCKET_UNIT="care-pi-helper.socket"
+HELPER_SOCKET="/run/care-pi-helper/helper.sock"
+HELPER_DROPIN="/etc/systemd/system/$AGENT_UNIT.d/60-helper.conf"
 CONSOLE_PORT=8443
 NFT_NOFLUSH_DIR="/run/systemd/system/nftables.service.d"
 JOURNALD_DROPIN="/etc/systemd/journald.conf.d/50-care-pi.conf"
@@ -58,7 +64,7 @@ HOLD_PACKAGES="podman crun netavark aardvark-dns conmon skopeo"
 # The oldest podman that care-pi supports. "care-pi host check" checks the same
 # version. The .pod quadlets need podman 5.0. care-pi is tested with podman 5.4.2.
 MIN_PODMAN=5.4
-STEP_TOTAL=16
+STEP_TOTAL=17
 
 SELF=$0
 
@@ -73,6 +79,7 @@ ASSUME_YES=0
 UNATTENDED=0
 NO_FIREWALL=0
 FIREWALL_DROP=0
+HELPER=0
 NO_AVAHI=0
 NO_APT_HOLD=0
 SKIP_BOOTSTRAP=0
@@ -106,6 +113,7 @@ IS_PI=0
 HOSTNAME_CHANGED=0
 NFT_LEGACY_FOUND=0
 AGENT_CHANGED=0
+HELPER_CHANGED=0
 
 # ---------------------------------------------------------------- output
 
@@ -180,6 +188,10 @@ Options:
                      The first apply starts a rollback timer of 90 s: confirm
                      with "care-pi firewall confirm" from a new SSH session.
                      The script asks first on a terminal without --yes.
+  --helper           Run "care-pi serve --helper": the agent sends each host
+                     command to care-pi-helper.service (root, an allow-list) and
+                     runs with NoNewPrivileges. Phase 7, experimental. The script
+                     always installs the helper and the user care-pi.
   --no-avahi         Do not install or configure avahi (mDNS).
   --no-apt-hold      Do not hold the container packages.
   --skip-bootstrap   Prepare the host, but do not run "care-pi bootstrap".
@@ -192,7 +204,7 @@ Options:
 
 Each option has an environment variable: CARE_PI_VERSION, CARE_PI_HOSTNAME,
 CARE_PI_PRESET, CARE_PI_FE_PROVIDER, CARE_PI_UNATTENDED, CARE_PI_YES,
-CARE_PI_NO_FIREWALL, CARE_PI_FIREWALL_DROP, CARE_PI_NO_AVAHI, CARE_PI_NO_APT_HOLD,
+CARE_PI_NO_FIREWALL, CARE_PI_FIREWALL_DROP, CARE_PI_HELPER, CARE_PI_NO_AVAHI, CARE_PI_NO_APT_HOLD,
 CARE_PI_SKIP_BOOTSTRAP, CARE_PI_BINARY, CARE_PI_IMAGE_BUILD, CARE_PI_DRY_RUN.
 A flag overrides its
 variable. Switch variables accept 1, true, or yes.
@@ -478,6 +490,7 @@ load_env() {
   if is_true "${CARE_PI_YES:-}"; then ASSUME_YES=1; fi
   if is_true "${CARE_PI_NO_FIREWALL:-}"; then NO_FIREWALL=1; fi
   if is_true "${CARE_PI_FIREWALL_DROP:-}"; then FIREWALL_DROP=1; fi
+  if is_true "${CARE_PI_HELPER:-}"; then HELPER=1; fi
   if is_true "${CARE_PI_NO_AVAHI:-}"; then NO_AVAHI=1; fi
   if is_true "${CARE_PI_NO_APT_HOLD:-}"; then NO_APT_HOLD=1; fi
   if is_true "${CARE_PI_SKIP_BOOTSTRAP:-}"; then SKIP_BOOTSTRAP=1; fi
@@ -555,6 +568,10 @@ parse_args() {
         ;;
       --firewall-drop)
         FIREWALL_DROP=1
+        shift
+        ;;
+      --helper)
+        HELPER=1
         shift
         ;;
       --no-avahi)
@@ -675,6 +692,7 @@ ensure_root() {
   if [ "$ASSUME_YES" = 1 ]; then set -- "$@" --yes; fi
   if [ "$NO_FIREWALL" = 1 ]; then set -- "$@" --no-firewall; fi
   if [ "$FIREWALL_DROP" = 1 ]; then set -- "$@" --firewall-drop; fi
+  if [ "$HELPER" = 1 ]; then set -- "$@" --helper; fi
   if [ "$NO_AVAHI" = 1 ]; then set -- "$@" --no-avahi; fi
   if [ "$NO_APT_HOLD" = 1 ]; then set -- "$@" --no-apt-hold; fi
   if [ "$SKIP_BOOTSTRAP" = 1 ]; then set -- "$@" --skip-bootstrap; fi
@@ -861,6 +879,10 @@ confirm_plan() {
     log "  - download the agent ($AGENT_VERSION) and verify its checksum"
   fi
   log "  - install and start care-pi.service (the console on port $CONSOLE_PORT)"
+  log "  - create the system user $AGENT_USER and install $HELPER_SOCKET_UNIT (the privileged helper)"
+  if [ "$HELPER" = 1 ]; then
+    log "  - run care-pi.service with --helper and NoNewPrivileges (experimental)"
+  fi
   if [ "$UNATTENDED" = 1 ]; then
     log "  - run care-pi bootstrap --unattended (host name $HOSTNAME_ARG, preset $PRESET, FE provider $FE_PROVIDER)"
   else
@@ -1949,6 +1971,119 @@ WantedBy=multi-user.target
 EOF
 }
 
+# --- Phase 7: the privileged helper (docs/console-server.md section 14)
+
+helper_socket_unit() {
+  cat <<EOF
+# Managed by care-pi install.sh. Do not edit.
+# The socket of the privileged helper of the care-pi agent. Only root and the
+# group $AGENT_USER can connect. systemd starts $HELPER_UNIT at the first
+# connection, and again after a stop or a crash.
+[Unit]
+Description=care-pi privileged helper socket ($HELPER_SOCKET)
+Documentation=https://github.com/rithviknishad/care-pi
+
+[Socket]
+ListenStream=$HELPER_SOCKET
+SocketUser=root
+SocketGroup=$AGENT_USER
+SocketMode=0660
+DirectoryMode=0755
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target
+EOF
+}
+
+# helper_unit prints care-pi-helper.service. The helper runs as root. It runs only
+# the commands of its allow-list ("care-pi helper"). It has the sandbox of
+# care-pi.service: the same commands ran in care-pi.service before Phase 7.
+helper_unit() {
+  cat <<EOF
+# Managed by care-pi install.sh. Do not edit.
+# The privileged helper of the care-pi agent: "care-pi serve --helper" sends each
+# host command to it. Each request and each refusal is in its journal.
+[Unit]
+Description=care-pi privileged helper (the host commands of care-pi.service)
+Documentation=https://github.com/rithviknishad/care-pi
+Requires=$HELPER_SOCKET_UNIT
+After=$HELPER_SOCKET_UNIT
+
+[Service]
+Type=notify
+ExecStart=$BIN_PATH helper
+Restart=on-failure
+RestartSec=2
+MemoryMax=96M
+OOMScoreAdjust=-100
+ProtectSystem=strict
+ReadWritePaths=/etc/care-pi /var/lib/care-pi /run /etc/containers/systemd /etc/systemd/system /var/lib/containers -/var/cache/containers -/etc/hosts
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+EOF
+}
+
+# helper_dropin prints the drop-in of care-pi.service for --helper. The daemon
+# runs no program of its own: NoNewPrivileges, and only the capabilities for
+# the files of the agent (the postgres-owned backup directories need CAP_CHOWN
+# and CAP_DAC_OVERRIDE). The daemon stays uid 0: the move to the user care-pi
+# waits for the typed file writes of the helper (section 14).
+helper_dropin() {
+  cat <<EOF
+# Managed by care-pi install.sh (--helper). Do not edit.
+[Unit]
+Wants=$HELPER_SOCKET_UNIT
+After=$HELPER_SOCKET_UNIT
+
+[Service]
+ExecStart=
+ExecStart=$BIN_PATH serve --helper
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER
+EOF
+}
+
+ensure_agent_user() {
+  if getent passwd "$AGENT_USER" >/dev/null 2>&1; then
+    return 0
+  fi
+  STEP_CHANGED=1
+  if ! getent group "$AGENT_USER" >/dev/null 2>&1; then
+    run groupadd --system "$AGENT_USER" || die "Cannot create the group $AGENT_USER."
+  fi
+  run useradd --system --gid "$AGENT_USER" --no-create-home --home-dir /nonexistent \
+    --shell /usr/sbin/nologin --comment "care-pi agent" "$AGENT_USER" || die "Cannot create the user $AGENT_USER."
+}
+
+step_helper() {
+  ensure_agent_user
+  write_file "/etc/systemd/system/$HELPER_SOCKET_UNIT" 644 "$(helper_socket_unit)"
+  hs_written=$LAST_WRITE
+  write_file "/etc/systemd/system/$HELPER_UNIT" 644 "$(helper_unit)"
+  if [ "$LAST_WRITE" = 1 ]; then hs_written=1; fi
+  if [ "$HELPER" = 1 ]; then
+    if [ ! -d "${HELPER_DROPIN%/*}" ]; then
+      ensure_dir "${HELPER_DROPIN%/*}" 755 0:0
+    fi
+    write_file "$HELPER_DROPIN" 644 "$(helper_dropin)"
+    if [ "$LAST_WRITE" = 1 ]; then hs_written=1; fi
+  elif [ -e "$HELPER_DROPIN" ]; then
+    STEP_CHANGED=1
+    hs_written=1
+    run rm -f "$HELPER_DROPIN"
+  fi
+  if [ "$hs_written" = 1 ]; then HELPER_CHANGED=1; fi
+  if [ "$hs_written" = 1 ] && [ "$SYSTEMD" = 1 ] && [ "$IMAGE_BUILD" != 1 ]; then
+    run systemctl daemon-reload
+    # A running helper keeps its old binary and unit until a restart.
+    run systemctl try-restart "$HELPER_UNIT" || true
+  fi
+  ensure_service "$HELPER_SOCKET_UNIT"
+}
+
 step_agent_service() {
   if [ "$IMAGE_BUILD" = 1 ]; then
     write_file "$AGENT_UNIT_FILE" 644 "$(care_pi_unit)"
@@ -1979,7 +2114,7 @@ step_agent_service() {
     return 0
   fi
   if systemctl is-active --quiet "$AGENT_UNIT"; then
-    if [ "$as_written" = 1 ] || [ "$AGENT_CHANGED" = 1 ]; then
+    if [ "$as_written" = 1 ] || [ "$AGENT_CHANGED" = 1 ] || [ "$HELPER_CHANGED" = 1 ]; then
       STEP_CHANGED=1
       run systemctl restart "$AGENT_UNIT" || warn "$AGENT_UNIT did not restart. Run: systemctl status $AGENT_UNIT"
     fi
@@ -2262,6 +2397,7 @@ main() {
   step "Hold the container packages" step_holds
   step "Create the directories" step_dirs
   step "Install the agent" step_agent
+  step "Install the privileged helper" step_helper
   step "Install the agent service" step_agent_service
   step "Install the NetworkManager hook" step_nm_hook
   step "Let the pod publish on an absent address" step_sysctl

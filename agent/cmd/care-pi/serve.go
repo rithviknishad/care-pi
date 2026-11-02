@@ -36,6 +36,8 @@ type serveOptions struct {
 	insecureDev  bool
 	fakeHost     bool
 	allowOrigins []string
+	// helper sends each host command through the privileged helper (Phase 7, docs/console-server.md section 14).
+	helper bool
 }
 
 var serveFlags serveOptions
@@ -84,6 +86,11 @@ Never use --insecure-dev on a clinic device.`,
 		svc.Host = host.New(host.Transient{})
 		if global.verbose {
 			svc.Host = host.New(host.Transient{Exec: host.Exec{Log: cmd.ErrOrStderr()}})
+		}
+		if f.helper {
+			// The helper applies the transient units and nsenter itself (host.Transient in "care-pi helper").
+			svc.Host = host.New(host.NewHelperClient(paths.HelperSocket))
+			log.Info("care-pi serve: the host commands go through the helper", "socket", paths.HelperSocket)
 		}
 		if f.fakeHost {
 			svc.Host = host.New(host.NewDev())
@@ -173,6 +180,9 @@ func checkServeFlags(f serveOptions, p paths.Paths) error {
 	if (f.fakeHost || len(f.allowOrigins) > 0) && !f.insecureDev {
 		return errors.New("--fake-host and --allow-origin need --insecure-dev")
 	}
+	if f.helper && f.fakeHost {
+		return errors.New("--helper and --fake-host exclude each other")
+	}
 	if f.insecureDev && (p.Root == "/" || p.Root == "") {
 		return errors.New("--insecure-dev needs --root with a dev directory, for example --root ./.dev-root")
 	}
@@ -212,6 +222,7 @@ func init() {
 	f.StringVar(&serveFlags.listen, "listen", "", "unix://PATH or tcp://HOST:PORT (default: unix:///run/care-pi/api.sock below --root)")
 	f.BoolVar(&serveFlags.insecureDev, "insecure-dev", false, "plain HTTP on a loopback TCP address, for console development only")
 	f.BoolVar(&serveFlags.fakeHost, "fake-host", false, "answer the host commands with plausible output (needs --insecure-dev)")
+	f.BoolVar(&serveFlags.helper, "helper", false, "send each host command through the privileged helper on "+paths.HelperSocket+" (Phase 7)")
 	f.StringArrayVar(&serveFlags.allowOrigins, "allow-origin", nil, "one more origin for unsafe requests (needs --insecure-dev)")
 	rootCmd.AddCommand(serveCmd)
 }

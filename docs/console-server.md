@@ -34,7 +34,7 @@ browser ──https:443──▶ care-caddy ──▶ Care (care-api), the FE bu
 
 ## 2. `care-pi.service`
 
-The installer writes `/etc/systemd/system/care-pi.service`, enables it, and starts it (installer step 13).
+The installer writes `/etc/systemd/system/care-pi.service`, enables it, and starts it (installer step 14).
 `care-pi apply` never writes this unit: an apply must not restart the process that runs the apply.
 `care-pi bootstrap` enables and starts the unit when the file exists.
 
@@ -541,6 +541,105 @@ The agent does not start the timer when the unit is not active (the table is not
 
 **CLI.** `care-pi firewall status [--json]`, `policy accept|drop`, `allow-ssh true|false` (each writes `config.yaml` and
 applies, as `care-pi config set … --apply`), `confirm`, `rollback`.
+
+## 14. Phase 7: the privileged helper (`04` §2)
+
+Before Phase 7, `care-pi serve` ran each host command itself, as root.
+Phase 7 adds a root helper with an allow-list.
+The daemon sends each host command to the helper and runs no program of its own.
+
+### The shape
+
+| Part | Value |
+|---|---|
+| Helper | `care-pi helper` in `care-pi-helper.service` (root, `Type=notify`, `Restart=on-failure`, `MemoryMax=96M`, the sandbox of `care-pi.service`). |
+| Socket | `/run/care-pi-helper/helper.sock`, mode 0660, root:care-pi, from `care-pi-helper.socket` (socket activation: systemd starts the helper at the first connection and after a crash). |
+| User | The system user and group `care-pi` (installer step 13). The group opens the socket. |
+| Daemon | `care-pi serve --helper`. `host.NewHelperClient` implements `host.Runner` and `host.Streamer`, so the service layer is the same. |
+| CLI | `care-pi apply`, the timers, and the other commands of root keep the direct exec (`host.Exec`). |
+| Peer check | The helper reads `SO_PEERCRED` of each connection. It accepts uid 0 and the user `care-pi`. |
+
+The socket is not in `/run/care-pi`: `care-caddy` bind-mounts that directory (the unix socket of the console) and
+runs as root. A helper socket there would give the Caddy container the privileged commands.
+
+### The protocol
+
+One request for each connection, as one JSON line: `{"name", "args", "env", "stdin", "stream"}`.
+The helper answers with JSON lines: one `line` frame for each output line of a stream (`journalctl --follow`), then one
+`done` frame with `stdout`, `code`, `stderr`, or `denied` (the reason of a refusal), or `error`.
+A close of the connection stops the command: the cancel of a job or of an event stream reaches the helper.
+
+### The allow-list
+
+`agent/internal/helper/validate.go` has one rule for each program. A rule checks each argument against the shapes
+that the agent sends: the subcommands, the flags, the unit names (`care*`, the mount units of the backup disks,
+`avahi-daemon`, `systemd-sysctl`, `tailscaled`), the paths (below `/etc/care-pi`, `/var/lib/care-pi`, `/run/care-pi`),
+the image references, and the device names.
+The helper refuses each other program, a terminal command (`care-pi shell`), an unknown environment variable, and a NUL
+byte in an argument.
+The helper does not check the command inside a Care container (the arguments after the container name of
+`podman exec`, and after the image of `podman run`): the daemon owns the data of Care anyway. The helper guards the
+host, not the containers.
+
+| Program | What the helper accepts |
+|---|---|
+| `systemctl` | `start`, `stop`, `restart`, `try-restart`, `reload`, `enable`, `disable`, `daemon-reload`, `reset-failed`, `is-active`, `show`, `list-units`, `list-timers`, `reboot`, `poweroff` on the units above. |
+| `podman` | `ps`, `inspect`, `image` and `secret` subcommands, `pull`, `exec` into a `care-*` container, `run --rm` of the images of the lock (the drills, the FE build), `pod` inspect. |
+| `systemd-run` | Transient units `care-pi-*` with a fixed set of properties, then `podman`, `restic`, `tailscale`, `apt-get`, `apt-mark`, the disk commands, `raspi-config nonint do_wifi_country`, `tee` of `52care-pi.conf`, `care-pi firewall rollback`, or `/bin/sh -c` with one of four constant scripts of the agent (clock, Wi-Fi keyfile, sysctl, Tailscale install), compared byte for byte. |
+| `journalctl` | `--unit` of a Care unit, with `--lines`, `--output`, `--since`, `--after-cursor`, `--follow`. |
+| `restic`, `skopeo`, `sftp` | The subcommands of the backups and of the lock; the repository and key paths below the directories of the agent. |
+| `nmcli`, `iw`, `ip`, `tailscale`, `hostnamectl`, `timedatectl` | The read commands of the network page, and `tailscale up`/`down`/`logout`/`serve` with the arguments of the agent (`--login-server` an https URL). |
+| `apt`, `apt-cache`, `dpkg-query` | The read commands of the updates page. |
+| `lsblk`, `wipefs`, `sfdisk`, `partprobe`, `mkfs.ext4`, `udevadm` | The disk preparation of the backups: one `/dev/sd*`, `/dev/nvme*`, or `/dev/mmcblk*` device. |
+| `nft`, `ss`, `sh` | `nft list ruleset`, the accept of the firewall rollback, `ss -ltnpH`, and `sh -c "command -v raspi-config"`. |
+
+The helper logs each request (`helper: run`, the program, the first arguments, the count, the size of stdin) and each
+refusal (`helper: denied`, the reason) to its journal: `journalctl -u care-pi-helper`. It never logs a stdin (a secret
+goes through stdin).
+
+### Turn it on
+
+The installer installs the helper on each host. `install.sh --helper` (or `CARE_PI_HELPER=1`) also writes the drop-in
+`/etc/systemd/system/care-pi.service.d/60-helper.conf`:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/care-pi serve --helper
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER
+```
+
+The daemon then cannot run a program with more rights than its own, and it keeps only the capabilities for the
+files of the agent (the postgres-owned backup directories need `CAP_CHOWN` and `CAP_DAC_OVERRIDE`).
+Run the installer again without `--helper` to remove the drop-in.
+
+### What remains (the gap to the full split)
+
+The default is off: the daemon runs as root without `--helper` until the lumine exit test of Phase 7 passes.
+The full split of `04` §2 (`User=care-pi`, `ProtectSystem=strict`, `NoNewPrivileges=yes`, an empty
+`CapabilityBoundingSet=`) needs these changes first:
+
+1. Typed file requests in the helper: the daemon writes about 250 files as root today (the rendered tree, the quadlets,
+   the units in `/etc/systemd/system`, the secrets, the state, `/etc/hosts`). A request `write-file {path, mode, owner,
+   content}` with the same path allow-list, and `remove`, `rename`, `chown`.
+2. The files of a backup session (`/run/care-pi/backup/<id>/ssh_config`, the key copies): the helper must write them,
+   because an `ssh_config` controls `ProxyCommand`.
+3. Read access of the user `care-pi` to `/etc/care-pi` (the config, the auth store, the secrets): a group-readable tree,
+   or the reads through the helper.
+4. `/etc/shadow` for the OS password check of the claim (`auth.Shadow`): a request `check-password` in the helper.
+5. The chown of the postgres directories of the drills, through the helper.
+
+### Tests
+
+- `agent/internal/helper/validate_test.go`: each command shape of the agent passes. A table of bad commands (other
+  programs, other units, path escapes, extra flags, shells, environment variables, NUL bytes) is refused.
+  `TestValidateFuzz` puts a hostile argument at each position of good commands: the helper refuses each one, except
+  inside a container (see below).
+- `agent/internal/helper/server_test.go`: a round trip on a temporary socket with the fake executor: output, stdin, an
+  exit code, a refusal, a stream and its cancel, the socket mode, and the journal lines.
+- `CARE_PI_TEST_HELPER=1 go test ./agent/internal/server`: each contract test sends its host commands through the
+  helper and fails on each refusal (a CI step).
 
 ## 15. Phase 7: the Coraza WAF (optional, off by default)
 

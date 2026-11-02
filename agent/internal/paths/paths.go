@@ -125,6 +125,15 @@ const (
 	ApplyLock = "/run/care-pi/apply.lock"
 	// AgentSocket is the socket of "care-pi serve". Caddy is its only client.
 	AgentSocket = "/run/care-pi/api.sock"
+	// HelperSocket is the socket of the privileged helper (Phase 7, care-pi-helper.socket, 0660 root:care-pi). It is
+	// not in RunDir: care-caddy mounts RunDir, and Caddy runs as root in its container.
+	HelperDir    = "/run/care-pi-helper"
+	HelperSocket = "/run/care-pi-helper/helper.sock"
+	// HelperUnit and HelperSocketUnit are the units of the helper (the installer writes them).
+	HelperUnit       = "care-pi-helper.service"
+	HelperSocketUnit = "care-pi-helper.socket"
+	// AgentUser is the system user of the daemon after the privilege split, and the group of HelperSocket.
+	AgentUser = "care-pi"
 	// RunBackupDir holds the files of one restic run (password file, SSH key, S3 credentials). tmpfs.
 	RunBackupDir = "/run/care-pi/backup"
 	// AgentUnit runs "care-pi serve". The installer writes it.

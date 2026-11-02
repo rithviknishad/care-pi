@@ -60,7 +60,7 @@ info "care-pi version: $("${mnt}/usr/local/bin/care-pi" version | head -n 1)"
 check "host name is care" test "$(cat "${mnt}/etc/hostname")" = care
 info "os-release: $(sed -n 's/^PRETTY_NAME="\(.*\)"$/\1/p' "${mnt}/etc/os-release")"
 info "rpi-issue: $(head -n 1 "${mnt}/etc/rpi-issue" 2>/dev/null || echo none)"
-for u in care-firstboot.service care-pi.service care-pi-firewall.service care-pi-led.service care-pi-led.path \
+for u in care-firstboot.service care-pi.service care-pi-firewall.service care-pi-helper.socket care-pi-led.service care-pi-led.path \
 	avahi-daemon.service systemd-timesyncd.service apt-daily.timer apt-daily-upgrade.timer NetworkManager.service \
 	cloud-init-main.service cloud-final.service; do
 	state="$(systemctl --root="${mnt}" is-enabled "${u}" 2>/dev/null || true)"
@@ -77,6 +77,7 @@ for f in etc/rpi/swap.conf.d/50-care-pi.conf etc/systemd/journald.conf.d/50-care
 	usr/local/lib/care-pi/care-firstboot usr/local/lib/care-pi/care-pi-led; do
 	check "file /${f}" test -f "${mnt}/${f}"
 done
+check "system user care-pi (the group of the helper socket, Phase 7)" grep -q '^care-pi:' "${mnt}/etc/passwd"
 check "NetworkManager hook /etc/NetworkManager/dispatcher.d/90-care-pi is executable" test -x "${mnt}/etc/NetworkManager/dispatcher.d/90-care-pi"
 check "avahi allow-interfaces is set" grep -q '^allow-interfaces=' "${mnt}/etc/avahi/avahi-daemon.conf"
 check "/var/log/journal is 2755" test "$(stat -c %a "${mnt}/var/log/journal")" = 2755

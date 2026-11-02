@@ -13,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -29,6 +30,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/apply"
 	"github.com/rithviknishad/care-pi/agent/internal/auth"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
+	"github.com/rithviknishad/care-pi/agent/internal/helper"
 	"github.com/rithviknishad/care-pi/agent/internal/host"
 	"github.com/rithviknishad/care-pi/agent/internal/hostcheck"
 	"github.com/rithviknishad/care-pi/agent/internal/jobs"
@@ -111,6 +113,11 @@ func newEnv(t *testing.T) *env {
 		host.Response{Out: "care-caddy\tUp 1 minute\ncare-api\tUp 5 minutes (healthy)\n"})
 	e.fake.On("timedatectl show --property NTPSynchronized --value", host.Response{Out: "yes\n"})
 	h := host.New(e.fake)
+	// CARE_PI_TEST_HELPER=1 runs each host command of the tests through the privileged helper (Phase 7): the contract
+	// tests then also check the allow-list of the helper.
+	if os.Getenv("CARE_PI_TEST_HELPER") == "1" {
+		h = helperHost(t, e.fake, root)
+	}
 	am := auth.New(auth.Options{Paths: p, Now: e.clock.now, Params: auth.Argon2Params{MemoryKiB: 64, Time: 1, Threads: 1}})
 	jm := &jobs.Manager{Paths: p, Now: e.clock.now, LockWait: 200 * time.Millisecond, CancelPoll: 20 * time.Millisecond}
 	e.svc = &service.Service{Paths: p, SolutionsDir: "../render/testdata/solutions", Host: h,
@@ -132,6 +139,31 @@ func newEnv(t *testing.T) *env {
 		e.hs.Close()
 	})
 	return e
+}
+
+// helperHost serves a helper with the fake on a socket of a short temporary directory and returns a Host whose
+// commands go through it.
+func helperHost(t *testing.T, f *host.Fake, root string) *host.Host {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "cph")
+	must(t, err)
+	sock := filepath.Join(dir, "h.sock")
+	l, err := helper.Listener(sock)
+	must(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	srv := &helper.Server{Exec: f, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Root: root, Denied: func(c host.Cmd, err error) {
+		t.Errorf("the helper refused a command of the agent: %s: %v", c.String(), err)
+	}}
+	done := make(chan error, 1)
+	go func() { done <- srv.Serve(ctx, l) }()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Logf("helper: %v", err)
+		}
+		_ = os.RemoveAll(dir)
+	})
+	return host.New(host.NewHelperClient(sock))
 }
 
 func must(t *testing.T, err error) {
