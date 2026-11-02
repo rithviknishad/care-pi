@@ -64,6 +64,9 @@
 | S58 | Coraza WAF (`01` §5) | `coraza-caddy` v2.6.2 in `images/caddy/Containerfile` (the Caddy binary grows from 25 to 60 MiB). The CRS comes from the module (`load_owasp_crs`, embedded CRS v4), not from files in `/etc/caddy/crs`. `security.waf: {enabled: false, mode: detect\|block, paranoia: 1-4}` renders `coraza_waf` on `@api` only; `care-caddy` gets `MemoryMax=256M` when it is on. Detect mode logs to stdout. The apply refuses `enabled: true` when the Caddy image of the target lacks the module (`podman run --rm --network none <image> caddy list-modules`; also the staging of an update and a rollback; review m2). |
 | S59 | Headscale (O4) | Both are supported; **Tailscale SaaS is the default**. `tls.tailscale.control_url` (an `https` URL) adds `--login-server` to `tailscale up`; the `.ts.net` check of the host name and the `tskey-` check of the auth key apply only without it. |
 | S60 | Local-CA rotation (Phase 7) | `POST /tls/local-ca/rotate` (job `tls-local-ca-rotate`, CLI `care-pi tls local-ca rotate`): a new root with a new key; the previous root stays at `ca/root.prev.crt`, and the certificate page shows both fingerprints for 7 days with the banner "re-install the certificate on every device". Caddy gets a new intermediate. |
+| S61 | Client address over Tailscale | tailscaled masquerades forwarded traffic, so every tailnet client reaches Care as the pod address. Caddy on the Tailscale listener sets `X-Forwarded-For` from the Tailscale WhoIs identity (the local API). The agent keys rate limits and lockouts on it only for that listener. |
+| S62 | Maintenance page on `restart` | Every path that stops `care-api` (cutover and `restart`) shows the maintenance page. A restart is about 1 min of page instead of 502. |
+| S63 | `care-api` cap | `small-clinic` 576M/128M, `busy-counter` 832M/128M (measured peaks 487–491 MiB at 512M). `solo` stays 320M/64M. |
 
 ## B. PROPOSED — please confirm or override
 
