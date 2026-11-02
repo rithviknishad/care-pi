@@ -1,0 +1,73 @@
+# The docs site (docs/releasing.md, "The docs site"). docs/site/build.sh assembles the pages in
+# .docs-site/ (docs/ and two files of plans/) and runs "mkdocs build" with this file.
+site_name: care-pi
+site_description: Care on a Raspberry Pi or a small Linux host. The guide for operators and developers.
+repo_url: https://github.com/rithviknishad/care-pi
+edit_uri: ""
+docs_dir: ../../.docs-site
+site_dir: ../../site
+use_directory_urls: false
+exclude_docs: |
+  *.go
+  *.sh
+  site/
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - search.highlight
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      toggle: {icon: material/weather-night, name: Dark mode}
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      toggle: {icon: material/weather-sunny, name: Light mode}
+plugins:
+  - search
+markdown_extensions:
+  - tables
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+validation:
+  # The pages link to files of the repository (plans/, agent/) that are not pages of the site.
+  links:
+    not_found: info
+    unrecognized_links: info
+    absolute_links: info
+nav:
+  - Home: README.md
+  - Operator guide:
+      - Quick start (clinic): quickstart-clinic.md
+      - Install with the script: install.md
+      - The Raspberry Pi image: image.md
+      - Connectivity and the certificate: connectivity.md
+      - Backups and restore: backups.md
+      - Updates and solutions: solutions.md
+      - Configuration: config.md
+      - Telemetry: telemetry.md
+      - Troubleshooting (doctor): troubleshooting.md
+  - Developer guide:
+      - Architecture: developer/architecture.md
+      - Plans: developer/plans.md
+      - The agent (console server): console-server.md
+      - Apply: apply.md
+      - The console: console-ui.md
+      - The FE builds: fe.md
+      - The API contract: api/contract.md
+      - API reference: api/reference.md
+      - The DNS service: dns-service.md
+      - Releasing: releasing.md

@@ -35,3 +35,7 @@ console/playwright-report/
 image/out/
 # cloudflare wrangler local state
 .wrangler/
+
+# the docs site (docs/site/build.sh)
+/.docs-site/
+/site/
