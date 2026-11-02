@@ -262,6 +262,11 @@ Phase 7 (O4): the Tailscale service is the default; a self-hosted control server
 - Each `tailscale up` of the job then has `--login-server=<url>`. `--reset` sets each flag that is not given to its
   default, so the agent gives the flag at each `up`. An empty `control_url` (`--control-url ""`) goes back to the
   Tailscale service.
+- A new control server on a connected `tailscaled` (the request changes `control_url`): the job logs in again with
+  `tailscale up --reset --force-reauth` (`tailscaled` refuses another `--login-server` without it), with the key or
+  with a new login URL. The device leaves the old tailnet. With `tls.tailscale.manage_daemon: false`, the job stops
+  with `state-conflict`: set the control server yourself, then set `tls.tailscale.control_url` with
+  `care-pi config set`. The same `control_url` again runs no `tailscale up`.
 - A pre-auth key of Headscale (`headscale preauthkeys create`) has no `tskey-` prefix: the agent checks the prefix only
   without a control server.
 - The MagicDNS name is below the `base_domain` of the server, not `ts.net`. `tls.tailscale.hostname` must end in `.ts.net`

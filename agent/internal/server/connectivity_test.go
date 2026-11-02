@@ -570,6 +570,107 @@ func TestTailscaleServePort(t *testing.T) {
 	e.jobOK(e.do("PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": true, "auth_key": nil}))
 }
 
+// TestTailscaleControlURLChange (m3 of the Phase 7 review): a change of the control server on a connected tailscaled
+// is not only saved: the job logs in again with "tailscale up --reset --force-reauth" (and --login-server for a
+// self-hosted server); without a key, it waits until tailscaled leaves the old login. The same URL runs no up.
+func TestTailscaleControlURLChange(t *testing.T) {
+	e, _ := readyConnEnv(t)
+	e.svc.IPs = netinfoTailscale("192.168.1.10", "100.101.102.103")
+	e.fake.On("tailscale version", host.Response{Out: "1.104.1\n"})
+	e.fake.On("tailscale serve status --json", host.Response{Out: `{}`})
+	saas := tailscale.StatusJSON(tailscale.StateRunning, "")
+	hs := strings.ReplaceAll(saas, "tail1234.ts.net", "hs.example.org")
+	var mu sync.Mutex
+	status := []string{saas}
+	next := e.fake.Hook
+	e.fake.Hook = func(c host.Cmd, stdin []byte) (host.Response, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		line := c.String()
+		switch {
+		case line == "tailscale status --json":
+			out := status[0]
+			if len(status) > 1 {
+				status = status[1:]
+			}
+			return host.Response{Out: out}, true
+		case strings.HasPrefix(line, "tailscale up ") && strings.Contains(line, "--login-server=https://hs.example.org"):
+			status = []string{hs}
+		case strings.Contains(line, "-- tailscale up ") && !strings.Contains(line, "--login-server"):
+			status = []string{saas, tailscale.StatusJSON(tailscale.StateNeedsLogin, "https://login.tailscale.com/a/x"), saas}
+		}
+		return next(c, stdin)
+	}
+
+	// Connected, no change: no tailscale up.
+	e.jobOK(e.do("PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": true, "auth_key": nil}))
+	if got := e.fake.Filter("tailscale up", "systemd-run --collect --quiet --unit=care-pi-tailscale-up"); len(got) != 0 {
+		t.Fatalf("up without a change %q", got)
+	}
+	// A self-hosted control server: a new login with the key.
+	e.jobOK(e.do("PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": true, "auth_key": "0123abcd", "control_url": "https://hs.example.org"}))
+	up := e.fake.Filter("tailscale up")
+	if len(up) != 1 || !strings.Contains(up[0], "--reset --login-server=https://hs.example.org --force-reauth --auth-key=file:") {
+		t.Fatalf("up %q", up)
+	}
+	cfg, _ := config.Load(e.p.Abs(paths.ConfigFile))
+	if cfg.TLS.Tailscale.ControlURL != "https://hs.example.org" || cfg.TLS.Tailscale.Hostname != "care.hs.example.org" {
+		t.Fatalf("config %+v", cfg.TLS.Tailscale)
+	}
+	// The same URL again: no new login.
+	e.fake.Calls = nil
+	e.jobOK(e.do("PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": true, "auth_key": nil, "control_url": "https://hs.example.org"}))
+	if got := e.fake.Filter("tailscale up", "systemd-run --collect --quiet --unit=care-pi-tailscale-up"); len(got) != 0 {
+		t.Fatalf("up for the same URL %q", got)
+	}
+	// Back to the Tailscale service without a key: a login in the browser; the job waits for the new login.
+	e.fake.Calls = nil
+	e.jobOK(e.do("PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": true, "auth_key": nil, "control_url": ""}))
+	start := e.fake.Filter("systemd-run --collect --quiet --unit=care-pi-tailscale-up")
+	if len(start) != 1 || !strings.HasSuffix(start[0], "--reset --force-reauth --timeout=15m0s") || strings.Contains(start[0], "--login-server") {
+		t.Fatalf("login %q", start)
+	}
+	// After the start of the login: the old login (refused), the login URL, then the new login.
+	polls, started := 0, false
+	for _, c := range e.fake.Calls {
+		started = started || strings.HasPrefix(c, "systemd-run --collect --quiet --unit=care-pi-tailscale-up")
+		if started && c == "tailscale status --json" {
+			polls++
+		}
+	}
+	if polls != 3 {
+		t.Fatalf("the job did not wait for the new login: %d status calls after the start", polls)
+	}
+	cfg, _ = config.Load(e.p.Abs(paths.ConfigFile))
+	if cfg.TLS.Tailscale.ControlURL != "" || cfg.TLS.Tailscale.Hostname != "care.tail1234.ts.net" {
+		t.Fatalf("config %+v", cfg.TLS.Tailscale)
+	}
+}
+
+// TestTailscaleControlURLUnmanaged (m3 of the Phase 7 review): with tls.tailscale.manage_daemon false, a new control
+// server on a connected tailscaled is a state-conflict: care-pi does not change the daemon of the operator.
+func TestTailscaleControlURLUnmanaged(t *testing.T) {
+	e, _ := readyConnEnv(t)
+	r := e.do("GET", "/api/v1/config", nil)
+	e.want(e.do("PATCH", "/api/v1/config", map[string]any{"tls": map[string]any{"tailscale": map[string]any{"manage_daemon": false}}},
+		header("Content-Type", "application/merge-patch+json"), header("If-Match", r.header.Get("ETag"))), 200, "")
+	e.fake.On("tailscale version", host.Response{Out: "1.104.1\n"})
+	e.fake.On("tailscale status --json", host.Response{Out: tailscale.StatusJSON(tailscale.StateRunning, "")})
+	r = e.do("PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": true, "auth_key": nil, "control_url": "https://hs.example.org"})
+	e.want(r, 202, "")
+	j := e.waitJob(r.json(t)["id"].(string))
+	if j.State != jobs.StateFailed || !strings.HasSuffix(j.Error.Type(), "state-conflict") || !strings.Contains(j.Error.Detail, "not managed") ||
+		!strings.Contains(j.Error.Detail, "https://hs.example.org") {
+		t.Fatalf("job %s %+v", j.State, j.Error)
+	}
+	if got := e.fake.Filter("tailscale up", "systemd-run --collect --quiet --unit=care-pi-tailscale-up"); len(got) != 0 {
+		t.Fatalf("up of an unmanaged tailscaled %q", got)
+	}
+	if cfg, _ := config.Load(e.p.Abs(paths.ConfigFile)); cfg.TLS.Tailscale.ControlURL != "" || cfg.TLS.Tailscale.Enabled {
+		t.Fatalf("config %+v", cfg.TLS.Tailscale)
+	}
+}
+
 // TestTailscaleServeStatusFails (B1 of the Phase 7 review): when "tailscale serve status --json" fails (for example a
 // refusal of the helper), the job fails and names the command; it does not skip the check of the ports.
 func TestTailscaleServeStatusFails(t *testing.T) {

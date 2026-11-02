@@ -104,6 +104,7 @@ func TestAllowed(t *testing.T) {
 		cmd("tailscale", "up", "--hostname=care", "--accept-dns=false", "--accept-routes=false", "--reset", "--login-server=https://hs.example.org", "--auth-key=file:/run/care-pi/tailscale-auth-key", "--timeout=2m0s"),
 		cmd("tailscale", "status", "--json"),
 		cmd("tailscale", "serve", "status", "--json"),
+		cmd("tailscale", "up", "--hostname=care", "--accept-dns=false", "--accept-routes=false", "--reset", "--login-server=https://hs.example.org", "--force-reauth", "--auth-key=file:/run/care-pi/tailscale-auth-key", "--timeout=2m0s"),
 		cmd("hostnamectl", "set-hostname", "sunrise"),
 		cmd("apt", "list", "--upgradable"),
 		cmd("apt-cache", "policy", "podman", "crun"),

@@ -700,7 +700,8 @@ func (s *Service) StartTailscale(ctx context.Context, req TailscaleRequest, sour
 	return s.Jobs.Start(ctx, jobs.Spec{Kind: jobs.KindTLSTailscaleEnrol, Source: source, Reason: req.Reason, Lock: true, Cancellable: true},
 		func(ctx context.Context, rec *jobs.Recorder) (any, error) {
 			if req.Enabled {
-				return s.tailscaleEnable(ctx, rec, req, cfg.Identity.Hostname, controlURL, cfg.TLS.Tailscale.DaemonManaged())
+				return s.tailscaleEnable(ctx, rec, req, cfg.Identity.Hostname, controlURL, controlURL != cfg.TLS.Tailscale.ControlURL,
+					cfg.TLS.Tailscale.DaemonManaged())
 			}
 			return s.tailscaleDisable(ctx, rec, cfg.TLS.Tailscale.DaemonManaged())
 		})
@@ -718,10 +719,22 @@ func (s *Service) saveTailscale(st *tailscale.Status) {
 // controlURLRE is the pattern of tls.tailscale.control_url in the config schema.
 var controlURLRE = regexp.MustCompile(`^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^\s]*)?$`)
 
+// controlServer names a control URL in a message: "" is the Tailscale service.
+func controlServer(controlURL string) string {
+	if controlURL == "" {
+		return "the Tailscale service"
+	}
+	return controlURL
+}
+
 // unmanagedNote is the end of the messages when tls.tailscale.manage_daemon is false.
 const unmanagedNote = "tls.tailscale.manage_daemon is false: care-pi does not install, connect, or disconnect tailscaled"
 
-func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req TailscaleRequest, hostname, controlURL string, managed bool) (any, error) {
+// tailscaleEnable connects tailscaled when it is not connected. A connected tailscaled keeps its settings, except when
+// the request changes the control server (urlChanged, review m3 of Phase 7): then a managed tailscaled logs in again
+// ("tailscale up --reset --force-reauth", with --login-server for a self-hosted server), and an unmanaged one stops the
+// job with state-conflict, because only its operator can change it.
+func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req TailscaleRequest, hostname, controlURL string, urlChanged, managed bool) (any, error) {
 	tc := s.tailscaleClient()
 	if err := step(rec, "tailscale-install: install tailscale from the repository of Tailscale", func() error {
 		if !managed {
@@ -745,7 +758,16 @@ func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req T
 		return nil, err
 	}
 	cur, _ := tc.Status(ctx)
-	if cur == nil || cur.BackendState != tailscale.StateRunning {
+	relogin := cur != nil && cur.BackendState == tailscale.StateRunning && urlChanged
+	if relogin && !managed {
+		return nil, problem.New(problem.StateConflict, "tailscaled is not managed, so care-pi does not change its control server to "+
+			controlServer(controlURL)+". Set the control server yourself (tailscale up --login-server=… --force-reauth), then turn Tailscale on "+
+			"again without a control server in the request, or set tls.tailscale.control_url with care-pi config set. "+unmanagedNote+".")
+	}
+	if relogin {
+		tc.ForceReauth = true
+	}
+	if cur == nil || cur.BackendState != tailscale.StateRunning || relogin {
 		if !managed {
 			state := "not running"
 			if cur != nil && cur.BackendState != "" {
@@ -756,6 +778,9 @@ func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req T
 		if err := step(rec, "tailscale-up: connect to the tailnet", func() error {
 			if controlURL != "" {
 				rec.Logf("control server %s", controlURL)
+			}
+			if relogin {
+				rec.Logf("tailscaled is connected (%s); a new login moves it to the control server %s", cur.DNSName, controlServer(controlURL))
 			}
 			if req.AuthKey != "" {
 				return tc.UpWithKey(ctx, hostname, controlURL, req.AuthKey)
@@ -775,6 +800,9 @@ func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req T
 	var st *tailscale.Status
 	if err := step(rec, "tailscale-login: wait for the login", func() error {
 		said := false
+		// A new login without a key starts in a transient unit: the old login stays Running for a moment, so the wait
+		// takes a Running state only after tailscaled left it.
+		left := !relogin || req.AuthKey != ""
 		var err error
 		st, err = tc.WaitFor(ctx, timeout, func(x *tailscale.Status) {
 			s.saveTailscale(x)
@@ -783,7 +811,12 @@ func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req T
 				rec.Logf("open the login URL in Settings > Connectivity, or run: care-pi tls tailscale status")
 				said = true
 			}
-		}, func(x *tailscale.Status) bool { return x.BackendState == tailscale.StateRunning && x.DNSName != "" })
+		}, func(x *tailscale.Status) bool {
+			if x.BackendState != tailscale.StateRunning {
+				left = true
+			}
+			return left && x.BackendState == tailscale.StateRunning && x.DNSName != ""
+		})
 		if err != nil {
 			if st != nil && st.BackendState == tailscale.StateNeedsLogin {
 				return problem.New(problem.TailscaleLoginRequired, "Nobody logged in within "+timeout.String()+". Turn Tailscale on again for a new login URL.")

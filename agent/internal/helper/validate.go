@@ -799,7 +799,7 @@ func tailscaleRule(args []string) error {
 	for _, a := range args[1:] {
 		k, v, _ := strings.Cut(a, "=")
 		switch {
-		case a == "--accept-dns=false" || a == "--accept-routes=false" || a == "--reset":
+		case a == "--accept-dns=false" || a == "--accept-routes=false" || a == "--reset" || a == "--force-reauth":
 		case k == "--hostname" && hostnameRE.MatchString(v):
 		case k == "--login-server" && ctlURLRE.MatchString(v):
 		case k == "--auth-key" && v == "file:"+paths.RunDir+"/tailscale-auth-key":

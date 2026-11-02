@@ -125,6 +125,18 @@ type Client struct {
 	RunDir string
 	// Poll is the interval of the status polls (default 2 s).
 	Poll time.Duration
+	// ForceReauth adds "--force-reauth" to "tailscale up": a connected tailscaled changes its control server only with
+	// a new login ("can't change --login-server without --force-reauth").
+	ForceReauth bool
+}
+
+// upArgs are UpArgs, with "--force-reauth" when the client changes the control server of a connected tailscaled.
+func (c Client) upArgs(hostname, controlURL string) []string {
+	args := UpArgs(hostname, controlURL)
+	if c.ForceReauth {
+		args = append(args, "--force-reauth")
+	}
+	return args
 }
 
 func (c Client) run(ctx context.Context, args ...string) ([]byte, error) {
@@ -209,7 +221,7 @@ func (c Client) UpWithKey(ctx context.Context, hostname, controlURL, authKey str
 		return err
 	}
 	defer func() { _ = os.Remove(f) }()
-	args := append(UpArgs(hostname, controlURL), "--auth-key=file:"+f, "--timeout=2m")
+	args := append(c.upArgs(hostname, controlURL), "--auth-key=file:"+f, "--timeout=2m")
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	if _, err := c.run(ctx, args...); err != nil {
@@ -223,7 +235,7 @@ func (c Client) UpWithKey(ctx context.Context, hostname, controlURL, authKey str
 func (c Client) StartLogin(ctx context.Context, hostname, controlURL string) error {
 	_, _ = c.Runner.Run(ctx, host.Cmd{Name: "systemctl", Args: []string{"stop", UpUnit + ".service"}})
 	args := append([]string{"--collect", "--quiet", "--unit=" + UpUnit, "--", "tailscale"},
-		append(UpArgs(hostname, controlURL), "--timeout="+UpTimeout.String())...)
+		append(c.upArgs(hostname, controlURL), "--timeout="+UpTimeout.String())...)
 	if _, err := c.Runner.Run(ctx, host.Cmd{Name: "systemd-run", Args: args}); err != nil {
 		return fmt.Errorf("cannot start tailscale up: %w", err)
 	}

@@ -181,3 +181,19 @@ func equalInts(a, b []int) bool {
 	}
 	return true
 }
+
+// TestForceReauth (m3 of the Phase 7 review): a connected tailscaled changes its control server only with a new login.
+func TestForceReauth(t *testing.T) {
+	f := host.NewFake()
+	c := Client{Runner: f, ForceReauth: true}
+	if err := c.StartLogin(context.Background(), "care", "https://hs.example.org"); err != nil {
+		t.Fatal(err)
+	}
+	got := f.Filter("systemd-run")
+	if len(got) != 1 || !strings.HasSuffix(got[0], "--reset --login-server=https://hs.example.org --force-reauth --timeout=15m0s") {
+		t.Fatalf("login %q", got)
+	}
+	if strings.Contains(strings.Join(UpArgs("care", ""), " "), "force-reauth") {
+		t.Fatal("UpArgs must not force a new login")
+	}
+}

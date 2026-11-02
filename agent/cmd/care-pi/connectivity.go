@@ -193,7 +193,8 @@ With --auth-key-stdin, the auth key comes from the standard input. Without it, t
 open Settings > Connectivity in the console, or run "care-pi tls tailscale status", for the login URL.
 The tailnet must have MagicDNS and HTTPS Certificates on (the DNS page of the Tailscale admin console).
 --control-url sets a self-hosted control server (Headscale) for "tailscale up --login-server"; "" goes back to
-the Tailscale service. Without the flag, the value of tls.tailscale.control_url stays.`,
+the Tailscale service. Without the flag, the value of tls.tailscale.control_url stays. A new value on a connected
+tailscaled logs in again ("tailscale up --reset --force-reauth"); with tls.tailscale.manage_daemon false, it fails.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		svc := newService(cmd)

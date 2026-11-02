@@ -7080,7 +7080,9 @@ export interface components {
              * @description Phase 7 (O4). The URL of a self-hosted control server (Headscale): `tailscale up --login-server`. An empty string
              *     goes back to the Tailscale service. `null` or absent keeps `tls.tailscale.control_url`. The enrol job writes it
              *     to `config.yaml`. A control server gives a certificate only when it supports `tailscale cert`; else the job
-             *     fails with `tailscale-https-disabled`.
+             *     fails with `tailscale-https-disabled`. A new value on a connected `tailscaled` logs in again
+             *     (`tailscale up --reset --force-reauth`): the device leaves the old tailnet. With
+             *     `tls.tailscale.manage_daemon: false`, a new value on a connected `tailscaled` fails with `state-conflict`.
              * @example https://headscale.example.org
              */
             control_url?: string | null;
