@@ -11,15 +11,18 @@ import (
 const (
 	CredentialPerMinute = 10
 	PublicPerMinute     = 60
-	SessionPerMinute    = 300
-	AddressFailures     = 5
-	AddressWindow       = 15 * time.Minute
-	AddressLock         = 15 * time.Minute
-	ClaimFailures       = 5
-	ClaimLock           = 15 * time.Minute
-	AccountFailures     = 10
-	AccountLockFirst    = time.Minute
-	AccountLockMax      = 60 * time.Minute
+	// PublicPerMinuteShared is the limit of public reads for the shared address of the Tailscale site (S61): each
+	// client of the tailnet has it. The tailnet admits these clients; the credential limits stay the same.
+	PublicPerMinuteShared = 600
+	SessionPerMinute      = 300
+	AddressFailures       = 5
+	AddressWindow         = 15 * time.Minute
+	AddressLock           = 15 * time.Minute
+	ClaimFailures         = 5
+	ClaimLock             = 15 * time.Minute
+	AccountFailures       = 10
+	AccountLockFirst      = time.Minute
+	AccountLockMax        = 60 * time.Minute
 )
 
 type bucket struct {

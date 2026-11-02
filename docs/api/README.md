@@ -56,6 +56,8 @@ Other transport rules:
 - The agent listens on the unix socket `/run/care-pi/api.sock`. Caddy is the only client.
 - Caddy sets `X-Forwarded-For` to the client address. Caddy removes that header from a client,
   so the agent can trust it. The rate limits and the session records use this address.
+- Caddy sets `X-Care-Pi-Listener` to the site of the request: `local`, `public`, or `tailscale` (S61). Caddy replaces
+  the header of a client. On the Tailscale site, the client address can be the shared address `tailscale` (section 4).
   Caddy keeps the `Host` header with the port (for example `care.local:8443`). The `Origin` check uses it.
 - CORS: none. The agent sends no `Access-Control-*` header on any response.
 - Bodies are JSON. Errors are `application/problem+json` (section 7). The agent rejects a body larger than 1 MiB.
@@ -271,7 +273,7 @@ The promise resolves only when the browser trusts the certificate of that host. 
 | Failed credentials (same operations) | client address | 5 in 15 minutes: the address is locked for 15 minutes | `429 locked-out` |
 | Failed claims | all addresses together | 5: the claim is locked for 15 minutes (07 §4.2) | `429 locked-out` |
 | Failed passwords of the account: login, reauth, password change | operator account | 10 failures in a row: the account is locked for 1 minute; each next failure doubles the lock, up to 60 minutes; a success resets the count | `429 locked-out` |
-| Public reads: `/_care-pi/status`, `/health`, the public `/tls/*` operations | client address | 60 each minute | `429 rate-limited` |
+| Public reads: `/_care-pi/status`, `/health`, the public `/tls/*` operations | client address | 60 each minute (600 for the shared address `tailscale`) | `429 rate-limited` |
 | Requests with a session | session | 300 each minute | `429 rate-limited` |
 | Open SSE streams | session, agent | 4 for each session, 16 in total | `429 rate-limited` |
 
@@ -287,6 +289,13 @@ Rules:
 
 The agent keeps the address locks, the claim lock, and the failed attempts in a file
 (`state/auth-locks.json`), so a restart of the agent does not remove them.
+
+The Tailscale site (S61, `docs/connectivity.md` section 4.7): `tailscaled` masquerades the devices of the tailnet, so
+Caddy sees one address for all of them. A request with `X-Care-Pi-Listener: tailscale` and an address that is not a
+tailnet address gets the client address `tailscale`. For this shared address, a failed password, claim secret, or
+recovery code does not count for the address lock; the account lock and the claim lock stay. A failed TOTP code still
+counts. The public reads have 600 each minute. A request of the Tailscale site with a tailnet address
+(`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) keeps its address and the limits of one address.
 
 ## 5. The setup state machine
 

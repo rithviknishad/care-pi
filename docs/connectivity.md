@@ -278,19 +278,56 @@ Phase 7 (O4): the Tailscale service is the default; a self-hosted control server
   version (headscale issue 2137). Use the public name or the local CA meanwhile.
 - The login link (no key) comes from the control server, as with the Tailscale service.
 
-### 4.5 Use it
+### 4.5 A tailscaled of the operator
+
 A `tailscaled` that is already connected (`BackendState: Running`) stays as it is: the job does not install and does
 not run `tailscale up` (`--reset` would change the settings of the operator). Set `tls.tailscale.manage_daemon: false`
 when the operator manages `tailscaled` (for example a host that was in a tailnet before care-pi): then the job never
 installs or connects (it needs `Running`), and the off job never runs `tailscale down` or `tailscale logout`.
 `care-pi config set tls.tailscale.manage_daemon=false` before the first enable.
 
-### 4.4 Use it
+### 4.6 Use it
 
 Install the Tailscale app on the phone or the laptop, and log in to the tailnet of the clinic.
 Open `https://<host>.<tailnet>.ts.net`. There is no certificate warning and no root CA install.
 The device of the doctor needs Tailscale on. A key of an auth key or a login expires (the default is 180 days):
 turn off the key expiry of the care-pi device in the admin console of Tailscale.
+
+### 4.7 The client address (S61)
+
+`tailscaled` masquerades the packets that it forwards from `tailscale0` to another interface (the chain
+`ts-postrouting`). The pod publishes its ports on the Tailscale address, so each request to the Tailscale name is a
+forwarded packet. Thus Caddy sees the address of the pod bridge (`10.88.0.1`) for each device of the tailnet.
+
+Caddy cannot find the device. The Tailscale module of Caddy (`tailscale_auth`) asks `tailscaled` who has the address of
+the connection (WhoIs), and that address is the bridge. In the test of wave 9, `tailscaled` answered "peer not found",
+and `tailscale_auth` gave `401` to each request. The module also gives the user, not the device. So care-pi does not
+use it. The agent cannot find the device either: it gets the request from Caddy.
+
+What care-pi does:
+
+- Each site of Caddy sends the header `X-Care-Pi-Listener` to the agent: `local`, `public`, or `tailscale`. Caddy
+  replaces the header of a client, so a client cannot set it. The dev listener (`--insecure-dev`) ignores the header.
+- A request of the Tailscale site gets the client address `tailscale` when its address is not a tailnet address
+  (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`). The journal of `care-pi.service`, `care-pi auth sessions`, and the console
+  show `tailscale`.
+- For the address `tailscale`, a failed password, claim secret, or recovery code does not lock the address. The account
+  lock stays: 10 failed passwords in a row lock the account. The claim lock stays. A failed TOTP code still counts:
+  5 failed codes (each needs the correct password) lock the Tailscale site for 15 minutes.
+- The address `tailscale` has 600 public reads each minute (`/_care-pi/status`, `/health`, the root CA), not 60. The
+  limit of 10 credential requests each minute is the same, and each device of the tailnet uses it.
+- A request of the Tailscale site with a tailnet address (a `tailscaled` that does not masquerade) keeps its address
+  and the limits of one address.
+
+Limits that stay:
+
+- The throttles of Care (Django REST framework) see one client for the tailnet.
+- A device of the tailnet that opens the LAN address or the public name through a subnet router also comes from the
+  bridge address. These sites keep the address lock for it.
+
+To get the address of each device, `tailscaled` must not masquerade. `tailscale set --snat-subnet-routes=false` can
+remove the rule, but this is not tested, and it also changes the subnet routes of the node. The agent does not change
+this setting.
 
 ## 5. The names, the canonical host, and multihost
 

@@ -8,12 +8,14 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
 	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -242,7 +244,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if !strings.HasPrefix(r.URL.Path, "/assets/") {
 			s.log.Info("request", "method", r.Method, "path", r.URL.Path, "status", sw.status,
-				"ms", time.Since(start).Milliseconds(), "address", s.clientAddr(r))
+				"ms", time.Since(start).Milliseconds(), "address", s.client(r).Addr)
 		}
 	}()
 	if unsafeMethod(r.Method) {
@@ -281,6 +283,40 @@ func (w *statusWriter) Write(b []byte) (int, error) {
 }
 
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// ListenerHeader names the site of Caddy that got the request: local, public, or tailscale (S61). Caddy sets it on
+// each site and replaces the header of a client, so the agent can trust it. The dev listener ignores it.
+const ListenerHeader = "X-Care-Pi-Listener"
+
+// ListenerTailscale is the value of ListenerHeader on the Tailscale site.
+const ListenerTailscale = "tailscale"
+
+// SharedTailscaleAddr is the client address of a request of the Tailscale site whose address is not a tailnet address
+// (docs/api/README.md section 4).
+const SharedTailscaleAddr = "tailscale"
+
+// tailnet are the address ranges of Tailscale: the CGNAT range of the IPv4 addresses and the ULA of the IPv6 addresses.
+var tailnet = []netip.Prefix{netip.MustParsePrefix("100.64.0.0/10"), netip.MustParsePrefix("fd7a:115c:a1e0::/48")}
+
+// client returns the address and the user agent of a request. tailscaled masquerades the packets that it forwards to
+// the pod, so on the Tailscale site each client has the address of the pod bridge (S61). Such a request gets the
+// shared address "tailscale": no address lock for failed passwords and a larger limit of public reads. A request of
+// the Tailscale site with a tailnet address (tailscaled without the masquerade) keeps its address.
+func (s *Server) client(r *http.Request) auth.Client {
+	c := auth.Client{Addr: s.clientAddr(r), UA: r.UserAgent()}
+	if s.o.Dev || r.Header.Get(ListenerHeader) != ListenerTailscale {
+		return c
+	}
+	if a, err := netip.ParseAddr(c.Addr); err == nil {
+		for _, p := range tailnet {
+			if p.Contains(a.Unmap()) {
+				return c
+			}
+		}
+	}
+	c.Addr, c.Shared = SharedTailscaleAddr, true
+	return c
+}
 
 // clientAddr is the address that Caddy reports in X-Forwarded-For. Caddy replaces the header
 // of a client, so the last item is the client. The dev listener uses the TCP peer.
@@ -372,7 +408,7 @@ func (s *Server) sessionCookie(r *http.Request) string {
 func (s *Server) api(w http.ResponseWriter, r *http.Request, prefix, rest string, public bool) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	c := &reqCtx{w: w, r: r, prefix: prefix, client: auth.Client{Addr: s.clientAddr(r), UA: r.UserAgent()}}
+	c := &reqCtx{w: w, r: r, prefix: prefix, client: s.client(r)}
 	rt, params := s.find(r.Method, rest, public)
 	if rt == nil {
 		s.problem(w, r, problem.Newf(problem.NotFound, "No operation has the method %s and the path %s.", r.Method, r.URL.Path))
@@ -394,8 +430,12 @@ func (s *Server) chain(c *reqCtx, rt *route) error {
 		return problem.New(problem.CSRF, "The Origin header must be the origin of the console: https://<host>:8443.")
 	}
 	if rt.publicRead {
-		if ok, wait := s.a.Limits.Allow("public:"+c.client.Addr, auth.PublicPerMinute); !ok {
-			return problem.Limited(problem.RateLimited, int(wait.Seconds())+1, "The limit is 60 public requests each minute for this address.")
+		limit := auth.PublicPerMinute
+		if c.client.Shared {
+			limit = auth.PublicPerMinuteShared
+		}
+		if ok, wait := s.a.Limits.Allow("public:"+c.client.Addr, limit); !ok {
+			return problem.Limited(problem.RateLimited, int(wait.Seconds())+1, fmt.Sprintf("The limit is %d public requests each minute for this address.", limit))
 		}
 	}
 	if !rt.public {

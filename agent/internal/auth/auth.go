@@ -93,6 +93,11 @@ func (a *Account) remaining() int {
 type Client struct {
 	Addr string
 	UA   string
+	// Shared is true when Addr is not one client: tailscaled masquerades the clients of the Tailscale listener to one
+	// address (S61, docs/api/README.md section 4). A failed password, claim secret, or recovery code then does not
+	// count for the address lock: the account lock, the claim lock, and the 50 bits of a recovery code protect them.
+	// A failed TOTP code still counts.
+	Shared bool
 }
 
 // Options configures a Manager.
@@ -320,6 +325,14 @@ func (m *Manager) gate(c Client) error {
 	return nil
 }
 
+// failAddress records a failed password, claim secret, or recovery code for the address lock. A shared address does
+// not count (Client.Shared).
+func (m *Manager) failAddress(c Client) {
+	if !c.Shared {
+		m.Limits.Fail(c.Addr)
+	}
+}
+
 func (m *Manager) audit(event string, c Client, args ...any) {
 	m.log.Info("auth: "+event, append([]any{"address", c.Addr, "user_agent", cut(c.UA, 256)}, args...)...)
 }
@@ -381,7 +394,7 @@ func (m *Manager) ClaimWith(c Client, method, secret, newPassword string, verifi
 		ok = m.os.Verify(secret)
 	}
 	if !ok {
-		m.Limits.Fail(c.Addr)
+		m.failAddress(c)
 		m.Limits.FailClaim()
 		m.audit("claim failed", c, "method", method)
 		return nil, problem.New(problem.BadCredentials, "The claim secret is not correct.")
@@ -494,7 +507,7 @@ func (m *Manager) checkPassword(c Client, password, pointer string) error {
 		return err
 	}
 	if !ok {
-		m.Limits.Fail(c.Addr)
+		m.failAddress(c)
 		m.audit("password failed", c)
 		return problem.New(problem.BadCredentials, "The password is not correct.").
 			WithErrors(problem.FieldError{Pointer: pointer, Message: "the password is not correct", Code: "bad-credentials"})
@@ -604,7 +617,7 @@ func (m *Manager) Recover(c Client, code, newPassword string) (*Grant, error) {
 		return m.saveSessions()
 	})
 	if failed {
-		m.Limits.Fail(c.Addr)
+		m.failAddress(c)
 		m.audit("recover failed", c)
 	}
 	if err != nil {

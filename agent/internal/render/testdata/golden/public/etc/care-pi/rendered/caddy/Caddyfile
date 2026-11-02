@@ -25,7 +25,8 @@
 	}
 }
 
-# The routes of Care on port 443. Each site of port 443 imports them.
+# The routes of Care on port 443. Each site of port 443 imports them with the name of its listener:
+# local, public, or tailscale (S61).
 (care) {
 	encode zstd gzip
 	header -Server
@@ -76,7 +77,10 @@
 	# Below /_care-pi/ the agent answers only the public operations. Each other path gives 404.
 	@agent path /_care-pi/*
 	handle @agent {
-		reverse_proxy unix//run/care-pi/api.sock
+		reverse_proxy unix//run/care-pi/api.sock {
+			# The listener of the site (S61). The agent keys its limits on it. The value replaces the header of a client.
+			header_up X-Care-Pi-Listener {args[0]}
+		}
 	}
 
 	# The console has its own origin on port 8443 (S48).
@@ -162,7 +166,8 @@
 }
 
 # The console origin (S48): the console SPA at /, the API at /api/v1/, and the public operations
-# at /_care-pi/. Each request goes to the agent. Each site of port 8443 imports these routes.
+# at /_care-pi/. Each request goes to the agent. Each site of port 8443 imports these routes
+# with the name of its listener, as for (care).
 (console) {
 	header -Server
 	header {
@@ -184,6 +189,7 @@
 	}
 	reverse_proxy unix//run/care-pi/api.sock {
 		flush_interval -1
+		header_up X-Care-Pi-Listener {args[0]}
 	}
 	# A body larger than max_size: a problem document, as from the agent.
 	handle_errors 413 {
@@ -224,24 +230,24 @@ http://192.168.1.10, http://10.0.0.5 {
 # The local CA mode: care.local and the LAN addresses. No HSTS (07 F7).
 https://care.local, https://192.168.1.10, https://10.0.0.5 {
 	tls internal
-	import care
+	import care local
 }
 
 # The public name (S36): a certificate of Let's Encrypt, so HSTS is safe.
 https://sunrise-4f2a.care-pi.rithviknishad.dev {
 	import tls_public
 	header Strict-Transport-Security "max-age=31536000"
-	import care
+	import care public
 }
 
 # The console on port 8443: the same certificates as port 443.
 https://care.local:8443, https://192.168.1.10:8443, https://10.0.0.5:8443 {
 	tls internal
-	import console
+	import console local
 }
 
 https://sunrise-4f2a.care-pi.rithviknishad.dev:8443 {
 	import tls_public
 	header Strict-Transport-Security "max-age=31536000"
-	import console
+	import console public
 }

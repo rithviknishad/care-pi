@@ -456,3 +456,65 @@ ssh_pwauth: true
 		t.Fatal("the default user is not the Imager user")
 	}
 }
+
+// TestSharedAddress: the shared address of the Tailscale site (S61) gets no address lock for failed passwords,
+// recovery codes, or claim secrets. The account lock stays, and failed TOTP codes still lock the address.
+func TestSharedAddress(t *testing.T) {
+	c := newClock()
+	m, _ := newManager(t, c)
+	g := claim(t, m)
+	ts := Client{Addr: "tailscale", UA: "test", Shared: true}
+	for i := range 9 {
+		if _, err := m.Login(ts, "wrong password", ""); slug(err) != problem.BadCredentials {
+			t.Fatalf("failure %d: %v", i, err)
+		}
+	}
+	if wait := m.Limits.AddressLocked("tailscale"); wait != 0 {
+		t.Fatalf("the shared address is locked for %s", wait)
+	}
+	if _, err := m.Recover(ts, "AAAAA-BBBBB", "another long passphrase"); slug(err) != problem.BadCredentials {
+		t.Fatalf("a wrong recovery code: %v", err)
+	}
+	if wait := m.Limits.AddressLocked("tailscale"); wait != 0 {
+		t.Fatalf("a recovery code locked the shared address for %s", wait)
+	}
+	c.add(time.Minute)
+	// The tenth failure in a row locks the account, also for the shared address.
+	if _, err := m.Login(ts, "wrong password", ""); slug(err) != problem.BadCredentials {
+		t.Fatalf("failure 10: %v", err)
+	}
+	_, err := m.Login(ts, pw, "")
+	if p := problem.From(err); p.Slug != problem.LockedOut || !strings.Contains(p.Detail, "account") {
+		t.Fatalf("account lock: %+v", p)
+	}
+	// (Unlock uses the time of a file, not the fake clock.) The lock ends after 1 minute; a success resets the count.
+	c.add(time.Minute)
+	if _, err := m.Login(ts, pw, ""); err != nil {
+		t.Fatalf("after the account lock: %v", err)
+	}
+
+	// A failed TOTP code counts: 5 lock the shared address.
+	enr, err := m.StartTOTP("care.local")
+	mustNil(t, err)
+	code, _ := TOTPCode(enr.Secret, c.now())
+	mustNil(t, m.VerifyTOTPEnrolment(client("a"), code))
+	c.add(time.Minute)
+	wrong := "000000"
+	for _, d := range []time.Duration{-30 * time.Second, 0, 30 * time.Second} {
+		if v, _ := TOTPCode(enr.Secret, c.now().Add(d)); v == wrong {
+			wrong = "111111"
+		}
+	}
+	for i := range 5 {
+		if _, err := m.Login(ts, pw, wrong); slug(err) != problem.BadCredentials {
+			t.Fatalf("totp failure %d: %v", i, err)
+		}
+	}
+	_, err = m.Login(ts, pw, "")
+	if p := problem.From(err); p.Slug != problem.LockedOut || p.RetryAfter != 900 {
+		t.Fatalf("totp failures must lock the shared address: %+v", p)
+	}
+	if _, err := m.Recover(client("b"), g.Codes[0], "another long passphrase"); err != nil {
+		t.Fatalf("another address: %v", err)
+	}
+}

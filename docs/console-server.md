@@ -83,6 +83,11 @@ Caddy sends no HSTS on both ports. Port 8443 sends `X-Frame-Options`, `X-Content
 Caddy replaces the `X-Forwarded-For` header of a client with the client address. The agent uses the last item
 of the header for the rate limits and the session records. Caddy keeps the `Host` header with the port
 (for example `care.local:8443`). The `Origin` check uses it.
+Each site also sets `X-Care-Pi-Listener` (`local`, `public`, or `tailscale`; S61) on the requests to the agent, and
+replaces the header of a client. The Caddyfile passes the name as the argument of `import care` and `import console`.
+On the Tailscale site, `tailscaled` masquerades each device to the address of the pod bridge: the agent then uses the
+shared client address `tailscale` (no address lock for failed passwords; 600 public reads each minute;
+`docs/connectivity.md` section 4.7, `docs/api/README.md` section 4).
 
 When the agent does not answer (`502`, `503`, or `504` from the socket), Caddy gives `503` with
 `Content-Type: application/problem+json`, `Retry-After: 5`, and the problem type `unavailable`.
