@@ -619,7 +619,7 @@ and the commands inside a container.
 | Program | What the helper accepts |
 |---|---|
 | `systemctl` | `start`, `stop`, `restart`, `try-restart`, `reload`, `enable`, `disable`, `daemon-reload`, `reset-failed`, `is-active`, `show`, `list-units`, `list-timers`, `reboot`, `poweroff` on the units above. |
-| `podman` | `ps`, `inspect`, `image` and `secret` subcommands, `pull`, `exec` into a `care-*` container, `run --rm` of an image of the lock or of `images.*` with the volumes of the drills and the restore (`--network none`, `--user postgres`, `--entrypoint pgbackrest`), `pod` inspect. |
+| `podman` | `ps`, `inspect`, `image` and `secret` subcommands, `pull`, `exec` into a `care-*` container, `run --rm` of an image of the lock or of `images.*` with the volumes of the drills and the restore (`--network none`, `--user postgres`, `--entrypoint pgbackrest`), `run --rm --network none <image> caddy list-modules --skip-standard` of any image (the WAF check of a target; no volume, no network), `pod` inspect. |
 | `systemd-run` | Transient units `care-pi-*` with a fixed set of properties, then `podman`, `restic`, `tailscale`, `apt-get`, `apt-mark`, the disk commands, `raspi-config nonint do_wifi_country`, `care-pi firewall rollback`, or `/bin/sh -c` with one of four constant scripts of the agent (clock, Wi-Fi keyfile, sysctl, Tailscale install), compared byte for byte. |
 | `write-apt-conf` | A typed request: `on` or `off`. The helper writes the fixed text of `52care-pi.conf` itself. |
 | `journalctl` | `--unit` of a Care unit, with `--lines`, `--output`, `--since`, `--after-cursor`, `--follow`. |
@@ -704,9 +704,13 @@ security:
   buckets, the plug bundles, the FE, and the console have no WAF.
 - **Memory.** In Docker, Caddy used 25 MiB without the WAF and 60 MiB with the CRS loaded (cgroup memory; VmRSS 105 MiB).
   With the WAF, `care-caddy.container` gets `MemoryMax=256M` (else 128M).
-- **Safety.** An apply that turns the WAF on checks the modules of the running Caddy (`caddy list-modules`): without
-  `http.handlers.waf` (an image of an older lock), it stops with an error before it writes a file, because the next
-  start of Caddy would fail on the unknown directive.
+- **Safety.** With the WAF on, the agent checks the Caddy image of the target, not the running Caddy:
+  `podman run --rm --network none <image> caddy list-modules --skip-standard` (in a transient unit). An apply that
+  changes the Caddyfile or the image of `care-caddy`, the staging of an update (step `stage-pull`), and a rollback
+  (step `stage-pull`) stop with `unsupported-config`, which names the image, when it has no `http.handlers.waf` (an
+  image of a lock of before Phase 7), because the next start of Caddy would fail on the unknown directive and stop
+  Care. Nothing is written or stopped then. When the modules cannot be listed (no podman, an image that does not
+  pull), the agent writes a warning and goes on.
 - **False positives.** Expect them on file uploads, rich text (notes, prescriptions), and search with quotes. Use
   `detect` first, read the audit lines for some days, then `block`. Paranoia 1 is the right level for Care; 2 and more
   give many more false positives. Off by default, also on a 4 GB Pi.

@@ -130,6 +130,7 @@ func TestAllowed(t *testing.T) {
 		restore.PodmanRun(pgImage, "care-pi-restore", paths.PGData, false, "pgbackrest", "--stanza=main", "restore", "--delta"),
 		restore.PodmanRun("ghcr.io/rithviknishad/care-pi/postgres-pgbackrest:17", "care-drill", paths.DrillDir+"/x", true, "", "postgres"),
 		tailscale.InstallCmd(),
+		apply.WAFModulesCmd("ghcr.io/rithviknishad/care-pi/caddy@sha256:2"),
 		cmd("systemd-run", "--wait", "--collect", "--pipe", "--quiet", "--unit="+host.SetClockUnit, "--", "/bin/sh", "-c", host.SetClockScript, "sh", "1793600000"),
 		cmd("systemd-run", "--wait", "--collect", "--pipe", "--quiet", "--unit=care-pi-wifi-keyfile", "--", "/bin/sh", "-c", wifi.KeyfileScript, "sh", wifi.KeyfilePath),
 		cmd("systemd-run", "--wait", "--collect", "--pipe", "--quiet", "--unit=care-pi-sysctl", "--", "/bin/sh", "-c", apply.SysctlScript, "sh", paths.SysctlFile),
@@ -342,6 +343,12 @@ func TestValidateFuzz(t *testing.T) {
 		cmd(pgVol[0], append(pgVol[1:], paths.DrillDir+"/dangling:/x", pgImage)...),
 		cmd(pgVol[0], append(pgVol[1:], paths.DrillDir+"/x:/var/lib/postgresql/data", "docker.io/library/alpine:latest", "sh")...),
 		restore.PodmanRun("docker.io/attacker/postgres:17", "care-drill", paths.DrillDir+"/x", true, "", "postgres"),
+		// The modules of a Caddy image (m2): only this fixed command, without a volume or a network.
+		cmd("podman", "run", "--rm", "--network", "none", "docker.io/x/caddy:2", "caddy", "run"),
+		cmd("podman", "run", "--rm", "--network", "host", "docker.io/x/caddy:2", "caddy", "list-modules", "--skip-standard"),
+		cmd("podman", "run", "--rm", "--network", "none", "--volume", "/:/host", "docker.io/x/caddy:2", "caddy", "list-modules", "--skip-standard"),
+		cmd("podman", "run", "--rm", "--network", "none", "docker.io/x/caddy:2", "caddy", "list-modules", "--skip-standard", "--versions"),
+		cmd("podman", "run", "--rm", "--network", "none", "--privileged", "caddy", "list-modules", "--skip-standard"),
 		// (c) the apt configuration: only the typed request, on or off.
 		cmd("systemd-run", "--wait", "--collect", "--pipe", "--quiet", "--unit=care-pi-apt-conf", "--", "tee", paths.AptConfCarePi),
 		cmd("systemd-run", "--wait", "--unit=care-pi-apt-conf", "-p", "MemoryMax=512M", "--setenv=DEBIAN_FRONTEND=noninteractive", "--", "tee", paths.AptConfCarePi),

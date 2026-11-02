@@ -409,6 +409,12 @@ func podmanExec(args []string) error {
 // lock.yaml or config.yaml, and each volume source is below /var/lib/care-pi or /etc/care-pi/rendered, also after
 // the resolution of its symbolic links.
 func podmanRun(v view, args []string) error {
+	// "caddy list-modules" of the Caddy image of a target (apply.WAFModulesCmd): no volume, no secret, no network, and
+	// a fixed command, so the image can be one that lock.yaml does not have yet (an update or a rollback).
+	if len(args) == 7 && strings.Join(args[:3], " ") == "--rm --network none" && imageRE.MatchString(args[3]) &&
+		strings.Join(args[4:], " ") == "caddy list-modules --skip-standard" {
+		return nil
+	}
 	var sources []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
