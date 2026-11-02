@@ -29,15 +29,45 @@ Supported hosts:
 | Raspberry Pi OS Lite, trixie, 64-bit | Supported. This is the target. It ships podman 5.4. |
 | Debian 13 (trixie), amd64 or arm64 | Supported. It ships podman 5.4. |
 | Ubuntu 24.04 and older | Not supported in this version. Ubuntu 24.04 ships podman 4.9. The script stops before it changes the host. |
-| Ubuntu 25.04 or newer | Not tested. The podman check decides. |
+| Ubuntu 25.04 or newer | Tested in a container only (Phase 7): 25.04 ships podman 5.4.1, 25.10 ships 5.4.2, 26.04 LTS ships 5.7.0, and 26.10 ships 5.8.6. The podman check decides. |
 | Debian 12 | Stops at the podman check, before the script installs a package. Podman 4.3.1 is too old. |
-| Fedora and Red Hat family | Not supported in this version. |
+| Fedora Server 42 or newer | Experimental (Phase 7, S57). See [Fedora](#fedora-experimental). Fedora 42 ships podman 5.8.2, Fedora 43 and 44 ship 5.8.9. |
+| Fedora 41 and older, Fedora with rpm-ostree (CoreOS, IoT, Atomic desktops) | Refused. |
+| Red Hat Enterprise Linux, CentOS, Rocky Linux, AlmaLinux | Not supported in this version. |
 | 32-bit systems | Refused. |
 
 The script needs systemd as PID 1, cgroup v2, and podman 5.4 or newer with quadlet.
 The agent requires the same podman version (`care-pi host check`).
 The script checks the podman version before it installs a package.
 The script adds no third-party apt repository.
+
+### Fedora (experimental)
+
+On Fedora Server 42 or newer, the script uses `dnf` (S57):
+
+- Step 1 installs `podman skopeo restic nftables dnf-automatic ca-certificates curl shadow-utils catatonit iproute diffutils`,
+  `avahi`, and `chrony` (the NTP client of Fedora) when no other NTP client is there.
+  The podman check reads the candidate with `dnf repoquery`.
+- Step 3 installs `zram-generator`. Fedora already has zram swap; the drop-in sets it to the size of the RAM.
+- Step 6 enables `chronyd.service`.
+- Step 8: Fedora Server runs `firewalld`. The script adds the services `http`, `https`, `mdns`, and the port 8443/tcp
+  to the default zone (`firewall-cmd --permanent`, then `--reload`). It does not install the table `inet care-pi`, so
+  `security.firewall.policy` has no effect: firewalld keeps its own policy (the FedoraServer zone drops each port that
+  it does not list). Without firewalld, the step is the same as on Debian.
+- Step 9 writes `/etc/dnf/automatic.conf` (`upgrade_type = security`, `apply_updates = yes`, `reboot = never`) and
+  enables `dnf5-automatic.timer`.
+- Step 10 holds no packages.
+
+Limits of this version:
+
+- SELinux must be permissive. The quadlets of Care bind-mount host directories without SELinux labels (`:z`, `:Z`).
+  With SELinux enforcing, the script stops with this message:
+  `SELinux is enforcing. Care on Fedora is experimental and needs SELinux in permissive mode: the containers of Care bind-mount host directories without SELinux labels. Run 'sudo setenforce 0' and set SELINUX=permissive in /etc/selinux/config, then run the script again.`
+- `care-pi update --os` and the OS part of the updates page are for Debian-family hosts. On Fedora, the job
+  `os-update` stops with `os-update-failed`, and `dnf-automatic` installs the security updates. Run
+  `sudo dnf upgrade` for the other updates.
+- Tests: a dry run and two real runs of the script in a `fedora:43` container (no systemd, no SELinux). No test on a
+  real Fedora host yet.
 
 ## Run the script
 

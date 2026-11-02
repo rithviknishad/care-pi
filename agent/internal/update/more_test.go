@@ -514,3 +514,34 @@ func TestMakeLockDist(t *testing.T) {
 	}
 	t.Logf("rollback steps %v; pitr_offer target_time %s restore_point %s", actions(rec), rr.PitrOffer.TargetTime, *rr.PitrOffer.RestorePoint)
 }
+
+// TestOSUpdateFedora: a Fedora host (experimental) runs no apt command: the job refuses with os-update-failed, the
+// view lists nothing, and the security configuration of apt is not written.
+func TestOSUpdateFedora(t *testing.T) {
+	e := newTEnv(t, "stable", "")
+	if err := os.MkdirAll(e.p.Abs("/etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(e.p.Abs("/etc/os-release"), []byte("ID=fedora\nVERSION_ID=43\nPRETTY_NAME=\"Fedora Linux 43 (Server Edition)\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.fake.Calls = nil
+	o, err := e.u.OS(context.Background())
+	if err != nil || o.Distro.ID != "fedora" || len(o.Upgradable) != 0 {
+		t.Fatalf("os %+v %v", o, err)
+	}
+	rec := e.job(jobs.KindOSUpdate)
+	if _, err := e.u.OSUpdate(context.Background(), rec, OSOptions{Source: jobs.SourceCLI}); !problem.Is(err, problem.OSUpdateFailed) ||
+		!strings.Contains(err.Error(), "dnf-automatic") {
+		t.Fatalf("want os-update-failed, got %v", err)
+	}
+	cfg, _ := e.u.Config()
+	if changed, err := e.u.SyncSecurityConf(context.Background(), cfg); changed || err != nil {
+		t.Fatalf("security conf %v %v", changed, err)
+	}
+	for _, c := range e.fake.Calls {
+		if strings.Contains(c, "apt") || strings.Contains(c, "dpkg") {
+			t.Fatalf("an apt command on Fedora: %s", c)
+		}
+	}
+}

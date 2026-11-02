@@ -65,7 +65,7 @@ The script detects the host and then runs 17 steps.
 Each step is a function named `step_<name>`.
 Each step is idempotent. If nothing changes, it prints `already configured`.
 
-1. Packages: `podman skopeo restic avahi-daemon nftables systemd-timesyncd unattended-upgrades ca-certificates curl uidmap`, and also `catatonit` and `iproute2`. Check podman before the install (the installed version, or else the apt candidate) and after it: 5.4 or newer (`MIN_PODMAN`), quadlet present. Debian 13 (trixie) ships 5.4. Ubuntu 24.04 (podman 4.9) is not supported in this version.
+1. Packages: `podman skopeo restic avahi-daemon nftables systemd-timesyncd unattended-upgrades ca-certificates curl uidmap`, and also `catatonit` and `iproute2`. Check podman before the install (the installed version, or else the apt candidate) and after it: 5.4 or newer (`MIN_PODMAN`), quadlet present. Debian 13 (trixie) ships 5.4. Ubuntu 24.04 (podman 4.9) is not supported in this version. On Fedora Server 42 or newer (experimental, `PKG_MGR=dnf`), the step installs the Fedora packages with `dnf` (`docs/install.md`, "Fedora").
 2. Memory cgroup: edit `/boot/firmware/cmdline.txt` on a Pi. Otherwise check the controller.
 3. zram swap of at least 90 % of RAM: `rpi-swap` drop-in on Pi OS, `systemd-zram-generator` elsewhere.
 4. Host name: change it only for `--hostname` or for the default `raspberrypi`.
@@ -156,6 +156,16 @@ docker run --rm -v "$PWD/installer:/src:ro" debian:trixie sh -c '
 The second run must print `already configured` for each step. `cmdline.txt` must have
 `cgroup_enable=memory cgroup_memory=1` and no `cgroup_disable=memory`. `systemctl` must print `enabled` twice.
 The full image build (`image/build.sh`) also runs the script in the chroot of Raspberry Pi OS Lite.
+
+Fedora (experimental, Phase 7) and Ubuntu have the same container checks:
+
+```sh
+docker run --rm -v "$PWD/installer:/src:ro" fedora:43 sh /src/install.sh --dry-run --skip-bootstrap --binary /bin/true
+docker run --rm -v "$PWD/installer:/src:ro" -e CARE_PI_ALLOW_NO_SYSTEMD=1 fedora:43 \
+  sh -c 'for i in 1 2; do sh /src/install.sh --yes --skip-bootstrap --binary /bin/true --no-firewall; done'
+docker run --rm -v "$PWD/installer:/src:ro" -e CARE_PI_ALLOW_NO_SYSTEMD=1 ubuntu:26.04 \
+  sh -c 'for i in 1 2; do sh /src/install.sh --yes --skip-bootstrap --binary /bin/true --no-firewall; done'
+```
 
 ### Choices to know
 

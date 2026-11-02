@@ -98,6 +98,11 @@ LAST_WRITE=0
 REBOOT_NEEDED=0
 REBOOT_REASONS=""
 APT_UPDATED=0
+# PKG_MGR is apt (Debian family) or dnf (Fedora, experimental: S57). detect_os sets it.
+PKG_MGR=apt
+ZRAM_PKG="systemd-zram-generator"
+# DNF_AUTOMATIC_CONF overrides the defaults of dnf5 automatic (Fedora 41 and newer).
+DNF_AUTOMATIC_CONF="/etc/dnf/automatic.conf"
 WORK_DIR=""
 AVAHI_SINCE=""
 ADVERTISED_NAME=""
@@ -274,11 +279,26 @@ apt_update_once() {
 }
 
 pkg_installed() {
+  if [ "$PKG_MGR" = dnf ]; then
+    # --whatprovides also finds a package by a name that it provides (dnf-automatic is dnf5-plugin-automatic).
+    rpm -q --quiet --whatprovides "$1" 2>/dev/null
+    return
+  fi
   dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q ' ok installed$'
 }
 
 pkg_held() {
   apt-mark showhold 2>/dev/null | grep -qx "$1"
+}
+
+# pkg_install PKG...: install packages with the package manager of the host.
+pkg_install() {
+  if [ "$PKG_MGR" = dnf ]; then
+    run dnf -y --setopt=install_weak_deps=False install "$@"
+    return
+  fi
+  apt_update_once
+  apt_get install "$@"
 }
 
 # write_file PATH MODE CONTENT: write CONTENT and a newline to PATH. Do nothing
@@ -734,8 +754,19 @@ detect_os() {
   OS_PRETTY=$(. /etc/os-release && printf '%s' "${PRETTY_NAME:-$OS_ID}")
 
   case $OS_ID in
-    fedora | rhel | centos | rocky | almalinux)
-      die "$OS_PRETTY is not supported in this version. This version supports Debian-family hosts only. Fedora support is planned (plans/06-roadmap.md, Phase 7)."
+    fedora)
+      if [ -e /run/ostree-booted ]; then
+        die "$OS_PRETTY uses rpm-ostree (CoreOS, IoT, or an Atomic desktop). It is not supported. Use Fedora Server 42 or newer."
+      fi
+      if [ -z "$OS_VERSION" ] || ! version_ge "$OS_VERSION" 42; then
+        die "$OS_PRETTY is not supported. Care on Fedora needs Fedora 42 or newer (podman 5.8). Use Fedora Server 42 or newer, Raspberry Pi OS (trixie), or Debian 13."
+      fi
+      PKG_MGR=dnf
+      ZRAM_PKG="zram-generator"
+      warn "Fedora support is experimental (docs/install.md, Fedora). SELinux must be permissive. 'care-pi update --os' is not available: dnf-automatic installs the security updates."
+      ;;
+    rhel | centos | rocky | almalinux)
+      die "$OS_PRETTY is not supported in this version. Supported hosts: Raspberry Pi OS (trixie), Debian 13, Ubuntu 25.04 or newer, and Fedora 42 or newer (experimental)."
       ;;
     debian | raspbian)
       if [ -n "$OS_VERSION" ] && ! version_ge "$OS_VERSION" 12; then
@@ -751,7 +782,7 @@ detect_os() {
       if ! version_ge "$OS_VERSION" 25.04; then
         die "Ubuntu $OS_VERSION is not supported in this version. Care needs podman 5.4 or newer. Ubuntu 24.04 ships podman 4.9, and Ubuntu 22.04 ships podman 3.4. Debian 13 (trixie) ships podman 5.4. Use Raspberry Pi OS (trixie) or Debian 13."
       fi
-      warn "$OS_PRETTY is not tested. The podman check decides."
+      warn "$OS_PRETTY is tested in a container only, not on hardware. The podman check decides."
       ;;
     *)
       case " $OS_ID_LIKE " in
@@ -764,8 +795,23 @@ detect_os() {
       esac
       ;;
   esac
+  if [ "$PKG_MGR" = dnf ]; then
+    if ! command -v dnf >/dev/null 2>&1 || ! command -v rpm >/dev/null 2>&1; then
+      die "dnf and rpm are required on Fedora."
+    fi
+    detect_selinux
+    return 0
+  fi
   if ! command -v apt-get >/dev/null 2>&1 || ! command -v dpkg >/dev/null 2>&1; then
     die "apt-get and dpkg are required. This host is not Debian-family."
+  fi
+}
+
+# detect_selinux stops on Fedora when SELinux enforces: the quadlets of Care
+# bind-mount host directories without SELinux labels (:z, :Z) in this version.
+detect_selinux() {
+  if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce 2>/dev/null)" = Enforcing ]; then
+    die_unless_dry "SELinux is enforcing. Care on Fedora is experimental and needs SELinux in permissive mode: the containers of Care bind-mount host directories without SELinux labels. Run 'sudo setenforce 0' and set SELINUX=permissive in /etc/selinux/config, then run the script again."
   fi
 }
 
@@ -777,7 +823,7 @@ detect_arch() {
       die "The CPU architecture $(uname -m) is not supported. Use a 64-bit Raspberry Pi OS (arm64) or an amd64 host."
       ;;
   esac
-  if [ "$(dpkg --print-architecture)" != "$ARCH" ]; then
+  if [ "$PKG_MGR" = apt ] && [ "$(dpkg --print-architecture)" != "$ARCH" ]; then
     die "The kernel is $ARCH, but the user space is $(dpkg --print-architecture). Install a 64-bit operating system."
   fi
 }
@@ -855,6 +901,17 @@ other_ntp_installed() {
 }
 
 build_package_list() {
+  if [ "$PKG_MGR" = dnf ]; then
+    # Fedora: dnf-automatic for the security updates; chrony is the NTP client of Fedora.
+    PKG_LIST="podman skopeo restic nftables dnf-automatic ca-certificates curl shadow-utils catatonit iproute diffutils"
+    if [ "$NO_AVAHI" != 1 ]; then
+      PKG_LIST="$PKG_LIST avahi"
+    fi
+    if ! other_ntp_installed >/dev/null; then
+      PKG_LIST="$PKG_LIST chrony"
+    fi
+    return 0
+  fi
   PKG_LIST="podman skopeo restic nftables unattended-upgrades ca-certificates curl uidmap catatonit iproute2"
   if [ "$NO_AVAHI" != 1 ]; then
     PKG_LIST="$PKG_LIST avahi-daemon"
@@ -931,6 +988,16 @@ podman_version() {
 
 # Stop before the install when apt offers only an old podman.
 check_podman_candidate() {
+  if [ "$PKG_MGR" = dnf ]; then
+    pc_ver=$(dnf -q repoquery --latest-limit=1 --qf '%{version}\n' podman 2>/dev/null | sed -n '1s/^\([0-9][0-9.]*\).*/\1/p')
+    if [ -z "$pc_ver" ]; then
+      die "The dnf repositories have no podman package."
+    fi
+    if ! version_ge "$pc_ver" "$MIN_PODMAN"; then
+      podman_too_old "$pc_ver" "the version in the dnf repositories"
+    fi
+    return 0
+  fi
   pc_ver=$(apt-cache policy podman 2>/dev/null | sed -n 's/^ *Candidate: \([0-9][0-9.]*\).*/\1/p')
   if [ -z "$pc_ver" ]; then
     die "The apt sources have no podman package."
@@ -984,11 +1051,17 @@ step_packages() {
   if [ $# -gt 0 ]; then
     STEP_CHANGED=1
     log "Install: $*"
-    apt_update_once
+    if [ "$PKG_MGR" = apt ]; then
+      apt_update_once
+    fi
     if [ "$DRY_RUN" != 1 ] && ! pkg_installed podman; then
       check_podman_candidate
     fi
-    apt_get install "$@" || die "apt-get install failed. Read the output above."
+    if [ "$PKG_MGR" = dnf ]; then
+      pkg_install "$@" || die "dnf install failed. Read the output above."
+    else
+      apt_get install "$@" || die "apt-get install failed. Read the output above."
+    fi
   fi
   check_podman
 }
@@ -1144,10 +1217,9 @@ zram_with_rpi_swap() {
 }
 
 zram_with_generator() {
-  if ! pkg_installed systemd-zram-generator; then
+  if ! pkg_installed "$ZRAM_PKG"; then
     STEP_CHANGED=1
-    apt_update_once
-    apt_get install systemd-zram-generator || die "Cannot install systemd-zram-generator."
+    pkg_install "$ZRAM_PKG" || die "Cannot install $ZRAM_PKG."
   fi
   # A drop-in overrides the main file. Ubuntu ships a main file with a default [zram0].
   ensure_dir "$ZRAM_GENERATOR_DROPIN_DIR" 755 0:0
@@ -1317,6 +1389,11 @@ step_avahi() {
 # --- 6. time
 
 step_time() {
+  # Fedora: chrony is the NTP client (step 1 installs it when no other one is there).
+  if [ "$PKG_MGR" = dnf ] && { pkg_installed chrony || ! other_ntp_installed >/dev/null; }; then
+    ensure_service chronyd.service
+    return 0
+  fi
   if sn_other=$(other_ntp_installed); then
     STEP_SKIP="$sn_other is installed and keeps the clock in sync"
     return 0
@@ -1694,6 +1771,10 @@ step_firewall() {
   if [ "$SYSTEMD" = 1 ]; then
     for sf_unit in ufw.service firewalld.service; do
       if systemctl is-active --quiet "$sf_unit" 2>/dev/null; then
+        if [ "$sf_unit" = firewalld.service ]; then
+          firewalld_allow
+          return 0
+        fi
         STEP_SKIP="$sf_unit manages the firewall. Allow 80/tcp, 443/tcp, $CONSOLE_PORT/tcp, and 5353/udp there"
         return 0
       fi
@@ -1764,6 +1845,32 @@ step_firewall() {
   nft_service_retire
 }
 
+# firewalld_allow opens the ports of Care in the default zone of firewalld (Fedora).
+# firewalld keeps its own policy (default-drop in the FedoraServer zone), and the
+# script does not install the care-pi table: security.firewall.policy has no effect.
+firewalld_allow() {
+  fa_zone=$(firewall-cmd --get-default-zone 2>/dev/null)
+  if [ -z "$fa_zone" ]; then
+    die "firewalld is active, but firewall-cmd gives no default zone. Allow 80/tcp, 443/tcp, $CONSOLE_PORT/tcp, and 5353/udp in firewalld, or use --no-firewall."
+  fi
+  set --
+  for fa_svc in http https mdns; do
+    if ! firewall-cmd --permanent --zone="$fa_zone" --query-service="$fa_svc" >/dev/null 2>&1; then
+      set -- "$@" "--add-service=$fa_svc"
+    fi
+  done
+  if ! firewall-cmd --permanent --zone="$fa_zone" --query-port="$CONSOLE_PORT/tcp" >/dev/null 2>&1; then
+    set -- "$@" "--add-port=$CONSOLE_PORT/tcp"
+  fi
+  if [ $# -eq 0 ]; then
+    log "firewalld (zone $fa_zone) allows http, https, mdns, and $CONSOLE_PORT/tcp."
+    return 0
+  fi
+  STEP_CHANGED=1
+  run firewall-cmd --permanent --zone="$fa_zone" "$@" || die "firewall-cmd failed. Allow 80/tcp, 443/tcp, $CONSOLE_PORT/tcp, and 5353/udp in firewalld, or use --no-firewall."
+  run firewall-cmd --reload || die "firewall-cmd --reload failed. Run: systemctl status firewalld"
+}
+
 # --- 9. unattended-upgrades
 
 unattended_conf() {
@@ -1777,7 +1884,26 @@ APT::Periodic::Unattended-Upgrade "1";
 EOF
 }
 
+# dnf_automatic_conf prints the dnf5 automatic configuration of Fedora: install
+# the security updates, never reboot (Care reboots in its update window).
+dnf_automatic_conf() {
+  cat <<'EOF'
+# Managed by care-pi install.sh.
+# Install security updates automatically. Never reboot by itself.
+[commands]
+upgrade_type = security
+download_updates = yes
+apply_updates = yes
+reboot = never
+EOF
+}
+
 step_upgrades() {
+  if [ "$PKG_MGR" = dnf ]; then
+    write_file "$DNF_AUTOMATIC_CONF" 644 "$(dnf_automatic_conf)"
+    ensure_service dnf5-automatic.timer
+    return 0
+  fi
   write_file /etc/apt/apt.conf.d/52care-pi.conf 644 "$(unattended_conf)"
   if pkg_installed unattended-upgrades; then
     if ! apt-config dump | grep -i 'Unattended-Upgrade::\(Origins-Pattern\|Allowed-Origins\)' | grep -qi security; then
@@ -1793,6 +1919,10 @@ step_upgrades() {
 step_holds() {
   if [ "$NO_APT_HOLD" = 1 ]; then
     STEP_SKIP="--no-apt-hold"
+    return 0
+  fi
+  if [ "$PKG_MGR" = dnf ]; then
+    STEP_SKIP="Fedora (experimental): the script holds no packages. dnf-automatic installs only the security updates"
     return 0
   fi
   set --

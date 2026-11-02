@@ -90,6 +90,10 @@ func aptMark(verb string, pkgs ...string) host.Cmd {
 	return AptRun("care-pi-apt-mark", append([]string{"apt-mark", "-o", "DPkg::Lock::Timeout=600", verb}, pkgs...)...)
 }
 
+// aptHost reports whether the host has the apt tools of the OS updates. Fedora (experimental, Phase 7) has dnf:
+// dnf-automatic installs its security updates, and "care-pi update --os" is not available.
+func aptHost(d Distro) bool { return d.ID != "fedora" }
+
 func readDistro(p paths.Paths) Distro {
 	d := Distro{ID: "debian", Codename: "unknown", PrettyName: "unknown"}
 	data, err := os.ReadFile(p.Abs("/etc/os-release"))
@@ -269,6 +273,9 @@ func (u *Updater) OS(ctx context.Context) (*OSUpdates, error) {
 	for _, n := range HoldPackages {
 		held[n] = true
 	}
+	if !aptHost(o.Distro) {
+		return o, nil
+	}
 	if out, err := u.Host.Runner.Run(ctx, host.Cmd{Name: "apt", Args: []string{"list", "--upgradable"}}); err == nil {
 		for _, p := range parseUpgradable(out) {
 			if !held[p.Name] {
@@ -330,6 +337,9 @@ func SecurityConf(cfg *config.Config) string {
 // SyncSecurityConf writes 52care-pi.conf when it differs. The file is outside the sandbox of
 // care-pi.service, so a transient unit writes it.
 func (u *Updater) SyncSecurityConf(ctx context.Context, cfg *config.Config) (bool, error) {
+	if !aptHost(readDistro(u.Paths)) {
+		return false, nil
+	}
 	want := SecurityConf(cfg)
 	if data, err := os.ReadFile(u.Paths.Abs(paths.AptConfCarePi)); err == nil && string(data) == want {
 		return false, nil
@@ -376,6 +386,10 @@ func (u *Updater) OSUpdate(ctx context.Context, rec *jobs.Recorder, o OSOptions)
 			return p
 		}
 		return problem.New(problem.OSUpdateFailed, e.Error())
+	}
+	if d := readDistro(u.Paths); !aptHost(d) {
+		return nil, problem.New(problem.OSUpdateFailed, d.PrettyName+" has no apt: the OS update of Care is for Debian-family hosts. "+
+			"On Fedora (experimental), dnf-automatic installs the security updates; run 'sudo dnf upgrade' for the others.")
 	}
 	if _, err := u.SyncSecurityConf(ctx, cfg); err != nil {
 		rec.Logf("warning: %v", err)
