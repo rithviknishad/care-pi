@@ -951,9 +951,10 @@ func (s *Server) putPublic(c *reqCtx) error {
 
 func (s *Server) putTailscale(c *reqCtx) error {
 	var req struct {
-		Enabled *bool   `json:"enabled"`
-		AuthKey *string `json:"auth_key"`
-		Reason  *string `json:"reason"`
+		Enabled    *bool   `json:"enabled"`
+		AuthKey    *string `json:"auth_key"`
+		ControlURL *string `json:"control_url"`
+		Reason     *string `json:"reason"`
 	}
 	if err := c.decode(&req, true); err != nil {
 		return err
@@ -966,8 +967,13 @@ func (s *Server) putTailscale(c *reqCtx) error {
 			return err
 		}
 	}
+	if req.ControlURL != nil {
+		if err := lengthOK("/control_url", *req.ControlURL, 0, 200); err != nil {
+			return err
+		}
+	}
 	j, err := s.svc.StartTailscale(c.r.Context(), service.TailscaleRequest{Enabled: *req.Enabled, AuthKey: deref(req.AuthKey),
-		Reason: deref(req.Reason)}, jobs.SourceConsole)
+		ControlURL: req.ControlURL, Reason: deref(req.Reason)}, jobs.SourceConsole)
 	return s.accepted(c, j, err)
 }
 

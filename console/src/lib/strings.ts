@@ -1826,6 +1826,10 @@ export const strings = {
     authKey: "Auth key (optional)",
     authKeyHelp: "An auth key of the Tailscale admin console (tskey-auth-…). Without a key, you log in with a link.",
     authKeyInvalid: "An auth key starts with tskey-.",
+    controlUrl: "Control server (optional)",
+    controlUrlHelp:
+      "Only for a self-hosted control server (Headscale). Empty uses the Tailscale service. The server must give certificates (tailscale cert).",
+    controlUrlInvalid: "Use an https:// address without spaces, or leave it empty.",
     loginTitle: "Log in to Tailscale",
     login:
       "Open this link on a device where you can log in to the tailnet of the clinic. Then log in and connect this device. The link is secret: do not share it.",

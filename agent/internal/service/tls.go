@@ -98,7 +98,7 @@ func (s *Service) TLS(ctx context.Context) *TLSState {
 		t.LocalCA.PreviousFingerprint = strPtr(st.PreviousFingerprint)
 	}
 	t.Public = s.publicTLS(ctx, cfg.TLS.Public.Enabled, cfg.TLS.Public.ClinicID, cfg.TLS.Public.ACMECA)
-	t.Tailscale = s.tailscaleTLS(ctx, cfg.TLS.Tailscale.Enabled, cfg.TLS.Tailscale.Hostname)
+	t.Tailscale = s.tailscaleTLS(ctx, cfg.TLS.Tailscale.Enabled, cfg.TLS.Tailscale.Hostname, cfg.TLS.Tailscale.ControlURL)
 	return t
 }
 

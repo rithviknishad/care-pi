@@ -96,6 +96,21 @@ func TestPhase6Keys(t *testing.T) {
 	}
 }
 
+// Phase 7 (O4): a self-hosted control server (Headscale) allows a MagicDNS name outside ts.net.
+func TestHeadscaleControlURL(t *testing.T) {
+	c, err := Load("testdata/valid-headscale.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.TLS.Tailscale.ControlURL != "https://headscale.example.org" || c.TLS.Tailscale.Hostname != "care.clinic.example.org" {
+		t.Fatalf("tailscale: %+v", c.TLS.Tailscale)
+	}
+	_, err = Load("testdata/invalid-tailscale-not-ts-net.yaml")
+	if err == nil || !strings.Contains(err.Error(), "/tls/tailscale/hostname: must end in .ts.net") {
+		t.Fatalf("a name outside ts.net without control_url must fail, got %v", err)
+	}
+}
+
 // Phase 4 keys: the schema accepts them, and apply implements them (wave 6a).
 func TestPhase4Keys(t *testing.T) {
 	c, err := Load("testdata/valid-phase4.yaml")

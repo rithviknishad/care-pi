@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strings"
 	"text/template"
 )
 
@@ -48,6 +49,10 @@ func (c *Config) check() []Detail {
 			out = append(out, Detail{Pointer: fmt.Sprintf("/solution/custom/plugs/%d/id", i), Message: fmt.Sprintf("plug %q occurs more than once", p.ID), Keyword: "uniqueItems"})
 		}
 		seen[p.ID] = true
+	}
+	// Without a control server of its own (Headscale, O4), the MagicDNS name is a name of Tailscale.
+	if ts := c.TLS.Tailscale; ts.Hostname != "" && ts.ControlURL == "" && !strings.HasSuffix(ts.Hostname, ".ts.net") {
+		out = append(out, Detail{Pointer: "/tls/tailscale/hostname", Message: "must end in .ts.net when tls.tailscale.control_url is not set", Keyword: "pattern"})
 	}
 	dests := map[string]bool{}
 	for i, d := range c.Backups.Destinations {

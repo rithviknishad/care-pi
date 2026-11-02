@@ -31,6 +31,8 @@ var connFlags struct {
 	scheduled bool
 	reason    string
 	newKey    bool
+	// controlURL is tls.tailscale.control_url (Headscale, Phase 7).
+	controlURL string
 }
 
 func printConnJob(cmd *cobra.Command, svc *service.Service, j *jobs.Job, err error) error {
@@ -163,16 +165,21 @@ var tlsTailscaleCmd = &cobra.Command{
 }
 
 var tlsTailscaleEnableCmd = &cobra.Command{
-	Use:   "enable [--auth-key-stdin]",
+	Use:   "enable [--auth-key-stdin] [--control-url URL]",
 	Short: "Install tailscale, connect to the tailnet, and turn on the Tailscale name",
 	Long: `Install tailscale from the repository of Tailscale (only now: the installer never installs it), then connect.
 With --auth-key-stdin, the auth key comes from the standard input. Without it, the command prints nothing secret:
 open Settings > Connectivity in the console, or run "care-pi tls tailscale status", for the login URL.
-The tailnet must have MagicDNS and HTTPS Certificates on (the DNS page of the Tailscale admin console).`,
+The tailnet must have MagicDNS and HTTPS Certificates on (the DNS page of the Tailscale admin console).
+--control-url sets a self-hosted control server (Headscale) for "tailscale up --login-server"; "" goes back to
+the Tailscale service. Without the flag, the value of tls.tailscale.control_url stays.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		svc := newService(cmd)
 		req := service.TailscaleRequest{Enabled: true, Reason: connFlags.reason}
+		if cmd.Flags().Changed("control-url") {
+			req.ControlURL = &connFlags.controlURL
+		}
 		if connFlags.keyStdin {
 			k, err := readSecret(cmd, "auth key")
 			if err != nil {
@@ -345,6 +352,7 @@ func init() {
 	tlsPublicEnableCmd.Flags().StringVar(&connFlags.acmeCA, "acme-ca", "", "the ACME directory URL (empty: Let's Encrypt)")
 	tlsPublicUpdateCmd.Flags().BoolVar(&connFlags.scheduled, "scheduled", false, "print only changes (the timer)")
 	tlsTailscaleEnableCmd.Flags().BoolVar(&connFlags.keyStdin, "auth-key-stdin", false, "read the auth key from the standard input")
+	tlsTailscaleEnableCmd.Flags().StringVar(&connFlags.controlURL, "control-url", "", "the URL of a self-hosted control server (Headscale); \"\" is the Tailscale service")
 	networkWiFiSetCmd.Flags().StringVar(&connFlags.ssid, "ssid", "", "the network name")
 	networkWiFiSetCmd.Flags().BoolVar(&connFlags.pskStdin, "psk-stdin", false, "read the passphrase from the standard input")
 	networkWiFiSetCmd.Flags().StringVar(&connFlags.country, "country", "", "the Wi-Fi country, for example IN")

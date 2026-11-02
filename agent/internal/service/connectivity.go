@@ -131,6 +131,8 @@ type TailscaleTLS struct {
 	HTTPSEnabled bool    `json:"https_enabled"`
 	// Published is true when the pod publishes on the Tailscale address (care.pod).
 	Published bool `json:"published"`
+	// ControlURL is tls.tailscale.control_url (Phase 7, O4), or nil for the Tailscale service.
+	ControlURL *string `json:"control_url"`
 }
 
 // tailscaleState is state/tls-tailscale.json: what the enrol job saw last. The login URL is a capability:
@@ -204,8 +206,8 @@ func (s *Service) publicTLS(ctx context.Context, enabled bool, clinicID, acmeCA 
 	return out
 }
 
-func (s *Service) tailscaleTLS(ctx context.Context, enabled bool, hostname string) TailscaleTLS {
-	out := TailscaleTLS{Enabled: enabled, Hostname: strPtr(hostname)}
+func (s *Service) tailscaleTLS(ctx context.Context, enabled bool, hostname, controlURL string) TailscaleTLS {
+	out := TailscaleTLS{Enabled: enabled, Hostname: strPtr(hostname), ControlURL: strPtr(controlURL)}
 	st, _ := readJSONFile[tailscaleState](s.Paths.Abs(paths.TailscaleState))
 	// Read tailscaled only when the mode is on, or when an enrol job ran.
 	if enabled || st.BackendState != "" {
@@ -652,7 +654,10 @@ type TailscaleRequest struct {
 	Enabled bool
 	// AuthKey is the auth key; "" starts the login in the browser (the login URL in GET /tls).
 	AuthKey string
-	Reason  string
+	// ControlURL is tls.tailscale.control_url (Phase 7, O4): nil keeps the value of config.yaml, "" is the Tailscale
+	// service, and an https URL is a self-hosted control server (Headscale).
+	ControlURL *string
+	Reason     string
 }
 
 // StartTailscale starts the job tls-tailscale-enrol: enable or disable the Tailscale mode (S37: opt-in).
@@ -664,7 +669,15 @@ func (s *Service) StartTailscale(ctx context.Context, req TailscaleRequest, sour
 	if err != nil {
 		return nil, err
 	}
-	if req.AuthKey != "" && !strings.HasPrefix(req.AuthKey, "tskey-") {
+	controlURL := cfg.TLS.Tailscale.ControlURL
+	if req.ControlURL != nil {
+		controlURL = *req.ControlURL
+	}
+	if controlURL != "" && !controlURLRE.MatchString(controlURL) {
+		return nil, problem.Invalid("/control_url", "the control server URL starts with https:// and has no spaces", "pattern")
+	}
+	// Headscale makes its own pre-auth keys (a hex string), so only the Tailscale service needs the tskey- prefix.
+	if req.AuthKey != "" && controlURL == "" && !strings.HasPrefix(req.AuthKey, "tskey-") {
 		return nil, problem.Invalid("/auth_key", "an auth key of Tailscale starts with tskey-", "pattern")
 	}
 	if !req.Enabled && !cfg.TLS.Tailscale.Enabled {
@@ -676,7 +689,7 @@ func (s *Service) StartTailscale(ctx context.Context, req TailscaleRequest, sour
 	return s.Jobs.Start(ctx, jobs.Spec{Kind: jobs.KindTLSTailscaleEnrol, Source: source, Reason: req.Reason, Lock: true, Cancellable: true},
 		func(ctx context.Context, rec *jobs.Recorder) (any, error) {
 			if req.Enabled {
-				return s.tailscaleEnable(ctx, rec, req, cfg.Identity.Hostname)
+				return s.tailscaleEnable(ctx, rec, req, cfg.Identity.Hostname, controlURL)
 			}
 			return s.tailscaleDisable(ctx, rec)
 		})
@@ -691,7 +704,10 @@ func (s *Service) saveTailscale(st *tailscale.Status) {
 	_ = writeJSONFile(s.Paths.Abs(paths.TailscaleState), ts)
 }
 
-func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req TailscaleRequest, hostname string) (any, error) {
+// controlURLRE is the pattern of tls.tailscale.control_url in the config schema.
+var controlURLRE = regexp.MustCompile(`^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^\s]*)?$`)
+
+func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req TailscaleRequest, hostname, controlURL string) (any, error) {
 	tc := s.tailscaleClient()
 	if err := step(rec, "tailscale-install: install tailscale from the repository of Tailscale", func() error {
 		did, err := tc.Install(ctx)
@@ -710,10 +726,13 @@ func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req T
 	cur, _ := tc.Status(ctx)
 	if cur == nil || cur.BackendState != tailscale.StateRunning {
 		if err := step(rec, "tailscale-up: connect to the tailnet", func() error {
-			if req.AuthKey != "" {
-				return tc.UpWithKey(ctx, hostname, req.AuthKey)
+			if controlURL != "" {
+				rec.Logf("control server %s", controlURL)
 			}
-			return tc.StartLogin(ctx, hostname)
+			if req.AuthKey != "" {
+				return tc.UpWithKey(ctx, hostname, controlURL, req.AuthKey)
+			}
+			return tc.StartLogin(ctx, hostname, controlURL)
 		}); err != nil {
 			return nil, err
 		}
@@ -741,6 +760,10 @@ func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req T
 			return err
 		}
 		if !st.HTTPSEnabled() {
+			if controlURL != "" {
+				return problem.New(problem.TailscaleHTTPSDisabled, "The control server "+controlURL+" gives no certificate for "+st.DNSName+
+					". Headscale gives certificates only when it supports \"tailscale cert\" (DNS-01) and its configuration turns it on. Use the public name or the local CA meanwhile.")
+			}
 			return problem.New(problem.TailscaleHTTPSDisabled, "Turn on MagicDNS and HTTPS Certificates in the DNS page of the Tailscale admin console, then turn Tailscale on again.")
 		}
 		rec.Logf("the device is %s in the tailnet %s", st.DNSName, st.Tailnet)
@@ -753,6 +776,11 @@ func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req T
 			ts := section(section(doc, "tls"), "tailscale")
 			ts["enabled"] = true
 			ts["hostname"] = st.DNSName
+			if controlURL != "" {
+				ts["control_url"] = controlURL
+			} else {
+				delete(ts, "control_url")
+			}
 		})
 	}); err != nil {
 		return nil, err

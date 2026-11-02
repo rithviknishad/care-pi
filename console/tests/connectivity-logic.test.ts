@@ -9,6 +9,7 @@ import {
   signalLevel,
   sortNetworks,
   validAuthKey,
+  validControlUrl,
   validHint,
   validateWifi,
 } from "@/features/connectivity/connectivity-logic";
@@ -25,6 +26,16 @@ describe("connectivity logic", () => {
     expect(validAuthKey("")).toBe(true);
     expect(validAuthKey("tskey-auth-abc")).toBe(true);
     expect(validAuthKey("abc")).toBe(false);
+    // Headscale (Phase 7): a pre-auth key without the tskey- prefix.
+    expect(validAuthKey("0123abcd", "https://headscale.example.org")).toBe(true);
+  });
+
+  it("accepts an https control server URL or nothing", () => {
+    expect(validControlUrl("")).toBe(true);
+    expect(validControlUrl("https://headscale.example.org")).toBe(true);
+    expect(validControlUrl("https://hs.example.org:8443/x")).toBe(true);
+    expect(validControlUrl("http://headscale.example.org")).toBe(false);
+    expect(validControlUrl("https://a b")).toBe(false);
   });
 
   it("validates the Wi-Fi form", () => {

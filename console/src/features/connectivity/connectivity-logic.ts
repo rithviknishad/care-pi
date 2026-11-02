@@ -12,8 +12,14 @@ export function validHint(hint: string): boolean {
   return HINT.test(hint);
 }
 
-export function validAuthKey(key: string): boolean {
-  return key === "" || key.startsWith("tskey-");
+export function validAuthKey(key: string, controlUrl = ""): boolean {
+  // A pre-auth key of Headscale has no tskey- prefix (Phase 7, O4).
+  return key === "" || controlUrl !== "" || key.startsWith("tskey-");
+}
+
+/** The pattern of `control_url` in the contract: empty (the Tailscale service) or an https URL. */
+export function validControlUrl(url: string): boolean {
+  return url === "" || /^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\/\S*)?$/.test(url);
 }
 
 export interface WifiForm {

@@ -219,7 +219,7 @@ reloads the unit again.
 
 ### 4.3 Turn it on and off
 
-Console: Settings > Connectivity > Tailscale. CLI: `care-pi tls tailscale enable [--auth-key-stdin]`.
+Console: Settings > Connectivity > Tailscale. CLI: `care-pi tls tailscale enable [--auth-key-stdin] [--control-url URL]`.
 API: `PUT /tls/tailscale {"enabled": true, "auth_key": "tskey-…"}` (needs a recent password check).
 The job is `tls-tailscale-enrol` (steps `tailscale-install`, `tailscale-up`, `tailscale-login`, `write-config`, apply steps).
 
@@ -227,7 +227,28 @@ Off: `care-pi tls tailscale disable`, or `PUT /tls/tailscale {"enabled": false}`
 (the site and the drop-in go), runs `tailscale down` and `tailscale logout`. The package stays installed and
 `tailscaled` stays enabled, so a new enable is fast. To remove it: `apt-get purge tailscale`.
 
-### 4.4 Use it
+### 4.4 A self-hosted control server (Headscale)
+
+Phase 7 (O4): the Tailscale service is the default; a self-hosted control server, for example
+[Headscale](https://github.com/juanfont/headscale), is the other option. Set `tls.tailscale.control_url`:
+
+- Console: Settings > Connectivity > Tailscale > Control server. CLI:
+  `care-pi tls tailscale enable --control-url https://headscale.example.org [--auth-key-stdin]`. API:
+  `PUT /tls/tailscale {"enabled": true, "control_url": "https://headscale.example.org", "auth_key": "<pre-auth key>"}`.
+- Each `tailscale up` of the job then has `--login-server=<url>`. `--reset` sets each flag that is not given to its
+  default, so the agent gives the flag at each `up`. An empty `control_url` (`--control-url ""`) goes back to the
+  Tailscale service.
+- A pre-auth key of Headscale (`headscale preauthkeys create`) has no `tskey-` prefix: the agent checks the prefix only
+  without a control server.
+- The MagicDNS name is below the `base_domain` of the server, not `ts.net`. `tls.tailscale.hostname` must end in `.ts.net`
+  only when `control_url` is empty.
+- The certificate: Caddy gets it from `tailscaled` (`tailscale cert`), and `tailscaled` asks the control server for the
+  DNS-01 record. A control server without this function gives no `CertDomains`: the job stops with
+  `tailscale-https-disabled`, and the message names the control server. Check the release notes of the Headscale
+  version (headscale issue 2137). Use the public name or the local CA meanwhile.
+- The login link (no key) comes from the control server, as with the Tailscale service.
+
+### 4.5 Use it
 
 Install the Tailscale app on the phone or the laptop, and log in to the tailnet of the clinic.
 Open `https://<host>.<tailnet>.ts.net`. There is no certificate warning and no root CA install.

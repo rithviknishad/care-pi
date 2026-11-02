@@ -143,8 +143,14 @@
           "properties": {
             "enabled": { "type": "boolean" },
             "hostname": {
+              "description": "The MagicDNS name. <host>.<tailnet>.ts.net with Tailscale; with control_url (Headscale), a name below the base domain of that server.",
               "type": ["string", "null"],
-              "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+ts\\.net$"
+              "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$"
+            },
+            "control_url": {
+              "description": "Phase 7 (O4). The URL of a self-hosted control server (Headscale), for tailscale up --login-server. null: the Tailscale service.",
+              "type": ["string", "null"],
+              "pattern": "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^\\s]*)?$"
             }
           },
           "allOf": [

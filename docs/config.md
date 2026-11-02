@@ -162,7 +162,8 @@ Postgres always gets `max_connections=40` and `work_mem=4MB`.
 | `tls.public.clinic_id` | string, or `null` | `null` | Phase 6 | The id that the DNS service gives (for example `sunrise-k3x9`). Required when `tls.public.enabled` is `true`. Do not type it: the enrol job writes it. |
 | `tls.public.acme_ca` | `https://` URL, or `null` | `null` | Phase 6 | The ACME directory. `null` uses Let's Encrypt. For a test, use the staging directory `https://acme-staging-v02.api.letsencrypt.org/directory` (browsers do not trust its certificates). |
 | `tls.tailscale.enabled` | boolean | `false` | Phase 6 | Tailscale mode: the MagicDNS name with the certificate of `tailscaled`. Use `care-pi tls tailscale enable` or `PUT /tls/tailscale`: the enrol job installs Tailscale, connects, and sets `hostname`. |
-| `tls.tailscale.hostname` | `<host>.<tailnet>.ts.net`, or `null` | `null` | Phase 6 | The MagicDNS name. Required when `tls.tailscale.enabled` is `true`. The enrol job writes it from `tailscale status --json`. |
+| `tls.tailscale.hostname` | `<host>.<tailnet>.ts.net`, or `null` | `null` | Phase 6 | The MagicDNS name. Required when `tls.tailscale.enabled` is `true`. The enrol job writes it from `tailscale status --json`. It must end in `.ts.net` when `control_url` is not set. |
+| `tls.tailscale.control_url` | `https://…`, or `null` | `null` | Phase 7 | A self-hosted control server (Headscale, O4): `tailscale up --login-server`. `null` is the Tailscale service. `docs/connectivity.md` section 4.4. |
 
 The order of the names is: the public name, the local names, the Tailscale name. The first name is the canonical host
 (`CURRENT_DOMAIN`, `BUCKET_EXTERNAL_ENDPOINT`, the `meta.url` of the plugs). With more than 1 name, the plug

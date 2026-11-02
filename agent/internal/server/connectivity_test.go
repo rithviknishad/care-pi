@@ -423,6 +423,27 @@ func TestTailscaleHTTPSOff(t *testing.T) {
 	}
 }
 
+// TestTailscaleHeadscale: tls.tailscale.control_url (Phase 7, O4) gives "--login-server" to "tailscale up", a pre-auth key
+// of Headscale has no tskey- prefix, and a server without certificates names the control server in the problem.
+func TestTailscaleHeadscale(t *testing.T) {
+	e, _ := readyConnEnv(t)
+	e.want(e.do("PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": true, "auth_key": "0123abcd", "control_url": "http://hs.example.org"}, invalid), 422, "invalid-request")
+	e.want(e.do("PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": true, "auth_key": "0123abcd"}, invalid), 422, "invalid-request")
+	e.fake.On("tailscale version", host.Response{Out: "1.90.4\n"})
+	st := strings.Replace(tailscale.StatusJSON(tailscale.StateRunning, ""), `"CertDomains":["care.tail1234.ts.net"]`, `"CertDomains":[]`, 1)
+	e.fake.On("tailscale status --json", host.Response{Out: tailscale.StatusJSON(tailscale.StateNeedsLogin, ""), Code: 1}, host.Response{Out: st})
+	r := e.do("PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": true, "auth_key": "0123abcd", "control_url": "https://hs.example.org"})
+	e.want(r, 202, "")
+	j := e.waitJob(r.json(t)["id"].(string))
+	if j.State != jobs.StateFailed || !strings.HasSuffix(j.Error.Type(), "tailscale-https-disabled") || !strings.Contains(j.Error.Detail, "https://hs.example.org") {
+		t.Fatalf("job %s %+v", j.State, j.Error)
+	}
+	up := e.fake.Filter("tailscale up")
+	if len(up) != 1 || !strings.Contains(up[0], "--reset --login-server=https://hs.example.org --auth-key=file:") {
+		t.Fatalf("up %v", up)
+	}
+}
+
 // TestWiFi: scan, set, and remove (section 15.4).
 func TestWiFi(t *testing.T) {
 	e, _ := readyConnEnv(t)

@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: care-pi agent API
-  version: 0.7.1
+  version: 0.8.0
   summary: The HTTP API between the care-pi agent and the console.
   description: |
     This document is the contract between the care-pi agent (`care-pi serve`) and the console.
@@ -8429,6 +8429,7 @@ components:
             ipv4: null
             https_enabled: false
             published: false
+            control_url: null
     TlsPublic:
       x-phase: 6
       type: object
@@ -8531,7 +8532,7 @@ components:
       type: object
       additionalProperties: false
       description: The Tailscale mode (Phase 6, P11, S37).
-      required: [enabled, hostname, installed, backend_state, login_url, tailnet, ipv4, https_enabled, published]
+      required: [enabled, hostname, installed, backend_state, login_url, tailnet, ipv4, https_enabled, published, control_url]
       properties:
         enabled:
           type: boolean
@@ -8569,6 +8570,14 @@ components:
         published:
           type: boolean
           description: The pod publishes on the Tailscale address. `false` after a boot without the address; the next apply publishes it.
+        control_url:
+          x-phase: 7
+          type: [string, 'null']
+          format: uri
+          description: |
+            `tls.tailscale.control_url` (O4): the URL of a self-hosted control server (Headscale). `null` is the Tailscale
+            service.
+          examples: [https://headscale.example.org]
       examples:
         - enabled: false
           hostname: null
@@ -8579,6 +8588,7 @@ components:
           ipv4: null
           https_enabled: false
           published: false
+          control_url: null
     CaRoot:
       type: object
       additionalProperties: false
@@ -8774,9 +8784,21 @@ components:
           writeOnly: true
           maxLength: 200
           description: |
-            A Tailscale auth key (`tskey-...`). `null` or absent starts the login in the browser: `GET /tls` shows
-            `tailscale.login_url`. The key goes to tailscale through a file in `/run`; the agent deletes it after `tailscale up`.
+            A Tailscale auth key (`tskey-...`), or a pre-auth key of the control server when `control_url` is set.
+            `null` or absent starts the login in the browser: `GET /tls` shows `tailscale.login_url`. The key goes to
+            tailscale through a file in `/run`; the agent deletes it after `tailscale up`.
           examples: [tskey-auth-EXAMPLE]
+        control_url:
+          x-phase: 7
+          type: [string, 'null']
+          maxLength: 200
+          pattern: '^(https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^\s]*)?)?$'
+          description: |
+            Phase 7 (O4). The URL of a self-hosted control server (Headscale): `tailscale up --login-server`. An empty string
+            goes back to the Tailscale service. `null` or absent keeps `tls.tailscale.control_url`. The enrol job writes it
+            to `config.yaml`. A control server gives a certificate only when it supports `tailscale cert`; else the job
+            fails with `tailscale-https-disabled`.
+          examples: [https://headscale.example.org]
         reason:
           type: [string, 'null']
           maxLength: 200

@@ -50,6 +50,7 @@ function tls(over: Partial<TlsState> = {}): TlsState {
       ipv4: null,
       https_enabled: false,
       published: false,
+      control_url: null,
     },
     ...over,
   };
@@ -158,6 +159,7 @@ describe("connectivity tab", () => {
         ipv4: "100.101.102.103",
         https_enabled: false,
         published: false,
+        control_url: "https://headscale.example.org",
       },
     });
     renderTab();
@@ -166,6 +168,7 @@ describe("connectivity tab", () => {
     expect(ts).toHaveTextContent("care.tail1234.ts.net");
     expect(ts).toHaveTextContent("Turn on HTTPS Certificates");
     expect(ts).toHaveTextContent("The next apply adds it");
+    expect(screen.getByTestId("tailscale-control-url")).toHaveTextContent("https://headscale.example.org");
   });
 
   it("tells that the device has no Wi-Fi", () => {

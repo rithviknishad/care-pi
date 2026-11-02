@@ -1,0 +1,3 @@
+version: 1
+tls:
+  tailscale: {enabled: true, hostname: care.clinic.example.org}

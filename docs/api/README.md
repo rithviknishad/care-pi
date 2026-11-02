@@ -1697,3 +1697,24 @@ All changes are additive.
   `ClockSource` (S52).
 - `PublicStatus.firstboot_error`: why the first boot of the image did not use the pre-seed (`docs/image.md` section 5).
   The claim page of the console and the setup page on port 443 show it until the setup is finished.
+
+## 17. Hardening and breadth (Phase 7)
+
+Phase 7 adds options for a hardened host and more hosts. Each addition is optional and off by default, except where a
+section tells otherwise. The design notes are `docs/console-server.md`, `docs/connectivity.md`, `docs/solutions.md`,
+`docs/telemetry.md`, and `docs/install.md`.
+
+### 17.1 Headscale (O4)
+
+`tls.tailscale.control_url` (config) and `TailscaleRequest.control_url` (request) set a self-hosted control server:
+`tailscale up --login-server <url>`. `TlsTailscale.control_url` shows it in `GET /tls`. The Tailscale service stays the
+default. Without `control_url`, an auth key must start with `tskey-` (`422 invalid-request`, `/auth_key`), and the
+MagicDNS name must end in `.ts.net`. A control server that gives no certificate fails the enrol job with
+`tailscale-https-disabled` (`docs/connectivity.md` section 4.4).
+
+### 17.9 Changes of contract 0.8.0
+
+All changes are additive.
+
+- `TailscaleRequest.control_url`, `TlsTailscale.control_url` (section 17.1).
+

@@ -120,6 +120,8 @@ type TLSTailscale struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
 	// Hostname is the MagicDNS name (<host>.<tailnet>.ts.net). The enrol job sets it from "tailscale status".
 	Hostname string `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	// ControlURL is the URL of a self-hosted control server, for example Headscale (Phase 7, O4). Empty: Tailscale.
+	ControlURL string `yaml:"control_url,omitempty" json:"control_url,omitempty"`
 }
 
 // Clock selects the clock gate policy.

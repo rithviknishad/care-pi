@@ -165,6 +165,7 @@ function tlsState(state) {
       ipv4: ts.state === "Running" ? TS_IP : null,
       https_enabled: ts.state === "Running",
       published: ts.enabled,
+      control_url: ts.controlUrl ?? null,
     },
   };
 }
@@ -270,7 +271,14 @@ function putTailscale({ res, state, body }) {
   if (typeof body.enabled !== "boolean") throw new Problem("invalid-request", "The member enabled is required.");
   const c = conn(state);
   const key = body.auth_key ?? null;
-  if (key !== null && !String(key).startsWith("tskey-")) {
+  const controlUrl = body.control_url ?? c.tailscale.controlUrl ?? "";
+  if (controlUrl && !/^https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\/\S*)?$/.test(controlUrl)) {
+    throw new Problem("invalid-request", "1 value is not valid.", {
+      errors: [{ pointer: "/control_url", message: "the control server URL starts with https://", code: "pattern" }],
+    });
+  }
+  if (body.enabled) c.tailscale.controlUrl = controlUrl || null;
+  if (key !== null && !controlUrl && !String(key).startsWith("tskey-")) {
     throw new Problem("invalid-request", "1 value is not valid.", {
       errors: [{ pointer: "/auth_key", message: "an auth key of Tailscale starts with tskey-", code: "pattern" }],
     });

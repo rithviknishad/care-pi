@@ -69,7 +69,7 @@ func TestUpWithKeyKeepsTheKeyOffTheCommandLine(t *testing.T) {
 		return host.Response{}, false
 	}
 	c := Client{Runner: f, RunDir: dir}
-	if err := c.UpWithKey(context.Background(), "care", "tskey-auth-SECRET"); err != nil {
+	if err := c.UpWithKey(context.Background(), "care", "", "tskey-auth-SECRET"); err != nil {
 		t.Fatal(err)
 	}
 	if seen != "tskey-auth-SECRET" {
@@ -94,7 +94,7 @@ func TestLoginFlow(t *testing.T) {
 		host.Response{Out: StatusJSON(StateNeedsLogin, "https://login.tailscale.com/a/abc"), Code: 1},
 		host.Response{Out: StatusJSON(StateRunning, "")})
 	c := Client{Runner: f, Poll: time.Millisecond}
-	if err := c.StartLogin(context.Background(), "care"); err != nil {
+	if err := c.StartLogin(context.Background(), "care", ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.Filter("systemd-run"); len(got) != 1 || !strings.Contains(got[0], "--unit="+UpUnit+" -- tailscale up --hostname=care") ||
@@ -118,5 +118,24 @@ func TestStatusWithoutTailscale(t *testing.T) {
 	st, err := Client{Runner: f}.Status(context.Background())
 	if err != nil || st.Installed {
 		t.Fatalf("%+v %v", st, err)
+	}
+}
+
+func TestUpArgsControlURL(t *testing.T) {
+	got := strings.Join(UpArgs("care", ""), " ")
+	if strings.Contains(got, "--login-server") {
+		t.Fatalf("SaaS up has a login server: %s", got)
+	}
+	got = strings.Join(UpArgs("care", "https://hs.example.org"), " ")
+	if !strings.HasSuffix(got, "--reset --login-server=https://hs.example.org") {
+		t.Fatalf("Headscale up %q", got)
+	}
+	f := host.NewFake()
+	c := Client{Runner: f}
+	if err := c.StartLogin(context.Background(), "care", "https://hs.example.org"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Filter("systemd-run"); len(got) != 1 || !strings.Contains(got[0], "--login-server=https://hs.example.org --timeout=") {
+		t.Fatalf("start login %q", got)
 	}
 }

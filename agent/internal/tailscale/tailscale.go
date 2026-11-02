@@ -184,13 +184,19 @@ func (c Client) Install(ctx context.Context) (bool, error) {
 
 // UpArgs are the flags of "tailscale up": the host name, and no DNS settings from the tailnet on the host
 // (the agent never resolves names through MagicDNS, and the clinic DNS of the host must stay).
-func UpArgs(hostname string) []string {
-	return []string{"up", "--hostname=" + hostname, "--accept-dns=false", "--accept-routes=false", "--reset"}
+// A controlURL (tls.tailscale.control_url, O4) adds "--login-server" for a self-hosted control server such as
+// Headscale. "--reset" sets each flag that is not given to its default, so the flag is necessary at each "up".
+func UpArgs(hostname, controlURL string) []string {
+	args := []string{"up", "--hostname=" + hostname, "--accept-dns=false", "--accept-routes=false", "--reset"}
+	if controlURL != "" {
+		args = append(args, "--login-server="+controlURL)
+	}
+	return args
 }
 
 // UpWithKey runs "tailscale up" with an auth key. The key goes through a file in RunDir (mode 0600), never
 // through the command line: "--auth-key=file:<path>".
-func (c Client) UpWithKey(ctx context.Context, hostname, authKey string) error {
+func (c Client) UpWithKey(ctx context.Context, hostname, controlURL, authKey string) error {
 	if c.RunDir == "" {
 		return errors.New("tailscale: no RunDir for the auth key")
 	}
@@ -202,7 +208,7 @@ func (c Client) UpWithKey(ctx context.Context, hostname, authKey string) error {
 		return err
 	}
 	defer func() { _ = os.Remove(f) }()
-	args := append(UpArgs(hostname), "--auth-key=file:"+f, "--timeout=2m")
+	args := append(UpArgs(hostname, controlURL), "--auth-key=file:"+f, "--timeout=2m")
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	if _, err := c.run(ctx, args...); err != nil {
@@ -213,10 +219,10 @@ func (c Client) UpWithKey(ctx context.Context, hostname, authKey string) error {
 
 // StartLogin starts "tailscale up" without a key in a transient unit: tailscaled then waits for a login in the
 // browser (BackendState NeedsLogin with an AuthURL). The unit ends at the login, or after UpTimeout.
-func (c Client) StartLogin(ctx context.Context, hostname string) error {
+func (c Client) StartLogin(ctx context.Context, hostname, controlURL string) error {
 	_, _ = c.Runner.Run(ctx, host.Cmd{Name: "systemctl", Args: []string{"stop", UpUnit + ".service"}})
 	args := append([]string{"--collect", "--quiet", "--unit=" + UpUnit, "--", "tailscale"},
-		append(UpArgs(hostname), "--timeout="+UpTimeout.String())...)
+		append(UpArgs(hostname, controlURL), "--timeout="+UpTimeout.String())...)
 	if _, err := c.Runner.Run(ctx, host.Cmd{Name: "systemd-run", Args: args}); err != nil {
 		return fmt.Errorf("cannot start tailscale up: %w", err)
 	}
