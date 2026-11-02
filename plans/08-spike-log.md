@@ -1638,8 +1638,8 @@ To check on lumine with the Phase 6 exit test:
 ## Phase 6 exit test — lumine, 2026-11-02 — **PASS except Wi-Fi: the CA switch, the public name, and the Tailscale mode; both exit criteria (10 fixes, waves 8 and 8-ts)**
 ## Phase 7 exit test — plan (run after the merge of `phase-7-hardening` and the Phase 6 exit test)
 
-Status: **planned, not run.** The Phase 7 code did not use lumine (rule of the wave). Keep the raw output in
-`local/p7-exit/` (S39). The specifications: `docs/console-server.md` sections 13 (firewall), 14 (helper), 15 (WAF), 16
+Status: **run in the final acceptance on lumine, 2026-11-02 (wave 10): PASS, with fixes** (see "Final acceptance —
+lumine, 2026-11-02" at the end of this file). The raw output is in `local/wave10/` (S39), not in `local/p7-exit/`. The specifications: `docs/console-server.md` sections 13 (firewall), 14 (helper), 15 (WAF), 16
 (doctor); `docs/connectivity.md` section 2.5 (CA rotation); `docs/telemetry.md`; `docs/solutions.md` section 18
 (signing); the contract `docs/api/README.md` section 17 (0.8.0).
 
@@ -2014,3 +2014,102 @@ deleted. Leftovers: `~/wave8/` (scripts, logs, `api.py`), the Care files of the 
 the multihost plug on (auto) without an operator setting (`ALLOWED_HOSTS` = the lock list + the public name from the agent);
 the 4 destinations `ok`; `systemctl --failed` empty. Leftovers: `~/wave8ts/` (scripts, logs, the agent binary), 4 more Care
 files of `W5 Patient One` (`w8ts-tailscale`, `w8ts-public`, twice; 1 MiB each).
+
+## Final acceptance — lumine, 2026-11-02 — **PASS (A to D), with 9 fixes; lumine runs the dev build `v0.1.0-fix.10`**
+
+Wave 10. The deferred list (`09-handoff.md` §8k), the Phase 7 exit test (the plan above), and the release path of
+`v0.1.0`, on the same lumine install as the Phase 6 exit test. The raw output is in `local/wave10/` (each step has a
+script and its output); the screenshots are in the session files (`wave10-shots/`). The Mac reached lumine only through
+the tailnet (`100.67.15.72`; the Mac is `100.127.72.71`). Not a fresh flash.
+
+Owner approvals that the wave used: `update --os --now` with a real `apt-get full-upgrade` and reboots; the removal of
+the test leftovers. The Let's Encrypt certificate of `lumine-shaj` was kept (no new production certificate). The CA
+rotation changed only the local CA.
+
+### Results
+
+| Step | What | Result | Timings |
+|---|---|---|---|
+| A1 | Before-state (`00-before.txt`) | Agent `85d5d3b`, lock 2026.11.1, no `care-pi firewall`, no helper, `care-api` 512M, the Caddy image `localhost/care-pi/caddy:2` without the WAF module | — |
+| A2 | The release installer (`curl` of `releases/latest/download/install.sh`, `--version v0.1.0 --skip-bootstrap`) | **PASS.** The installer downloaded `care-pi_linux_arm64` and `SHA256SUMS` of the release and checked the sum; `care-pi version` gives `v0.1.0` (`daed1f2`). Steps 8 (the firewall file of the installer), 9 (`52care-pi.conf`), 12 (the agent), 13 (the helper: user `care-pi`, the socket), and 14 (the restart of the agent) changed; the other steps were "already configured" (the install was from the installer of wave 5a) | install 15 s (download 10 s) |
+| A2 | The first apply of `v0.1.0` | **PASS.** S63: `MemoryMax=603979776`. S62: the restart of `care-api` ran behind the page: `/` gave `503` with the page, `/_care-pi/status` had `maintenance {active: true, kind: apply, step: restart}`. S61: `header_up X-Care-Pi-Listener {args[0]}` in the Caddyfile. Phase 7: the table of the agent (policy `accept`, DHCP, `41641/udp`, DNS of podman) and its drop-in; the drop-in of Phase 6 went | apply 24 s; page 22 s (`/ping/` 502 for 19.6 s) |
+| A3 | `agent-too-old` with the release | **PASS after fix 1.** With the locks of the dist (min `v0.4.0`), the check logs "care-clinic 2026.11.1 needs agent v0.4.0 or newer. This agent is v0.1.0. Run the installer again." 2026.11.1 is the running version, so `GET /updates` has no target and `blocked_by: null` (the contract: "why the agent does not install `target`"). With a TEST ONLY lock 2026.11.3 (min `v0.4.0`), the job result had the blocker, but `GET /updates` had `blocked_by: null` (bug 1). After fix 1 (checked with a CLI of `12ace01` that says `v0.1.0`, run from `~/wave10` only): `blocked_by` `agent-too-old` with the detail; `update status` prints "blocked: …". Lock 2026.11.2 (`--min-agent v0.1.0`, the inputs of `local/wave6-exit/common-args.sh`, the solution with `care_fasterappointments_fe` on as in wave 6b, the Caddy image `ghcr.io/rithviknishad/care-pi/caddy:2@sha256:e9a11d07…` with the WAF module): the check gives target 2026.11.2, path `cutover` | check 1 s |
+| B1 | `update --os --check --json` | **PASS.** 14 upgradable (2 security: vim), 6 held packages (`tested: null`: the local `index.json` has no `os.held_packages`, so each stays held), no reboot required | — |
+| B1 | `update --os --now --reboot-if-required` (in a transient unit) | **PASS after fixes 2 and 3.** `apt-get update`, `full-upgrade` with the holds (14 packages, also `tailscale` 1.104.1 → 1.104.4 and `cloudflared`), `os-unhold` (nothing: no tested version), `os-hold`. `apt-mark showhold` unchanged, `podman 5.4.2`, no reboot required, so no reboot. The upgrade of `tailscale` restarted `tailscaled`: the Tailscale name failed (TLS "internal error") until a manual restart of `care-caddy` (bug 3) | job 34.8 s; the Tailscale name down 2 min 17 s |
+| B1 | The reboot path (`update --os --reboot --now`) | **PASS after fix 2.** Before the fix the command printed the time and did not reboot (bug 2). After: the reboot after 5 s; units active, the holds and `podman 5.4.2` unchanged, the 3 names `200` | SSH 36 s; Care 110 s |
+| B2 | `update apply --now` 2026.11.1 → 2026.11.2 | **PASS.** The cutover behind the page (steps stop, checkpoint, migrate, start, plug-config); lock 2026.11.2; rollback to 2026.11.1 available. Then `images.caddy` (the override of wave 6b) went out of `config.yaml`: the Caddy image of the lock runs (`http.handlers.waf`) | job 64 s; downtime 63.2 s (migrate 31 s); the Caddy image change: a full cycle, 61 s, no page |
+| C1 | The helper (S53) | **PASS after fixes 4 and 8.** `install.sh --helper`: `serve --helper`, `NoNewPrivileges=yes`, 4 capabilities, `srw-rw---- root care-pi`. Through the daemon: login, `GET /status`, `GET /apply/plan`, `GET /doctor`, `GET /tls`, `GET /network`, an update check, a backup run (4 destinations), a support bundle, a log follow, an OS update, applies (WAF, telemetry), the firewall confirmation: no `denied` line. The drill failed (bug 4); after fix 4, 3 drills pass and no container stays. 8 hand-made requests on the socket as root (`podman run -v /:/x`, `--volume /:/x` with the Care image, `restic --password-command`, `restic -o sftp.command`, `bash`, `systemctl start ssh.service`, `systemd-run … tee /etc/shadow`, `podman rm care-db`): each refused and logged (`helper: denied`). A user that is not root or `care-pi` gets `EACCES` on the socket. A kill of the helper: the next request starts it again. A manual deploy of a new binary did not restart the helper, and the installer had the same gap (bug 8) | 113 requests in the first API run; drill 10 s |
+| C2 | The policy `drop` and the rollback timer (S54) | **PASS.** Second SSH session open the whole time. `care-pi firewall policy drop`: from the Mac a new SSH session, the 3 names, and the console work; a closed port (`8080`) and a port outside the list (`9100`) time out (3 s), not refused. No confirmation: back to `accept` (config, live, `rollback_reason: timeout`). Drop, then `POST /security/firewall/confirm` (through the helper): `care-pi.nft` has `policy drop`, no pending file; container egress (`care-api` → `ghcr.io` 401, `care-worker` → `pypi.org` 200), mDNS (lumine resolves `eywa.local` and `avocado.local`), a new DHCP lease (`nmcli con up`, the same address), NTP (a restart of `timesyncd` synchronizes), a backup run to the 4 destinations. A reboot inside the window boots `accept` ("the policy drop was not confirmed"). A reboot after the confirmation keeps `drop` | drop → rollback 90.7 s; reboot in the window: SSH 47 s, Care 114 s; reboot with drop: SSH 42 s, Care 109 s |
+| C3 | The CA rotation (S60) | **PASS after fix 5.** New root `DD:FF:2A:EE:…:40:63`; the previous root `D5:12:73:DB:…:1A:44` in `GET /tls` (`previous_root`) and on the page "for 7 days"; `ca/root.prev.crt`. The old root: `curl` exit 60 (lumine and the Mac); the new root: `200` (Care and the console). Chromium that trusts the served intermediate (checked with `openssl` against the new root only) opens `https://lumine.local/`; with the old root, `ERR_CERT_AUTHORITY_INVALID`. The public (`YE2`) and Tailscale (`YE1`) names unchanged. The page shows both fingerprints (screenshots), but its install steps showed "." and "Open." (bug 5) | job 2.5 s |
+| C4 | The WAF (S58) | **PASS.** `detect` through the API apply (the helper): `care-caddy` restart, `MemoryMax=256M`. The probe `/api/v1/users/?q=' OR 1=1--` with a bearer token and a console cookie: `200` and 1 audit line (rules 942100, 949110); no `Bearer`, `__Host-`, token, or cookie value in the journal (the access log has `["REDACTED"]`). Normal use (a patient search, a patient, a 1 MiB PDF through the presigned URL to `patient-bucket`, read back): 0 audit lines. `block` (a reload): the probe `403`, the normal use and the upload work. Back to `detect`: the probe `200` | apply 2 s |
+| C5 | Telemetry (S56) | **PASS after fixes 6 and 7.** VictoriaMetrics in Docker on the Mac. On: `care-node-exporter` could not bind `127.0.0.1:9100` (the owner's `prometheus-node-exporter` has `*:9100`) and restarted each 10 s; vmagent scraped the owner's exporter (`up` 1, no `care_pi_*`) (bug 6). After fix 6 (port 19100): `up` 1 with `instance=lumine` and `care_pi_version`, `care_pi_info`, `care_pi_unit_memory_bytes{unit="care-api.service"}`, `care_pi_firewall_policy{policy="drop"}`, the backup timestamps. `GET /api/v1/metrics`: `401` without a cookie, Prometheus text with a session. Off: the containers and quadlets go; `care-node-exporter` stayed failed (exit 2 at the stop, bug 7), not after fix 7. No connection to the receiver after off (`ss`; `tcpdump` is not installed). The receiver is removed | samples after 2 min |
+| C6 | `care-pi doctor` and the bundle | **PASS.** Clean: 59 checks `ok`, exit 0. With `/run/reboot-required` and `care-worker` stopped: `units` (`warn`, fix `sudo care-pi apply`) and `reboot` (`warn`) first. The Support page shows the same; after the repair, "Run again" gives `ok` (screenshots). The bundle (69 files) has `doctor.json`, `nft-ruleset.txt`, `firewall-state.json`, `memory-peaks.txt`, `podman-ps.txt`, `tailscale-status.json` (`AuthURL` redacted, no key); no bearer token, cookie, `nodekey`, `privkey`, `tskey-`, or S3 key; of the values of `/etc/care-pi/secrets`, only non-secret values match (the URL of the DNS service, the claim address, a user agent) | — |
+| C7 | S61 | **PASS.** Through the ts.net console, 10 wrong passwords: each `401 bad-credentials`, no `locked-out`; the journal has `address=tailscale`. Then `429 rate-limited` (10 credential requests each minute, shared by the tailnet), and after the minute the right password gives `200`; the session has the address `tailscale`. On `lumine.local:8443` from lumine: 5 × `401`, the sixth `429 locked-out` ("5 failed attempts from this address in 15 minutes"); `care-pi auth unlock`. A spoofed `X-Care-Pi-Listener: tailscale` on the LAN site logs `192.168.165.91`. Public reads: 90 parallel through `lumine.local` give 34 × `200` and 56 × `429`; 90 through the ts.net name give 90 × `200`. (61 sequential reads pass on both: the limit refills 1 each second) | — |
+| C8 | Phase 6 regression on the final agent | **PASS.** The 3 names `200`; `GET /tls`: the public name issued (`YE2`, production, until 2027-01-31), Tailscale `Running`, the rotated local CA; `care-dns-update` succeeded (each 5 min); a backup run to the 4 destinations (32 s) and a verify; no failed unit; the real journeys `desktop.login.spec.ts` and `phone.ready.spec.ts` over the tailnet with the system trust only | — |
+| D | Cleanup (owner approved) | **PASS after fix 9.** `s3` out of `config.yaml` (apply), then `w5-s3` (stop, quadlet, container) and `/var/lib/care-pi-test/s3`; `local` out (apply), then `/srv/care-backups`. The 4 timers of the 2 removed destinations stayed failed (bug 9); fix 9 checked with a temporary destination on and off. Also removed: the cached TEST ONLY lock 2026.11.3 and the image `care-clinic-test-broken-migrate`. 2 destinations stay: `usb` (`ok`) and `mac` (`ok`). `/var/lib/care-pi-test/loop.img` stays: it is the disk of `usb` (a loop device, not a real USB disk). On the Mac the key id `b7616345` is the live key, so `~/care-pi-sftp-backups/care-pi-b7616345` and its restricted `authorized_keys` line stay | — |
+
+### Fixes (one signed commit each, with a test; on `main` after `daed1f2`)
+
+1. `12ace01` update: `GET /updates` shows the `agent-too-old` blocker of the last check (the check recorded no target).
+2. `fef512b` cli: `care-pi update --os` waits for its reboot (the timer of the service ended with the process; also the
+   reboot step of `--reboot-if-required`).
+3. `1bbf445` render: in the Tailscale mode, the drop-in `tailscaled.service.d/50-care-pi.conf` (`RuntimeDirectoryPreserve=yes`,
+   only `daemon-reload`): a restart of `tailscaled` no longer leaves `care-caddy` with a deleted `/run/tailscale`. Checked:
+   a restart of `tailscaled` with the drop-in, the Tailscale name stayed `200`.
+4. `af129f2`, `83d1951` restore: the drill stops and removes its containers with `systemd-run --wait` (the mount namespace
+   of the host). From the private namespace of `care-pi.service` or the helper, podman cannot unmount the shm of the
+   container ("device or resource busy"), and a container stayed in the storage of podman after each drill (also the one of
+   2026-11-01), so the next drill failed on the name. `care-drill` runs without `--rm`.
+5. `6b104ee` console: the install steps of the root CA use the 27 keys of the agent (the page showed "." for the
+   fingerprint step and "Open." for others); the label of the download button follows the file (macOS gets a `.crt`).
+6. `f277b77` render: `care-node-exporter` listens on `127.0.0.1:19100`.
+7. `71c5c0e` apply: telemetry off runs `systemctl reset-failed` of the 2 units.
+8. `8fda826` installer: a new agent binary restarts the running helper (`try-restart`), also when its units did not change.
+9. `49ca4de` plan: the timers of a removed backup destination go to `disable-units` before their files go.
+
+Plus `d103536` (docs). The dev builds `v0.1.0-fix.1` … `v0.1.0-fix.10` were deployed one after the other; lumine ends on
+`v0.1.0-fix.10` (`49ca4de`), installed with the installer of `8fda826` (`--binary`, `--helper`). A tag `v0.1.1` gives a
+release with the fixes; then `install.sh --version v0.1.1` puts lumine on a release build again.
+
+### Measurements
+
+| What | Value |
+|---|---|
+| `care-api` peak (S63, 576M) | 471 MiB (the cutover to 2026.11.2), 473 MiB (from the boot of 18:42 to the end: the WAF tests, uploads, journeys): 82 % |
+| `care-caddy` peak, 3 names, WAF off (128M) | 115.8 MiB (before the wave, a long uptime), 100 MiB (after a reboot): up to 90 % |
+| `care-caddy` peak, 3 names, WAF `detect`/`block` (256M) | 116.5 MiB |
+| Agent (`care-pi.service`, 128M) | 69 MiB (API runs and 2 browser journeys) |
+| Helper (96M) | the first API run reached 96 MiB: file cache (anon 8 MiB, file 84 MiB; 311 `memory.max` events, 0 OOM kill); later 67 MiB (anon 10 MiB) |
+| vmagent, node_exporter | 23 of 96 MiB, 24 of 64 MiB |
+| `update --os` | 34.8 s with 14 packages; 5.1 s with none |
+| Firewall | drop → rollback 90.7 s; SSH and the 3 names kept |
+| Reboots | SSH after 34–47 s; Care on the 3 names after 109–114 s |
+| Downtime | update cutover 63.2 s (page); S62 restart 22 s (page); a full cycle for a new Caddy image 61 s (no page) |
+| Jobs | CA rotation 2.5 s; drill 10 s; backup run (4 destinations) 32–33 s |
+
+### Findings (not fixed; the owner decides)
+
+1. **The policy `drop` closes the other services of the host.** lumine runs the owner's `prometheus-node-exporter`
+   (9100) and `prometheus-process-exporter` (9256), and `avocado` (`100.123.72.40`) scrapes them over the tailnet; the
+   peer API of `tailscaled` is also closed. With `drop`, new connections time out. The table has no operator list of
+   ports and does not trust `tailscale0`. A design change (an allow-list in `security.firewall`, or accept on
+   `tailscale0`). lumine ends with `drop` confirmed, as asked: the scrapes of `avocado` fail until the owner decides
+   (`sudo care-pi firewall policy accept` opens them at once).
+2. A full cycle of an apply (a new image, for example the Caddy image) stops `care-api` without the maintenance page
+   (61 s of `502` on `/ping/`); S62 covers the paths `cutover` and `restart` only.
+3. No release step writes `os.held_packages` into `index.json`, so `update --os` never moves the podman stack
+   (`os-unhold` has no tested version).
+4. The installer and the agent write different comments in `52care-pi.conf`, so each run of the installer rewrites it,
+   and it writes `APT::Periodic::Unattended-Upgrade "1"` also when `updates.os_security` is `false` (until the next
+   scheduled check).
+5. node_exporter logs "collected metric node_filesystem_* … was collected before" for `/tmp` (a duplicate mount);
+   candidate: `/tmp` in `--collector.filesystem.mount-points-exclude`.
+6. Each apply that writes the lock (telemetry on adds images) moves the rollback point: after the telemetry test the
+   rollback goes to "2026.11.2 before telemetry", not to 2026.11.1.
+7. `care-caddy` reached 90 % of 128M with 3 names and the WAF off (§8k asks for a decision; 160M is the candidate).
+
+### What a fresh flash still has to test (owner, hardware)
+
+The Phase 1 fresh-flash test (`curl | sh` on a new Pi OS: ghcr pulls, the reboot-required cgroup path, the host name
+`care` and a collision), the Phase 5 image with Imager on a Pi 5 and a Pi 4 (no internet, S52 clock), Wi-Fi and the cable
+pull, a real phone on mobile data, F7, and DR to a second Pi.

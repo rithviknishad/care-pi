@@ -135,7 +135,9 @@ minisign signing of `index.json` and the locks (no key yet), the Coraza WAF (off
 (vmagent and node_exporter, `remote_write` only) and `GET /api/v1/metrics`, Headscale (`tls.tailscale.control_url`),
 `care-pi doctor` and a fuller support bundle, Ubuntu 25.04+ and Fedora Server 42+ (experimental) in the installer, and
 the docs site (an artifact while the repository is private). Not built: `PUT /security/ssh`, SELinux labels for
-Fedora enforcing. The exit test on lumine is planned, not run (`08-spike-log.md`, "Phase 7 exit test — plan").
+Fedora enforcing. **The Phase 7 exit test passed on lumine** in the final acceptance (wave 10, 2026-11-02, `08-spike-log.md`
+"Final acceptance — lumine, 2026-11-02", `09-handoff.md` §8r): the helper, the policy `drop` with its rollback, the CA
+rotation, the WAF, telemetry, and `care-pi doctor`, with 9 fixes.
 
 ## Cross-cutting threads (run alongside)
 
@@ -162,7 +164,16 @@ Fedora enforcing. The exit test on lumine is planned, not run (`08-spike-log.md`
 | WAF false positives (file uploads, rich text) | Care requests blocked | medium in `block` mode | off by default; `detect` first; per-rule tuning after the exit test |
 | The signing key is lost or leaks | no signed release, or forged locks accepted | low | `require_signed` opt-in; two keys during a rotation; the ceremony in `docs/solutions.md` §18 |
 
-## Status (2026-11-02, after the final code wave)
+## Status (2026-11-02, after the final acceptance)
+
+**v0.1.0 released; all phases complete on lumine; remaining: image flash test on hardware (owner), Wi-Fi test (owner),
+a second Pi for DR-to-new-device.** The final acceptance on lumine (wave 10, `09-handoff.md` §8r) ran the release
+installer of `v0.1.0`, `agent-too-old`, `update --os --now` with a real full upgrade and the reboot path, the update to
+lock 2026.11.2, the Phase 7 exit test, S61–S63, the Phase 6 regression, and the cleanup: PASS with 9 fixes (on `main`;
+lumine runs the dev build `v0.1.0-fix.10` until a tag `v0.1.1`). The owner decides the findings of `08` (the policy
+`drop` and the other services of the host, the page for a full cycle, `os.held_packages`, the Caddy cap).
+
+The history below is the status after each wave.
 
 Phase 0: SP1–SP6 are done (results in `08-spike-log.md`, folded back into `01`/`02`/`03`/`05`);
 SP7–SP11 are pending. All proposals in `00` §B are accepted (S37, S40); S41–S43 were added
@@ -201,7 +212,7 @@ names, the disable paths, the reboots, and the Phase 1–5 regression pass with 
 **The final code wave is complete** (wave 9, 2026-11-02, on `main`, `09-handoff.md` §8q): S61 as the fallback (the
 Tailscale site has the shared client address `tailscale`; the WhoIs identity cannot work behind the masquerade), S62 (the
 maintenance page on each restart of `care-api`), S63 (the `care-api` caps 576M and 832M), and the workflow `release` of
-an agent release `vX.Y.Z` with the installer check. Next: the tag `v0.1.0`, then the final acceptance on lumine
-(`09-handoff.md` §8k and §8q, "Acceptance").
+an agent release `vX.Y.Z` with the installer check. The tag `v0.1.0` and its release followed, then the final
+acceptance (above).
 The remaining open questions (`00` §C: O4, O6 plug set, O7 upstream PR timing, O9, O11, O12,
 O13, O16, O17) each become blocking only in the phase noted there.

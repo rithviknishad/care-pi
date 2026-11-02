@@ -5,9 +5,9 @@ Raspberry Pi: a flashable Pi OS Lite image, a `curl | sh` installer, and a Go ag
 on-Pi web console that renders one declarative `config.yaml` into rootful podman/quadlet
 units, Caddy, pgBackRest/restic backups, and solution-based updates.
 
-Status: **Phase 0 (hardware spikes) SP1–SP6 done; Phase 1 (declarative core) code
-complete, not yet run on a Pi.** See `09-handoff.md` §8 for the Phase 1 state and the
-pending exit test on `lumine`. Start with `09-handoff.md` if you are picking this up.
+Status (2026-11-02): **v0.1.0 released; all phases complete on lumine** (the final acceptance, `09-handoff.md` §8r).
+Remaining: the image flash test on hardware (owner), the Wi-Fi test (owner), and a second Pi for DR to a new device.
+Start with `09-handoff.md` if you are picking this up.
 
 How to read the labels used across these documents:
 

@@ -575,28 +575,34 @@ assets (`docs/solutions.md` open point 1); a maintenance page for the path `rest
 of a failed `--lock-file` update; `care-api` at 487 of 512 MiB; `agent-too-old` with a tagged build; `update --os --now`
 and F5; F1 on a device. Next phase: Phase 5 (the image).
 
-### 8k. Deferred to the final acceptance (after Phase 7)
+### 8k. Deferred to the final acceptance: done and remaining
 
-The owner asked to keep these for the end. Do them on lumine before the project is called done:
+The owner kept these for the end. The final acceptance on lumine (wave 10, §8r) did them, except the items for new
+hardware.
 
-- `care-pi update --os --now` with a real `apt-get full-upgrade` and the reboot path (Phase 4 §11).
-- `agent-too-old` with a release build that has a version tag. The tooling is built (wave 9, §8q): the workflow
-  `release`, a dev build counts as the newest agent. Test it with `v0.1.0` after the tag (§8q, "Acceptance").
-- ~~Backend plug *off* (`restart` path): 56 s API downtime without a maintenance page. Decide: show the page, or
-  accept.~~ Decided S62, built in wave 9 (§8q); check it on lumine.
-- ~~`care-api` peak 487 of 512 MiB on `small-clinic`: decide whether to raise the cap to 576M.~~ Decided S63 (576M,
-  832M for `busy-counter`), built in wave 9 (§8q); watch the peak on lumine.
-- S61 (the client address on the Tailscale name): built as the fallback (no WhoIs identity, §8q); check it on lumine
-  with the Mac as the one tailnet client.
-- `care-caddy` reached 115.8 of 128 MiB with 3 names (wave 8-ts, `08` "Phase 6 exit test" follow-ups). S63 covers
-  `care-api` only. Decide whether to raise the Caddy cap (for example 160M), after a measure with the 3 names and the
-  WAF off.
-- The `care-api` cap of `custom` with 4 or more workers stays 64M + 200M for each worker (S63 names the presets only):
-  4 workers get 896M, only 64M more than the 832M of 3 workers. Decide whether to use 64M + 256M for each worker.
-- Test leftovers to remove: on lumine the `w5-s3` container, `/var/lib/care-pi-test`, `/srv/care-backups`; on the
-  Mac the restricted `authorized_keys` line and `~/care-pi-sftp-backups/care-pi-b7616345`. They are live test
-  destinations until then.
-- Phase 1 fresh-flash test (`curl | sh`, ghcr pulls, the reboot-required cgroup path, host name `care` + collision).
+Done (wave 10, `08-spike-log.md` "Final acceptance — lumine, 2026-11-02"):
+
+- `care-pi update --os --now` with a real `apt-get full-upgrade` (14 packages, the holds kept, 34.8 s), and the reboot
+  path (`--reboot --now`; fix 2). The upgrade of `tailscale` broke the Tailscale name until fix 3.
+- `agent-too-old` with the release `v0.1.0`: the check and the job; `GET /updates` shows the blocker after fix 1.
+- S62: the restart of `care-api` runs behind the page (22 s of page at the first apply of `v0.1.0`).
+- S63: the `care-api` peak is 471–473 MiB of 576M.
+- S61: on the ts.net console no address lock after wrong passwords (`address=tailscale`); the LAN keeps its lock; a
+  spoofed listener header stays the LAN address.
+- The test leftovers on lumine: the destinations `s3` and `local`, `w5-s3`, `/var/lib/care-pi-test/s3`,
+  `/srv/care-backups` (fix 9 for the timers). Kept on purpose: `/var/lib/care-pi-test/loop.img` (the disk of the
+  destination `usb`), and on the Mac `~/care-pi-sftp-backups/care-pi-b7616345` with its restricted `authorized_keys`
+  line (`b7616345` is the live key id of the destination `mac`).
+
+Remaining:
+
+- Owner decisions: the `care-caddy` cap (measured 100–116 MiB of 128M with 3 names and the WAF off; 116.5 MiB of 256M
+  with the WAF; 160M is the candidate); the `care-api` cap of `custom` with 4 or more workers (not measured); the
+  findings of `08` (the policy `drop` closes the other services of the host, the page for a full cycle,
+  `os.held_packages`, `52care-pi.conf`).
+- New hardware (owner): the Phase 1 fresh-flash test (`curl | sh`, ghcr pulls, the reboot-required cgroup path, host name
+  `care` and a collision), the image flash (Phase 5), Wi-Fi, and DR to a second Pi.
+- A tag `v0.1.1` with fixes 1–9, so lumine can run a release build again.
 
 The ghcr packages are public since 2026-11-01 (S43 done). lumine pulls `care`, `caddy`, `postgres-pgbackrest`
 without a token. The recovery key words of lumine are in `local/care-recovery-key` on the owner's Mac (S39).
@@ -963,3 +969,51 @@ release layout (`file://`, in `debian:trixie`) installs `v0.1.0`, and a changed 
    tag) installs. Put the dev agent back after the test, or the old locks stay blocked.
 7. **`curl | sh`** of the Phase 1 fresh-flash test (§8k) uses the same release: the default `latest` downloads `v0.1.0`.
    The default index (`releases/download/index/index.json`) exists only after `solution-lock.yml` runs.
+
+### 8r. Final acceptance result (wave 10, 2026-11-02)
+
+**PASS on lumine (A to D), with 9 fixes.** The record is `08-spike-log.md`, "Final acceptance — lumine, 2026-11-02"; the
+raw output is `local/wave10/`. lumine runs the dev build `v0.1.0-fix.10` (`49ca4de`, after the 9 fixes), not a release
+build: a tag `v0.1.1` and `install.sh --version v0.1.1` put it on a release again.
+
+- **A. The release `v0.1.0`.** The installer from `releases/latest/download/install.sh` downloaded and checked the agent
+  (15 s). The first apply: `care-api` `MemoryMax=576M` (S63), its restart behind the page (22 s; S62), the listener
+  header in the Caddyfile (S61), and the Phase 7 firewall table. `agent-too-old`: the check logs the exact text; with
+  a newer lock, `GET /updates` shows `blocked_by` only after fix 1. Lock 2026.11.2 (`--min-agent v0.1.0`) installs.
+- **B. Phase 4 deferred.** `update --os --now`: a real `full-upgrade` of 14 packages with the holds kept (34.8 s); the
+  reboot path works after fix 2 (SSH 36 s, Care 110 s); fix 3 keeps the Tailscale name up when `tailscaled` restarts.
+  The update to 2026.11.2: 63.2 s behind the page; then the Caddy image of the lock (the WAF module).
+- **C. The Phase 7 exit test.** All 6 criteria pass: the helper (no refusal of a real request; 8 hand-made requests
+  refused and logged; fixes 4 and 8), the policy `drop` (SSH, Care, the console, mDNS, DHCP, NTP, egress, backups; the
+  rollback after 90.7 s; a reboot in the window boots `accept`; a confirmed `drop` stays after a reboot), the CA rotation
+  (with the new root, `curl` and Chromium on the Mac open Care, with the old one they fail; both fingerprints on the
+  page; fix 5 for the install steps; no real phone), the WAF (`detect`: 0 audit lines for a short normal use with an
+  upload, no token or cookie in the log; `block`: `403`), telemetry to VictoriaMetrics on the Mac over the tailnet
+  (fixes 6 and 7; off: no unit and no connection to the receiver, checked with `ss`, as lumine has no `tcpdump`), and
+  `care-pi doctor` (the 2 injected faults first, the same on the Support page). S61 and the Phase 6 regression pass.
+- **D. Cleanup.** 2 destinations stay: `usb` (a loop device, not a real USB disk) and `mac` (SFTP). Fix 9: the timers
+  of a removed destination stop first.
+
+The fixes: (1) `12ace01` the blocker in `GET /updates`; (2) `fef512b` the CLI waits for its reboot; (3) `1bbf445` the
+`tailscaled` drop-in `RuntimeDirectoryPreserve=yes`; (4) `af129f2`, `83d1951` the drill stops and removes its container
+in the namespace of the host; (5) `6b104ee` the console texts of the install steps; (6) `f277b77` the exporter port
+19100; (7) `71c5c0e` telemetry off resets its units; (8) `8fda826` the installer restarts the helper after a new binary;
+(9) `49ca4de` the timers of a removed destination. Docs: `d103536`.
+
+Decisions of wave 10 (owner informed; override in `00` if wrong):
+
+- The test of `agent-too-old` used a TEST ONLY lock 2026.11.3 (min `v0.4.0`) for 2 checks, then the dist without it. The
+  fix was checked with a CLI binary of `12ace01` that says `v0.1.0`, run from `~/wave10` only (a dev build is never
+  blocked). That binary is deleted.
+- Lock 2026.11.2 has the solution of `HEAD` with `care_fasterappointments_fe` on (as lock 2026.11.1 of wave 6b), so the
+  update kept the plug set of lumine. The override `images.caddy` of wave 6b is gone: the lock gives the Caddy image.
+- `/var/lib/care-pi-test` keeps `loop.img`: it is the disk of the destination `usb`, which the brief keeps.
+- lumine ends with the policy `drop` confirmed, as the brief asks, although it closes the owner's exporters to
+  `avocado` (`08` finding 1). One command opens them: `sudo care-pi firewall policy accept`.
+- One restart of `tailscaled` (after the apt upgrade had restarted it once) checked fix 3. No `tailscale up/down/logout`.
+
+End state of lumine: lock 2026.11.2 (`stable`), the helper mode on, the policy `drop` confirmed, the WAF in `detect`,
+telemetry off, 3 names (the public name with its production certificate, `lumine.local` with the rotated root,
+the ts.net name), 2 destinations, `systemctl --failed` empty. `local/LUMINE.md` has the details.
+
+Next: the owner decides the findings of `08` and tags `v0.1.1`; the hardware tests (§8k, "Remaining").
