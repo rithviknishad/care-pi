@@ -160,12 +160,13 @@ func TestServePorts(t *testing.T) {
 	}
 	f := host.NewFake()
 	f.On("tailscale serve status --json", host.Response{Out: serveJSON})
-	if got := (Client{Runner: f}).ServePorts(context.Background()); !equalInts(got, []int{443}) {
-		t.Fatalf("client %v", got)
+	if got, err := (Client{Runner: f}).ServePorts(context.Background()); err != nil || !equalInts(got, []int{443}) {
+		t.Fatalf("client %v %v", got, err)
 	}
+	// B1 (Phase 7 review): a failed command (for example a refusal of the helper) is an error, not "no ports".
 	f.Set("tailscale serve status --json", host.Response{Code: 1})
-	if got := (Client{Runner: f}).ServePorts(context.Background()); got != nil {
-		t.Fatalf("a failed command gives no ports, got %v", got)
+	if got, err := (Client{Runner: f}).ServePorts(context.Background()); err == nil || got != nil {
+		t.Fatalf("a failed command must give an error, got %v %v", got, err)
 	}
 }
 

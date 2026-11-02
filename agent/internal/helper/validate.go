@@ -603,7 +603,7 @@ func tailscaleRule(args []string) error {
 		return deny("tailscale without a command")
 	}
 	switch strings.Join(args, " ") {
-	case "version", "status --json", "down", "logout":
+	case "version", "status --json", "serve status --json", "down", "logout":
 		return nil
 	}
 	if args[0] != "up" {

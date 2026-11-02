@@ -800,8 +800,13 @@ func (s *Service) tailscaleEnable(ctx context.Context, rec *jobs.Recorder, req T
 		rec.Logf("the device is %s in the tailnet %s", st.DNSName, st.Tailnet)
 		// tailscaled listens on the ports of "tailscale serve" (and funnel) of the Tailscale address: the pod cannot
 		// publish on them, and a pod that fails to publish stops all of Care.
+		ports, err := tc.ServePorts(ctx)
+		if err != nil {
+			return problem.New(problem.Internal, "Cannot read the serve configuration of tailscaled, so the check of the ports 80, 443, and "+
+				fmt.Sprint(paths.ConsolePort)+" did not run: "+err.Error())
+		}
 		var used []string
-		for _, p := range tc.ServePorts(ctx) {
+		for _, p := range ports {
 			if p == 80 || p == 443 || p == paths.ConsolePort {
 				used = append(used, fmt.Sprint(p))
 			}

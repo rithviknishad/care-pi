@@ -244,7 +244,8 @@ Console: Settings > Connectivity > Tailscale. CLI: `care-pi tls tailscale enable
 API: `PUT /tls/tailscale {"enabled": true, "auth_key": "tskey-…"}` (needs a recent password check).
 The job is `tls-tailscale-enrol` (steps `tailscale-install`, `tailscale-up`, `tailscale-login`, `write-config`, apply steps).
 The step `tailscale-login` stops the job when `tailscale serve` (or `funnel`) uses port 80, 443, or 8443 of the node
-(section 9).
+(section 9). When `tailscale serve status --json` fails, the step stops with `internal` and the error of the command:
+the job does not skip the check.
 
 Off: `care-pi tls tailscale disable`, or `PUT /tls/tailscale {"enabled": false}`. The job sets the config, applies
 (the site and the drop-in go), runs `tailscale down` and `tailscale logout`. The package stays installed and

@@ -266,13 +266,14 @@ func (c Client) WaitFor(ctx context.Context, timeout time.Duration, each func(*S
 // ServePorts returns the TCP ports of the node that "tailscale serve" or "tailscale funnel" uses (the TCP map of
 // "tailscale serve status --json"). tailscaled listens on these ports of the Tailscale address itself, so the pod
 // cannot publish on them: a publish on a port in use stops the pod, and then all of Care. A host without a serve
-// configuration, or a version without the JSON output, gives no ports.
-func (c Client) ServePorts(ctx context.Context) []int {
+// configuration gives no ports. A command that fails (for example a refusal of the helper) gives an error: the
+// caller must not skip the check.
+func (c Client) ServePorts(ctx context.Context) ([]int, error) {
 	out, err := c.run(ctx, "serve", "status", "--json")
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("tailscale serve status --json: %w", err)
 	}
-	return ParseServePorts(out)
+	return ParseServePorts(out), nil
 }
 
 // ParseServePorts reads the TCP ports of "tailscale serve status --json" (ipn.ServeConfig), in increasing order.

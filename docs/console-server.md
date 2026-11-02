@@ -588,7 +588,7 @@ host, not the containers.
 | `systemd-run` | Transient units `care-pi-*` with a fixed set of properties, then `podman`, `restic`, `tailscale`, `apt-get`, `apt-mark`, the disk commands, `raspi-config nonint do_wifi_country`, `tee` of `52care-pi.conf`, `care-pi firewall rollback`, or `/bin/sh -c` with one of four constant scripts of the agent (clock, Wi-Fi keyfile, sysctl, Tailscale install), compared byte for byte. |
 | `journalctl` | `--unit` of a Care unit, with `--lines`, `--output`, `--since`, `--after-cursor`, `--follow`. |
 | `restic`, `skopeo`, `sftp` | The subcommands of the backups and of the lock; the repository and key paths below the directories of the agent. |
-| `nmcli`, `iw`, `ip`, `tailscale`, `hostnamectl`, `timedatectl` | The read commands of the network page, and `tailscale up`/`down`/`logout`/`serve` with the arguments of the agent (`--login-server` an https URL). |
+| `nmcli`, `iw`, `ip`, `tailscale`, `hostnamectl`, `timedatectl` | The read commands of the network page, `tailscale status --json` and `serve status --json`, and `tailscale up`/`down`/`logout` with the arguments of the agent (`--login-server` an https URL). |
 | `apt`, `apt-cache`, `dpkg-query` | The read commands of the updates page. |
 | `lsblk`, `wipefs`, `sfdisk`, `partprobe`, `mkfs.ext4`, `udevadm` | The disk preparation of the backups: one `/dev/sd*`, `/dev/nvme*`, or `/dev/mmcblk*` device. |
 | `nft`, `ss`, `sh` | `nft list ruleset`, the accept of the firewall rollback, `ss -ltnpH`, and `sh -c "command -v raspi-config"`. |

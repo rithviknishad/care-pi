@@ -1794,6 +1794,15 @@ ssh lumine 'sudo care-pi support-bundle --out b.tar.gz && tar -tzf b.tar.gz | gr
 Pass: the clean run has no `fail` (exit code 0); the fault run shows `units` (`warn`: `care-worker` inactive) and
 `reboot` (`warn`) with their fix hints, first in the table; the Support page shows the same checks after "Run again"; the bundle has the Phase 7 files and no secret value
 (`grep -r` for the database password and the S3 key gives nothing).
+### Review fixes (Phase 7)
+
+A review of `phase-7-hardening` after the merge of main (`d1c515a`) found 1 blocker, 3 major defects, and 3 minor
+defects. Each fix is one signed commit with a test; nothing ran on lumine.
+
+| # | Defect | Fix | Commit |
+|---|---|---|---|
+| B1 | The helper refused `tailscale serve status --json` (the serve-port check of main), and `ServePorts` gave no ports on an error, so the check did not run | The helper accepts `tailscale serve status --json`; `ServePorts` returns the error, and the step `tailscale-login` stops with `internal` and the error of the command | B1 |
+
 ## Phase 6 exit test — lumine, 2026-11-02 — **PARTIAL: the CA switch and the public name PASS (6 fixes); the Tailscale mode is blocked by the owner's `tailscale serve`**
 
 Wave 8. The merged tree (`e130030`, Phases 5 and 6 with the review fixes and S52) on lumine, from the Phase 4 state

@@ -570,6 +570,25 @@ func TestTailscaleServePort(t *testing.T) {
 	e.jobOK(e.do("PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": true, "auth_key": nil}))
 }
 
+// TestTailscaleServeStatusFails (B1 of the Phase 7 review): when "tailscale serve status --json" fails (for example a
+// refusal of the helper), the job fails and names the command; it does not skip the check of the ports.
+func TestTailscaleServeStatusFails(t *testing.T) {
+	e, _ := readyConnEnv(t)
+	e.svc.IPs = netinfoTailscale("192.168.1.10", "100.101.102.103")
+	e.fake.On("tailscale version", host.Response{Out: "1.104.1\n"})
+	e.fake.On("tailscale status --json", host.Response{Out: tailscale.StatusJSON(tailscale.StateRunning, "")})
+	e.fake.On("tailscale serve status --json", host.Response{Code: 1})
+	r := e.do("PUT", "/api/v1/tls/tailscale", map[string]any{"enabled": true, "auth_key": nil})
+	e.want(r, 202, "")
+	j := e.waitJob(r.json(t)["id"].(string))
+	if j.State != jobs.StateFailed || !strings.HasSuffix(j.Error.Type(), "/internal") || !strings.Contains(j.Error.Detail, "tailscale serve status --json") {
+		t.Fatalf("job %s %+v", j.State, j.Error)
+	}
+	if cfg, _ := config.Load(e.p.Abs(paths.ConfigFile)); cfg.TLS.Tailscale.Enabled {
+		t.Fatal("the mode must stay off")
+	}
+}
+
 // TestWiFi: scan, set, and remove (section 15.4).
 func TestWiFi(t *testing.T) {
 	e, _ := readyConnEnv(t)
