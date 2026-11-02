@@ -23,6 +23,14 @@ const (
 	DrillUnit             = "care-backup-drill-pg.service"
 )
 
+// HostPodman runs a podman command in a transient unit, in the mount namespace of the host. care-pi.service and the
+// helper have a private mount namespace (ProtectSystem, PrivateTmp): there, "podman stop" and "podman rm" of a
+// container that a transient unit started cannot unmount its shm ("device or resource busy"), and the container stays
+// in the storage of podman (podman ps --external) and blocks its name.
+func HostPodman(args ...string) host.Cmd {
+	return host.Cmd{Name: "systemd-run", Args: append([]string{"--quiet", "--wait", "--collect", "--pipe", "--", "podman"}, args...)}
+}
+
 // DrillSpace returns the free space and the space that a drill needs: 2 times the database size.
 // FreeOverride (the environment variable CARE_PI_DRILL_FREE_BYTES) replaces the free space in a test.
 func DrillSpace(ctx context.Context, e Env) (need, free int64, err error) {
@@ -88,16 +96,28 @@ func Drill(ctx context.Context, e Env, skipOnSpace bool) (*backup.DrillResult, e
 	last := info.Last()
 	res.BackupLabel = &last.Label
 	dir := paths.DrillDir + "/" + e.Rec.ID()
-	// removeDrill deletes the containers of a drill. "systemctl stop" of DrillUnit can stop "podman run --rm" while it
-	// removes the stopped container, and a container that stays blocks the name of each later drill.
+	// removeDrill deletes the containers of a drill: at the cleanup, and before the restore (a container of an earlier
+	// drill blocks the name).
 	removeDrill := func(ctx context.Context) {
 		for _, name := range []string{DrillRestoreContainer, DrillContainer} {
-			_, _ = e.Runner.Run(ctx, host.Cmd{Name: "podman", Args: []string{"rm", "--force", "--ignore", name}})
+			_, _ = e.Runner.Run(ctx, HostPodman("rm", "--force", "--ignore", name))
 		}
 	}
 	cleanup := func() error {
 		bg := context.WithoutCancel(ctx)
-		_, _ = e.Runner.Run(bg, host.Cmd{Name: "podman", Args: []string{"stop", "--ignore", "--time", "30", DrillContainer}})
+		_, _ = e.Runner.Run(bg, HostPodman("stop", "--ignore", "--time", "30", DrillContainer))
+		// "podman run" ends when the container stopped, then DrillUnit ends. Stop the unit only after that, or after
+		// 30 s, then remove the container (removeDrill).
+		for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); {
+			props, err := e.Systemd.Show(bg, []string{DrillUnit}, "ActiveState")
+			if err != nil {
+				break
+			}
+			if st := props[0]["ActiveState"]; st != "active" && st != "activating" && st != "deactivating" {
+				break
+			}
+			time.Sleep(min(e.poll(), time.Second))
+		}
 		_ = e.systemctl(bg, "stop", DrillUnit)
 		_, _ = e.Runner.Run(bg, host.Cmd{Name: "systemctl", Args: []string{"reset-failed", DrillUnit}})
 		removeDrill(bg)
@@ -131,10 +151,12 @@ func Drill(ctx context.Context, e Env, skipOnSpace bool) (*backup.DrillResult, e
 		// max_connections must not be lower than on the primary (40), else the recovery stops.
 		run := PodmanRun(e.Image, DrillContainer, dir, true, "", "postgres", "-c", "archive_mode=off",
 			"-c", "shared_buffers=32MB", "-c", "max_connections=40", "-c", "listen_addresses=")
-		// A service without --wait: PostgreSQL runs until drill-cleanup stops it.
+		// A service without --wait: PostgreSQL runs until drill-cleanup stops it. Without --rm: "podman stop" of the
+		// cleanup and the --rm of "podman run" both removed the container, and the loser left it in the storage of
+		// podman (podman ps --external), which blocked the name of the next drill. The cleanup removes it.
 		args := []string{"--quiet", "--collect", "--unit=" + DrillUnit}
 		for _, a := range run.Args {
-			if a == "--wait" || a == "--pipe" || a == "--quiet" || a == "--collect" {
+			if a == "--wait" || a == "--pipe" || a == "--quiet" || a == "--collect" || a == "--rm" {
 				continue
 			}
 			args = append(args, a)

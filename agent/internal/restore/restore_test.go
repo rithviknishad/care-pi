@@ -222,16 +222,35 @@ func TestDrill(t *testing.T) {
 	te.fake.On(pgExec+"pg_controldata /var/lib/postgresql/data", host.Response{Out: "Database cluster state:               in production\n"})
 	te.fake.On("podman exec --user postgres care-drill pg_controldata /var/lib/postgresql/data", host.Response{Out: "Database cluster state:               in production\n"})
 	te.fake.On("podman exec --user postgres care-drill psql -X -At -d care -c select 1", host.Response{Out: "1\n"})
+	// The cleanup waits until "podman run --rm" ends the unit, then stops it.
+	const showDrill = "systemctl show -p ActiveState care-backup-drill-pg.service"
+	te.fake.On(showDrill, host.Response{Out: "ActiveState=active\n"}, host.Response{Out: "ActiveState=inactive\n"})
 	res, err := Drill(context.Background(), te.e, false)
 	if err != nil {
 		t.Fatal(err)
+	}
+	stopAt, shows := -1, 0
+	for i, c := range te.fake.Calls {
+		switch c {
+		case showDrill:
+			shows++
+		case "systemctl stop care-backup-drill-pg.service":
+			stopAt = i
+		}
+		if stopAt >= 0 {
+			break
+		}
+	}
+	if shows != 2 || stopAt < 0 {
+		t.Fatalf("want 2 reads of the drill unit before its stop, got %d (stop at %d): %q", shows, stopAt, te.fake.Calls)
 	}
 	if res.Outcome != "passed" || len(res.Checks) != 2 || *res.BackupLabel != "20261030-010000F" {
 		t.Fatalf("%+v", res)
 	}
 	got := te.actions()
 	// A stale container of an earlier drill goes first (before the restore), and the cleanup removes both containers.
-	rm := []string{"podman rm --force --ignore care-drill-restore", "podman rm --force --ignore care-drill"}
+	rm := []string{"systemd-run --quiet --wait --collect --pipe -- podman rm --force --ignore care-drill-restore",
+		"systemd-run --quiet --wait --collect --pipe -- podman rm --force --ignore care-drill"}
 	if len(got) < 2 || !reflect.DeepEqual(got[:2], rm) {
 		t.Fatalf("want the removal of stale drill containers first, got %q", got)
 	}
@@ -241,7 +260,7 @@ func TestDrill(t *testing.T) {
 	got = got[2:]
 	if len(got) < 3 || !strings.Contains(got[0], "--stanza=main restore --set=20261030-010000F --type=immediate --target-action=promote --archive-mode=off") ||
 		!strings.Contains(got[0], "/var/lib/care-pi/backup/pg:/var/lib/pgbackrest:ro") || !strings.Contains(got[1], "--unit=care-backup-drill-pg.service") ||
-		!strings.Contains(got[1], "-c archive_mode=off") || strings.Contains(got[1], "--wait") {
+		!strings.Contains(got[1], "-c archive_mode=off") || strings.Contains(got[1], "--wait") || strings.Contains(got[1], " --rm ") {
 		t.Fatalf("drill commands %q", got)
 	}
 	check(t, "steps", te.steps(), []string{"check-space:succeeded", "drill-restore:succeeded", "drill-start:succeeded", "drill-check:succeeded", "drill-cleanup:succeeded"})
