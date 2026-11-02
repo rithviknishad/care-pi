@@ -13,6 +13,8 @@ const (
 	DefaultUploadMaxBodyMB   = 200
 	// DefaultFirewallPolicy keeps each existing host as it is (S42). install.sh --firewall-drop sets drop.
 	DefaultFirewallPolicy = "accept"
+	// DefaultTelemetryIntervalS is telemetry.interval_s.
+	DefaultTelemetryIntervalS = 60
 )
 
 // Default returns a config with every default set.
@@ -61,11 +63,13 @@ func Default() *Config {
 			OSSecurity: true,
 			OSReboot:   true,
 		},
-		FE:      FE{Provider: DefaultFEProvider},
-		Uploads: Uploads{MaxBodyMB: DefaultUploadMaxBodyMB},
+		FE:        FE{Provider: DefaultFEProvider},
+		Telemetry: Telemetry{IntervalS: DefaultTelemetryIntervalS},
+		Uploads:   Uploads{MaxBodyMB: DefaultUploadMaxBodyMB},
 		Security: Security{
 			Firewall: Firewall{Policy: DefaultFirewallPolicy},
 			SSH:      SSHSecurity{Allow: true},
+			WAF:      WAF{Mode: "detect", Paranoia: 1},
 		},
 	}
 }

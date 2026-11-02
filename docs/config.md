@@ -346,8 +346,10 @@ The address of `tailscale0` is a separate source: the pod also publishes on it w
 
 | Key | Type | Default | Phase | Description |
 |---|---|---|---|---|
-| `telemetry.enabled` | boolean | `false` | validate (Phase 7) | Opt-in metrics. |
-| `telemetry.remote_write_url` | `http(s)://` URL, or `null` | `null` | validate (Phase 7) | The Prometheus remote-write URL. |
+| `telemetry.enabled` | boolean | `false` | Phase 7 | Opt-in metrics: node_exporter and vmagent with remote write (`docs/telemetry.md`). Nothing leaves the device while it is `false`. |
+| `telemetry.remote_write_url` | `http(s)://` URL, or `null` | `null` | Phase 7 | The Prometheus remote-write URL. Required when `enabled` is `true`. |
+| `telemetry.username` | string, or `null` | `null` | Phase 7 | The basic auth user. The password is `/etc/care-pi/secrets/telemetry_password` (`care-pi telemetry set-password`). |
+| `telemetry.interval_s` | integer 15 to 3600 | `60` | Phase 7 | The scrape interval. |
 
 ## `security`
 
@@ -357,3 +359,6 @@ Phase 7. The hardening options. `docs/console-server.md` section 13 has the fire
 |---|---|---|---|---|
 | `security.firewall.policy` | `accept` \| `drop` | `accept` | Phase 7 | The input policy of the table `inet care-pi`. `accept` keeps S42: the table accepts the Care ports and drops nothing. `drop` accepts only the allow-list. A switch to `drop` starts a rollback timer of 90 s: without `care-pi firewall confirm` (or the button in Security), the policy goes back to `accept`. `install.sh --firewall-drop` writes `drop` for a new install. |
 | `security.ssh.allow` | boolean | `true` | Phase 7 | Accept 22/tcp. It matters only with the policy `drop`. `care-pi firewall allow-ssh false` closes SSH from the network. |
+| `security.waf.enabled` | boolean | `false` | Phase 7 | The Coraza WAF with the OWASP CRS v4 on the routes of the Care API (`/api/*` and the other Django paths). Expect false positives (file uploads, rich text): start with `detect`. Needs the care-pi Caddy image with the Coraza module; the apply refuses it otherwise. care-caddy gets `MemoryMax=256M`. `docs/console-server.md` section 15. |
+| `security.waf.mode` | `detect` \| `block` | `detect` | Phase 7 | `detect`: log only (`SecRuleEngine DetectionOnly`). `block`: `403` for a request over the anomaly threshold. |
+| `security.waf.paranoia` | integer 1 to 4 | `1` | Phase 7 | The paranoia level of the CRS (`tx.blocking_paranoia_level`). Each level adds rules and false positives. |

@@ -1,0 +1,14 @@
+# {{.Header}}
+# The scrape configuration of vmagent (telemetry, Phase 7; docs/telemetry.md).
+global:
+  scrape_interval: {{.Telemetry.Interval}}
+  external_labels:
+    care_pi_version: "{{.Telemetry.Version}}"
+scrape_configs:
+  - job_name: node
+    static_configs:
+      - targets: ["127.0.0.1:{{.Telemetry.ExporterPort}}"]
+    relabel_configs:
+      # instance is the host name, not the address of the exporter.
+      - target_label: instance
+        replacement: "{{.Telemetry.Instance}}"

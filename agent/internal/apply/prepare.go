@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/rithviknishad/care-pi/agent/internal/buildinfo"
@@ -45,6 +46,8 @@ type Prepared struct {
 	ACMEDNS string
 	// EnsureCA is true when the root of the agent does not exist and a LAN address is known (Phase 6).
 	EnsureCA bool
+	// TelemetryPassword is the value of the podman secret care-pi-telemetry-password, or "" (Phase 7).
+	TelemetryPassword string
 }
 
 // PrepareOptions controls Prepare.
@@ -199,9 +202,17 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 		return nil, fmt.Errorf("cannot read the network interfaces: %w", err)
 	}
 	conn := readConnectivity(o.Paths, cfg, o.IPs, ips, time.Now())
+	// Phase 7: the basic auth password of the telemetry (docs/telemetry.md), only with telemetry on.
+	var telemetryPassword string
+	if cfg.Telemetry.Enabled {
+		if data, err := os.ReadFile(o.Paths.Abs(paths.TelemetryPasswordFile)); err == nil {
+			telemetryPassword = strings.TrimSpace(string(data))
+		}
+	}
 	m, err := render.NewModel(render.Input{Config: cfg, Solution: sol, Lock: lk, IPs: ips, Bootstrap: bootstrap,
 		SolutionLock: sl, PlugSecrets: plugSecrets, CareBuild: cb,
-		CARoot: conn.caRoot, PublicIssued: conn.publicIssued, ACMEDNS: conn.acmeDNS != "", TailscaleIP: conn.tailscaleIP})
+		CARoot: conn.caRoot, PublicIssued: conn.publicIssued, ACMEDNS: conn.acmeDNS != "", TailscaleIP: conn.tailscaleIP,
+		TelemetryPassword: telemetryPassword != ""})
 	if err != nil {
 		return nil, exitcode.With(exitcode.BadInput, err)
 	}
@@ -220,7 +231,7 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 	}
 	return &Prepared{Config: cfg, Solution: sol, Desire: des, PrevLock: prev, Lock: lk, IPs: ips, Model: m, Tree: tree,
 		Phase: o.Phase, SolutionLock: sl, CareBuild: cb, DistBase: distBase,
-		ACMEDNS: conn.acmeDNS, EnsureCA: conn.caRoot && !conn.caExists}, nil
+		ACMEDNS: conn.acmeDNS, EnsureCA: conn.caRoot && !conn.caExists, TelemetryPassword: telemetryPassword}, nil
 }
 
 // CheckImplemented runs the apply-time checks on a config before it is installed (the pre-seed of the image): the

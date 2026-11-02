@@ -14,6 +14,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/auth"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/jobs"
+	"github.com/rithviknishad/care-pi/agent/internal/metrics"
 	"github.com/rithviknishad/care-pi/agent/internal/problem"
 	"github.com/rithviknishad/care-pi/agent/internal/service"
 	"github.com/rithviknishad/care-pi/agent/internal/setup"
@@ -99,6 +100,7 @@ func (s *Server) table() []*route {
 	add(get, "/jobs/{job_id}/events", s.jobEvents)
 	add(post, "/jobs/{job_id}/cancel", s.cancelJob)
 
+	add(get, "/metrics", s.metrics)
 	add(get, "/logs", s.logUnits)
 	add(get, "/logs/{unit}", s.logs)
 	add(post, "/support-bundle", s.supportBundle)
@@ -1060,6 +1062,18 @@ func (s *Server) sendFile(c *reqCtx, f *service.RootCAFile) error {
 	h.Set("Content-Length", strconv.Itoa(len(f.Data)))
 	_, err := c.w.Write(f.Data)
 	return err
+}
+
+func (s *Server) metrics(c *reqCtx) error {
+	set, err := s.svc.Metrics(c.r.Context())
+	if err != nil {
+		return err
+	}
+	c.w.Header().Set("Content-Type", metrics.ContentType)
+	c.w.Header().Set("Cache-Control", "no-store")
+	c.w.WriteHeader(http.StatusOK)
+	_, _ = set.WriteTo(c.w)
+	return nil
 }
 
 func (s *Server) rootCA(c *reqCtx) error {

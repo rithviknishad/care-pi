@@ -911,6 +911,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the metrics of the device (Prometheus text)
+         * @description Phase 7. The metrics of the agent in the Prometheus text format 0.0.4: the units of Care (`care_pi_unit_active`,
+         *     `care_pi_unit_memory_bytes`, `care_pi_unit_memory_peak_bytes`, `care_pi_unit_memory_max_bytes`,
+         *     `care_pi_unit_restarts_total`), the host (`care_pi_host_*`, `care_pi_disk_*`), the clock, the backups
+         *     (`care_pi_backup_*`), the certificates (`care_pi_certificate_expiry_timestamp_seconds`), the updates, and the
+         *     firewall. The opt-in telemetry sends the same metrics through node_exporter (`docs/telemetry.md`). The names are
+         *     stable; a later version can add metrics and labels.
+         */
+        get: operations["getMetrics"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/logs": {
         parameters: {
             query?: never;
@@ -4969,10 +4994,13 @@ export interface components {
          *     one-time switch, and care-caddy restarts), `disable-units` (stop and disable `care-dns-update.timer` before its file
          *     goes), `reload-firewall` (reload `care-pi-firewall.service` after a change of its Tailscale drop-in), and `update-dns`
          *     (send a new LAN address to the DNS service; a failure is a warning).
+         *     Phase 7 adds `ensure-telemetry` (restart the units of the opt-in telemetry after a change, or stop them after
+         *     `telemetry.enabled: false`; never the stack); `reload-firewall` also loads the table of the agent and, on a switch
+         *     to the policy `drop`, starts the rollback timer first.
          * @example restart
          * @enum {string}
          */
-        PlanActionKind: "ensure-dirs" | "ensure-ca" | "set-secrets" | "write-files" | "disable-units" | "delete-files" | "daemon-reload" | "reload-firewall" | "enable-target" | "pull-images" | "full-cycle" | "start-target" | "restart" | "reload-caddy" | "ensure-buckets" | "ensure-stanza" | "ensure-mounts" | "ensure-repositories" | "ensure-timers" | "ensure-fe" | "cutover" | "plug-config" | "update-dns" | "write-lock";
+        PlanActionKind: "ensure-dirs" | "ensure-ca" | "set-secrets" | "write-files" | "disable-units" | "delete-files" | "daemon-reload" | "reload-firewall" | "enable-target" | "pull-images" | "full-cycle" | "start-target" | "restart" | "reload-caddy" | "ensure-buckets" | "ensure-stanza" | "ensure-mounts" | "ensure-repositories" | "ensure-timers" | "ensure-fe" | "cutover" | "plug-config" | "update-dns" | "ensure-telemetry" | "write-lock";
         /**
          * @description One action of the plan.
          * @example {
@@ -5245,7 +5273,7 @@ export interface components {
              *     Phase 6 keys (design note section 15): `ensure-ca`, `disable-units`, `reload-firewall`, `update-dns`, `write-config`,
              *     `dns-register`, `dns-address`, `dns-delete`, `wait-certificate`, `tailscale-install`, `tailscale-up`, `tailscale-login`,
              *     `tailscale-down`, `tailscale-logout`, `wifi-radio`, `wifi-profile`, `wifi-connect`, `wifi-verify`, `wifi-remove`.
-             *     Phase 7 keys (design note section 17): `ca-rotate`, `restart-caddy`.
+             *     Phase 7 keys (design note section 17): `ca-rotate`, `restart-caddy`, `ensure-telemetry`.
              *     `null` for a journal of Phase 1 when the name does not start with a known key.
              * @example restart
              */
@@ -12480,10 +12508,16 @@ export interface components {
                     country?: string | null;
                 };
             };
+            /** @description Phase 7 (O12). Opt-in metrics with remote_write only (docs/telemetry.md). Nothing leaves the device while enabled is false. */
             telemetry?: {
                 enabled?: boolean;
+                /** @description The Prometheus remote-write URL of the receiver (VictoriaMetrics, Prometheus, Grafana Cloud, Mimir). Required when enabled is true. */
                 remote_write_url?: string | null;
-            };
+                /** @description Phase 7. The basic auth user of the remote write. The password is /etc/care-pi/secrets/telemetry_password (care-pi telemetry set-password). */
+                username?: string | null;
+                /** @description Phase 7. The scrape interval in seconds. Default 60. */
+                interval_s?: number;
+            } & unknown;
             /** @description Phase 7. The hardening options (docs/console-server.md, section 13). */
             security?: {
                 firewall?: {
@@ -12496,6 +12530,17 @@ export interface components {
                 ssh?: {
                     /** @description Accept 22/tcp in the firewall. It matters only with the policy drop. Default true. */
                     allow?: boolean;
+                };
+                /** @description Phase 7. The optional Coraza WAF with the OWASP CRS on the routes of the Care API (/api/* and the other Django paths). Off by default: expect false positives (file uploads, rich text). Needs the care-pi Caddy image with the Coraza module. */
+                waf?: {
+                    enabled?: boolean;
+                    /**
+                     * @description detect: log only (SecRuleEngine DetectionOnly; default). block: deny a request over the anomaly threshold with 403.
+                     * @enum {unknown}
+                     */
+                    mode?: "detect" | "block";
+                    /** @description The paranoia level of the CRS (1 to 4). Default 1. */
+                    paranoia?: number;
                 };
             };
             $defs: {
@@ -14686,6 +14731,33 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            default: components["responses"]["UnexpectedProblem"];
+        };
+    };
+    getMetrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The metrics. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example # HELP care_pi_unit_active The unit is active.
+                     *     # TYPE care_pi_unit_active gauge
+                     *     care_pi_unit_active{unit="care-api.service"} 1
+                     */
+                    "text/plain": string;
+                };
+            };
+            401: components["responses"]["NotAuthenticated"];
             default: components["responses"]["UnexpectedProblem"];
         };
     };

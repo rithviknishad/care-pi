@@ -57,7 +57,10 @@ var (
 	MemRedis = Mem{MaxMB: 96}
 	MemS3    = Mem{MaxMB: 256}
 	MemCaddy = Mem{MaxMB: 128}
-	MemBeat  = Mem{MaxMB: 512, SwapMB: 128}
+	// MemCaddyWAF is the cap of care-caddy with the Coraza WAF and the CRS (security.waf, Phase 7): the compiled
+	// rules take about 60 MiB more (docs/console-server.md section 15).
+	MemCaddyWAF = Mem{MaxMB: 256}
+	MemBeat     = Mem{MaxMB: 512, SwapMB: 128}
 )
 
 // FE builder shape (SP4). The builder is shaped, not capped.

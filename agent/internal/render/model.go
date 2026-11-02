@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/rithviknishad/care-pi/agent/internal/buildinfo"
 	"regexp"
 	"sort"
 	"strings"
@@ -35,6 +36,9 @@ const (
 	ImageRedis        = "docker.io/library/redis:8-alpine"
 	ImageS3           = "docker.io/versity/versitygw:latest"
 	ImageNode         = "docker.io/library/node:22-bookworm-slim"
+	// Telemetry (Phase 7, S56): vmagent and node_exporter, 44 + 40 MB on arm64 (Grafana Alloy: 641 MB).
+	ImageVMAgent      = "docker.io/victoriametrics/vmagent:v1.131.0"
+	ImageNodeExporter = "quay.io/prometheus/node-exporter:v1.10.2"
 )
 
 // Ports on the pod localhost.
@@ -214,6 +218,42 @@ type Model struct {
 	Firewall           FirewallModel
 	FirewallFile       string
 	FirewallDropInFile string
+	// WAF is the Coraza WAF on the @api routes (Phase 7).
+	WAF WAFModel
+	// Telemetry is the opt-in telemetry (Phase 7, docs/telemetry.md): vmagent and node_exporter.
+	Telemetry TelemetryModel
+}
+
+// TelemetrySecret is the podman secret with secrets/telemetry_password (the basic auth of the remote write).
+const TelemetrySecret = "care-pi-telemetry-password"
+
+// TelemetryModel is telemetry of config.yaml.
+type TelemetryModel struct {
+	Enabled        bool
+	RemoteWriteURL string
+	Username       string
+	// PasswordSecret is TelemetrySecret when secrets/telemetry_password exists, else "".
+	PasswordSecret string
+	// Interval is the scrape interval, for example "60s". Instance is the label instance (the host name).
+	Interval string
+	Instance string
+	Version  string
+	// Ports on the loopback of the host.
+	ExporterPort int
+	AgentPort    int
+	RenderedDir  string
+	TextfileDir  string
+	QueueDir     string
+}
+
+func telemetry(m *Model) bool { return m.Telemetry.Enabled && !m.Bootstrap }
+
+// WAFModel is security.waf of config.yaml (the Coraza WAF of the Caddyfile, Phase 7).
+type WAFModel struct {
+	Enabled bool
+	// Engine is the SecRuleEngine value: DetectionOnly (mode detect) or On (mode block).
+	Engine   string
+	Paranoia int
 }
 
 // FirewallModel is security.firewall and security.ssh of config.yaml.
@@ -311,6 +351,8 @@ type Input struct {
 	ACMEDNS bool
 	// TailscaleIP is the IPv4 address of tailscale0, or "".
 	TailscaleIP string
+	// TelemetryPassword is true when secrets/telemetry_password exists (Phase 7).
+	TelemetryPassword bool
 }
 
 // Hostnames returns the DNS names that the config serves, the canonical name first (docs/connectivity.md):
@@ -445,6 +487,11 @@ func DesireLock(cfg *config.Config, sol *solution.Solution, sl *solution.Lock, c
 	if cfg.FE.Provider == "local" {
 		w.Images["node"] = firstNonEmpty(cfg.Images.Node, lockRef("node", ImageNode))
 	}
+	// Phase 7: the images of the opt-in telemetry, only when it is on (docs/telemetry.md).
+	if cfg.Telemetry.Enabled {
+		w.Images["vmagent"] = lockRef("vmagent", ImageVMAgent)
+		w.Images["node-exporter"] = lockRef("node-exporter", ImageNodeExporter)
+	}
 	plugEnv := solution.PlugEnv(plugs)
 	backend := solution.MergeEnv(nil, backendDefaults(cfg), sol.Env.Backend, plugEnv.Backend, cfg.Env.Backend)
 	frontend := solution.MergeEnv(solution.MultiValueFrontendKeys, sol.Env.Frontend, plugEnv.Frontend, cfg.Env.Frontend)
@@ -559,6 +606,19 @@ func NewModel(in Input) (*Model, error) {
 	if err := connectivity(m, cfg, in); err != nil {
 		return nil, err
 	}
+	if t := cfg.Telemetry; t.Enabled && !in.Bootstrap {
+		interval := t.IntervalS
+		if interval <= 0 {
+			interval = config.DefaultTelemetryIntervalS
+		}
+		m.Telemetry = TelemetryModel{Enabled: true, RemoteWriteURL: t.RemoteWriteURL, Username: t.Username,
+			Interval: fmt.Sprintf("%ds", interval), Instance: cfg.Identity.Hostname, Version: buildinfo.Version,
+			ExporterPort: 9100, AgentPort: 8429, RenderedDir: paths.RenderedTelemetry, TextfileDir: paths.TelemetryTextfileDir,
+			QueueDir: paths.TelemetryQueueDir}
+		if in.TelemetryPassword {
+			m.Telemetry.PasswordSecret = TelemetrySecret
+		}
+	}
 
 	s := m.Sizing
 	m.MemAPI = config.MemAPI(s.GunicornWorkers)
@@ -568,6 +628,16 @@ func NewModel(in Input) (*Model, error) {
 	m.MemRed = config.MemRedis
 	m.MemS3 = config.MemS3
 	m.MemCad = config.MemCaddy
+	if w := cfg.Security.WAF; w.Enabled {
+		m.WAF = WAFModel{Enabled: true, Engine: "DetectionOnly", Paranoia: w.Paranoia}
+		if w.Mode == "block" {
+			m.WAF.Engine = "On"
+		}
+		if m.WAF.Paranoia < 1 {
+			m.WAF.Paranoia = 1
+		}
+		m.MemCad = config.MemCaddyWAF
+	}
 
 	for name := range pl.Wants.Images {
 		if in.Bootstrap && name != "caddy" {
@@ -918,8 +988,9 @@ var MaintenanceSteps = map[string]string{
 	"wifi-verify":       "Check the network routes",
 	"wifi-remove":       "Remove the Wi-Fi network",
 	// Phase 7 (docs/api/README.md section 17).
-	"ca-rotate":     "Make a new root certificate",
-	"restart-caddy": "Restart the web server for the new certificate",
+	"ca-rotate":        "Make a new root certificate",
+	"restart-caddy":    "Restart the web server for the new certificate",
+	"ensure-telemetry": "Start or stop the telemetry",
 }
 
 // GitHubSlug returns OWNER/NAME for a https://github.com/OWNER/NAME URL, else "".

@@ -123,6 +123,10 @@ Never use --insecure-dev on a clinic device.`,
 		recoveryTicker := time.NewTicker(recoveryInterval)
 		defer recoveryTicker.Stop()
 		go recoverUpdates(ctx, recoveryTicker.C, svc.RecoverUpdates, log)
+		// Phase 7: the text file of node_exporter while telemetry is on (docs/telemetry.md); nothing while it is off.
+		if !f.fakeHost {
+			go svc.RunTextfile(ctx, 30*time.Second, log)
+		}
 		log.Info("care-pi serve: ready", "listen", l.Addr().String(), "dev", f.insecureDev, "setup_state", svc.SetupStateName())
 		if err := server.Notify("READY=1"); err != nil {
 			log.Warn("sd_notify failed", "error", err)

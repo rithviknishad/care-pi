@@ -32,7 +32,7 @@ Volume=/run/tailscale:/run/tailscale
 # The bind mount needs the directory, also when the agent does not run.
 ExecStartPre=/bin/mkdir -p /run/care-pi
 ExecStartPre=/bin/mkdir -p /run/tailscale
-MemoryMax=128M
+MemoryMax=256M
 MemorySwapMax=0
 Restart=always
 RestartSec=5

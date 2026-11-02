@@ -237,10 +237,11 @@ export function effectiveConfig(state) {
     images: {},
     uploads: { max_body_mb: 100 },
     network: { wifi: null },
-    telemetry: { enabled: false, remote_write_url: null },
+    telemetry: { enabled: false, remote_write_url: null, username: null, interval_s: 60, ...f.telemetry },
     security: {
       firewall: { policy: "accept", ...f.security?.firewall },
       ssh: { allow: true, ...f.security?.ssh },
+      waf: { enabled: false, mode: "detect", paranoia: 1, ...f.security?.waf },
     },
   };
 }

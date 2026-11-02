@@ -106,6 +106,13 @@ const (
 	FirewallFile         = "/etc/care-pi/rendered/firewall/care-pi.nft"
 	// FirewallState records the policy of the last load and the rollback timer (Phase 7, S42 default-drop).
 	FirewallState = "/var/lib/care-pi/state/firewall.json"
+	// Telemetry (Phase 7, docs/telemetry.md). RenderedTelemetry holds the scrape configuration of vmagent;
+	// TelemetryDir holds the text file of the agent for node_exporter and the queue of vmagent.
+	RenderedTelemetry     = "/etc/care-pi/rendered/telemetry"
+	TelemetryDir          = "/var/lib/care-pi/telemetry"
+	TelemetryTextfileDir  = "/var/lib/care-pi/telemetry/textfile"
+	TelemetryQueueDir     = "/var/lib/care-pi/telemetry/vmagent"
+	TelemetryPasswordFile = "/etc/care-pi/secrets/telemetry_password"
 	// KeysDir holds the minisign public keys that this host trusts in addition to the keys of the agent (Phase 7).
 	KeysDir = "/etc/care-pi/keys"
 	// SysctlFile sets net.ipv4.ip_nonlocal_bind=1: the pod can publish on an address that is not there yet

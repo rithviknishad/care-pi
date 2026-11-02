@@ -148,7 +148,7 @@ var actionKeys = map[string]bool{
 	"tailscale-install": true, "tailscale-up": true, "tailscale-login": true, "tailscale-down": true, "tailscale-logout": true,
 	"wifi-radio": true, "wifi-profile": true, "wifi-connect": true, "wifi-verify": true, "wifi-remove": true,
 	// Phase 7 (docs/api/README.md section 17).
-	"ca-rotate": true, "restart-caddy": true,
+	"ca-rotate": true, "restart-caddy": true, "ensure-telemetry": true,
 }
 
 // ActionOf returns the action key of a step name ("restart: care-api.service" gives "restart"), or "".

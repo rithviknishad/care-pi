@@ -4,15 +4,20 @@ FROM --platform=$BUILDPLATFORM docker.io/library/caddy:2-builder AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
+# Coraza (Phase 7): the optional WAF on /api/* (security.waf). The module embeds the OWASP CRS v4
+# (coraza-coreruleset): "load_owasp_crs" in the Caddyfile reads it from the binary, so no rule file is on disk.
+ARG CORAZA_CADDY_VERSION=v2.6.2
+
 RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} xcaddy build \
     --with github.com/caddy-dns/acmedns \
     --with github.com/tailscale/caddy-tailscale \
+    --with github.com/corazawaf/coraza-caddy/v2@${CORAZA_CADDY_VERSION} \
     --output /usr/bin/caddy
 
 FROM docker.io/library/caddy:2
 
 LABEL org.opencontainers.image.title="care-pi caddy" \
-      org.opencontainers.image.description="Caddy 2 with the acmedns DNS provider and the Tailscale module, for the care-caddy container of care-pi" \
+      org.opencontainers.image.description="Caddy 2 with the acmedns DNS provider, the Tailscale module, and the Coraza WAF (OWASP CRS), for the care-caddy container of care-pi" \
       org.opencontainers.image.source="https://github.com/rithviknishad/care-pi" \
       org.opencontainers.image.licenses="Apache-2.0"
 

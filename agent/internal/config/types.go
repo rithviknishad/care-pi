@@ -25,6 +25,16 @@ type Config struct {
 type Security struct {
 	Firewall Firewall    `yaml:"firewall" json:"firewall"`
 	SSH      SSHSecurity `yaml:"ssh" json:"ssh"`
+	WAF      WAF         `yaml:"waf" json:"waf"`
+}
+
+// WAF is the optional Coraza WAF with the OWASP CRS on /api/* (01 section 5).
+type WAF struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Mode is "detect" (log only, SecRuleEngine DetectionOnly; the default) or "block" (403).
+	Mode string `yaml:"mode" json:"mode"`
+	// Paranoia is the paranoia level of the CRS, 1 to 4. Each level adds rules and false positives.
+	Paranoia int `yaml:"paranoia" json:"paranoia"`
 }
 
 // Firewall is the input policy of the table inet care-pi.
@@ -273,8 +283,14 @@ type WiFi struct {
 	Country string `yaml:"country,omitempty" json:"country,omitempty"`
 }
 
-// Telemetry holds the opt-in telemetry settings (Phase 7).
+// Telemetry holds the opt-in telemetry settings (Phase 7, O12: remote_write only; docs/telemetry.md).
+// Nothing leaves the device while Enabled is false.
 type Telemetry struct {
 	Enabled        bool   `yaml:"enabled" json:"enabled"`
 	RemoteWriteURL string `yaml:"remote_write_url,omitempty" json:"remote_write_url,omitempty"`
+	// Username is the basic auth user of the remote write. The password is the secret file
+	// /etc/care-pi/secrets/telemetry_password ("care-pi telemetry set-password"), never this file.
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	// IntervalS is the scrape interval in seconds (default 60).
+	IntervalS int `yaml:"interval_s" json:"interval_s"`
 }

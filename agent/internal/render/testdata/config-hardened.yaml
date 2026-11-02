@@ -20,8 +20,14 @@ backups:
   wal_archive_timeout_min: 5
 fe:
   provider: none
+telemetry:
+  enabled: true
+  remote_write_url: https://metrics.example.org/api/v1/write
+  username: sunrise
+  interval_s: 60
 uploads:
   max_body_mb: 200
 security:
   firewall: {policy: drop}
   ssh: {allow: false}
+  waf: {enabled: true, mode: block, paranoia: 2}

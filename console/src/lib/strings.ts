@@ -825,6 +825,7 @@ export const strings = {
       "wifi-remove": "Remove the Wi-Fi network",
       "ca-rotate": "Make a new root certificate",
       "restart-caddy": "Restart the web server for the new certificate",
+      "ensure-telemetry": "Start or stop the telemetry",
     } as Record<string, string>,
     // The text of a step in a job of one kind, when the key has a different meaning there.
     byKind: {

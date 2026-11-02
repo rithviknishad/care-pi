@@ -11,6 +11,8 @@
 		# Port 443/udp is not published, so HTTP/3 is off.
 		protocols h1 h2
 	}
+	# The Coraza WAF (security.waf, Phase 7) runs before the proxy in the @api routes.
+	order coraza_waf first
 	# The local CA uses the name-constrained root of the agent (07 section 4.1, docs/connectivity.md).
 	# Caddy makes its intermediate and the leaf certificates below this root. The root permits
 	# only the names and the address ranges of its name constraints.
@@ -38,6 +40,25 @@
 	# /admin/* is not routed (O16). Django sends HSTS; local CA hosts must not get it.
 	@api path /api/* /staticfiles/* /mediafiles/* /ping/ /health/* /app_version/
 	handle @api {
+		# The Coraza WAF with the OWASP CRS v4 of the module (security.waf; docs/console-server.md section 15).
+		# Mode block, paranoia level 2. The audit log goes to the journal of care-caddy.
+		coraza_waf {
+			load_owasp_crs
+			directives `
+				Include @coraza.conf-recommended
+				Include @crs-setup.conf.example
+				SecRuleEngine On
+				SecRequestBodyAccess On
+				SecResponseBodyAccess Off
+				SecAuditEngine RelevantOnly
+				SecAuditLogType Serial
+				SecAuditLog /dev/stdout
+				SecAuditLogFormat JSON
+				SecAuditLogParts ABHZ
+				SecAction "id:900000,phase:1,pass,t:none,nolog,setvar:tx.blocking_paranoia_level=2"
+				Include @owasp_crs/*.conf
+			`
+		}
 		reverse_proxy localhost:9000 {
 			header_up X-Forwarded-Proto https
 			# The browser also sends the console cookie to this port (docs/api/README.md, section 2.5).

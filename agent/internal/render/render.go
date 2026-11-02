@@ -101,6 +101,12 @@ var phase4Outputs = []dynOutput{
 	// Phase 6 (docs/connectivity.md).
 	{output{"care-dns-update.timer.tmpl", systemd(DNSUpdateTimer), 0o644, 0, dnsUpdate}, nil},
 	{output{"care-dns-update.service.tmpl", systemd("care-dns-update.service"), 0o644, 0, dnsUpdate}, nil},
+	// Phase 7: the opt-in telemetry (docs/telemetry.md).
+	{output{"care-telemetry.image.tmpl", quadlet("care-telemetry.image"), 0o644, 0, telemetry}, nil},
+	{output{"care-node-exporter.image.tmpl", quadlet("care-node-exporter.image"), 0o644, 0, telemetry}, nil},
+	{output{"care-node-exporter.container.tmpl", quadlet("care-node-exporter.container"), 0o644, 0, telemetry}, nil},
+	{output{"care-telemetry.container.tmpl", quadlet("care-telemetry.container"), 0o644, 0, telemetry}, nil},
+	{output{"telemetry-scrape.yml.tmpl", paths.RenderedTelemetry + "/scrape.yml", 0o644, 0, telemetry}, nil},
 }
 
 func dnsUpdate(m *Model) bool { return m.DNSUpdate && !m.Bootstrap }
@@ -131,6 +137,8 @@ var funcs = template.FuncMap{
 		}
 		return out
 	},
+	// sd escapes a value for an Exec line of systemd: % starts a specifier.
+	"sd": func(s string) string { return strings.ReplaceAll(s, "%", "%%") },
 	"short": func(s string) string {
 		if i := strings.Index(s, "@sha256:"); i >= 0 && len(s) > i+20 {
 			return s[:i+20]

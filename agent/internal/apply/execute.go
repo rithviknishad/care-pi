@@ -220,6 +220,16 @@ func (x *executor) run(ctx context.Context, a plan.Action) error {
 		return firewall.Reload(ctx, h, x.o.Paths, render.FirewallOf(x.pr.Config).Policy, x.o.Now(), x.o.Out)
 	case plan.UpdateDNS:
 		return x.updateDNS(ctx)
+	case plan.EnsureTelemetry:
+		if len(a.Names) > 0 {
+			if _, err := h.Runner.Run(ctx, host.Cmd{Name: "systemctl", Args: append([]string{"stop"}, a.Names...)}); err != nil {
+				_, _ = fmt.Fprintf(x.o.Out, "    warning: cannot stop %s: %v\n", strings.Join(a.Names, " "), err)
+			}
+		}
+		if len(a.Units) > 0 {
+			return h.Systemd.Restart(ctx, a.Units...)
+		}
+		return nil
 	case plan.PlugConfig:
 		rows := plugcfg.Desired(x.pr.Config, x.pr.Desire.Plugs, x.pr.Lock)
 		res, err := plugcfg.Sync(ctx, h, x.o.Paths, rows, x.o.Now())

@@ -542,3 +542,35 @@ The agent does not start the timer when the unit is not active (the table is not
 **CLI.** `care-pi firewall status [--json]`, `policy accept|drop`, `allow-ssh true|false` (each writes `config.yaml` and
 applies, as `care-pi config set … --apply`), `confirm`, `rollback`.
 
+## 15. Phase 7: the Coraza WAF (optional, off by default)
+
+`01` section 5 plans an optional web application firewall on `/api/*`. `security.waf` turns it on:
+
+```yaml
+security:
+  waf: {enabled: true, mode: detect, paranoia: 1}
+```
+
+- **Image.** `images/caddy/Containerfile` adds `github.com/corazawaf/coraza-caddy/v2` (pinned, `CORAZA_CADDY_VERSION`).
+  The module embeds the OWASP Core Rule Set v4 (`coraza-coreruleset`): `load_owasp_crs` reads the rules from the binary,
+  so no rule file is on the disk and the rules change with the image of the lock. (The plan said `/etc/caddy/crs`; the
+  embedded CRS is the same set without a second copy.)
+- **The Caddyfile.** The global block gets `order coraza_waf first`; the handler `@api` (`/api/*`, `/staticfiles/*`,
+  `/mediafiles/*`, `/ping/`, `/health/*`, `/app_version/`) gets `coraza_waf` with `coraza.conf-recommended`,
+  `crs-setup.conf.example`, `SecRuleEngine DetectionOnly` (mode `detect`) or `On` (mode `block`), the paranoia level
+  (`tx.blocking_paranoia_level`), the request body on, the response body off, and the audit log of the relevant
+  transactions as JSON on the standard output (parts A, B, H, Z): `care-pi logs caddy` shows the rule ids. The S3
+  buckets, the plug bundles, the FE, and the console have no WAF.
+- **Memory.** In Docker, Caddy used 25 MiB without the WAF and 60 MiB with the CRS loaded (cgroup memory; VmRSS 105 MiB).
+  With the WAF, `care-caddy.container` gets `MemoryMax=256M` (else 128M).
+- **Safety.** An apply that turns the WAF on checks the modules of the running Caddy (`caddy list-modules`): without
+  `http.handlers.waf` (an image of an older lock), it stops with an error before it writes a file, because the next
+  start of Caddy would fail on the unknown directive.
+- **False positives.** Expect them on file uploads, rich text (notes, prescriptions), and search with quotes. Use
+  `detect` first, read the audit lines for some days, then `block`. Paranoia 1 is the right level for Care; 2 and more
+  give many more false positives. Off by default, also on a 4 GB Pi.
+- **Test.** `images/caddy/test-waf.sh [IMAGE]`: the module, `caddy validate` of the golden case `hardened` (block,
+  paranoia 2), and live requests with a stub of care-api: a normal request 200; `?search=1' OR '1'='1' -- ` 403 in block
+  mode, 200 with the audit line of the CRS rule 942100 in detect mode. It passed with Caddy 2.11.7 and coraza-caddy
+  2.6.2 (arm64).
+

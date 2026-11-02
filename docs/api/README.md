@@ -1738,6 +1738,18 @@ warning of the certificate page with both fingerprints (`docs/connectivity.md` s
 in `GET /solutions/{name}/locks/{version}`; the cache stays. CLI: `care-pi solution verify FILE`. The keys, CI, and the
 key ceremony: `docs/solutions.md` section 18.
 
+### 17.5 Telemetry and metrics
+
+`GET /metrics` (session; `text/plain; version=0.0.4`) gives the metrics of the agent in the Prometheus text format;
+CLI `care-pi metrics`. The config keys `telemetry.{enabled, remote_write_url, username, interval_s}` turn on the opt-in
+telemetry (node_exporter and vmagent, remote write only; `docs/telemetry.md`). The plan action `ensure-telemetry` starts,
+restarts, or stops only its units.
+
+### 17.6 The WAF
+
+`security.waf.{enabled, mode, paranoia}` (config) turns on the Coraza WAF on the Care API routes of port 443
+(`docs/console-server.md` section 15). The console API (port 8443) has no WAF. No operation changes.
+
 ### 17.9 Changes of contract 0.8.0
 
 All changes are additive.
@@ -1748,3 +1760,6 @@ All changes are additive.
 - `POST /tls/local-ca/rotate` is implemented (no `x-phase`); the job kind `tls-local-ca-rotate` and
   `TlsLocalCaRotateResult`; `TlsState.local_ca.change_reason` and `TlsState.local_ca.previous_root` (section 17.3).
 - The config key `updates.require_signed` and the problem type `lock-signature-invalid` (section 17.4).
+- `GET /metrics`; the plan action kind and the step key `ensure-telemetry`; the config keys `telemetry.username` and
+  `telemetry.interval_s` (section 17.5).
+- The config keys `security.waf.enabled`, `security.waf.mode`, `security.waf.paranoia` (section 17.6).

@@ -82,7 +82,7 @@ func fixture(t *testing.T, name string) (Tree, *lock.Lock) {
 	// Phase 6: each golden host has the root of the agent. The case public has the certificate of the public name;
 	// public-tailscale has none yet, and a Tailscale address.
 	in := Input{Config: cfg, Solution: sol, Lock: lk, IPs: TestIPs, Bootstrap: boot, CareBuild: cb, CARoot: true,
-		ACMEDNS: cfg.TLS.Public.Enabled, PublicIssued: cfgName == "public"}
+		ACMEDNS: cfg.TLS.Public.Enabled, PublicIssued: cfgName == "public", TelemetryPassword: cfg.Telemetry.Enabled}
 	if cfg.TLS.Tailscale.Enabled {
 		in.TailscaleIP = "100.101.102.103"
 	}
