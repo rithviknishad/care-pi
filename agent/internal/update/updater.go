@@ -278,19 +278,34 @@ func (t *Target) Version() string {
 }
 
 // index returns the cached index, or, with network, the index of the URL. Without both, it imports the
-// dist snapshot of the Raspberry Pi image, which then becomes the cache (docs/image.md).
+// dist snapshot of the Raspberry Pi image, which then becomes the cache (docs/image.md). With
+// updates.require_signed, a cache without the record of a signature check (from before the setting) does not count:
+// the index downloads again, and offline the result is lock-signature-invalid.
 func (u *Updater) index(ctx context.Context, cfg *config.Config, network bool) (*solution.Index, error) {
-	ix, err := solution.CachedIndex(u.Paths)
+	c := u.client()
+	ix, err := c.TrustedCache()
 	if err == nil && ix != nil {
 		return ix, nil
 	}
+	unsigned := errors.Is(err, errUnsignedCache)
 	fetchErr := errNoIndex
 	if network {
-		if ix, fetchErr = u.client().FetchIndex(ctx, IndexURL(cfg.Updates.IndexURL)); fetchErr == nil {
+		if ix, fetchErr = c.FetchIndex(ctx, IndexURL(cfg.Updates.IndexURL)); fetchErr == nil {
 			return ix, nil
 		}
 	}
-	if local, err := u.client().ImportLocalDist(paths.LocalDist); err == nil {
+	if unsigned {
+		if p := errorsAs(fetchErr); p != nil && p.Slug == problem.LockSignatureInvalid {
+			return nil, fetchErr
+		}
+		why := "offline"
+		if network {
+			why = "the download failed: " + fetchErr.Error()
+		}
+		return nil, sigProblem("The cached index is unsigned: no check of a trusted key accepted it (updates.require_signed), "+
+			"and the agent cannot download it again (%s). Run care-pi update check when the device is online.", why)
+	}
+	if local, err := c.ImportLocalDist(paths.LocalDist); err == nil {
 		return local, nil
 	}
 	return nil, fetchErr
@@ -341,7 +356,7 @@ func (u *Updater) ResolveTarget(ctx context.Context, cfg *config.Config, version
 			return nil, problem.Newf(problem.LockNotFound, "Cannot read %s: %v", lockFile, err)
 		}
 		c := u.client()
-		if err := c.verifyLocal(lockFile, data); err != nil {
+		if _, err := c.verifyLocal(lockFile, data); err != nil {
 			return nil, err
 		}
 		l, err := c.Accept(data, name, "", "")
@@ -350,7 +365,10 @@ func (u *Updater) ResolveTarget(ctx context.Context, cfg *config.Config, version
 		}
 		return u.checkAgent(&Target{Kind: "lock", Lock: l})
 	}
-	ix, _ := u.index(ctx, cfg, network)
+	ix, err := u.index(ctx, cfg, network)
+	if p := errorsAs(err); p != nil && p.Slug == problem.LockSignatureInvalid {
+		return nil, err
+	}
 	track := cfg.Solution.Track
 	switch {
 	case version != "" && track == "stable":

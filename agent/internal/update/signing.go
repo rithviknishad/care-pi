@@ -75,31 +75,39 @@ func VerifyFile(keys minisign.Keys, data, sig []byte, what string) (minisign.Pub
 	return k, nil
 }
 
-// verifyRemote downloads <url>.minisig and checks data when the client requires signatures.
-func (c Client) verifyRemote(ctx context.Context, url string, data []byte) error {
+// verifyRemote downloads <url>.minisig and checks data when the client requires signatures. It returns the key id
+// of the signature ("" when the client requires none).
+func (c Client) verifyRemote(ctx context.Context, url string, data []byte) (string, error) {
 	if !c.RequireSigned {
-		return nil
+		return "", nil
 	}
 	resp, sig, err := c.get(ctx, url+SigSuffix, nil, MaxSigBytes)
 	if err != nil {
-		return sigProblem("GET %s%s failed: %v", url, SigSuffix, err)
+		return "", sigProblem("GET %s%s failed: %v", url, SigSuffix, err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return sigProblem("GET %s%s gave HTTP %d: the file has no signature.", url, SigSuffix, resp.StatusCode)
+		return "", sigProblem("GET %s%s gave HTTP %d: the file has no signature.", url, SigSuffix, resp.StatusCode)
 	}
-	_, err = VerifyFile(c.Keys, data, sig, url)
-	return err
+	k, err := VerifyFile(c.Keys, data, sig, url)
+	if err != nil {
+		return "", err
+	}
+	return k.KeyID(), nil
 }
 
-// verifyLocal checks the signature file next to a local file (a lock file of the CLI, the dist snapshot).
-func (c Client) verifyLocal(file string, data []byte) error {
+// verifyLocal checks the signature file next to a local file (a lock file of the CLI, the dist snapshot). It returns
+// the key id of the signature ("" when the client requires none).
+func (c Client) verifyLocal(file string, data []byte) (string, error) {
 	if !c.RequireSigned {
-		return nil
+		return "", nil
 	}
 	sig, err := os.ReadFile(file + SigSuffix)
 	if err != nil {
-		return sigProblem("%s has no signature file %s%s.", file, filepath.Base(file), SigSuffix)
+		return "", sigProblem("%s has no signature file %s%s.", file, filepath.Base(file), SigSuffix)
 	}
-	_, err = VerifyFile(c.Keys, data, sig, strings.TrimPrefix(file, c.Paths.Abs("/")))
-	return err
+	k, err := VerifyFile(c.Keys, data, sig, strings.TrimPrefix(file, c.Paths.Abs("/")))
+	if err != nil {
+		return "", err
+	}
+	return k.KeyID(), nil
 }

@@ -1082,6 +1082,11 @@ ceremony and one release with signatures):
 
 - `GET <index_url>.minisig` before the agent accepts `index.json`; each check downloads the index again (no
   `If-None-Match`), because a cached index can be from before the setting.
+- The cache records the check: `state/update-cache/index.meta.json` has `signed_by` (the key id) and `signed_sha256`
+  (the SHA-256 of the cached file). An update or a rollback uses the cached index only with this record, the same
+  file, and a key that the agent still trusts. Else it downloads the index again; offline it stops with
+  `lock-signature-invalid` ("the cached index is unsigned"). The tested versions of the held OS packages also come
+  only from such a cache.
 - `GET <lock url>.minisig` before it accepts a lock of the index.
 - `<file>.minisig` next to `care-pi update --lock-file <file>`, and `index/index.json.minisig` of a dist snapshot.
 - The trusted keys: `solutions/keys/*.pub` of the agent build (embedded) and `/etc/care-pi/keys/*.pub` of the host

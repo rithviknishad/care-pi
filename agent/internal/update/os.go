@@ -16,7 +16,6 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/jobs"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/problem"
-	"github.com/rithviknishad/care-pi/agent/internal/solution"
 )
 
 // HoldPackages are the held container packages (installer HOLD_PACKAGES).
@@ -195,7 +194,8 @@ func (u *Updater) held(ctx context.Context, codename string) ([]HeldPackage, err
 	pol, _ := r.Run(ctx, host.Cmd{Name: "apt-cache", Args: append([]string{"policy"}, HoldPackages...)})
 	policy := parsePolicy(pol)
 	var tested map[string]string
-	if ix, _ := solution.CachedIndex(u.Paths); ix != nil && ix.OS != nil {
+	// With updates.require_signed, an unsigned cache gives no tested version: each held package stays.
+	if ix, _ := u.client().TrustedCache(); ix != nil && ix.OS != nil {
 		tested = ix.OS.HeldPackages[codename]
 	}
 	var res []HeldPackage
