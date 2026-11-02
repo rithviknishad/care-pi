@@ -84,10 +84,14 @@ func (u *Updater) Check(ctx context.Context, rec *jobs.Recorder) (*CheckResult, 
 	}
 	var t *Target
 	var blocked *UpdateBlocker
+	var blockedRec *BlockedRecord
 	if err := step(rec, "fetch-lock", "", func() error {
 		t, err = u.ResolveTarget(ctx, cfg, "", "", true)
 		if p := errorsAs(err); p != nil && p.Slug == problem.AgentTooOld {
 			blocked = &UpdateBlocker{Code: p.Slug, Detail: p.Detail, MinAgentVersion: strp(p.MinAgentVersion)}
+			if t != nil && t.Lock != nil {
+				blockedRec = &BlockedRecord{Version: t.Lock.Version, MinAgentVersion: p.MinAgentVersion, Detail: p.Detail}
+			}
 			rec.Logf("%s", p.Detail)
 			return nil
 		}
@@ -136,7 +140,7 @@ func (u *Updater) Check(ctx context.Context, rec *jobs.Recorder) (*CheckResult, 
 		res.UpdateAvailable = updateAvailable(cfg, cur, rec2)
 	}
 	if err := UpdateState(u.Paths, func(s *State) {
-		s.LastCheckAt, s.LastCheckError, s.Target = &res.CheckedAt, nil, rec2
+		s.LastCheckAt, s.LastCheckError, s.Target, s.Blocked = &res.CheckedAt, nil, rec2, blockedRec
 	}); err != nil {
 		return nil, err
 	}

@@ -227,6 +227,11 @@ func (u *Updater) overview(ctx context.Context, full bool) (*Overview, error) {
 	if o.BlockedBy == nil && st.LastCheckError != nil && st.LastCheckError.Slug == problem.AgentTooOld {
 		o.BlockedBy = &UpdateBlocker{Code: problem.AgentTooOld, Detail: st.LastCheckError.Detail, MinAgentVersion: strp(st.LastCheckError.MinAgentVersion)}
 	}
+	if b := st.Blocked; o.BlockedBy == nil && o.Target == nil && b != nil {
+		if old, _ := solution.AgentTooOld(u.agent(), b.MinAgentVersion); old && updateAvailable(cfg, cur, &TargetRecord{Version: b.Version}) {
+			o.BlockedBy = &UpdateBlocker{Code: problem.AgentTooOld, Detail: b.Detail, MinAgentVersion: strp(b.MinAgentVersion)}
+		}
+	}
 	o.State, _ = u.machineState(st)
 	if j := runningJob(u.Paths, UpdateKinds...); j != nil {
 		s := j.Summary()

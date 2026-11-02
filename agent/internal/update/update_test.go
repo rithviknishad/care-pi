@@ -484,6 +484,20 @@ func TestAgentTooOldReleaseBuild(t *testing.T) {
 	if b := cr.BlockedBy; cr.UpdateAvailable || b == nil || b.Code != problem.AgentTooOld || b.MinAgentVersion == nil || *b.MinAgentVersion != "v0.2.0" {
 		t.Fatalf("check %+v blocked_by %+v", cr, cr.BlockedBy)
 	}
+	// GET /updates shows the blocker of the check (it has no target), until the agent is new enough.
+	o, err := e.u.Overview(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := o.BlockedBy; o.Target != nil || b == nil || b.Code != problem.AgentTooOld || b.MinAgentVersion == nil || *b.MinAgentVersion != "v0.2.0" ||
+		!strings.Contains(b.Detail, "This agent is v0.1.0") {
+		t.Fatalf("overview target %+v blocked_by %+v", o.Target, o.BlockedBy)
+	}
+	e.u.AgentVersion = "v0.2.0"
+	if o, err = e.u.Overview(context.Background()); err != nil || o.BlockedBy != nil {
+		t.Fatalf("overview with agent v0.2.0: blocked_by %+v, %v", o.BlockedBy, err)
+	}
+	e.u.AgentVersion = "v0.1.0"
 	_, err = e.u.ResolveTarget(context.Background(), mustConfig(t, e.cfg), "", "", false)
 	if p := problem.From(err); !problem.Is(err, problem.AgentTooOld) || p.MinAgentVersion != "v0.2.0" || !strings.Contains(p.Detail, "This agent is v0.1.0") {
 		t.Fatalf("want agent-too-old, got %v", err)

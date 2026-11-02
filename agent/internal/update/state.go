@@ -22,6 +22,8 @@ type State struct {
 	LastCheckError *problem.Problem `json:"last_check_error,omitempty"`
 	// Target is the target that the last check found.
 	Target *TargetRecord `json:"target,omitempty"`
+	// Blocked is the lock that the last check found but this agent cannot install (agent-too-old).
+	Blocked *BlockedRecord `json:"blocked,omitempty"`
 	// Staging is the last staging.
 	Staging *StagingRecord `json:"staging,omitempty"`
 	// RebootScheduledAt is the reboot that the agent does in the next window.
@@ -44,6 +46,14 @@ type TargetRecord struct {
 	// FromVersion is the running version at the check. A target is stale after another update.
 	FromVersion string `json:"from_version,omitempty"`
 	FromSHA256  string `json:"from_sha256,omitempty"`
+}
+
+// BlockedRecord is the lock of a check that stopped with agent-too-old. GET /updates shows it as blocked_by
+// while the lock is an update of the running version and the agent is still too old for it.
+type BlockedRecord struct {
+	Version         string `json:"version"`
+	MinAgentVersion string `json:"min_agent_version"`
+	Detail          string `json:"detail"`
 }
 
 // StagingRecord is one staging.
