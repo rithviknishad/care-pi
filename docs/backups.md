@@ -337,6 +337,9 @@ runs `pg_controldata` and `select 1`, and deletes everything. It never touches t
 - It needs free space of 2 times the database size. Else a timer run records `skipped`, and a manual run gives `409 insufficient-space`.
 - The environment variable `CARE_PI_DRILL_FREE_BYTES` replaces the free space (a test only).
 - A failed drill gives the banner `drill-failed`.
+- The containers are `care-drill-restore` and `care-drill`. The drill removes both before the restore and at the end
+  (`podman rm --force --ignore`): the stop of `care-backup-drill-pg.service` can interrupt the `--rm` of `podman run`,
+  and a container that stays would block the name of the next drill (the final acceptance on lumine).
 
 ## 9. Health
 

@@ -3,6 +3,7 @@ package restore
 import (
 	"context"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -229,6 +230,15 @@ func TestDrill(t *testing.T) {
 		t.Fatalf("%+v", res)
 	}
 	got := te.actions()
+	// A stale container of an earlier drill goes first (before the restore), and the cleanup removes both containers.
+	rm := []string{"podman rm --force --ignore care-drill-restore", "podman rm --force --ignore care-drill"}
+	if len(got) < 2 || !reflect.DeepEqual(got[:2], rm) {
+		t.Fatalf("want the removal of stale drill containers first, got %q", got)
+	}
+	if n := len(got); n < 2 || !reflect.DeepEqual(got[n-2:], rm) {
+		t.Fatalf("want the removal of the drill containers at the cleanup, got %q", got)
+	}
+	got = got[2:]
 	if len(got) < 3 || !strings.Contains(got[0], "--stanza=main restore --set=20261030-010000F --type=immediate --target-action=promote --archive-mode=off") ||
 		!strings.Contains(got[0], "/var/lib/care-pi/backup/pg:/var/lib/pgbackrest:ro") || !strings.Contains(got[1], "--unit=care-backup-drill-pg.service") ||
 		!strings.Contains(got[1], "-c archive_mode=off") || strings.Contains(got[1], "--wait") {

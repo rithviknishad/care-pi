@@ -369,6 +369,11 @@ func podman(v view, args []string) error {
 		if j == "stop --ignore --time 30 care-drill" {
 			return nil
 		}
+	case "rm":
+		// The containers of the restore drill only (restore.removeDrill).
+		if j == "rm --force --ignore care-drill" || j == "rm --force --ignore care-drill-restore" {
+			return nil
+		}
 	case "exec":
 		return podmanExec(args[1:])
 	case "run":

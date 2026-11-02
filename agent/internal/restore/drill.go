@@ -18,8 +18,9 @@ import (
 
 // Drill names on the host.
 const (
-	DrillContainer = "care-drill"
-	DrillUnit      = "care-backup-drill-pg.service"
+	DrillContainer        = "care-drill"
+	DrillRestoreContainer = "care-drill-restore"
+	DrillUnit             = "care-backup-drill-pg.service"
 )
 
 // DrillSpace returns the free space and the space that a drill needs: 2 times the database size.
@@ -87,11 +88,19 @@ func Drill(ctx context.Context, e Env, skipOnSpace bool) (*backup.DrillResult, e
 	last := info.Last()
 	res.BackupLabel = &last.Label
 	dir := paths.DrillDir + "/" + e.Rec.ID()
+	// removeDrill deletes the containers of a drill. "systemctl stop" of DrillUnit can stop "podman run --rm" while it
+	// removes the stopped container, and a container that stays blocks the name of each later drill.
+	removeDrill := func(ctx context.Context) {
+		for _, name := range []string{DrillRestoreContainer, DrillContainer} {
+			_, _ = e.Runner.Run(ctx, host.Cmd{Name: "podman", Args: []string{"rm", "--force", "--ignore", name}})
+		}
+	}
 	cleanup := func() error {
 		bg := context.WithoutCancel(ctx)
 		_, _ = e.Runner.Run(bg, host.Cmd{Name: "podman", Args: []string{"stop", "--ignore", "--time", "30", DrillContainer}})
 		_ = e.systemctl(bg, "stop", DrillUnit)
 		_, _ = e.Runner.Run(bg, host.Cmd{Name: "systemctl", Args: []string{"reset-failed", DrillUnit}})
+		removeDrill(bg)
 		return os.RemoveAll(e.Paths.Abs(dir))
 	}
 	fail := func(err error) (*backup.DrillResult, error) {
@@ -100,6 +109,8 @@ func Drill(ctx context.Context, e Env, skipOnSpace bool) (*backup.DrillResult, e
 		return nil, problem.New(problem.VerifyFailed, "The restore drill failed: "+err.Error())
 	}
 	if err := e.Step("drill-restore: "+last.Label+" to "+dir, "drill-restore", func() error {
+		// A container of an earlier drill that was not removed (see removeDrill).
+		removeDrill(ctx)
 		if err := os.MkdirAll(e.Paths.Abs(dir), 0o700); err != nil {
 			return err
 		}
@@ -108,7 +119,7 @@ func Drill(ctx context.Context, e Env, skipOnSpace bool) (*backup.DrillResult, e
 		}
 		args := []string{"--stanza=" + backup.Stanza, "restore", "--set=" + last.Label, "--type=immediate",
 			"--target-action=promote", "--archive-mode=off"}
-		out, err := e.Runner.Run(ctx, PodmanRun(e.Image, "care-drill-restore", dir, true, "pgbackrest", args...))
+		out, err := e.Runner.Run(ctx, PodmanRun(e.Image, DrillRestoreContainer, dir, true, "pgbackrest", args...))
 		if err != nil {
 			return fmt.Errorf("pgbackrest restore: %w: %s", err, lastLines(string(out), 3))
 		}
