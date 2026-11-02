@@ -54,8 +54,31 @@ jobs:
             --changelog-base "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag" "${args[@]}" > out/index.json
           bin/care-pi solution validate out/index.json
           (cd out && sha256sum index.json > index.json.sha256)
+
+      # Phase 7 (docs/solutions.md section 18): the index has the SHA-256 of each lock, so its signature covers the
+      # locks too. Without the secret MINISIGN_KEY, no signature.
+      - name: Sign index.json with minisign
+        env:
+          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
+        run: |
+          if [ -z "${MINISIGN_KEY}" ]; then
+            echo "::notice::No secret MINISIGN_KEY: index.json has no signature (docs/solutions.md section 18)."
+            exit 0
+          fi
+          sudo apt-get install -y -qq minisign > /dev/null
+          key="${RUNNER_TEMP}/minisign.key"
+          (umask 077 && printf '%s\n' "${MINISIGN_KEY}" > "$key")
+          minisign -S -s "$key" -m out/index.json -t "care-pi index run ${GITHUB_RUN_ID}"
+          rm -f "$key"
+          minisign -V -p solutions/keys/care-pi.pub -m out/index.json
+          bin/care-pi solution verify out/index.json --key solutions/keys/care-pi.pub
+
+      - name: Publish index.json
+        run: |
           if ! gh release view index --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             gh release create index --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
               --title "Index of the solution locks" --notes "index.json of each solution lock (docs/solutions.md, section 4). CI replaces the assets."
           fi
-          gh release upload index --repo "$GITHUB_REPOSITORY" out/index.json out/index.json.sha256 --clobber
+          assets=(out/index.json out/index.json.sha256)
+          if [ -f out/index.json.minisig ]; then assets+=(out/index.json.minisig); fi
+          gh release upload index --repo "$GITHUB_REPOSITORY" "${assets[@]}" --clobber

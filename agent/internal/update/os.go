@@ -16,7 +16,6 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/jobs"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/problem"
-	"github.com/rithviknishad/care-pi/agent/internal/solution"
 )
 
 // HoldPackages are the held container packages (installer HOLD_PACKAGES).
@@ -89,6 +88,10 @@ func aptGet(args ...string) host.Cmd {
 func aptMark(verb string, pkgs ...string) host.Cmd {
 	return AptRun("care-pi-apt-mark", append([]string{"apt-mark", "-o", "DPkg::Lock::Timeout=600", verb}, pkgs...)...)
 }
+
+// aptHost reports whether the host has the apt tools of the OS updates. Fedora (experimental, Phase 7) has dnf:
+// dnf-automatic installs its security updates, and "care-pi update --os" is not available.
+func aptHost(d Distro) bool { return d.ID != "fedora" }
 
 func readDistro(p paths.Paths) Distro {
 	d := Distro{ID: "debian", Codename: "unknown", PrettyName: "unknown"}
@@ -191,7 +194,8 @@ func (u *Updater) held(ctx context.Context, codename string) ([]HeldPackage, err
 	pol, _ := r.Run(ctx, host.Cmd{Name: "apt-cache", Args: append([]string{"policy"}, HoldPackages...)})
 	policy := parsePolicy(pol)
 	var tested map[string]string
-	if ix, _ := solution.CachedIndex(u.Paths); ix != nil && ix.OS != nil {
+	// With updates.require_signed, an unsigned cache gives no tested version: each held package stays.
+	if ix, _ := u.client().TrustedCache(); ix != nil && ix.OS != nil {
 		tested = ix.OS.HeldPackages[codename]
 	}
 	var res []HeldPackage
@@ -269,6 +273,9 @@ func (u *Updater) OS(ctx context.Context) (*OSUpdates, error) {
 	for _, n := range HoldPackages {
 		held[n] = true
 	}
+	if !aptHost(o.Distro) {
+		return o, nil
+	}
 	if out, err := u.Host.Runner.Run(ctx, host.Cmd{Name: "apt", Args: []string{"list", "--upgradable"}}); err == nil {
 		for _, p := range parseUpgradable(out) {
 			if !held[p.Name] {
@@ -314,29 +321,19 @@ func (u *Updater) osSummary(cfg *config.Config, st State) OSSummary {
 }
 
 // SecurityConf returns /etc/apt/apt.conf.d/52care-pi.conf for updates.os_security.
-func SecurityConf(cfg *config.Config) string {
-	on := "1"
-	if !cfg.Updates.OSSecurity {
-		on = "0"
-	}
-	return "// Managed by care-pi (updates.os_security in /etc/care-pi/config.yaml).\n" +
-		"// Install security updates automatically. Never reboot by itself: Care reboots\n" +
-		"// inside the update window that the operator sets.\n" +
-		"Unattended-Upgrade::Automatic-Reboot \"false\";\n" +
-		"APT::Periodic::Update-Package-Lists \"1\";\n" +
-		"APT::Periodic::Unattended-Upgrade \"" + on + "\";\n"
-}
+func SecurityConf(cfg *config.Config) string { return host.AptSecurityConf(cfg.Updates.OSSecurity) }
 
-// SyncSecurityConf writes 52care-pi.conf when it differs. The file is outside the sandbox of
-// care-pi.service, so a transient unit writes it.
+// SyncSecurityConf writes 52care-pi.conf when it differs. The file is outside the sandbox of care-pi.service: the
+// typed request host.WriteAptConf (on or off) makes the runner (or the helper) write the fixed text in a transient unit.
 func (u *Updater) SyncSecurityConf(ctx context.Context, cfg *config.Config) (bool, error) {
+	if !aptHost(readDistro(u.Paths)) {
+		return false, nil
+	}
 	want := SecurityConf(cfg)
 	if data, err := os.ReadFile(u.Paths.Abs(paths.AptConfCarePi)); err == nil && string(data) == want {
 		return false, nil
 	}
-	c := AptRun("care-pi-apt-conf", "tee", paths.AptConfCarePi)
-	c.Stdin = strings.NewReader(want)
-	if _, err := u.Host.Runner.Run(ctx, c); err != nil {
+	if _, err := u.Host.Runner.Run(ctx, host.WriteAptConfCmd(cfg.Updates.OSSecurity)); err != nil {
 		return false, fmt.Errorf("cannot write %s: %w", paths.AptConfCarePi, err)
 	}
 	return true, nil
@@ -376,6 +373,10 @@ func (u *Updater) OSUpdate(ctx context.Context, rec *jobs.Recorder, o OSOptions)
 			return p
 		}
 		return problem.New(problem.OSUpdateFailed, e.Error())
+	}
+	if d := readDistro(u.Paths); !aptHost(d) {
+		return nil, problem.New(problem.OSUpdateFailed, d.PrettyName+" has no apt: the OS update of Care is for Debian-family hosts. "+
+			"On Fedora (experimental), dnf-automatic installs the security updates; run 'sudo dnf upgrade' for the others.")
 	}
 	if _, err := u.SyncSecurityConf(ctx, cfg); err != nil {
 		rec.Logf("warning: %v", err)

@@ -1,0 +1,45 @@
+#!/usr/sbin/nft -f
+# {{.Header}}
+# The table inet care-pi (docs/console-server.md, section 13). {{.FirewallUnit}} loads this file
+# ({{.FirewallDropInFile}}). It changes only this table: the tables of podman (netavark) and Tailscale stay.
+{{- if .Firewall.Waits}}
+# security.firewall.policy: drop, not confirmed. The boot loads this file, so it keeps the policy accept: the apply
+# loaded care-pi.pending.nft (drop) for the trial, and "care-pi firewall confirm" moves it over this file.
+# security.ssh.allow: {{.Firewall.SSH}}.
+{{- else}}
+# security.firewall.policy: {{.Firewall.Policy}}. security.ssh.allow: {{.Firewall.SSH}}.
+{{- end}}
+# The first two commands make "nft -f" idempotent: create the table when it is missing, then delete it.
+table inet care-pi
+delete table inet care-pi
+
+table inet care-pi {
+  chain input {
+    type filter hook input priority filter; policy {{.Firewall.Policy}};
+    iifname "lo" accept
+    ct state established,related accept
+{{- if eq .Firewall.Policy "drop"}}
+    ct state invalid drop
+{{- end}}
+    # ICMP and ICMPv6 (neighbour discovery, router advertisements, path MTU).
+    ip protocol icmp accept
+    meta l4proto ipv6-icmp accept
+    # The DHCP client: DHCPv4 offers (broadcast) and DHCPv6 replies.
+    udp sport 67 udp dport 68 accept
+    ip6 saddr fe80::/10 udp sport 547 udp dport 546 accept
+{{- if .Firewall.SSH}}
+    tcp dport 22 accept
+{{- end}}
+    # Care and the console (S48). The pod publishes them with DNAT (netavark), so these packets pass the forward
+    # hook; the rule is for a listener on the host.
+    tcp dport { 80, 443, {{.ConsolePort}} } accept
+    # mDNS (avahi).
+    udp dport 5353 accept
+{{- if .FirewallTailscale}}
+    # WireGuard of tailscaled (Tailscale mode).
+    udp dport 41641 accept
+{{- end}}
+    # DNS of aardvark-dns for the containers on a podman network.
+    iifname "podman*" meta l4proto { tcp, udp } th dport 53 accept
+  }
+}

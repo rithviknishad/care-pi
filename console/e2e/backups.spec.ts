@@ -1,4 +1,4 @@
-import { boxes, expect, isMobile, login, mockState, noSideScroll, shot, test } from "./fixtures";
+import { boxes, expect, isMobile, login, MOCK_URL, mockState, noSideScroll, shot, test } from "./fixtures";
 
 // The Backups page (plans/02 section 7, docs/api/README.md section 13): the health row, the local backups, the
 // destinations, the recovery key, the schedule, the jobs, and the layout stability.
@@ -107,7 +107,7 @@ test("without a destination: add an S3 bucket, make it, and apply", async ({ pag
   await expect(page.getByTestId("destination-card")).toHaveAttribute("data-id", "cloud");
   expect(requests.some((u) => u.endsWith("/api/v1/backups/destinations/cloud/secrets"))).toBeTruthy();
   expect(requests.some((u) => u.endsWith("/api/v1/apply"))).toBeTruthy();
-  const file = (await (await page.request.get("http://127.0.0.1:4711/__mock/state")).json()) as {
+  const file = (await (await page.request.get(`${MOCK_URL}/__mock/state`)).json()) as {
     file: { backups: { destinations: Record<string, unknown>[] } };
   };
   expect(JSON.stringify(file.file.backups)).not.toContain("a secret access key");

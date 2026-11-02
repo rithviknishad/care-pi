@@ -215,6 +215,8 @@ func TestFirstApply(t *testing.T) {
 		// The sysctl file of the pod (net.ipv4.ip_nonlocal_bind) is new: systemd-sysctl loads it.
 		"systemctl restart systemd-sysctl.service",
 		"systemctl daemon-reload",
+		// Phase 7: the table of the agent and its drop-in are new.
+		"systemctl try-reload-or-restart care-pi-firewall.service",
 		"systemctl enable care-start.service",
 		"systemctl enable care-update-check.timer care-update-apply.timer",
 		"systemctl start care-update-check.timer care-update-apply.timer",

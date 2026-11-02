@@ -4,7 +4,8 @@ import { gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { Problem, openSse, sendJson } from "./http.mjs";
 import { SUPPORT_STEPS, startJob, summary } from "./jobs.mjs";
-import { FINGERPRINT, FINGERPRINT_COLON, now } from "./state.mjs";
+import { FINGERPRINT, now } from "./state.mjs";
+import { currentRoot } from "./connectivity.mjs";
 
 const UNITS = {
   api: "care-api.service",
@@ -122,18 +123,19 @@ const NOTES = {
   linux: [["linux.distro"]],
 };
 
-function instructions(prefix, os) {
+function instructions(prefix, os, state) {
   if (!STEPS[os])
     throw new Problem("invalid-request", "Unknown OS.", {
       errors: [{ pointer: "", message: "not one of the OS values", code: "enum", parameter: "os" }],
     });
   const apple = os === "ios" || os === "macos";
   const pem = os === "linux";
+  const now = currentRoot(state);
   return {
     os,
     root: {
-      fingerprint_sha256: FINGERPRINT,
-      fingerprint_sha256_colon: FINGERPRINT_COLON,
+      fingerprint_sha256: now.fingerprint,
+      fingerprint_sha256_colon: now.colon,
       filename: apple
         ? "care-pi-care-root-ca.mobileconfig"
         : pem
@@ -313,13 +315,13 @@ export const opsRoutes = [
     method: "GET",
     path: "/api/v1/tls/instructions/:os",
     public: true,
-    handler: ({ res, params }) => sendJson(res, 200, instructions("/api/v1", params.os)),
+    handler: ({ res, params, state }) => sendJson(res, 200, instructions("/api/v1", params.os, state)),
   },
   {
     method: "GET",
     path: "/_care-pi/tls/instructions/:os",
     public: true,
-    handler: ({ res, params }) => sendJson(res, 200, instructions("/_care-pi", params.os)),
+    handler: ({ res, params, state }) => sendJson(res, 200, instructions("/_care-pi", params.os, state)),
   },
 ];
 
@@ -330,7 +332,9 @@ function bundleBytes(id) {
 // Operations of a later phase answer 501 after the auth checks. Phase 3 is in lib/backups-api.mjs and
 // lib/restore-api.mjs; Phase 4 is in lib/updates.mjs (reset option phase4: false gives 501 there).
 // Phase 6 is in lib/connectivity.mjs.
-export const phaseRoutes = [
-  ["POST", "/api/v1/tls/local-ca/rotate", 7],
-  ["PUT", "/api/v1/security/ssh", 7],
-].map(([method, path, phase]) => ({ method, path, phase, handler: () => {} }));
+export const phaseRoutes = [["PUT", "/api/v1/security/ssh", 7]].map(([method, path, phase]) => ({
+  method,
+  path,
+  phase,
+  handler: () => {},
+}));

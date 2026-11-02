@@ -1,0 +1,28 @@
+# {{.Header}}
+# node_exporter (telemetry, Phase 7; docs/telemetry.md): the metrics of the host from /proc and /sys, and the metrics
+# of the agent from the text file that "care-pi serve" writes ({{.Telemetry.TextfileDir}}). It listens on the
+# loopback of the host only; care-telemetry scrapes it. It runs only with telemetry.enabled.
+
+[Unit]
+Description=care-pi node_exporter (host metrics for the opt-in telemetry)
+PartOf=care.target
+
+[Container]
+ContainerName=care-node-exporter
+Image=care-node-exporter.image
+Network=host
+ReadOnly=true
+Volume=/:/host:ro,rslave
+Volume={{.Telemetry.TextfileDir}}:/textfile:ro
+Exec=--path.rootfs=/host --web.listen-address=127.0.0.1:{{.Telemetry.ExporterPort}} --collector.disable-defaults --collector.cpu --collector.meminfo --collector.loadavg --collector.filesystem --collector.diskstats --collector.netdev --collector.pressure --collector.thermal_zone --collector.hwmon --collector.time --collector.uname --collector.stat --collector.vmstat --collector.textfile --collector.textfile.directory=/textfile --collector.filesystem.mount-points-exclude=^/(dev|proc|run|sys|var/lib/containers/storage/.+)($|/)
+
+[Service]
+ExecStartPre=/bin/mkdir -p {{.Telemetry.TextfileDir}}
+MemoryMax=64M
+MemorySwapMax=0
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=care.target

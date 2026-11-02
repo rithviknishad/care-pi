@@ -85,7 +85,7 @@ func fixture(t *testing.T, name string, mutate ...func(*config.Config)) (Tree, *
 	// Phase 6: each golden host has the root of the agent. The case public has the certificate of the public name;
 	// public-tailscale has none yet, and a Tailscale address.
 	in := Input{Config: cfg, Solution: sol, Lock: lk, IPs: TestIPs, Bootstrap: boot, CareBuild: cb, CARoot: true,
-		ACMEDNS: cfg.TLS.Public.Enabled, PublicIssued: cfgName == "public"}
+		ACMEDNS: cfg.TLS.Public.Enabled, PublicIssued: cfgName == "public", TelemetryPassword: cfg.Telemetry.Enabled}
 	if cfg.TLS.Tailscale.Enabled {
 		in.TailscaleIP = "100.101.102.103"
 	}
@@ -107,7 +107,7 @@ func fixture(t *testing.T, name string, mutate ...func(*config.Config)) (Tree, *
 
 func TestGolden(t *testing.T) {
 	for _, name := range []string{"solo", "small-clinic", "busy-counter", "custom", "small-clinic-bootstrap", "backups", "custom-build",
-		"public", "public-tailscale"} {
+		"public", "public-tailscale", "hardened"} {
 		t.Run(name, func(t *testing.T) {
 			tree, lk := fixture(t, name)
 			lockData, err := lk.Marshal()
@@ -353,5 +353,45 @@ func TestACMEDirectoryInCaddyUnit(t *testing.T) {
 	}
 	if !strings.Contains(staging, "Label=care-pi.acme-ca=https://acme-staging-v02.api.letsencrypt.org/directory") || strings.Contains(prod, "acme-ca") {
 		t.Fatalf("staging:\n%s\nproduction:\n%s", staging, prod)
+	}
+}
+
+// TestFirewallPendingFile (M1 of the Phase 7 review): a policy drop before its confirmation goes to the pending file,
+// and the boot file keeps accept, so a reboot in the window loads accept. After the confirmation, the boot file is
+// the text of the pending file (firewall.Confirm moves it), so the next apply changes nothing.
+func TestFirewallPendingFile(t *testing.T) {
+	tree, _ := fixture(t, "hardened")
+	boot, pending := string(tree[paths.FirewallFile].Content), string(tree[paths.FirewallPendingFile].Content)
+	if !strings.Contains(boot, "policy accept;") || strings.Contains(boot, "policy drop;") || !strings.Contains(boot, "not confirmed") {
+		t.Fatalf("the boot file must keep accept:\n%s", boot)
+	}
+	if !strings.Contains(pending, "policy drop;") {
+		t.Fatalf("pending:\n%s", pending)
+	}
+	if tree, _ := fixture(t, "small-clinic"); len(tree[paths.FirewallPendingFile].Content) != 0 {
+		t.Fatal("the policy accept has no pending file")
+	}
+	tmpl, err := templates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ts := range []bool{false, true} {
+		m := &Model{Header: Header, Firewall: FirewallModel{Policy: "drop", SSH: true}, FirewallUnit: paths.FirewallUnit,
+			FirewallFile: paths.FirewallFile, FirewallDropInFile: paths.FirewallDropIn, ConsolePort: paths.ConsolePort, FirewallTailscale: ts}
+		trial := Tree{}
+		if err := renderFirewall(tmpl, m, trial); err != nil {
+			t.Fatal(err)
+		}
+		m.FirewallDropConfirmed = true
+		confirmed := Tree{}
+		if err := renderFirewall(tmpl, m, confirmed); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := confirmed[paths.FirewallPendingFile]; ok || len(confirmed) != 1 {
+			t.Fatalf("a confirmed drop has no pending file: %v", confirmed.Paths())
+		}
+		if !bytes.Equal(confirmed[paths.FirewallFile].Content, trial[paths.FirewallPendingFile].Content) {
+			t.Fatalf("the confirmed boot file differs from the pending file:\n%s\n---\n%s", confirmed[paths.FirewallFile].Content, trial[paths.FirewallPendingFile].Content)
+		}
 	}
 }

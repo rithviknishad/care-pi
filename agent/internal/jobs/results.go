@@ -69,3 +69,10 @@ type WiFiResult struct {
 	Connected bool    `json:"connected"`
 	Address   *string `json:"address"`
 }
+
+// TLSLocalCARotateResult is the result of a tls-local-ca-rotate job (schema TlsLocalCaRotateResult, Phase 7).
+type TLSLocalCARotateResult struct {
+	Kind                string `json:"kind"`
+	Fingerprint         string `json:"fingerprint_sha256"`
+	PreviousFingerprint string `json:"previous_fingerprint_sha256"`
+}

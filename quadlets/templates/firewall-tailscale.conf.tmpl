@@ -1,8 +1,0 @@
-# {{.Header}}
-# The Tailscale mode (01 section 12, docs/connectivity.md): accept the WireGuard port of tailscaled in the table
-# inet care-pi. The unit of the installer loads the table first ("nft -f"); this rule comes after it.
-# Without the Tailscale mode, apply deletes this file and reloads {{.FirewallUnit}}.
-
-[Service]
-ExecStartPost=/usr/sbin/nft add rule inet care-pi input udp dport 41641 accept
-ExecReload=/usr/sbin/nft add rule inet care-pi input udp dport 41641 accept

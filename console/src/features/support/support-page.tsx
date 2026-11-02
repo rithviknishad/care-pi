@@ -17,6 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { JobProgress } from "@/features/jobs/job-progress";
 import { formatBytes, formatDateTime, shortSha } from "@/lib/format";
 import { strings } from "@/lib/strings";
+import { DoctorCard } from "./doctor-card";
 
 const sp = strings.support;
 
@@ -207,6 +208,7 @@ export default function SupportPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader title={sp.title} />
+      <DoctorCard />
       <BundleCard />
       <div className="grid gap-4 xl:grid-cols-2">
         <AgentCard />

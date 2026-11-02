@@ -1,0 +1,34 @@
+# {{.Header}}
+# vmagent (telemetry, Phase 7, O12; docs/telemetry.md): it scrapes node_exporter each {{.Telemetry.Interval}} and sends
+# the samples to {{.Telemetry.RemoteWriteURL}} (Prometheus remote write). It keeps a small queue on disk when the
+# receiver does not answer. It runs only with telemetry.enabled: then nothing else leaves the device.
+
+[Unit]
+Description=care-pi vmagent (opt-in telemetry: remote write)
+PartOf=care.target
+Wants=care-node-exporter.service
+After=care-node-exporter.service
+
+[Container]
+ContainerName=care-telemetry
+Image=care-telemetry.image
+Network=host
+ReadOnly=true
+Volume={{.Telemetry.RenderedDir}}:/etc/vmagent:ro
+Volume={{.Telemetry.QueueDir}}:/var/lib/vmagent
+{{- if .Telemetry.PasswordSecret}}
+# The basic auth password (secrets/telemetry_password) as a file.
+Secret={{.Telemetry.PasswordSecret}},type=mount,mode=0400
+{{- end}}
+Exec=-promscrape.config=/etc/vmagent/scrape.yml -remoteWrite.url={{sd .Telemetry.RemoteWriteURL}}{{if .Telemetry.Username}} -remoteWrite.basicAuth.username={{sd .Telemetry.Username}}{{end}}{{if .Telemetry.PasswordSecret}} -remoteWrite.basicAuth.passwordFile=/run/secrets/{{.Telemetry.PasswordSecret}}{{end}} -remoteWrite.tmpDataPath=/var/lib/vmagent -remoteWrite.maxDiskUsagePerURL=64MB -httpListenAddr=127.0.0.1:{{.Telemetry.AgentPort}} -memory.allowedBytes=48MB -loggerLevel=WARN
+
+[Service]
+ExecStartPre=/bin/mkdir -p {{.Telemetry.QueueDir}}
+MemoryMax=96M
+MemorySwapMax=0
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=care.target

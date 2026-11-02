@@ -128,6 +128,15 @@ Opt-in telemetry (O12); generic-Linux installer across Debian/Ubuntu/Fedora;
 Coraza WAF option; agent privilege split (helper socket); optional lock signing;
 Headscale option; documentation site for operators (per solution) and developers.
 
+Status (2026-11-02): **the Phase 7 code is complete on `phase-7-hardening`** (`09-handoff.md` §8p, contract v0.8.0,
+decisions S53–S60). Built: the privileged helper (opt-in `--helper`; the daemon stays uid 0 until the helper has typed
+file requests), the default-drop firewall (opt-in, with a 90 s rollback timer), `POST /tls/local-ca/rotate`, optional
+minisign signing of `index.json` and the locks (no key yet), the Coraza WAF (off by default), opt-in telemetry
+(vmagent and node_exporter, `remote_write` only) and `GET /api/v1/metrics`, Headscale (`tls.tailscale.control_url`),
+`care-pi doctor` and a fuller support bundle, Ubuntu 25.04+ and Fedora Server 42+ (experimental) in the installer, and
+the docs site (an artifact while the repository is private). Not built: `PUT /security/ssh`, SELinux labels for
+Fedora enforcing. The exit test on lumine is planned, not run (`08-spike-log.md`, "Phase 7 exit test — plan").
+
 ## Cross-cutting threads (run alongside)
 
 - **Upstream PRs**: care_fe relative `meta.url` (O7); any care_fe build-memory or care start-time improvements discovered in SP3/SP4.
@@ -148,6 +157,10 @@ Headscale option; documentation site for operators (per solution) and developers
 | Podman stack upgrade breaks containers | boot loop after OS update | low–medium | apt holds; our releases bump deliberately |
 | Operator loses recovery key and device | data loss | low but severe | confirmation ceremony; persistent banner; printable sheet |
 | Let's Encrypt rate limits as clinic count grows | enrolment failures | low early | PSL application; rate-limit increase request |
+| Default-drop firewall locks out a headless device | no SSH, no console | low (opt-in) | `accept` default (S54); the 90 s rollback timer armed before the load; confirm from a second session |
+| The helper allow-list misses a command shape | a console action fails with a `denied` line | medium until the live test | contract tests through the helper in CI; `--helper` opt-in; the journal names each refusal |
+| WAF false positives (file uploads, rich text) | Care requests blocked | medium in `block` mode | off by default; `detect` first; per-rule tuning after the exit test |
+| The signing key is lost or leaks | no signed release, or forged locks accepted | low | `require_signed` opt-in; two keys during a rotation; the ceremony in `docs/solutions.md` §18 |
 
 ## Status (2026-11-02, after the Phase 6 exit test on lumine)
 

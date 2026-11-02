@@ -14,6 +14,7 @@ import (
 
 	"github.com/rithviknishad/care-pi/agent/internal/backup"
 	"github.com/rithviknishad/care-pi/agent/internal/fe"
+	"github.com/rithviknishad/care-pi/agent/internal/firewall"
 	"github.com/rithviknishad/care-pi/agent/internal/host"
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
@@ -215,10 +216,20 @@ func (x *executor) run(ctx context.Context, a plan.Action) error {
 		return nil
 	case plan.ReloadFirewall:
 		// try-reload-or-restart does nothing when the installer did not install the firewall (--no-firewall).
-		_, err := h.Runner.Run(ctx, host.Cmd{Name: "systemctl", Args: append([]string{"try-reload-or-restart"}, a.Units...)})
-		return err
+		// A switch to the policy drop starts the rollback timer first (Phase 7).
+		return firewall.Reload(ctx, h, x.o.Paths, render.FirewallOf(x.pr.Config).Policy, x.o.Now(), x.o.Out)
 	case plan.UpdateDNS:
 		return x.updateDNS(ctx)
+	case plan.EnsureTelemetry:
+		if len(a.Names) > 0 {
+			if _, err := h.Runner.Run(ctx, host.Cmd{Name: "systemctl", Args: append([]string{"stop"}, a.Names...)}); err != nil {
+				_, _ = fmt.Fprintf(x.o.Out, "    warning: cannot stop %s: %v\n", strings.Join(a.Names, " "), err)
+			}
+		}
+		if len(a.Units) > 0 {
+			return h.Systemd.Restart(ctx, a.Units...)
+		}
+		return nil
 	case plan.PlugConfig:
 		rows := plugcfg.Desired(x.pr.Config, x.pr.Desire.Plugs, x.pr.Lock)
 		res, err := plugcfg.Sync(ctx, h, x.o.Paths, rows, x.o.Now())
@@ -358,12 +369,14 @@ func writeFile(p paths.Paths, f render.File, chown bool) error {
 // writeSysctl writes the sysctl file of the pod (docs/connectivity.md, section 4.2) and loads it: systemd-sysctl.service
 // loads each file of /etc/sysctl.d again. care-pi.service cannot write /etc/sysctl.d (ProtectSystem=strict), so there
 // the file goes through a transient unit. The installer writes the same file, so the agent seldom writes it.
+// SysctlScript writes the file $1 from stdin (0644). The helper allows only this script, for paths.SysctlFile.
+const SysctlScript = `set -eu; f="$1"; mkdir -p "${f%/*}"; cat > "$f.tmp"; chmod 0644 "$f.tmp"; mv "$f.tmp" "$f"`
+
 func (x *executor) writeSysctl(ctx context.Context, f render.File) error {
 	err := writeFile(x.o.Paths, f, x.o.Chown)
 	if err != nil && (errors.Is(err, syscall.EROFS) || errors.Is(err, fs.ErrPermission)) {
-		script := `set -eu; f="$1"; mkdir -p "${f%/*}"; cat > "$f.tmp"; chmod 0644 "$f.tmp"; mv "$f.tmp" "$f"`
 		_, err = x.o.Host.Runner.Run(ctx, host.Cmd{Name: "systemd-run", Args: []string{"--wait", "--collect", "--pipe", "--quiet",
-			"--unit=care-pi-sysctl", "--", "/bin/sh", "-c", script, "sh", x.o.Paths.Abs(f.Path)}, Stdin: bytes.NewReader(f.Content)})
+			"--unit=care-pi-sysctl", "--", "/bin/sh", "-c", SysctlScript, "sh", x.o.Paths.Abs(f.Path)}, Stdin: bytes.NewReader(f.Content)})
 		if err != nil {
 			err = fmt.Errorf("cannot write %s: %w", f.Path, err)
 		}

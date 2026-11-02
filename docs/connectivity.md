@@ -95,6 +95,24 @@ for a root with the name constraints of section 2.2 (private IPv4 ranges only); 
 constraints) and each other certificate. With no internet, use the other QR code: it has only the fingerprint, to
 compare on the device.
 
+### 2.5 A new root (rotation, Phase 7)
+
+`POST /tls/local-ca/rotate` (reauthentication), `care-pi tls local-ca rotate`, or Certificate > New root certificate in
+the console starts the job `tls-local-ca-rotate`:
+
+1. `ca-rotate`: a new ECDSA P-256 root with a new key and the name constraints of the names and LAN addresses of now (so
+   `local_ca.uncovered` becomes empty after a move to another network). The old certificate stays as
+   `/var/lib/care-pi/ca/root.prev.crt`; the intermediate and the local leaves of Caddy go; `state/ca.json` gets
+   `reason: rotation`, `changed_at`, and the old fingerprint.
+2. `restart-caddy`: 2 s later, `systemctl try-restart care-caddy.service`: Caddy makes a new intermediate below the new
+   root. The console loses its connection for some seconds.
+
+Then each device of the clinic shows a certificate warning until it has the new root. `GET /tls` gives
+`local_ca.change_reason: rotation` and, for 7 days, `local_ca.previous_root`; the Certificate page shows the warning
+"install it again on every device" with the old and the new fingerprint, until the operator closes it in that
+browser. Use the rotation when a device that trusts the root is lost or the root key could be known to another
+person, or when a LAN address is outside the constraints. The backups keep the new root (section 2.1).
+
 ## 3. The public name
 
 ### 3.1 How it works
@@ -215,24 +233,52 @@ the addresses of the host. The setting is only for IPv4; care-pi publishes on IP
 When a unit of the stack is `failed` (for example a pod of an older care-pi that failed at the boot), the next `apply`
 starts `care.target` again (`docs/apply.md`, plan rules).
 
-The apply writes the drop-in `/etc/systemd/system/care-pi-firewall.service.d/50-care-pi-tailscale.conf`.
-It adds `udp dport 41641 accept` to the table `inet care-pi` after the unit of the installer loads the table.
-The plan action `reload-firewall` reloads the unit. With the Tailscale mode off, the apply deletes the drop-in and
-reloads the unit again.
+The table of the agent (`/etc/care-pi/rendered/firewall/care-pi.nft`, Phase 7, `docs/console-server.md` section 13) has
+`udp dport 41641 accept` in the Tailscale mode. The plan action `reload-firewall` reloads `care-pi-firewall.service`
+after a change. With the Tailscale mode off, the rule goes. (Phase 6 used the drop-in `50-care-pi-tailscale.conf`; the
+next apply deletes it.)
 
 ### 4.3 Turn it on and off
 
-Console: Settings > Connectivity > Tailscale. CLI: `care-pi tls tailscale enable [--auth-key-stdin]`.
+Console: Settings > Connectivity > Tailscale. CLI: `care-pi tls tailscale enable [--auth-key-stdin] [--control-url URL]`.
 API: `PUT /tls/tailscale {"enabled": true, "auth_key": "tskey-…"}` (needs a recent password check).
 The job is `tls-tailscale-enrol` (steps `tailscale-install`, `tailscale-up`, `tailscale-login`, `write-config`, apply steps).
 The step `tailscale-login` stops the job when `tailscale serve` (or `funnel`) uses port 80, 443, or 8443 of the node
-(section 9).
+(section 9). When `tailscale serve status --json` fails, the step stops with `internal` and the error of the command:
+the job does not skip the check.
 
 Off: `care-pi tls tailscale disable`, or `PUT /tls/tailscale {"enabled": false}`. The job sets the config, applies
 (the site, the drop-in, and the publishes on the Tailscale address go: a full cycle, about 60 s on a Pi 5), runs
 `tailscale down` and `tailscale logout`. The package stays installed and
 `tailscaled` stays enabled, so a new enable is fast. To remove it: `apt-get purge tailscale`.
 
+### 4.4 A self-hosted control server (Headscale)
+
+Phase 7 (O4): the Tailscale service is the default; a self-hosted control server, for example
+[Headscale](https://github.com/juanfont/headscale), is the other option. Set `tls.tailscale.control_url`:
+
+- Console: Settings > Connectivity > Tailscale > Control server. CLI:
+  `care-pi tls tailscale enable --control-url https://headscale.example.org [--auth-key-stdin]`. API:
+  `PUT /tls/tailscale {"enabled": true, "control_url": "https://headscale.example.org", "auth_key": "<pre-auth key>"}`.
+- Each `tailscale up` of the job then has `--login-server=<url>`. `--reset` sets each flag that is not given to its
+  default, so the agent gives the flag at each `up`. An empty `control_url` (`--control-url ""`) goes back to the
+  Tailscale service.
+- A new control server on a connected `tailscaled` (the request changes `control_url`): the job logs in again with
+  `tailscale up --reset --force-reauth` (`tailscaled` refuses another `--login-server` without it), with the key or
+  with a new login URL. The device leaves the old tailnet. With `tls.tailscale.manage_daemon: false`, the job stops
+  with `state-conflict`: set the control server yourself, then set `tls.tailscale.control_url` with
+  `care-pi config set`. The same `control_url` again runs no `tailscale up`.
+- A pre-auth key of Headscale (`headscale preauthkeys create`) has no `tskey-` prefix: the agent checks the prefix only
+  without a control server.
+- The MagicDNS name is below the `base_domain` of the server, not `ts.net`. `tls.tailscale.hostname` must end in `.ts.net`
+  only when `control_url` is empty.
+- The certificate: Caddy gets it from `tailscaled` (`tailscale cert`), and `tailscaled` asks the control server for the
+  DNS-01 record. A control server without this function gives no `CertDomains`: the job stops with
+  `tailscale-https-disabled`, and the message names the control server. Check the release notes of the Headscale
+  version (headscale issue 2137). Use the public name or the local CA meanwhile.
+- The login link (no key) comes from the control server, as with the Tailscale service.
+
+### 4.5 Use it
 A `tailscaled` that is already connected (`BackendState: Running`) stays as it is: the job does not install and does
 not run `tailscale up` (`--reset` would change the settings of the operator). Set `tls.tailscale.manage_daemon: false`
 when the operator manages `tailscaled` (for example a host that was in a tailnet before care-pi): then the job never
@@ -351,7 +397,7 @@ The Wi-Fi settings of the Raspberry Pi Imager are NetworkManager profiles too (f
 | `/var/lib/care-pi/state/wifi.json` | agent | The last state of the Wi-Fi job. |
 | `/var/lib/care-pi/state/pod-live.json` | agent | The published addresses of the pod that runs. |
 | `/etc/systemd/system/care-dns-update.{timer,service}` | apply | The address updates (public mode only). |
-| `/etc/systemd/system/care-pi-firewall.service.d/50-care-pi-tailscale.conf` | apply | UDP 41641 (Tailscale mode only). |
+| `/etc/systemd/system/care-pi-firewall.service.d/50-care-pi.conf`, `/etc/care-pi/rendered/firewall/care-pi.nft` | apply | The table of the agent (Phase 7); UDP 41641 in the Tailscale mode. |
 | `/etc/sysctl.d/50-care-pi.conf` | installer and apply | `net.ipv4.ip_nonlocal_bind = 1` (section 4.2). |
 
 ## 9. Troubleshooting

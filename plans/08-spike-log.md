@@ -1636,6 +1636,214 @@ To check on lumine with the Phase 6 exit test:
   the clock gate after the claim, and the banner goes when the Pi reaches NTP.
 
 ## Phase 6 exit test — lumine, 2026-11-02 — **PASS except Wi-Fi: the CA switch, the public name, and the Tailscale mode; both exit criteria (10 fixes, waves 8 and 8-ts)**
+## Phase 7 exit test — plan (run after the merge of `phase-7-hardening` and the Phase 6 exit test)
+
+Status: **planned, not run.** The Phase 7 code did not use lumine (rule of the wave). Keep the raw output in
+`local/p7-exit/` (S39). The specifications: `docs/console-server.md` sections 13 (firewall), 14 (helper), 15 (WAF), 16
+(doctor); `docs/connectivity.md` section 2.5 (CA rotation); `docs/telemetry.md`; `docs/solutions.md` section 18
+(signing); the contract `docs/api/README.md` section 17 (0.8.0).
+
+Exit criteria (`06` Phase 7, hardening):
+
+1. The agent works with `care-pi serve --helper`: each page and job of the console that the steps below use, and the
+   helper refuses nothing that the agent sends.
+2. The policy `drop` keeps Care, the console, mDNS, the backups, and SSH working; without a confirmation it goes back to
+   `accept` after 90 s, also when it closed SSH.
+3. After a CA rotation, each device that installs the new root opens Care without a warning; the page shows both
+   fingerprints.
+4. The WAF in `detect` mode logs and blocks nothing on a normal day of use, with a real file upload; `block` mode
+   gives `403` to an SQL injection probe.
+5. The telemetry reaches a receiver on the LAN; with `telemetry.enabled: false`, the host sends nothing.
+6. `care-pi doctor` finds each injected fault, and the Support page shows the same result.
+
+Run it after the Phase 6 exit test, on the same lumine install.
+
+### What the owner must provide (ask before the run)
+
+| Item | Why | Step |
+|---|---|---|
+| A second SSH session to lumine (a second terminal), and a way in without the network (HDMI and a keyboard, or the SD card in the Mac) | The rollback test of the firewall closes SSH for 90 s; the fallback if the timer fails | 2 |
+| A phone and a laptop that have the current root of lumine installed | The CA re-install | 3 |
+| A test patient in Care, and a PDF or an image of 1 to 5 MB | The real upload in WAF `detect` mode | 4 |
+| The LAN address of the Mac and permission to run VictoriaMetrics in Docker on port 8428 (or the URL and the credentials of another `remote_write` receiver) | The telemetry receiver | 5 |
+| Permission to run `tcpdump` on lumine for 2 minutes | "Nothing leaves the box" with telemetry off | 5 |
+
+### 0. Preconditions (Mac)
+
+```sh
+cd ~/ohc.network/care-pi            # the merged tree
+go test -race ./... && CARE_PI_TEST_HELPER=1 go test ./agent/internal/server && golangci-lint run ./...
+make build-linux                     # with the console
+mkdir -p local/p7-exit
+```
+
+The Caddy image of the lock must have the module `http.handlers.waf` (`images/caddy/Containerfile`, coraza-caddy v2.6.2):
+`ssh lumine 'sudo podman run --rm <caddy image> caddy list-modules | grep -E "waf|acmedns|tailscale"'`. If not, push a
+new image with `images.yml` and use it in the lock.
+
+### 1. The helper split (S53)
+
+```sh
+scp bin/care-pi_linux_arm64 installer/install.sh lumine:
+ssh lumine 'sudo sh install.sh --binary care-pi_linux_arm64 --skip-bootstrap --yes --helper' | tee local/p7-exit/10-install.txt
+ssh lumine 'id care-pi; systemctl is-enabled care-pi-helper.socket; ls -l /run/care-pi-helper/' | tee local/p7-exit/11-units.txt
+ssh lumine 'systemctl show care-pi.service -p ExecStart -p NoNewPrivileges -p CapabilityBoundingSet' | tee -a local/p7-exit/11-units.txt
+```
+
+Expected: the user `care-pi` exists; the socket is `srw-rw---- root care-pi`; `care-pi.service` runs `serve --helper` with
+`NoNewPrivileges=yes` and the 4 capabilities.
+
+Then use the console for 15 minutes: the dashboard, the logs page with "follow", a config change with an apply, a backup
+run, an update check, the network page (Wi-Fi status), the Tailscale status, the support bundle, and a restore drill. Then:
+
+```sh
+ssh lumine 'journalctl -u care-pi-helper --since -20min | grep -c "helper: run"; journalctl -u care-pi-helper --since -20min | grep "helper: denied"' \
+  | tee local/p7-exit/12-helper-journal.txt
+ssh lumine 'sudo systemctl kill care-pi-helper.service; sleep 1; sudo care-pi status --json | head -c 200'   # socket activation restarts it
+ssh lumine 'systemctl show care-pi-helper.service -p MemoryPeak -p NRestarts' | tee -a local/p7-exit/12-helper-journal.txt
+```
+
+Pass: no `helper: denied` line; the console works after the kill (the next request starts the helper); the memory peak
+of the helper is below 96 MiB. A `denied` line is a gap of the allow-list: add the shape to `validate.go` and a case to
+`TestAllowed`.
+
+### 2. The default-drop firewall with the rollback timer (S54)
+
+Session A:
+
+```sh
+ssh lumine 'sudo care-pi firewall status --json' | tee local/p7-exit/20-before.json
+ssh lumine 'sudo care-pi firewall policy drop'        # arms care-pi-firewall-rollback (90 s), then loads drop
+```
+
+Session B (new, within 90 s): `ssh lumine 'sudo care-pi firewall status; sudo care-pi firewall confirm'`. Check from the
+Mac and the phone: `https://lumine.local/` (Care), `https://lumine.local:8443/` (console), `avahi-browse -art | grep lumine`,
+a backup run to the SFTP and S3 destinations (container egress), `sudo nft list chain inet care-pi input` (policy drop),
+and `curl -m 3 http://<lumine IP>:5432` (dropped: a timeout, not a reset). Renew the DHCP lease
+(`sudo nmcli device reapply eth0`) and check the address.
+
+The rollback with SSH closed (the fallback of the owner is ready):
+
+```sh
+ssh lumine 'sudo care-pi firewall allow-ssh false && sudo care-pi firewall policy accept && sudo care-pi firewall policy drop'
+# SSH to lumine now times out. Do not confirm. Wait 100 s.
+ssh lumine 'sudo care-pi firewall status --json; journalctl -u care-pi-firewall-rollback --since -5min' | tee local/p7-exit/21-rollback.txt
+ssh lumine 'sudo care-pi firewall allow-ssh true'
+```
+
+Pass: after 90 s SSH answers again; the status shows `policy: accept` and the rollback event. Put the policy back to
+`accept` at the end unless the owner wants `drop` on lumine.
+
+### 3. The local-CA rotation (S60)
+
+```sh
+ssh lumine 'sudo care-pi tls show --json' | tee local/p7-exit/30-before.json
+ssh lumine 'sudo care-pi tls local-ca rotate' | tee local/p7-exit/31-rotate.txt
+ssh lumine 'sudo care-pi tls show --json' | tee local/p7-exit/32-after.json
+```
+
+Open the certificate page on the laptop: the banner "re-install the certificate on every device" and both fingerprints.
+`https://lumine.local/` warns now on the laptop and the phone. Install the new root on both (the steps of the page), and
+compare the fingerprint. Pass: no warning on both devices; `/var/lib/care-pi/ca/root.prev.crt` exists; Care and the
+console work; a Phase 6 public name (if on) is not affected.
+
+### 4. The WAF in detect mode, then block mode (S58)
+
+```sh
+ssh lumine 'sudo care-pi config set security.waf.enabled=true security.waf.mode=detect --apply' | tee local/p7-exit/40-detect.txt
+```
+
+Use Care for 10 minutes on the laptop: log in, open patients, upload the test file to the test patient, open it. Then:
+
+```sh
+ssh lumine 'journalctl -u care-caddy --since -15min | grep -c "\[id \"9"' | tee local/p7-exit/41-detect-hits.txt
+ssh lumine 'journalctl -u care-caddy --since -15min | grep -o "\[id \"[0-9]*\"\]" | sort | uniq -c | sort -rn | head'
+curl -sk -o /dev/null -w '%{http_code}\n' "https://lumine.local/api/v1/users/?q=1%27%20OR%20%271%27=%271"   # 200 or 401 + an audit line 942100
+ssh lumine 'sudo care-pi config set security.waf.mode=block --apply'
+curl -sk -o /dev/null -w '%{http_code}\n' "https://lumine.local/api/v1/users/?q=1%27%20OR%20%271%27=%271"   # 403
+ssh lumine 'systemctl show care-caddy -p MemoryPeak -p MemoryMax'
+```
+
+Record each rule id that a normal action triggered (the false positives) in this log; they decide whether `detect` stays
+the advice. Turn the WAF off at the end (`security.waf.enabled=false --apply`) unless the owner wants it.
+
+### 5. Telemetry to a local receiver (S56)
+
+On the Mac: `docker run -d --name vm -p 8428:8428 victoriametrics/victoria-metrics:v1.131.0 -httpAuth.username=care -httpAuth.password=<pw>`.
+
+```sh
+ssh lumine 'sudo tcpdump -ni eth0 -c 200 "tcp and not port 22 and not port 443 and not port 8443" -w off.pcap & sleep 120; sudo care-pi status --json >/dev/null'
+ssh lumine 'printf %s "<pw>" | sudo care-pi telemetry set-password && sudo care-pi config set telemetry.enabled=true telemetry.remote_write_url=http://<mac IP>:8428/api/v1/write telemetry.username=care --apply'
+sleep 120; curl -s -u care:<pw> 'http://localhost:8428/api/v1/query?query=up' | tee local/p7-exit/50-up.json
+curl -s -u care:<pw> 'http://localhost:8428/api/v1/query?query=care_pi_unit_memory_bytes' | head -c 400
+ssh lumine 'systemctl show care-telemetry care-node-exporter -p MemoryPeak; sudo care-pi metrics | head'
+```
+
+Pass: with telemetry off, the capture has no packet to the receiver and no new outbound connection of Care; with it on,
+`up` is 1 for both jobs with `instance=lumine` and `care_pi_version`; peaks below 96 MiB and 64 MiB. Turn it off
+(`telemetry.enabled=false --apply`): both units go, and the samples stop.
+
+### 6. `care-pi doctor` (section 16)
+
+```sh
+ssh lumine 'sudo care-pi doctor; echo "exit $?"' | tee local/p7-exit/60-clean.txt
+ssh lumine 'sudo touch /run/reboot-required; sudo systemctl stop care-worker.service; sudo care-pi doctor; echo "exit $?"' | tee local/p7-exit/61-faults.txt
+ssh lumine 'sudo rm /run/reboot-required; sudo systemctl start care-worker.service'
+ssh lumine 'sudo care-pi support-bundle --out b.tar.gz && tar -tzf b.tar.gz | grep -E "doctor|nft|rendered|tailscale|memory|podman"'
+```
+
+Pass: the clean run has no `fail` (exit code 0); the fault run shows `units` (`warn`: `care-worker` inactive) and
+`reboot` (`warn`) with their fix hints, first in the table; the Support page shows the same checks after "Run again"; the bundle has the Phase 7 files and no secret value
+(`grep -r` for the database password and the S3 key gives nothing).
+### Review fixes (Phase 7)
+
+A review of `phase-7-hardening` after the merge of main (`d1c515a`) found 1 blocker, 3 major defects, and 3 minor
+defects. Each fix is one signed commit with a test (the subject ends with `(review <id>)`); nothing ran on lumine.
+
+| # | Defect | Fix | Commit |
+|---|---|---|---|
+| B1 | The helper refused `tailscale serve status --json` (the serve-port check of main), and `ServePorts` gave no ports on an error, so the check did not run | The helper accepts `tailscale serve status --json`; `ServePorts` returns the error, and the step `tailscale-login` stops with `internal` and the error of the command | `16ce3ce` |
+| M1 | An unconfirmed policy `drop` survived a reboot: the apply wrote it to the boot file before the trial, the rollback timer is transient, nothing read `pending_until` at the boot, and `confirm` accepted a stale state | The boot file `care-pi.nft` keeps the confirmed policy; the trial table is `care-pi.pending.nft`, loaded with `nft -f`, and `confirm` moves it over the boot file (it refuses after `pending_until` or without the file); the rollback deletes it; `care-pi firewall boot-check` (`ExecStartPre=-` of the drop-in) ends a trial at a start of the unit as the rollback does. The helper accepts `nft -f <pending file>` only | `098a87d` |
+| M2 | The allow-list of the helper had 4 bypasses: (a) `restic` checked only the `-o` options before the subcommand (`--password-command`, `-o sftp.command`, `restore --target /` passed); (b) a `podman run --volume` source was checked as text (a symbolic link escaped), and each image passed; (c) `systemd-run … tee 52care-pi.conf` wrote any stdin; (d) the `ssh_config` of a run was below `/run/care-pi/backup`, which `care-caddy` mounts read-write as root | (a) each `restic` subcommand accepts only the flags of the agent (`backup` paths `/etc/care-pi` and below `/var/lib/care-pi`; one restore `--target` below `/var/lib/care-pi/restore`, or the data directories in place); (b) `realPath` (`EvalSymlinks`; a missing part stays; a link to nothing is refused) for the volume sources, the restore target, and the snapshot paths, and only the images of `lock.yaml` and `images.*`; (c) the typed request `write-apt-conf on\|off`: `host.Exec` (so also the helper) writes the fixed text; the helper refuses each `tee`; (d) `RunBackupDir` is `/run/care-pi-backup` (paths, docs, the uninstaller). `TestValidateFuzz` refuses each case; `docs/console-server.md` §14 states what the helper guards and what not | `9bbb4aa` |
+| M3 | The audit log of the WAF (`SecAuditLogParts ABHZ`) had the request headers: the bearer token of Care and the console cookie (the browser sends it to 443; `header_up` removes it after the WAF) went to the journal and to the support bundle | `SecAuditLogParts AHZ` (golden `hardened`); the support bundle replaces `Bearer <token>` and `__Host-care_pi_session=<value>` in each file. `images/caddy/test-waf.sh` sends both in the detect-mode probe and fails when the log has them | `2bdbb38` |
+| m1 | `updates.require_signed` did not cover a cached index: `index()` returned the cache first, and the update job resolved its target from it | `index.meta.json` records `signed_by` and `signed_sha256` when a check verified the index (download or dist snapshot); `Client.TrustedCache` accepts a cache only with the record, the same file, and a trusted key. Else the index downloads again; offline: `lock-signature-invalid` ("the cached index is unsigned"). `ResolveTarget` returns that problem; the tested versions of the held OS packages use the same check | `78d9166` |
+| m2 | The WAF module check read the running Caddy (`podman exec care-caddy`), not the image of the new lock; the update and rollback jobs did not check at all | `apply.CheckWAFImage` runs `caddy list-modules` in a container of `Images["caddy"]` of the target (`systemd-run … podman run --rm --network none`); the apply (a change of the Caddyfile or of `care-caddy.container`), the staging, and the rollback (step `stage-pull`) stop with `unsupported-config` that names the image. The helper accepts this one fixed command for any image (no volume, no network) | `9d5cac9` |
+| m3 | `--control-url` on a connected `tailscaled` went to `config.yaml`, but the job ran no `tailscale up`, so the device stayed on the old control server | A change of `control_url` on a connected `tailscaled`: managed, the job logs in again (`tailscale up --reset --force-reauth`, with `--login-server` for a self-hosted server; `tailscaled` refuses a new `--login-server` without `--force-reauth`), and without a key it waits until the old login goes; unmanaged, `state-conflict`. The helper accepts `--force-reauth` | the last commit of the 7 |
+
+Other than the review asked:
+
+- M1: `care-pi firewall boot-check` ends a trial as the rollback does: it also sets `accept` in `config.yaml` and records
+  `rollback_reason: timeout` (no new enum value in the contract). Else the next apply would start a new trial of 90 s.
+  It runs no host command (systemd waits for it in `ExecStartPre`). The render gets the confirmed policy from
+  `state/firewall.json` (`DropConfirmed`), so the pending file is the same text as the boot file after `confirm`, and
+  the next apply changes nothing. CI checks `care-pi*.nft` of each golden case.
+- M2 (b): the helper resolves the symbolic links of the allowed directories too (a host can have `/var/lib/care-pi` on
+  a link). (c): `host.Exec` builds the typed request `write-apt-conf`, so the CLI (direct exec) and the helper use the
+  same code and the same fixed text.
+- m2: the staging and the rollback check the image after the pull (step `stage-pull`), before the cutover; no new
+  step. The helper accepts the fixed `caddy list-modules` command for any image, because the image of a target is not
+  in `lock.yaml` yet.
+- m3: `tailscale up --reset --login-server` alone fails on a connected node ("can't change --login-server without
+  --force-reauth", `cmd/tailscale/cli/up.go`), so the new login has `--force-reauth`.
+
+Checks on the Mac (2026-11-02): `go build ./... && go vet ./... && go test -count=1 -race ./...` (38 packages ok);
+`CARE_PI_TEST_HELPER=1 go test ./agent/internal/server` ok (it failed 3 tests before B1); golangci-lint v2.15.0 0
+issues; `make api-lint` valid; shellcheck (installer, solutions/scripts, image, images) 0; actionlint 0; the console
+`npm run api:check` (contract 0.8.0), `typecheck`, `test` (143 passed). `nft -c -f` in `debian:trixie` (nftables 1.1.3):
+each `care-pi*.nft` of the goldens passes; `nft -f` of the hardened boot file gives `policy accept`, then of its
+pending file `policy drop`. `systemd-analyze verify` of `care-pi-firewall.service` with the new drop-in: OK.
+`images/caddy/test-waf.sh` (coraza-caddy v2.6.2, arm64): PASS with `AHZ`; with `ABHZ` it fails on the token in the log.
+Goldens changed (`go test ./agent/internal/render -update`): the drop-in `50-care-pi.conf` of each case (M1); the
+hardened `care-pi.nft` and the new `care-pi.pending.nft` (M1); `rendered/backup/ssh_config` of each case (M2, a comment);
+the hardened Caddyfile (M3).
+
+To check on lumine with the Phase 7 exit test (section 2 and 1 of the plan above): a reboot within 90 s of
+`care-pi firewall policy drop` boots `accept`, and `care-pi firewall status` shows `rollback_reason: timeout`; after a
+confirmation, `care-pi.nft` has `policy drop` and a reboot keeps it; `journalctl -u care-pi-helper` has no `denied`
+line for a backup run, a restore drill, an OS update, and a WAF apply; `/run/care-pi-backup` exists during a backup run
+and `/run/care-pi/backup` does not.
+
+## Phase 6 exit test — lumine, 2026-11-02 — **PARTIAL: the CA switch and the public name PASS (6 fixes); the Tailscale mode is blocked by the owner's `tailscale serve`**
 
 Wave 8. The merged tree (`e130030`, Phases 5 and 6 with the review fixes and S52) on lumine, from the Phase 4 state
 (agent `137057a`, lock 2026.11.1 `stable`, 4 backup destinations). One agent ran the test; it was the only agent on lumine.

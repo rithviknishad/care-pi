@@ -61,6 +61,8 @@ const problems: Record<ProblemSlug, string> = {
   "build-required-offline": "This change needs the internet, and the device has no connection.",
   "index-unavailable": "The device cannot download the list of versions.",
   "artefact-invalid": "A downloaded file is not correct. The device did not use it.",
+  "lock-signature-invalid":
+    "The signature of the update list or of a version is missing or not valid. The device did not use it. Ask the maintainer.",
   "rollback-unavailable": "No previous version is on the device.",
   "checkpoint-failed": "The backup point of the database failed. Nothing changed.",
   "migration-failed": "The database update failed. The previous version runs again.",
@@ -821,6 +823,9 @@ export const strings = {
       "wifi-connect": "Connect to the Wi-Fi network",
       "wifi-verify": "Check the network routes",
       "wifi-remove": "Remove the Wi-Fi network",
+      "ca-rotate": "Make a new root certificate",
+      "restart-caddy": "Restart the web server for the new certificate",
+      "ensure-telemetry": "Start or stop the telemetry",
     } as Record<string, string>,
     // The text of a step in a job of one kind, when the key has a different meaning there.
     byKind: {
@@ -996,6 +1001,23 @@ export const strings = {
       "On {time}, the device replaced its root certificate with a root certificate that has name limits. Install the new certificate again on each device of the clinic. The new fingerprint starts with {fingerprint}.",
     changedOld: "Old fingerprint: {fingerprint}",
     changedDismiss: "I installed it",
+    rotatedTitle: "New root certificate: install it again on every device",
+    rotated:
+      "On {time}, the device made a new root certificate. Each device of the clinic shows a warning until you install the new certificate on it. Compare the fingerprints on each device.",
+    rotatedNew: "New fingerprint",
+    rotatedOld: "Old fingerprint (shown for 7 days)",
+    rotate: {
+      title: "New root certificate",
+      intro:
+        "Make a new root certificate with a new key, for example when a device with the old certificate was lost. Each device of the clinic must then install the new certificate.",
+      introUncovered:
+        "These addresses are outside the limits of the root certificate: {names}. A new root certificate covers the addresses of now. Each device of the clinic must then install it.",
+      button: "Make a new root certificate",
+      confirmTitle: "Make a new root certificate?",
+      confirm:
+        "Each phone and computer of the clinic shows a certificate warning until you install the new certificate on it. The console restarts its web server for some seconds.",
+      running: "Making a new root certificate",
+    },
     qrMode: "The phone has",
     qrModes: { page: "Internet", fingerprint: "No internet", download: "Only this network" } as Record<string, string>,
     qrPage:
@@ -1101,6 +1123,30 @@ export const strings = {
   },
   security: {
     title: "Security",
+    firewall: {
+      title: "Firewall",
+      intro:
+        "The firewall of the device. Care, the console, and mDNS stay open with each policy. The policy drop closes each other port.",
+      loaded: "Loaded policy",
+      notLoaded: "Not loaded yet",
+      unit: "Firewall service",
+      unitInactive: "Not active (no care-pi firewall on this device): the policy has no effect.",
+      policy: "Policy",
+      policies: { accept: "Accept", drop: "Drop" } as Record<string, string>,
+      policyHelp: {
+        accept: "Accept each connection. The rules only list the ports of Care.",
+        drop: "Accept only the ports of Care, the console, mDNS, DHCP, and SSH (when allowed). After the change, keep it within 90 seconds, or it goes back to accept.",
+      } as Record<string, string>,
+      ssh: "Allow SSH (port 22)",
+      sshHelp: "Only with the policy drop. Turn it off when nobody uses SSH.",
+      pendingTitle: "Keep the new firewall?",
+      pending:
+        "The policy drop is loaded. Open a new SSH session or a new console tab to check that you still have access, then keep it. Without a click, it goes back to accept in {seconds} s.",
+      keep: "Keep the new firewall",
+      rolledBack: "Last rollback",
+      rolledBackAt: "{time} ({reason})",
+      reasons: { timeout: "nobody confirmed in time", manual: "by a command" } as Record<string, string>,
+    },
     password: "Console password",
     passwordSet: "Changed {time}.",
     changePassword: "Change the password",
@@ -1161,6 +1207,14 @@ export const strings = {
     kind: "Kind",
     state: "State",
     source: "Source",
+    doctor: {
+      title: "Health checks",
+      intro:
+        "The device checks its ports, name, clock, memory, disks, units, certificates, backups, firewall, and updates. Each problem has a fix. The checks change nothing.",
+      run: "Run again",
+      summary: "{fail} failed, {warn} warnings, {ok} passed. Run at {time}.",
+      statuses: { ok: "OK", warn: "Warning", fail: "Failed", skip: "Skipped" } as Record<string, string>,
+    },
   },
   backupsPage: {
     title: "Backups",
@@ -1826,6 +1880,10 @@ export const strings = {
     authKey: "Auth key (optional)",
     authKeyHelp: "An auth key of the Tailscale admin console (tskey-auth-…). Without a key, you log in with a link.",
     authKeyInvalid: "An auth key starts with tskey-.",
+    controlUrl: "Control server (optional)",
+    controlUrlHelp:
+      "Only for a self-hosted control server (Headscale). Empty uses the Tailscale service. The server must give certificates (tailscale cert).",
+    controlUrlInvalid: "Use an https:// address without spaces, or leave it empty.",
     loginTitle: "Log in to Tailscale",
     login:
       "Open this link on a device where you can log in to the tailnet of the clinic. Then log in and connect this device. The link is secret: do not share it.",
@@ -1913,6 +1971,7 @@ export const strings = {
       "tls-public-enrol": "Change the public name",
       "tls-tailscale-enrol": "Change Tailscale",
       "network-wifi": "Change the Wi-Fi",
+      "tls-local-ca-rotate": "Make a new root certificate",
     } as Record<string, string>,
   },
   qr: {

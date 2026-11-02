@@ -236,7 +236,11 @@ func (u *Updater) stage(ctx context.Context, rec *jobs.Recorder, o StageOptions)
 		pulled, _, err := apply.EnsureImages(ctx, ao, st.pr)
 		st.result.PulledImages = append(st.result.PulledImages, pulled...)
 		recordImages(u.Paths, pulled)
-		return err
+		if err != nil {
+			return err
+		}
+		// security.waf needs the Coraza module in the Caddy image of the target (an older lock has none).
+		return apply.CheckWAFImage(ctx, u.Host, out, st.pr)
 	}); err != nil {
 		return fail(err)
 	}
@@ -839,7 +843,12 @@ func (u *Updater) Rollback(ctx context.Context, rec *jobs.Recorder, o RollbackOp
 		}
 		pulled, _, err := apply.EnsureImages(ctx, ao, pr)
 		recordImages(u.Paths, pulled)
-		return err
+		if err != nil {
+			return err
+		}
+		// A lock of before Phase 7 has a Caddy image without the Coraza module: with security.waf on, care-caddy
+		// would not start after the cutover.
+		return apply.CheckWAFImage(ctx, u.Host, out, pr)
 	}); err != nil {
 		return nil, err
 	}

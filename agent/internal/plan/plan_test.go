@@ -526,3 +526,51 @@ func TestFirewallAndDNSTimer(t *testing.T) {
 		t.Fatalf("disable %v", a.Units)
 	}
 }
+
+// TestTelemetry: the units of the opt-in telemetry (Phase 7) start, restart, and stop alone; the stack stays.
+func TestTelemetry(t *testing.T) {
+	const (
+		tImg  = "/etc/containers/systemd/care-telemetry.image"
+		tCtr  = "/etc/containers/systemd/care-telemetry.container"
+		nImg  = "/etc/containers/systemd/care-node-exporter.image"
+		nCtr  = "/etc/containers/systemd/care-node-exporter.container"
+		tConf = "/etc/care-pi/rendered/telemetry/scrape.yml"
+	)
+	on := with(base(), tImg, "img", tCtr, "ctr", nImg, "img", nCtr, "ctr", tConf, "conf")
+	find := func(p *Plan) *Action {
+		for i := range p.Actions {
+			if p.Actions[i].Kind == EnsureTelemetry {
+				return &p.Actions[i]
+			}
+		}
+		return nil
+	}
+	p := Build(Input{Desired: tree(on), Current: current(base()), TargetActive: true, PodActive: true,
+		ImagesChanged: []string{"vmagent", "node-exporter"}})
+	a := find(p)
+	want := []string{"care-node-exporter-image.service", "care-telemetry-image.service", "care-node-exporter.service", "care-telemetry.service"}
+	if a == nil || !reflect.DeepEqual(a.Units, want) || len(a.Names) != 0 {
+		t.Fatalf("on: %v", p.Actions)
+	}
+	for _, k := range kinds(p) {
+		if k == FullCycle || k == Restart || k == Cutover || k == PullImages {
+			t.Fatalf("the stack changed: %v", kinds(p))
+		}
+	}
+	// A new scrape configuration restarts vmagent only.
+	p = Build(Input{Desired: tree(with(on, tConf, "conf v2")), Current: current(on), TargetActive: true, PodActive: true})
+	if a := find(p); a == nil || !reflect.DeepEqual(a.Units, []string{"care-telemetry.service"}) {
+		t.Fatalf("config: %v", p.Actions)
+	}
+	// A new password restarts vmagent only.
+	p = Build(Input{Desired: tree(on), Current: current(on), TargetActive: true, PodActive: true,
+		SecretsChanged: []string{render.TelemetrySecret}, SecretUnits: map[string][]string{render.TelemetrySecret: {"care-telemetry"}}})
+	if a := find(p); a == nil || !reflect.DeepEqual(a.Units, []string{"care-telemetry.service"}) {
+		t.Fatalf("secret: %v", p.Actions)
+	}
+	// Off: both stop.
+	p = Build(Input{Desired: tree(base()), Current: current(on), TargetActive: true, PodActive: true})
+	if a := find(p); a == nil || len(a.Units) != 0 || !reflect.DeepEqual(a.Names, []string{"care-node-exporter.service", "care-telemetry.service"}) {
+		t.Fatalf("off: %v", p.Actions)
+	}
+}

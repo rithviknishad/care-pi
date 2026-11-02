@@ -250,10 +250,12 @@ func Keyfile(s Spec, device string) []byte {
 
 // writeKeyfileCmd writes the keyfile from stdin in a transient unit (care-pi.service cannot write /etc/NetworkManager).
 func writeKeyfileCmd(data []byte) host.Cmd {
-	script := `set -eu; umask 077; f="$1"; cat > "$f.tmp"; chmod 0600 "$f.tmp"; mv "$f.tmp" "$f"`
 	return host.Cmd{Name: "systemd-run", Args: []string{"--wait", "--collect", "--pipe", "--quiet", "--unit=care-pi-wifi-keyfile",
-		"--", "/bin/sh", "-c", script, "sh", KeyfilePath}, Stdin: bytes.NewReader(data)}
+		"--", "/bin/sh", "-c", KeyfileScript, "sh", KeyfilePath}, Stdin: bytes.NewReader(data)}
 }
+
+// KeyfileScript writes the keyfile of $1 from stdin. The helper allows only this script.
+const KeyfileScript = `set -eu; umask 077; f="$1"; cat > "$f.tmp"; chmod 0600 "$f.tmp"; mv "$f.tmp" "$f"`
 
 // SetCountry sets the regulatory domain. raspi-config persists it on Raspberry Pi OS (and unblocks the radio);
 // another host gets "iw reg set" until the next boot.

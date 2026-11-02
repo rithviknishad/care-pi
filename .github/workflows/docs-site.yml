@@ -1,0 +1,69 @@
+name: docs-site
+
+# Build the docs site (docs/releasing.md, "The docs site"): MkDocs Material from docs/ and two files of plans/,
+# and the API reference with Redoc. The repository is private, so the site is a workflow artifact only.
+# When the repository is public: set the source of GitHub Pages to "GitHub Actions" (Settings > Pages), and add the
+# repository variable DOCS_PAGES with the value true (Settings > Secrets and variables > Actions > Variables). The job
+# deploy then publishes the site of main with actions/deploy-pages.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/**
+      - plans/README.md
+      - plans/01-architecture.md
+      - .github/workflows/docs-site.yml
+  pull_request:
+    paths:
+      - docs/**
+      - plans/README.md
+      - plans/01-architecture.md
+      - .github/workflows/docs-site.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-site-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install MkDocs Material
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/venv"
+          "${RUNNER_TEMP}/venv/bin/pip" install --quiet mkdocs-material==9.8.0
+          echo "${RUNNER_TEMP}/venv/bin" >> "$GITHUB_PATH"
+      - name: Build the site
+        run: sh docs/site/build.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: docs-site
+          path: site/
+          if-no-files-found: error
+      - name: Upload the site for GitHub Pages
+        if: vars.DOCS_PAGES == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site/
+
+  deploy:
+    needs: build
+    if: vars.DOCS_PAGES == 'true' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    steps:
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4

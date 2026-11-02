@@ -18,6 +18,36 @@ type Config struct {
 	Uploads   Uploads   `yaml:"uploads" json:"uploads"`
 	Network   Network   `yaml:"network" json:"network"`
 	Telemetry Telemetry `yaml:"telemetry" json:"telemetry"`
+	Security  Security  `yaml:"security" json:"security"`
+}
+
+// Security holds the hardening options (Phase 7).
+type Security struct {
+	Firewall Firewall    `yaml:"firewall" json:"firewall"`
+	SSH      SSHSecurity `yaml:"ssh" json:"ssh"`
+	WAF      WAF         `yaml:"waf" json:"waf"`
+}
+
+// WAF is the optional Coraza WAF with the OWASP CRS on /api/* (01 section 5).
+type WAF struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	// Mode is "detect" (log only, SecRuleEngine DetectionOnly; the default) or "block" (403).
+	Mode string `yaml:"mode" json:"mode"`
+	// Paranoia is the paranoia level of the CRS, 1 to 4. Each level adds rules and false positives.
+	Paranoia int `yaml:"paranoia" json:"paranoia"`
+}
+
+// Firewall is the input policy of the table inet care-pi.
+type Firewall struct {
+	// Policy is "accept" (the default, S42) or "drop" (the allow-list only). A switch to drop starts the rollback
+	// timer: without "care-pi firewall confirm" within 90 s, the policy goes back to accept.
+	Policy string `yaml:"policy" json:"policy"`
+}
+
+// SSHSecurity is the SSH rule of the firewall.
+type SSHSecurity struct {
+	// Allow accepts 22/tcp. It matters only with the policy drop.
+	Allow bool `yaml:"allow" json:"allow"`
 }
 
 // Identity names the clinic and the host.
@@ -120,6 +150,8 @@ type TLSTailscale struct {
 	Enabled bool `yaml:"enabled" json:"enabled"`
 	// Hostname is the MagicDNS name (<host>.<tailnet>.ts.net). The enrol job sets it from "tailscale status".
 	Hostname string `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	// ControlURL is the URL of a self-hosted control server, for example Headscale (Phase 7, O4). Empty: Tailscale.
+	ControlURL string `yaml:"control_url,omitempty" json:"control_url,omitempty"`
 	// ManageDaemon false: the operator runs tailscaled. The enrol job then never installs tailscale and never
 	// runs "tailscale up", and the off job never runs "tailscale down" or "tailscale logout". nil means true.
 	ManageDaemon *bool `yaml:"manage_daemon,omitempty" json:"manage_daemon,omitempty"`
@@ -201,6 +233,9 @@ type Updates struct {
 	OSFull bool `yaml:"os_full" json:"os_full"`
 	// IndexURL overrides the URL of index.json. Empty is the default of the agent release.
 	IndexURL string `yaml:"index_url,omitempty" json:"index_url,omitempty"`
+	// RequireSigned accepts index.json and a lock only with a valid minisign signature (Phase 7, docs/solutions.md
+	// section 15). The planned default after the key ceremony; false now.
+	RequireSigned bool `yaml:"require_signed" json:"require_signed"`
 }
 
 // UpdateWindow is the time window for automatic updates.
@@ -254,8 +289,14 @@ type WiFi struct {
 	Country string `yaml:"country,omitempty" json:"country,omitempty"`
 }
 
-// Telemetry holds the opt-in telemetry settings (Phase 7).
+// Telemetry holds the opt-in telemetry settings (Phase 7, O12: remote_write only; docs/telemetry.md).
+// Nothing leaves the device while Enabled is false.
 type Telemetry struct {
 	Enabled        bool   `yaml:"enabled" json:"enabled"`
 	RemoteWriteURL string `yaml:"remote_write_url,omitempty" json:"remote_write_url,omitempty"`
+	// Username is the basic auth user of the remote write. The password is the secret file
+	// /etc/care-pi/secrets/telemetry_password ("care-pi telemetry set-password"), never this file.
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	// IntervalS is the scrape interval in seconds (default 60).
+	IntervalS int `yaml:"interval_s" json:"interval_s"`
 }

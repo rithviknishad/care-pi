@@ -1,0 +1,33 @@
+# Phase 7: the hardening options together (the default-drop firewall without SSH, a Headscale control server).
+version: 1
+identity:
+  display_name: Sunrise Clinic
+  hostname: care
+solution:
+  name: care-clinic
+  track: stable
+size:
+  preset: small-clinic
+tls:
+  local_ca: {enabled: true}
+  tailscale:
+    enabled: true
+    hostname: care.clinic.example.org
+    control_url: https://headscale.example.org
+clock:
+  policy: ntp
+backups:
+  wal_archive_timeout_min: 5
+fe:
+  provider: none
+telemetry:
+  enabled: true
+  remote_write_url: https://metrics.example.org/api/v1/write
+  username: sunrise
+  interval_s: 60
+uploads:
+  max_body_mb: 200
+security:
+  firewall: {policy: drop}
+  ssh: {allow: false}
+  waf: {enabled: true, mode: block, paranoia: 2}

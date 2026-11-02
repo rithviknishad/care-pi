@@ -14,6 +14,8 @@ export const qk = {
   configSchema: ["config-schema"] as const,
   config: (view: "file" | "effective") => ["config", view] as const,
   security: ["security"] as const,
+  firewall: ["security", "firewall"] as const,
+  doctor: ["doctor"] as const,
   sessions: ["sessions"] as const,
   logUnits: ["log-units"] as const,
   logs: (unit: LogUnit, n: number) => ["logs", unit, n] as const,
@@ -164,6 +166,16 @@ export function useConfig(view: "file" | "effective") {
 
 export function useSecurity() {
   return useQuery({ queryKey: qk.security, queryFn: () => call(api.GET("/security")) });
+}
+
+// Phase 7: the firewall policy. While the rollback timer runs, read the state each 2 s (the countdown, and the
+// rollback when it fires).
+export function useFirewall() {
+  return useQuery({
+    queryKey: qk.firewall,
+    queryFn: () => call(api.GET("/security/firewall")),
+    refetchInterval: (q) => (q.state.data?.pending_until ? 2000 : false),
+  });
 }
 
 export function useSessions() {

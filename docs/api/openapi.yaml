@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: care-pi agent API
-  version: 0.7.1
+  version: 0.8.0
   summary: The HTTP API between the care-pi agent and the console.
   description: |
     This document is the contract between the care-pi agent (`care-pi serve`) and the console.
@@ -680,6 +680,64 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '422':
           $ref: '#/components/responses/UnprocessableContent'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+  /security/firewall:
+    get:
+      tags: [security]
+      operationId: getFirewall
+      summary: Get the firewall policy and the rollback timer
+      description: |
+        Phase 7. `security.firewall.policy` of `config.yaml`, the policy that the agent loaded last, and the rollback timer
+        of the policy `drop`. Change the policy with `PATCH /config` (`security.firewall.policy`, `apply=true`): a switch
+        to `drop` starts a timer of 90 s; `POST /security/firewall/confirm` stops it. Without the confirmation, the agent
+        sets the policy to `accept` again (`docs/console-server.md` section 13).
+      x-phase: 7
+      x-cli: care-pi firewall status --json
+      x-problems: [not-authenticated, not-implemented-in-this-version]
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The firewall state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FirewallState'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+  /security/firewall/confirm:
+    post:
+      tags: [security]
+      operationId: confirmFirewall
+      summary: Keep the policy drop
+      description: |
+        Phase 7. Stops the rollback timer of the policy `drop`. The console sends it from the page where the operator
+        switched the policy, so the request itself shows that the console still works through the new rules.
+        `409 state-conflict` when no timer runs.
+      security:
+        - session: []
+          csrf: []
+      x-phase: 7
+      x-cli: care-pi firewall confirm
+      x-problems: [not-authenticated, csrf, state-conflict, not-implemented-in-this-version]
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The firewall state after the confirmation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FirewallState'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '501':
           $ref: '#/components/responses/NotImplemented'
   /setup:
@@ -1465,6 +1523,60 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+  /doctor:
+    get:
+      tags: [status]
+      operationId: getDoctor
+      summary: Run the health checks of care-pi doctor
+      description: |
+        Phase 7. The agent runs the checks of `care-pi doctor` and gives each with its status and a fix hint: the host
+        check, the ports of the pod (another program on 80, 443, or 8443 of a published address, for example
+        `tailscale serve`), the mDNS name (a collision), the clock, the memory and zram, each disk, the units of Care, the
+        certificates (14 days before the end), each backup destination (the last snapshot against
+        `backups.alert_after_hours`), the firewall, a pending reboot, and the updates. The checks change nothing; a run
+        takes about 1 s. The failed checks come first.
+      x-cli: care-pi doctor --json
+      x-problems: [not-authenticated]
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DoctorReport'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+  /metrics:
+    get:
+      tags: [status]
+      operationId: getMetrics
+      summary: Get the metrics of the device (Prometheus text)
+      description: |
+        Phase 7. The metrics of the agent in the Prometheus text format 0.0.4: the units of Care (`care_pi_unit_active`,
+        `care_pi_unit_memory_bytes`, `care_pi_unit_memory_peak_bytes`, `care_pi_unit_memory_max_bytes`,
+        `care_pi_unit_restarts_total`), the host (`care_pi_host_*`, `care_pi_disk_*`), the clock, the backups
+        (`care_pi_backup_*`), the certificates (`care_pi_certificate_expiry_timestamp_seconds`), the updates, and the
+        firewall. The opt-in telemetry sends the same metrics through node_exporter (`docs/telemetry.md`). The names are
+        stable; a later version can add metrics and labels.
+      x-cli: care-pi metrics
+      x-problems: [not-authenticated]
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The metrics.
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: |
+                # HELP care_pi_unit_active The unit is active.
+                # TYPE care_pi_unit_active gauge
+                care_pi_unit_active{unit="care-api.service"} 1
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
   /logs:
     get:
       tags: [logs]
@@ -1996,14 +2108,17 @@ paths:
       tags: [tls]
       operationId: rotateLocalCa
       summary: Make a new root CA
-      description: Phase 7. Each device must then install the new root CA (07 §4.5).
+      description: |
+        Phase 7. The job `tls-local-ca-rotate` makes a new root CA (a new key) with the name constraints of the names and
+        LAN addresses of now (so `local_ca.uncovered` becomes empty), keeps the old root for 7 days
+        (`local_ca.previous_root`), and restarts `care-caddy` for a new intermediate. Each device must then install the
+        new root CA (07 §4.5). `409 state-conflict` when the local CA mode is off or the device has no root of its own yet.
       security:
         - session: []
           csrf: []
-      x-phase: 7
       x-reauth: true
       x-cli: care-pi tls local-ca rotate
-      x-problems: [not-authenticated, csrf, reauth-required, job-running, not-implemented-in-this-version]
+      x-problems: [not-authenticated, csrf, reauth-required, setup-incomplete, state-conflict, job-running]
       responses:
         default:
           $ref: '#/components/responses/UnexpectedProblem'
@@ -2015,8 +2130,6 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
-        '501':
-          $ref: '#/components/responses/NotImplemented'
   /fe:
     get:
       tags: [fe]
@@ -3678,7 +3791,7 @@ paths:
         and checks its SHA-256 (`502 index-unavailable` or `502 artefact-invalid` on a failure).
       x-phase: 4
       x-cli: care-pi solution show NAME --lock VERSION --json
-      x-problems: [not-authenticated, not-found, lock-not-found, index-unavailable, artefact-invalid, not-implemented-in-this-version]
+      x-problems: [not-authenticated, not-found, lock-not-found, index-unavailable, artefact-invalid, lock-signature-invalid, not-implemented-in-this-version]
       parameters:
         - name: name
           in: path
@@ -4405,7 +4518,7 @@ components:
                     code: dry-run-apply
                     parameter: apply
     UpdatesBadGateway:
-      description: 'Phase 4. `index-unavailable` or `artefact-invalid`: a download from the dist base failed.'
+      description: 'Phase 4. `index-unavailable` or `artefact-invalid`: a download from the dist base failed. Phase 7: `lock-signature-invalid`.'
       content:
         application/problem+json:
           schema:
@@ -4606,6 +4719,7 @@ components:
         - https://care-pi.rithviknishad.dev/problems/build-required-offline
         - https://care-pi.rithviknishad.dev/problems/index-unavailable
         - https://care-pi.rithviknishad.dev/problems/artefact-invalid
+        - https://care-pi.rithviknishad.dev/problems/lock-signature-invalid
         - https://care-pi.rithviknishad.dev/problems/rollback-unavailable
         - https://care-pi.rithviknishad.dev/problems/checkpoint-failed
         - https://care-pi.rithviknishad.dev/problems/migration-failed
@@ -5534,6 +5648,125 @@ components:
           $ref: '#/components/schemas/TotpCode'
       examples:
         - code: '492039'
+    DoctorReport:
+      x-phase: 7
+      type: object
+      additionalProperties: false
+      description: The result of `care-pi doctor` (Phase 7).
+      required: [generated_at, status, checks]
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+          description: The time of the run.
+        status:
+          $ref: '#/components/schemas/DoctorStatus'
+        checks:
+          type: array
+          description: The checks, the failed ones first, then the warnings.
+          items:
+            $ref: '#/components/schemas/DoctorCheck'
+      examples:
+        - generated_at: '2026-11-02T10:00:00Z'
+          status: warn
+          checks:
+            - id: backup-usb
+              title: Backup usb (posix)
+              status: warn
+              detail: no snapshot yet
+              fix: sudo care-pi backup run --destination usb
+            - id: ports
+              title: Ports 80, 443, 8443
+              status: ok
+              detail: no other program listens on a port of the pod
+              fix: null
+    DoctorStatus:
+      x-phase: 7
+      type: string
+      enum: [ok, warn, fail, skip]
+      description: |
+        `ok`; `warn` (works, but needs attention); `fail` (a part of Care does not work or is at risk); `skip` (the check
+        could not run). The status of a report is the worst status of its checks.
+      examples: [warn]
+    DoctorCheck:
+      x-phase: 7
+      type: object
+      additionalProperties: false
+      description: One check of `care-pi doctor`.
+      required: [id, title, status, detail, fix]
+      properties:
+        id:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]*$'
+          description: |
+            A stable id, for example `ports`, `mdns`, `clock`, `memory`, `zram`, `disk-root`, `units`, `cert-local`,
+            `cert-public`, `backup-<destination id>`, `backups`, `firewall`, `reboot`, `updates`, `host-<check name>`.
+          examples: [ports]
+        title:
+          type: string
+          description: The name of the check for a person.
+        status:
+          $ref: '#/components/schemas/DoctorStatus'
+        detail:
+          type: string
+          description: What the check found.
+        fix:
+          type: [string, 'null']
+          description: What to do, often a command. `null` when the check passed.
+      examples:
+        - id: ports
+          title: Ports 80, 443, 8443
+          status: fail
+          detail: tailscaled on 100.101.102.103:443
+          fix: 'Stop the other program on the port (for tailscaled: tailscale serve reset), then: sudo care-pi apply'
+    FirewallState:
+      x-phase: 7
+      type: object
+      additionalProperties: false
+      description: The firewall table `inet care-pi` (Phase 7, `docs/console-server.md` section 13).
+      required: [policy, live_policy, ssh_allowed, unit_active, pending_until, confirmed_at, rolled_back_at, rollback_reason]
+      properties:
+        policy:
+          type: string
+          enum: [accept, drop]
+          description: '`security.firewall.policy` of `config.yaml`.'
+        live_policy:
+          type: [string, 'null']
+          enum: [accept, drop, null]
+          description: The policy of the last load of the table of the agent. `null` before the first load.
+        ssh_allowed:
+          type: boolean
+          description: '`security.ssh.allow`: the table accepts 22/tcp. It matters only with the policy `drop`.'
+        unit_active:
+          type: boolean
+          description: |
+            `care-pi-firewall.service` is active. `false` after `install.sh --no-firewall` or with ufw or firewalld: then no
+            policy of the agent is loaded.
+        pending_until:
+          type: [string, 'null']
+          format: date-time
+          description: The time of the rollback to `accept` while the timer runs. `null` when no timer runs.
+        confirmed_at:
+          type: [string, 'null']
+          format: date-time
+          description: The last confirmation of the policy `drop`.
+        rolled_back_at:
+          type: [string, 'null']
+          format: date-time
+          description: The last rollback to `accept`.
+        rollback_reason:
+          type: [string, 'null']
+          enum: [timeout, manual, null]
+          description: '`timeout`: nobody confirmed within 90 s. `manual`: `care-pi firewall rollback`.'
+      examples:
+        - policy: drop
+          live_policy: drop
+          ssh_allowed: true
+          unit_active: true
+          pending_until: '2026-11-02T10:01:30Z'
+          confirmed_at: null
+          rolled_back_at: null
+          rollback_reason: null
     SshSettings:
       x-phase: 7
       type: object
@@ -6896,7 +7129,7 @@ components:
           kind: modify
     PlanActionKind:
       type: string
-      enum: [ensure-dirs, ensure-ca, set-secrets, write-files, disable-units, delete-files, daemon-reload, reload-firewall, enable-target, pull-images, full-cycle, start-target, restart, reload-caddy, ensure-buckets, ensure-stanza, ensure-mounts, ensure-repositories, ensure-timers, ensure-fe, cutover, plug-config, update-dns, write-lock]
+      enum: [ensure-dirs, ensure-ca, set-secrets, write-files, disable-units, delete-files, daemon-reload, reload-firewall, enable-target, pull-images, full-cycle, start-target, restart, reload-caddy, ensure-buckets, ensure-stanza, ensure-mounts, ensure-repositories, ensure-timers, ensure-fe, cutover, plug-config, update-dns, ensure-telemetry, write-lock]
       description: |
         The action kinds of `agent/internal/plan`, in execution order. A later version can add kinds.
         Phase 3 adds `ensure-mounts` (the mount units of `disk_label` destinations), `ensure-repositories` (`restic init`
@@ -6908,6 +7141,9 @@ components:
         one-time switch, and care-caddy restarts), `disable-units` (stop and disable `care-dns-update.timer` before its file
         goes), `reload-firewall` (reload `care-pi-firewall.service` after a change of its Tailscale drop-in), and `update-dns`
         (send a new LAN address to the DNS service; a failure is a warning).
+        Phase 7 adds `ensure-telemetry` (restart the units of the opt-in telemetry after a change, or stop them after
+        `telemetry.enabled: false`; never the stack); `reload-firewall` also loads the table of the agent and, on a switch
+        to the policy `drop`, starts the rollback timer first.
       examples: [restart]
     PlanAction:
       type: object
@@ -7096,7 +7332,7 @@ components:
       examples: [20261030T101500.123Z-apply]
     JobKind:
       type: string
-      enum: [apply, setup, fe-build, fe-prune, support-bundle, backup-run, backup-verify, restore-pitr, restore-files, restore-dr, disk-prepare, recovery-key-rotate, restore-drill, update-check, update-stage, update-apply, update-rollback, os-update, plug-change, tls-public-enrol, tls-tailscale-enrol, network-wifi]
+      enum: [apply, setup, fe-build, fe-prune, support-bundle, backup-run, backup-verify, restore-pitr, restore-files, restore-dr, disk-prepare, recovery-key-rotate, restore-drill, update-check, update-stage, update-apply, update-rollback, os-update, plug-change, tls-public-enrol, tls-tailscale-enrol, network-wifi, tls-local-ca-rotate]
       description: |
         The kind of job. These kinds hold the apply lock: `apply`, `setup`, `fe-build`, `fe-prune`, the Phase 3 kinds
         `restore-pitr`, `restore-files`, `restore-dr`, `disk-prepare`, `recovery-key-rotate`, the Phase 4 kinds `update-stage`,
@@ -7107,6 +7343,7 @@ components:
         `recovery-key-rotate`, `restore-drill` (design note section 13.8). Phase 4 makes `update-check` (no apply lock),
         `update-stage`, `update-apply`, `update-rollback`, `os-update`, `plug-change` (design note section 14.2). Phase 6 makes
         `tls-public-enrol`, `tls-tailscale-enrol`, and `network-wifi` (design note section 15); version 0.7.0 replaced the reserved kind `tls`.
+        Phase 7 makes `tls-local-ca-rotate` (apply lock; design note section 17).
         Version 0.4.0 replaced the reserved kinds `backup`, `verify`, and `restore` with the kinds of Phase 3; version 0.5.0
         replaced the reserved kinds `update` and `rollback`, which no agent made, with `update-apply` and `update-rollback`.
       examples: [apply]
@@ -7160,6 +7397,7 @@ components:
             Phase 6 keys (design note section 15): `ensure-ca`, `disable-units`, `reload-firewall`, `update-dns`, `write-config`,
             `dns-register`, `dns-address`, `dns-delete`, `wait-certificate`, `tailscale-install`, `tailscale-up`, `tailscale-login`,
             `tailscale-down`, `tailscale-logout`, `wifi-radio`, `wifi-profile`, `wifi-connect`, `wifi-verify`, `wifi-remove`.
+            Phase 7 keys (design note section 17): `ca-rotate`, `restart-caddy`, `ensure-telemetry`.
             `null` for a journal of Phase 1 when the name does not start with a known key.
           examples: [restart]
         state:
@@ -7356,6 +7594,7 @@ components:
         - $ref: '#/components/schemas/TlsPublicResult'
         - $ref: '#/components/schemas/TlsTailscaleResult'
         - $ref: '#/components/schemas/NetworkWifiResult'
+        - $ref: '#/components/schemas/TlsLocalCaRotateResult'
       discriminator:
         propertyName: kind
         mapping:
@@ -7381,6 +7620,7 @@ components:
           tls-public-enrol: '#/components/schemas/TlsPublicResult'
           tls-tailscale-enrol: '#/components/schemas/TlsTailscaleResult'
           network-wifi: '#/components/schemas/NetworkWifiResult'
+          tls-local-ca-rotate: '#/components/schemas/TlsLocalCaRotateResult'
       examples:
         - kind: fe-prune
           removed: [1a2b3c4d5e6f]
@@ -8346,7 +8586,7 @@ components:
           type: object
           additionalProperties: false
           description: The local CA mode.
-          required: [enabled, root, hostnames, uncovered, ca_changed_at, previous_fingerprint_sha256, cert_page_url]
+          required: [enabled, root, hostnames, uncovered, ca_changed_at, previous_fingerprint_sha256, cert_page_url, change_reason, previous_root]
           properties:
             enabled:
               type: boolean
@@ -8390,6 +8630,21 @@ components:
                 The page of the DNS/ACME service that offers a root from the fragment of the URL (07 §4.4). The QR code of
                 the console is `<cert_page_url>#<base64 DER>`; the fragment never reaches the service.
               examples: [https://care-pi.rithviknishad.dev/cert]
+            change_reason:
+              x-phase: 7
+              type: [string, 'null']
+              enum: [migration, rotation, null]
+              description: |
+                The cause of `ca_changed_at`: `migration` (the one-time switch from the root of Caddy, Phase 6) or `rotation`
+                (`POST /tls/local-ca/rotate`). `null` without a change.
+            previous_root:
+              x-phase: 7
+              description: |
+                The root before the last rotation, for 7 days after `ca_changed_at`, so that the operator can compare the
+                old and the new fingerprint on each device. `null` after 7 days, after a migration, or without a rotation.
+              oneOf:
+                - $ref: '#/components/schemas/CaRoot'
+                - type: 'null'
         public:
           x-phase: 6
           $ref: '#/components/schemas/TlsPublic'
@@ -8413,6 +8668,8 @@ components:
             ca_changed_at: '2026-11-01T10:00:00Z'
             previous_fingerprint_sha256: 9a1d6c0e5a2b9e4d7c8f1a0b2c3d4e5f60718293a4b5c6d7e8f9011223344500
             cert_page_url: https://care-pi.rithviknishad.dev/cert
+            change_reason: migration
+            previous_root: null
           public:
             enabled: true
             clinic_id: sunrise-k3x9
@@ -8432,6 +8689,7 @@ components:
             ipv4: null
             https_enabled: false
             published: false
+            control_url: null
     TlsPublic:
       x-phase: 6
       type: object
@@ -8534,7 +8792,7 @@ components:
       type: object
       additionalProperties: false
       description: The Tailscale mode (Phase 6, P11, S37).
-      required: [enabled, hostname, installed, backend_state, login_url, tailnet, ipv4, https_enabled, published]
+      required: [enabled, hostname, installed, backend_state, login_url, tailnet, ipv4, https_enabled, published, control_url]
       properties:
         enabled:
           type: boolean
@@ -8572,6 +8830,14 @@ components:
         published:
           type: boolean
           description: The pod publishes on the Tailscale address. `false` after a boot without the address; the next apply publishes it.
+        control_url:
+          x-phase: 7
+          type: [string, 'null']
+          format: uri
+          description: |
+            `tls.tailscale.control_url` (O4): the URL of a self-hosted control server (Headscale). `null` is the Tailscale
+            service.
+          examples: [https://headscale.example.org]
       examples:
         - enabled: false
           hostname: null
@@ -8582,6 +8848,7 @@ components:
           ipv4: null
           https_enabled: false
           published: false
+          control_url: null
     CaRoot:
       type: object
       additionalProperties: false
@@ -8777,9 +9044,23 @@ components:
           writeOnly: true
           maxLength: 200
           description: |
-            A Tailscale auth key (`tskey-...`). `null` or absent starts the login in the browser: `GET /tls` shows
-            `tailscale.login_url`. The key goes to tailscale through a file in `/run`; the agent deletes it after `tailscale up`.
+            A Tailscale auth key (`tskey-...`), or a pre-auth key of the control server when `control_url` is set.
+            `null` or absent starts the login in the browser: `GET /tls` shows `tailscale.login_url`. The key goes to
+            tailscale through a file in `/run`; the agent deletes it after `tailscale up`.
           examples: [tskey-auth-EXAMPLE]
+        control_url:
+          x-phase: 7
+          type: [string, 'null']
+          maxLength: 200
+          pattern: '^(https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^\s]*)?)?$'
+          description: |
+            Phase 7 (O4). The URL of a self-hosted control server (Headscale): `tailscale up --login-server`. An empty string
+            goes back to the Tailscale service. `null` or absent keeps `tls.tailscale.control_url`. The enrol job writes it
+            to `config.yaml`. A control server gives a certificate only when it supports `tailscale cert`; else the job
+            fails with `tailscale-https-disabled`. A new value on a connected `tailscaled` logs in again
+            (`tailscale up --reset --force-reauth`): the device leaves the old tailnet. With
+            `tls.tailscale.manage_daemon: false`, a new value on a connected `tailscaled` fails with `state-conflict`.
+          examples: [https://headscale.example.org]
         reason:
           type: [string, 'null']
           maxLength: 200
@@ -11307,6 +11588,25 @@ components:
           ssid: Sunrise-Staff
           connected: true
           address: 192.168.1.23
+    TlsLocalCaRotateResult:
+      x-phase: 7
+      type: object
+      additionalProperties: false
+      description: The result of a `tls-local-ca-rotate` job that succeeded.
+      required: [kind, fingerprint_sha256, previous_fingerprint_sha256]
+      properties:
+        kind:
+          type: string
+          const: tls-local-ca-rotate
+          description: The job kind.
+        fingerprint_sha256:
+          $ref: '#/components/schemas/Sha256Hex'
+        previous_fingerprint_sha256:
+          $ref: '#/components/schemas/Sha256Hex'
+      examples:
+        - kind: tls-local-ca-rotate
+          fingerprint_sha256: 3f1d6c0e5a2b9e4d7c8f1a0b2c3d4e5f60718293a4b5c6d7e8f9011223344556
+          previous_fingerprint_sha256: 9a1d6c0e5a2b9e4d7c8f1a0b2c3d4e5f60718293a4b5c6d7e8f9011223344500
     PlugChangeJobResult:
       x-phase: 4
       type: object

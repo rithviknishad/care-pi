@@ -10,11 +10,13 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/rithviknishad/care-pi/agent/internal/buildinfo"
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
+	"github.com/rithviknishad/care-pi/agent/internal/minisign"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/problem"
 	"github.com/rithviknishad/care-pi/agent/internal/solution"
@@ -33,6 +35,45 @@ type indexMeta struct {
 	ETag         string    `json:"etag,omitempty"`
 	LastModified string    `json:"last_modified,omitempty"`
 	FetchedAt    time.Time `json:"fetched_at"`
+	// SignedBy is the key id of the signature that the agent checked (updates.require_signed), and SignedSHA256 the
+	// SHA-256 of the index file that it covers. Empty: the cache had no check.
+	SignedBy     string `json:"signed_by,omitempty"`
+	SignedSHA256 string `json:"signed_sha256,omitempty"`
+}
+
+// signedMeta returns the meta of a cached index that the key keyID verified ("" without a check).
+func signedMeta(m indexMeta, keyID string, data []byte) indexMeta {
+	if keyID != "" {
+		sum := sha256.Sum256(data)
+		m.SignedBy, m.SignedSHA256 = keyID, hex.EncodeToString(sum[:])
+	}
+	return m
+}
+
+// errUnsignedCache tells that the cached index had no signature check of a trusted key.
+var errUnsignedCache = errors.New("the cached index is unsigned")
+
+// TrustedCache returns the cached index (nil without a cache). With RequireSigned, it returns the cache only when a
+// check of a trusted key accepted it (index.meta.json: the key id and the SHA-256 of the file); else errUnsignedCache.
+// A cache from before updates.require_signed has no such record.
+func (c Client) TrustedCache() (*solution.Index, error) {
+	ix, err := solution.CachedIndex(c.Paths)
+	if err != nil || ix == nil || !c.RequireSigned {
+		return ix, err
+	}
+	var meta indexMeta
+	if data, err := os.ReadFile(c.Paths.Abs(indexMetaFile)); err == nil {
+		_ = json.Unmarshal(data, &meta)
+	}
+	data, err := os.ReadFile(c.Paths.Abs(solution.IndexCacheFile))
+	if err != nil {
+		return nil, err
+	}
+	sum := sha256.Sum256(data)
+	if meta.SignedBy == "" || meta.SignedSHA256 != hex.EncodeToString(sum[:]) || !slices.Contains(c.Keys.IDs(), meta.SignedBy) {
+		return nil, errUnsignedCache
+	}
+	return ix, nil
 }
 
 const indexMetaFile = paths.UpdateCache + "/index.meta.json"
@@ -42,6 +83,10 @@ type Client struct {
 	Paths paths.Paths
 	HTTP  *http.Client
 	Now   func() time.Time
+	// RequireSigned accepts index.json and a lock only with a valid signature of one of Keys (updates.require_signed,
+	// Phase 7).
+	RequireSigned bool
+	Keys          minisign.Keys
 }
 
 func (c Client) http() *http.Client {
@@ -108,7 +153,8 @@ func (c Client) FetchIndex(ctx context.Context, url string) (*solution.Index, er
 	h := http.Header{}
 	cached, _ := solution.CachedIndex(c.Paths)
 	// file:// has a resolution of 1 s for If-Modified-Since: a USB copy can change in the same second.
-	if meta.URL == url && cached != nil && !strings.HasPrefix(url, "file://") {
+	// With signatures, each check downloads and verifies the index (the cache can be from before require_signed).
+	if meta.URL == url && cached != nil && !strings.HasPrefix(url, "file://") && !c.RequireSigned {
 		if meta.ETag != "" {
 			h.Set("If-None-Match", meta.ETag)
 		}
@@ -128,6 +174,10 @@ func (c Client) FetchIndex(ctx context.Context, url string) (*solution.Index, er
 	if resp.StatusCode != http.StatusOK {
 		return nil, indexProblem("GET %s gave HTTP %d.", url, resp.StatusCode)
 	}
+	keyID, err := c.verifyRemote(ctx, url, data)
+	if err != nil {
+		return nil, err
+	}
 	ix, err := solution.ParseIndex(data)
 	if err != nil {
 		return nil, indexProblem("%s: %v", url, err)
@@ -135,7 +185,7 @@ func (c Client) FetchIndex(ctx context.Context, url string) (*solution.Index, er
 	if err := lock.WriteFileAtomic(c.Paths.Abs(solution.IndexCacheFile), data, 0o600); err != nil {
 		return nil, err
 	}
-	meta = indexMeta{URL: url, ETag: resp.Header.Get("ETag"), LastModified: resp.Header.Get("Last-Modified"), FetchedAt: c.now()}
+	meta = signedMeta(indexMeta{URL: url, ETag: resp.Header.Get("ETag"), LastModified: resp.Header.Get("Last-Modified"), FetchedAt: c.now()}, keyID, data)
 	_ = writeJSON(c.Paths.Abs(indexMetaFile), meta)
 	return ix, nil
 }
@@ -167,6 +217,9 @@ func (c Client) FetchLock(ctx context.Context, ix *solution.Index, name string, 
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, problem.Newf(problem.ArtefactInvalid, "GET %s gave HTTP %d.", url, resp.StatusCode)
+	}
+	if _, err := c.verifyRemote(ctx, url, data); err != nil {
+		return nil, err
 	}
 	return c.Accept(data, name, entry.Version, entry.SHA256)
 }
@@ -207,6 +260,11 @@ func (c Client) ImportLocalDist(dir string) (*solution.Index, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The index has the SHA-256 of each lock, so its signature covers the locks of the snapshot.
+	keyID, err := c.verifyLocal(c.Paths.Abs(dir+"/index/index.json"), data)
+	if err != nil {
+		return nil, err
+	}
 	ix, err := solution.ParseIndex(data)
 	if err != nil {
 		return nil, problem.Newf(problem.ArtefactInvalid, "%s/index/index.json: %v", dir, err)
@@ -228,6 +286,6 @@ func (c Client) ImportLocalDist(dir string) (*solution.Index, error) {
 	if err := lock.WriteFileAtomic(c.Paths.Abs(solution.IndexCacheFile), data, 0o600); err != nil {
 		return nil, err
 	}
-	_ = writeJSON(c.Paths.Abs(indexMetaFile), indexMeta{URL: "file://" + dir + "/index/index.json", FetchedAt: c.now()})
+	_ = writeJSON(c.Paths.Abs(indexMetaFile), signedMeta(indexMeta{URL: "file://" + dir + "/index/index.json", FetchedAt: c.now()}, keyID, data))
 	return ix, nil
 }

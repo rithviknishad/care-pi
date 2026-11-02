@@ -125,6 +125,18 @@ type Client struct {
 	RunDir string
 	// Poll is the interval of the status polls (default 2 s).
 	Poll time.Duration
+	// ForceReauth adds "--force-reauth" to "tailscale up": a connected tailscaled changes its control server only with
+	// a new login ("can't change --login-server without --force-reauth").
+	ForceReauth bool
+}
+
+// upArgs are UpArgs, with "--force-reauth" when the client changes the control server of a connected tailscaled.
+func (c Client) upArgs(hostname, controlURL string) []string {
+	args := UpArgs(hostname, controlURL)
+	if c.ForceReauth {
+		args = append(args, "--force-reauth")
+	}
+	return args
 }
 
 func (c Client) run(ctx context.Context, args ...string) ([]byte, error) {
@@ -185,13 +197,19 @@ func (c Client) Install(ctx context.Context) (bool, error) {
 
 // UpArgs are the flags of "tailscale up": the host name, and no DNS settings from the tailnet on the host
 // (the agent never resolves names through MagicDNS, and the clinic DNS of the host must stay).
-func UpArgs(hostname string) []string {
-	return []string{"up", "--hostname=" + hostname, "--accept-dns=false", "--accept-routes=false", "--reset"}
+// A controlURL (tls.tailscale.control_url, O4) adds "--login-server" for a self-hosted control server such as
+// Headscale. "--reset" sets each flag that is not given to its default, so the flag is necessary at each "up".
+func UpArgs(hostname, controlURL string) []string {
+	args := []string{"up", "--hostname=" + hostname, "--accept-dns=false", "--accept-routes=false", "--reset"}
+	if controlURL != "" {
+		args = append(args, "--login-server="+controlURL)
+	}
+	return args
 }
 
 // UpWithKey runs "tailscale up" with an auth key. The key goes through a file in RunDir (mode 0600), never
 // through the command line: "--auth-key=file:<path>".
-func (c Client) UpWithKey(ctx context.Context, hostname, authKey string) error {
+func (c Client) UpWithKey(ctx context.Context, hostname, controlURL, authKey string) error {
 	if c.RunDir == "" {
 		return errors.New("tailscale: no RunDir for the auth key")
 	}
@@ -203,7 +221,7 @@ func (c Client) UpWithKey(ctx context.Context, hostname, authKey string) error {
 		return err
 	}
 	defer func() { _ = os.Remove(f) }()
-	args := append(UpArgs(hostname), "--auth-key=file:"+f, "--timeout=2m")
+	args := append(c.upArgs(hostname, controlURL), "--auth-key=file:"+f, "--timeout=2m")
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	if _, err := c.run(ctx, args...); err != nil {
@@ -214,10 +232,10 @@ func (c Client) UpWithKey(ctx context.Context, hostname, authKey string) error {
 
 // StartLogin starts "tailscale up" without a key in a transient unit: tailscaled then waits for a login in the
 // browser (BackendState NeedsLogin with an AuthURL). The unit ends at the login, or after UpTimeout.
-func (c Client) StartLogin(ctx context.Context, hostname string) error {
+func (c Client) StartLogin(ctx context.Context, hostname, controlURL string) error {
 	_, _ = c.Runner.Run(ctx, host.Cmd{Name: "systemctl", Args: []string{"stop", UpUnit + ".service"}})
 	args := append([]string{"--collect", "--quiet", "--unit=" + UpUnit, "--", "tailscale"},
-		append(UpArgs(hostname), "--timeout="+UpTimeout.String())...)
+		append(c.upArgs(hostname, controlURL), "--timeout="+UpTimeout.String())...)
 	if _, err := c.Runner.Run(ctx, host.Cmd{Name: "systemd-run", Args: args}); err != nil {
 		return fmt.Errorf("cannot start tailscale up: %w", err)
 	}
@@ -260,13 +278,14 @@ func (c Client) WaitFor(ctx context.Context, timeout time.Duration, each func(*S
 // ServePorts returns the TCP ports of the node that "tailscale serve" or "tailscale funnel" uses (the TCP map of
 // "tailscale serve status --json"). tailscaled listens on these ports of the Tailscale address itself, so the pod
 // cannot publish on them: a publish on a port in use stops the pod, and then all of Care. A host without a serve
-// configuration, or a version without the JSON output, gives no ports.
-func (c Client) ServePorts(ctx context.Context) []int {
+// configuration gives no ports. A command that fails (for example a refusal of the helper) gives an error: the
+// caller must not skip the check.
+func (c Client) ServePorts(ctx context.Context) ([]int, error) {
 	out, err := c.run(ctx, "serve", "status", "--json")
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("tailscale serve status --json: %w", err)
 	}
-	return ParseServePorts(out)
+	return ParseServePorts(out), nil
 }
 
 // ParseServePorts reads the TCP ports of "tailscale serve status --json" (ipn.ServeConfig), in increasing order.

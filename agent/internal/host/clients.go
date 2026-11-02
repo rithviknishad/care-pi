@@ -357,15 +357,18 @@ type ExecClock struct{ R Runner }
 // SetClockUnit is the transient unit that sets the clock.
 const SetClockUnit = "care-pi-clock-set"
 
+// SetClockScript is the script of SetClockUnit: $1 is the time in Unix seconds. The helper allows only this script
+// (docs/console-server.md section 14).
+const SetClockScript = `set -eu; date -u -s "@$1" >/dev/null; if command -v fake-hwclock >/dev/null 2>&1; then fake-hwclock save >/dev/null 2>&1 || true; fi`
+
 // SetTime sets the system clock to t (S52: the time of the browser at the claim), to the second.
 // "date -s" sets the clock also while NTP is on: "timedatectl set-time" refuses that, and its "set-ntp false" would
 // stop systemd-timesyncd. timesyncd keeps running, and it corrects the clock when an NTP server answers.
 // "fake-hwclock save" (Raspberry Pi OS) keeps the time over a reboot without internet. The commands run in a
 // transient unit: care-pi.service cannot write /etc/fake-hwclock.data (ProtectSystem=strict).
 func (c ExecClock) SetTime(ctx context.Context, t time.Time) error {
-	script := `set -eu; date -u -s "@$1" >/dev/null; if command -v fake-hwclock >/dev/null 2>&1; then fake-hwclock save >/dev/null 2>&1 || true; fi`
 	_, err := c.R.Run(ctx, Cmd{Name: "systemd-run", Args: []string{"--wait", "--collect", "--pipe", "--quiet", "--unit=" + SetClockUnit,
-		"--", "/bin/sh", "-c", script, "sh", strconv.FormatInt(t.Unix(), 10)}})
+		"--", "/bin/sh", "-c", SetClockScript, "sh", strconv.FormatInt(t.Unix(), 10)}})
 	return err
 }
 

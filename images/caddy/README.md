@@ -10,7 +10,7 @@ Image name: `ghcr.io/rithviknishad/care-pi/caddy`
 The Containerfile has two stages.
 
 1. The first stage starts from `docker.io/library/caddy:2-builder`.
-   It runs `xcaddy build` with two modules.
+   It runs `xcaddy build` with three modules.
 2. The second stage starts from `docker.io/library/caddy:2`.
    It replaces `/usr/bin/caddy` with the new binary.
 
@@ -22,13 +22,14 @@ This stage does not need QEMU.
 |---|---|---|
 | `github.com/caddy-dns/acmedns` | `dns.providers.acmedns` | DNS-01 challenge against the care-pi DNS and ACME service (Phase 6). |
 | `github.com/tailscale/caddy-tailscale` | `tls.get_certificate.tailscale` and others | Certificates for `*.ts.net` names. The operator must opt in to Tailscale. |
+| `github.com/corazawaf/coraza-caddy/v2` (`CORAZA_CADDY_VERSION`) | `http.handlers.waf` | The optional Coraza WAF with the embedded OWASP CRS v4 (Phase 7, `security.waf`, off by default). `test-waf.sh` tests it. |
 
 The module `tls internal` is part of Caddy.
 It needs none of the modules above.
 The local CA mode works with the stock Caddy image.
 
-The architecture plan mentions an optional Coraza module.
-This image does not contain it.
+The image has the optional Coraza module since Phase 7 (`docs/console-server.md` section 15).
+`images/caddy/test-waf.sh [IMAGE]` checks it in Docker.
 
 ## Status of the module list
 

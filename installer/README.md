@@ -61,26 +61,27 @@ Exit codes: `0` success, `1` failure, `2` wrong flags.
 
 ## What the script does
 
-The script detects the host and then runs 16 steps.
+The script detects the host and then runs 17 steps.
 Each step is a function named `step_<name>`.
 Each step is idempotent. If nothing changes, it prints `already configured`.
 
-1. Packages: `podman skopeo restic avahi-daemon nftables systemd-timesyncd unattended-upgrades ca-certificates curl uidmap`, and also `catatonit` and `iproute2`. Check podman before the install (the installed version, or else the apt candidate) and after it: 5.4 or newer (`MIN_PODMAN`), quadlet present. Debian 13 (trixie) ships 5.4. Ubuntu 24.04 (podman 4.9) is not supported in this version.
+1. Packages: `podman skopeo restic avahi-daemon nftables systemd-timesyncd unattended-upgrades ca-certificates curl uidmap`, and also `catatonit` and `iproute2`. Check podman before the install (the installed version, or else the apt candidate) and after it: 5.4 or newer (`MIN_PODMAN`), quadlet present. Debian 13 (trixie) ships 5.4. Ubuntu 24.04 (podman 4.9) is not supported in this version. On Fedora Server 42 or newer (experimental, `PKG_MGR=dnf`), the step installs the Fedora packages with `dnf` (`docs/install.md`, "Fedora").
 2. Memory cgroup: edit `/boot/firmware/cmdline.txt` on a Pi. Otherwise check the controller.
 3. zram swap of at least 90 % of RAM: `rpi-swap` drop-in on Pi OS, `systemd-zram-generator` elsewhere.
 4. Host name: change it only for `--hostname` or for the default `raspberrypi`.
 5. avahi: `allow-interfaces`, `use-ipv4`, restart, print the announced name and the IPs.
 6. Time: `systemd-timesyncd`, `timedatectl set-ntp true`.
 7. Journal: `/etc/systemd/journald.conf.d/50-care-pi.conf` (`Storage=persistent`, `SystemMaxUse=200M`), `/var/log/journal` (root:systemd-journal 2755), `systemd-tmpfiles`, restart `systemd-journald`, `journalctl --flush` (S45).
-8. Firewall: table `inet care-pi` in `/etc/care-pi/firewall.nft`, loaded by `care-pi-firewall.service` (S44). It accepts 80/tcp, 443/tcp, 8443/tcp (the console, S48), and 5353/udp. No default-drop policy before Phase 7 (S42). The step also removes the setup of an older install.sh (see below). The installer never installs Tailscale (S37). When the operator turns the Tailscale mode on, the agent installs it (`docs/connectivity.md` section 4), and `apply` writes the drop-in `/etc/systemd/system/care-pi-firewall.service.d/50-care-pi-tailscale.conf`: it adds 41641/udp to the table after `nft -f`. The installer does not change `firewall.nft` for it.
+8. Firewall: table `inet care-pi` in `/etc/care-pi/firewall.nft`, loaded by `care-pi-firewall.service` (S44). It accepts 80/tcp, 443/tcp, 8443/tcp (the console, S48), and 5353/udp. The step also removes the setup of an older install.sh (see below). The installer never installs Tailscale (S37). From Phase 7, `care-pi apply` renders the table of the agent (`/etc/care-pi/rendered/firewall/care-pi.nft`, with the policy of `security.firewall.policy`, 41641/udp when Tailscale is on) and the drop-in `/etc/systemd/system/care-pi-firewall.service.d/50-care-pi.conf` that makes the unit load it. `--firewall-drop` writes `security.firewall.policy: drop` to the new `config.yaml` (`docs/console-server.md` section 13).
 9. unattended-upgrades: `/etc/apt/apt.conf.d/52care-pi.conf`, timers.
 10. `apt-mark hold` for `podman crun netavark aardvark-dns conmon skopeo`.
 11. Directories under `/etc/care-pi` and `/var/lib/care-pi`.
 12. Agent binary: copy `--binary`, or download and verify the checksum.
-13. Agent service: `/etc/systemd/system/care-pi.service` (`care-pi serve`, `Type=notify`, `Restart=always`, `MemoryMax=128M`, `MemorySwapMax=32M`, `ProtectSystem=strict` with `ReadWritePaths`; function `care_pi_unit`). Enable it and start it. Restart it when the unit or the binary changed. The installer owns this unit: `care-pi apply` never writes it. `docs/console-server.md`, section 2, explains each line. The backups (Phase 3) add no path and no capability to the sandbox: restic, the probe of a destination, and the commands of a disk preparation run in transient units (`systemd-run`), and systemd mounts the backup disks from their mount units (`docs/backups.md`, "The sandbox").
-14. NetworkManager dispatcher hook `90-care-pi`. The hook coalesces the events of 5 s into one apply (15 s in the first 3 minutes after the boot: function `debounce_s`, from `/proc/uptime`). The apply waits up to 60 s for a LAN IPv4 address (`--address-wait`). It holds its flock until the apply ends, so its applies never overlap. An event during an apply gives one more apply after it.
-15. sysctl: `/etc/sysctl.d/50-care-pi.conf` with `net.ipv4.ip_nonlocal_bind = 1`, then restart `systemd-sysctl` (function `sysctl_conf`; `apply` renders the same file). The pod can then publish on an address that is not there yet: the Tailscale address, a second LAN address of Wi-Fi (`docs/connectivity.md`, section 4.2).
-16. `care-pi host check`, then `care-pi bootstrap --hostname NAME --preset NAME --fe-provider NAME --yes [--unattended]`. In setup mode (the default), bootstrap prints the claim code in a box, and the script prints the console URLs (`https://<name>:8443/`, `https://<ip>:8443/`). With `--unattended`, the script prints the Care URLs. The last message says `Care is ready` only when an FE build exists. Else it tells how to leave the setup page.
+13. Privileged helper (Phase 7): the system user and group `care-pi` (`useradd --system`), `/etc/systemd/system/care-pi-helper.socket` (`/run/care-pi-helper/helper.sock`, 0660 root:care-pi) and `care-pi-helper.service` (`care-pi helper`, root, `Type=notify`), and enable the socket (functions `helper_socket_unit`, `helper_unit`). With `--helper`, also the drop-in `/etc/systemd/system/care-pi.service.d/60-helper.conf` (`care-pi serve --helper`, `NoNewPrivileges=yes`, a small `CapabilityBoundingSet`); without it, the step removes the drop-in. `docs/console-server.md`, section 14.
+14. Agent service: `/etc/systemd/system/care-pi.service` (`care-pi serve`, `Type=notify`, `Restart=always`, `MemoryMax=128M`, `MemorySwapMax=32M`, `ProtectSystem=strict` with `ReadWritePaths`; function `care_pi_unit`). Enable it and start it. Restart it when the unit or the binary changed. The installer owns this unit: `care-pi apply` never writes it. `docs/console-server.md`, section 2, explains each line. The backups (Phase 3) add no path and no capability to the sandbox: restic, the probe of a destination, and the commands of a disk preparation run in transient units (`systemd-run`), and systemd mounts the backup disks from their mount units (`docs/backups.md`, "The sandbox").
+15. NetworkManager dispatcher hook `90-care-pi`. The hook coalesces the events of 5 s into one apply (15 s in the first 3 minutes after the boot: function `debounce_s`, from `/proc/uptime`). The apply waits up to 60 s for a LAN IPv4 address (`--address-wait`). It holds its flock until the apply ends, so its applies never overlap. An event during an apply gives one more apply after it.
+16. sysctl: `/etc/sysctl.d/50-care-pi.conf` with `net.ipv4.ip_nonlocal_bind = 1`, then restart `systemd-sysctl` (function `sysctl_conf`; `apply` renders the same file). The pod can then publish on an address that is not there yet: the Tailscale address, a second LAN address of Wi-Fi (`docs/connectivity.md`, section 4.2).
+17. `care-pi host check`, then `care-pi bootstrap --hostname NAME --preset NAME --fe-provider NAME --yes [--unattended]`. In setup mode (the default), bootstrap prints the claim code in a box, and the script prints the console URLs (`https://<name>:8443/`, `https://<ip>:8443/`). With `--unattended`, the script prints the Care URLs. The last message says `Care is ready` only when an FE build exists. Else it tells how to leave the setup page.
 
 With `--image-build`, the steps write their files and enable their units with `systemctl enable` (offline in the chroot).
 They skip each action that needs a running system: `systemctl start`/`restart`/`reload`, `hostnamectl`, `timedatectl`,
@@ -155,6 +156,16 @@ docker run --rm -v "$PWD/installer:/src:ro" debian:trixie sh -c '
 The second run must print `already configured` for each step. `cmdline.txt` must have
 `cgroup_enable=memory cgroup_memory=1` and no `cgroup_disable=memory`. `systemctl` must print `enabled` twice.
 The full image build (`image/build.sh`) also runs the script in the chroot of Raspberry Pi OS Lite.
+
+Fedora (experimental, Phase 7) and Ubuntu have the same container checks:
+
+```sh
+docker run --rm -v "$PWD/installer:/src:ro" fedora:43 sh /src/install.sh --dry-run --skip-bootstrap --binary /bin/true
+docker run --rm -v "$PWD/installer:/src:ro" -e CARE_PI_ALLOW_NO_SYSTEMD=1 fedora:43 \
+  sh -c 'for i in 1 2; do sh /src/install.sh --yes --skip-bootstrap --binary /bin/true --no-firewall; done'
+docker run --rm -v "$PWD/installer:/src:ro" -e CARE_PI_ALLOW_NO_SYSTEMD=1 ubuntu:26.04 \
+  sh -c 'for i in 1 2; do sh /src/install.sh --yes --skip-bootstrap --binary /bin/true --no-firewall; done'
+```
 
 ### Choices to know
 

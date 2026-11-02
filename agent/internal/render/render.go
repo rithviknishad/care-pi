@@ -83,6 +83,9 @@ var outputs = []output{
 	{"fe-build.sh.tmpl", paths.RenderedFE + "/" + FEBuildScriptName, 0o700, 0, feBuild},
 	// Phase 6 (docs/connectivity.md, section 4.2): a publish on an absent optional address does not stop the pod.
 	{"sysctl.conf.tmpl", paths.SysctlFile, 0o644, 0, always},
+	// Phase 7 (docs/console-server.md, section 13): the drop-in that loads the table of the agent. renderFirewall
+	// writes the table.
+	{"firewall.conf.tmpl", paths.FirewallDropIn, 0o644, 0, always},
 }
 
 // phase4Outputs are the outputs of Phase 4 (docs/solutions.md).
@@ -98,11 +101,15 @@ var phase4Outputs = []dynOutput{
 	// Phase 6 (docs/connectivity.md).
 	{output{"care-dns-update.timer.tmpl", systemd(DNSUpdateTimer), 0o644, 0, dnsUpdate}, nil},
 	{output{"care-dns-update.service.tmpl", systemd("care-dns-update.service"), 0o644, 0, dnsUpdate}, nil},
-	{output{"firewall-tailscale.conf.tmpl", paths.FirewallDropIn, 0o644, 0, firewallTailscale}, nil},
+	// Phase 7: the opt-in telemetry (docs/telemetry.md).
+	{output{"care-telemetry.image.tmpl", quadlet("care-telemetry.image"), 0o644, 0, telemetry}, nil},
+	{output{"care-node-exporter.image.tmpl", quadlet("care-node-exporter.image"), 0o644, 0, telemetry}, nil},
+	{output{"care-node-exporter.container.tmpl", quadlet("care-node-exporter.container"), 0o644, 0, telemetry}, nil},
+	{output{"care-telemetry.container.tmpl", quadlet("care-telemetry.container"), 0o644, 0, telemetry}, nil},
+	{output{"telemetry-scrape.yml.tmpl", paths.RenderedTelemetry + "/scrape.yml", 0o644, 0, telemetry}, nil},
 }
 
-func dnsUpdate(m *Model) bool         { return m.DNSUpdate && !m.Bootstrap }
-func firewallTailscale(m *Model) bool { return m.FirewallTailscale }
+func dnsUpdate(m *Model) bool { return m.DNSUpdate && !m.Bootstrap }
 
 // TimerUnits are the update timers that apply enables (docs/solutions.md, section 10.2).
 var TimerUnits = []string{"care-update-check.timer", "care-update-apply.timer"}
@@ -130,6 +137,8 @@ var funcs = template.FuncMap{
 		}
 		return out
 	},
+	// sd escapes a value for an Exec line of systemd: % starts a specifier.
+	"sd": func(s string) string { return strings.ReplaceAll(s, "%", "%%") },
 	"short": func(s string) string {
 		if i := strings.Index(s, "@sha256:"); i >= 0 && len(s) > i+20 {
 			return s[:i+20]
@@ -209,6 +218,9 @@ func Render(m *Model) (Tree, error) {
 		}
 		tree[p] = File{Path: p, Content: tidy(b.Bytes()), Mode: o.mode, GID: o.gid}
 	}
+	if err := renderFirewall(t, m, tree); err != nil {
+		return nil, err
+	}
 	if careBuild(m) {
 		cf := paths.RenderedBuild + "/Containerfile"
 		tree[cf] = File{Path: cf, Content: carebuild.Containerfile, Mode: 0o644}
@@ -221,6 +233,29 @@ func Render(m *Model) (Tree, error) {
 		}
 	}
 	return tree, nil
+}
+
+// renderFirewall writes the table inet care-pi. The boot file (paths.FirewallFile) has the confirmed policy: a
+// policy drop of config.yaml that waits for its confirmation goes to paths.FirewallPendingFile, which the apply loads
+// for the trial and "care-pi firewall confirm" moves over the boot file. A reboot before the confirmation loads
+// accept. The pending file is the same text as the boot file after the confirmation.
+func renderFirewall(t *template.Template, m *Model, tree Tree) error {
+	put := func(p string, x *Model) error {
+		var b bytes.Buffer
+		if err := t.ExecuteTemplate(&b, "firewall.nft.tmpl", x); err != nil {
+			return fmt.Errorf("render: firewall.nft.tmpl: %w", err)
+		}
+		tree[p] = File{Path: p, Content: tidy(b.Bytes()), Mode: 0o644}
+		return nil
+	}
+	boot := *m
+	if m.Firewall.Policy == "drop" && !m.FirewallDropConfirmed {
+		if err := put(paths.FirewallPendingFile, m); err != nil {
+			return err
+		}
+		boot.Firewall = FirewallModel{Policy: "accept", SSH: m.Firewall.SSH, Waits: true}
+	}
+	return put(paths.FirewallFile, &boot)
 }
 
 // tidy removes trailing spaces and collapses runs of blank lines that template actions leave.
@@ -273,7 +308,8 @@ func Owned(p string) bool {
 	case p == systemd("care-update-check.timer"), p == systemd("care-update-check.service"),
 		p == systemd("care-update-apply.timer"), p == systemd("care-update-apply.service"):
 		return true
-	case p == systemd(DNSUpdateTimer), p == systemd("care-dns-update.service"), p == paths.FirewallDropIn, p == paths.SysctlFile:
+	case p == systemd(DNSUpdateTimer), p == systemd("care-dns-update.service"), p == paths.FirewallDropIn,
+		p == paths.FirewallDropInLegacy, p == paths.SysctlFile:
 		return true
 	}
 	return false

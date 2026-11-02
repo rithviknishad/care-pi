@@ -5,7 +5,8 @@ The planning documents are in `plans/`. Start with `plans/09-handoff.md`.
 
 | File | Content |
 |---|---|
-| `install.md` | Install Care on a host with `installer/install.sh`. The setup mode and the claim code. |
+| `quickstart-clinic.md` | Phase 7: the quick start of an operator for a clinic: flash, claim, wizard, certificate, backups, updates (with screenshots in `images/quickstart/`). |
+| `install.md` | Install Care on a host with `installer/install.sh`. The setup mode and the claim code. Fedora (experimental). |
 | `config.md` | Each key of `/etc/care-pi/config.yaml`. |
 | `apply.md` | How `care-pi apply` works: the lock, the steps, the rendered files, the plan rules, setup mode. |
 | `fe.md` | The FE providers and the FE build. |
@@ -17,3 +18,7 @@ The planning documents are in `plans/`. Start with `plans/09-handoff.md`.
 | `connectivity.md` | Phase 6: the name-constrained local CA, the public name, Tailscale, the names that Care serves, Wi-Fi and the failover. |
 | `dns-service.md` | Phase 6: the DNS/ACME service (`services/dns/`). |
 | `api/` | The contract between the agent and the console (OpenAPI 3.1 and its design note). |
+| `telemetry.md` | Phase 7: opt-in telemetry (`remote_write` of vmagent and node_exporter) and `GET /api/v1/metrics`. |
+| `troubleshooting.md` | Phase 7: `care-pi doctor`, the common problems and their fixes, the logs, the support bundle. |
+| `releasing.md` | Phase 7: each artefact and its workflow, a new solution release, the signing, the docs site. |
+| `site/` | Phase 7: the MkDocs configuration and `build.sh` of the docs site (`releasing.md`, "The docs site"). |

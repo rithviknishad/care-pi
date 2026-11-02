@@ -29,15 +29,45 @@ Supported hosts:
 | Raspberry Pi OS Lite, trixie, 64-bit | Supported. This is the target. It ships podman 5.4. |
 | Debian 13 (trixie), amd64 or arm64 | Supported. It ships podman 5.4. |
 | Ubuntu 24.04 and older | Not supported in this version. Ubuntu 24.04 ships podman 4.9. The script stops before it changes the host. |
-| Ubuntu 25.04 or newer | Not tested. The podman check decides. |
+| Ubuntu 25.04 or newer | Tested in a container only (Phase 7): 25.04 ships podman 5.4.1, 25.10 ships 5.4.2, 26.04 LTS ships 5.7.0, and 26.10 ships 5.8.6. The podman check decides. |
 | Debian 12 | Stops at the podman check, before the script installs a package. Podman 4.3.1 is too old. |
-| Fedora and Red Hat family | Not supported in this version. |
+| Fedora Server 42 or newer | Experimental (Phase 7, S57). See [Fedora](#fedora-experimental). Fedora 42 ships podman 5.8.2, Fedora 43 and 44 ship 5.8.9. |
+| Fedora 41 and older, Fedora with rpm-ostree (CoreOS, IoT, Atomic desktops) | Refused. |
+| Red Hat Enterprise Linux, CentOS, Rocky Linux, AlmaLinux | Not supported in this version. |
 | 32-bit systems | Refused. |
 
 The script needs systemd as PID 1, cgroup v2, and podman 5.4 or newer with quadlet.
 The agent requires the same podman version (`care-pi host check`).
 The script checks the podman version before it installs a package.
 The script adds no third-party apt repository.
+
+### Fedora (experimental)
+
+On Fedora Server 42 or newer, the script uses `dnf` (S57):
+
+- Step 1 installs `podman skopeo restic nftables dnf-automatic ca-certificates curl shadow-utils catatonit iproute diffutils`,
+  `avahi`, and `chrony` (the NTP client of Fedora) when no other NTP client is there.
+  The podman check reads the candidate with `dnf repoquery`.
+- Step 3 installs `zram-generator`. Fedora already has zram swap; the drop-in sets it to the size of the RAM.
+- Step 6 enables `chronyd.service`.
+- Step 8: Fedora Server runs `firewalld`. The script adds the services `http`, `https`, `mdns`, and the port 8443/tcp
+  to the default zone (`firewall-cmd --permanent`, then `--reload`). It does not install the table `inet care-pi`, so
+  `security.firewall.policy` has no effect: firewalld keeps its own policy (the FedoraServer zone drops each port that
+  it does not list). Without firewalld, the step is the same as on Debian.
+- Step 9 writes `/etc/dnf/automatic.conf` (`upgrade_type = security`, `apply_updates = yes`, `reboot = never`) and
+  enables `dnf5-automatic.timer`.
+- Step 10 holds no packages.
+
+Limits of this version:
+
+- SELinux must be permissive. The quadlets of Care bind-mount host directories without SELinux labels (`:z`, `:Z`).
+  With SELinux enforcing, the script stops with this message:
+  `SELinux is enforcing. Care on Fedora is experimental and needs SELinux in permissive mode: the containers of Care bind-mount host directories without SELinux labels. Run 'sudo setenforce 0' and set SELINUX=permissive in /etc/selinux/config, then run the script again.`
+- `care-pi update --os` and the OS part of the updates page are for Debian-family hosts. On Fedora, the job
+  `os-update` stops with `os-update-failed`, and `dnf-automatic` installs the security updates. Run
+  `sudo dnf upgrade` for the other updates.
+- Tests: a dry run and two real runs of the script in a `fedora:43` container (no systemd, no SELinux). No test on a
+  real Fedora host yet.
 
 ## Run the script
 
@@ -92,6 +122,8 @@ If there is no terminal, it stops and asks you to add `--yes`.
 | `--unattended` | `CARE_PI_UNATTENDED` | off | Ask no questions. Imply `--yes`. Run `care-pi bootstrap --unattended`: install Care at once, without the console setup (the Phase 1 behaviour). Use it for CI tests and prepared hosts. |
 | `--yes` | `CARE_PI_YES` | off | Do not ask for confirmation. |
 | `--no-firewall` | `CARE_PI_NO_FIREWALL` | off | Do not install the care-pi firewall (`care-pi-firewall.service` and its nftables table). |
+| `--helper` | `CARE_PI_HELPER` | off | Phase 7, experimental. `care-pi.service` runs `care-pi serve --helper`: the agent sends each host command to `care-pi-helper.service` (root, an allow-list) and runs with `NoNewPrivileges=yes`. The script always installs the helper; this flag only switches the agent to it (`docs/console-server.md` section 14). |
+| `--firewall-drop` | `CARE_PI_FIREWALL_DROP` | off | Phase 7. Bootstrap writes `security.firewall.policy: drop` (only the allow-list). The first apply starts a rollback timer of 90 s: open a new SSH session and run `sudo care-pi firewall confirm`. Without it, the policy goes back to `accept`. Not with `--no-firewall` or `--image-build` (`docs/console-server.md` section 13). |
 | `--no-avahi` | `CARE_PI_NO_AVAHI` | off | Do not install or configure avahi. |
 | `--no-apt-hold` | `CARE_PI_NO_APT_HOLD` | off | Do not hold the container packages. |
 | `--skip-bootstrap` | `CARE_PI_SKIP_BOOTSTRAP` | off | Prepare the host. Do not run `care-pi bootstrap`. |
@@ -132,10 +164,11 @@ It stops if the host is not supported.
 | 10 | apt holds | The script runs `apt-mark hold` on `podman crun netavark aardvark-dns conmon skopeo`. A Care release updates these packages on purpose. The future command `care-pi update --os` lifts the holds. |
 | 11 | Directories | The script creates `/etc/care-pi` and `/var/lib/care-pi` with the owners and modes from the Phase 1 contract. |
 | 12 | Agent | The script installs `/usr/local/bin/care-pi`. See [Agent download](#agent-download). |
-| 13 | Agent service | The script writes `/etc/systemd/system/care-pi.service` (`care-pi serve`: the console API on `/run/care-pi/api.sock`), enables it, and starts it. It restarts the unit when the unit or the binary changed. After a reboot request, the unit starts at the next boot. `docs/console-server.md` describes the unit. The backups add no path and no capability to its sandbox (`docs/backups.md`, "The sandbox"). |
-| 14 | NetworkManager hook | If NetworkManager is present, the script installs `/etc/NetworkManager/dispatcher.d/90-care-pi`. After an address change, it waits 5 s (15 s in the first 3 minutes after the boot, from `/proc/uptime`) and runs `care-pi apply --reason address-change`. The events of that time give one apply. An event during an apply gives one more apply after it. Two applies of the hook never overlap. The apply also waits up to 60 s for a LAN IPv4 address (`docs/apply.md`, step 5). |
-| 15 | sysctl | The script writes `/etc/sysctl.d/50-care-pi.conf` with `net.ipv4.ip_nonlocal_bind = 1` and restarts `systemd-sysctl`. The pod can then publish on an address that is not there yet (the Tailscale address, a second LAN address of Wi-Fi), so a missing address does not stop Care at the boot (`docs/connectivity.md`, section 4.2). `care-pi apply` renders the same file. |
-| 16 | Host check and bootstrap | The script runs `care-pi host check`. Then it runs `care-pi bootstrap --hostname NAME --preset NAME --fe-provider NAME --yes` (with `--unattended` when the script has it). On a new host, bootstrap starts setup mode and prints the claim code. With `--unattended` and `--fe-provider local`, bootstrap also makes the first care_fe build. A host with an earlier install (a `lock.yaml`) always gets the full apply. |
+| 13 | Privileged helper | Phase 7. The script creates the system user and group `care-pi`. It writes `/etc/systemd/system/care-pi-helper.socket` (`/run/care-pi-helper/helper.sock`, mode 0660, root:care-pi) and `care-pi-helper.service` (`care-pi helper`, root), and enables the socket. With `--helper`, it also writes the drop-in `/etc/systemd/system/care-pi.service.d/60-helper.conf`: the agent sends each host command to the helper and runs with `NoNewPrivileges=yes`. Without `--helper`, it removes the drop-in. `docs/console-server.md` section 14. |
+| 14 | Agent service | The script writes `/etc/systemd/system/care-pi.service` (`care-pi serve`: the console API on `/run/care-pi/api.sock`), enables it, and starts it. It restarts the unit when the unit or the binary changed. After a reboot request, the unit starts at the next boot. `docs/console-server.md` describes the unit. The backups add no path and no capability to its sandbox (`docs/backups.md`, "The sandbox"). |
+| 15 | NetworkManager hook | If NetworkManager is present, the script installs `/etc/NetworkManager/dispatcher.d/90-care-pi`. After an address change, it waits 5 s (15 s in the first 3 minutes after the boot, from `/proc/uptime`) and runs `care-pi apply --reason address-change`. The events of that time give one apply. An event during an apply gives one more apply after it. Two applies of the hook never overlap. The apply also waits up to 60 s for a LAN IPv4 address (`docs/apply.md`, step 5). |
+| 16 | sysctl | The script writes `/etc/sysctl.d/50-care-pi.conf` with `net.ipv4.ip_nonlocal_bind = 1` and restarts `systemd-sysctl`. The pod can then publish on an address that is not there yet (the Tailscale address, a second LAN address of Wi-Fi), so a missing address does not stop Care at the boot (`docs/connectivity.md`, section 4.2). `care-pi apply` renders the same file. |
+| 17 | Host check and bootstrap | The script runs `care-pi host check`. Then it runs `care-pi bootstrap --hostname NAME --preset NAME --fe-provider NAME --yes` (with `--unattended` when the script has it). On a new host, bootstrap starts setup mode and prints the claim code. With `--unattended` and `--fe-provider local`, bootstrap also makes the first care_fe build. A host with an earlier install (a `lock.yaml`) always gets the full apply. |
 
 The script writes a log to `/var/log/care-pi-install.log`.
 It prefixes its own lines with `[care-pi]`.
@@ -231,10 +264,11 @@ skips each step that needs a running system:
 | 10. Holds | `apt-mark hold` of the container packages. | Nothing. |
 | 11. Directories | The same. | Nothing. |
 | 12. Agent | Copies `--binary` and runs `care-pi version`. | Nothing. |
-| 13. Agent service | Writes `care-pi.service`. Enables it. | The start. It starts at the first boot. |
-| 14. NetworkManager hook | The same. | Nothing. |
-| 15. sysctl | Writes `50-care-pi.conf`. | The restart of `systemd-sysctl`. It loads the file at the first boot. |
-| 16. Host check and bootstrap | Nothing. | `care-pi host check` and `care-pi bootstrap`. At the first boot, `care-firstboot.service` runs `care-pi bootstrap --from-image`. |
+| 13. Privileged helper | Creates the user `care-pi`. Writes the helper units. Enables `care-pi-helper.socket`. | The start. The socket listens from the first boot. |
+| 14. Agent service | Writes `care-pi.service`. Enables it. | The start. It starts at the first boot. |
+| 15. NetworkManager hook | The same. | Nothing. |
+| 16. sysctl | Writes `50-care-pi.conf`. | The restart of `systemd-sysctl`. It loads the file at the first boot. |
+| 17. Host check and bootstrap | Nothing. | `care-pi host check` and `care-pi bootstrap`. At the first boot, `care-firstboot.service` runs `care-pi bootstrap --from-image`. |
 
 Run the script again with `--image-build`: each step prints `already configured`.
 
@@ -396,13 +430,14 @@ sudo sh installer/uninstall.sh --purge-data
 
 The script:
 
-1. runs `systemctl disable --now care-pi.service` (the console agent) and removes its socket,
+1. runs `systemctl disable --now care-pi.service` (the console agent) and removes its socket, then disables and stops `care-pi-helper.socket` and `care-pi-helper.service`,
 2. stops `care.target` and `care-clock.service`, and disables `care-start.service`, `care.target`, and `care-clock.service` with `systemctl`.
    It disables and stops `care-backup.target` and the `care-backup-*` units, and stops the mount units of the backup disks,
 3. waits until every `care-*` unit is inactive (except `care-pi-firewall.service`, which step 4 stops),
 4. runs `systemctl disable --now care-pi-firewall.service`. The stop deletes the table `inet care-pi`,
 5. removes the quadlets (`/etc/containers/systemd/care*`), the unit files (also `care-pi.service`, `care-backup.target`, and the mount units of the backup disks), the NetworkManager hook, `/etc/sysctl.d/50-care-pi.conf` (the setting stays until the next boot), `/etc/care-pi/firewall.nft`, the files of an older install.sh, and the agent binary,
-6. removes a leftover pod `care` with `podman pod rm -f`.
+6. removes a leftover pod `care` with `podman pod rm -f`,
+7. removes the system user and group `care-pi` (Phase 7).
 
 The script never stops the pod unit with `systemctl`.
 
@@ -418,6 +453,10 @@ The packages, the kernel command line, the zram, avahi, and journald settings, t
 The container images stay in the podman storage, so a new install does not download them again.
 
 ## If the script fails
+
+First run `sudo care-pi doctor`: it checks the ports, the mDNS name, the clock, the memory controller, zram, the disks,
+the units, the certificates, the backups, and the firewall, and prints a fix for each problem
+(`docs/console-server.md` section 16).
 
 Read the last lines of the output.
 They name the step that failed.

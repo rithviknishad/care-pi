@@ -53,10 +53,14 @@ const (
 	EnsureCA Kind = "ensure-ca"
 	// DisableUnits (Phase 6) stops and disables a timer before apply deletes its file (care-dns-update.timer).
 	DisableUnits Kind = "disable-units"
-	// ReloadFirewall (Phase 6) reloads care-pi-firewall.service after a change of its drop-in (Tailscale port).
+	// ReloadFirewall (Phase 6) reloads care-pi-firewall.service after a change of its drop-in or of the table of the
+	// agent (Phase 7). A change of the policy from accept to drop first starts the rollback timer.
 	ReloadFirewall Kind = "reload-firewall"
 	// UpdateDNS (Phase 6) sends a new LAN address to the DNS service (public mode). A failure is a warning.
 	UpdateDNS Kind = "update-dns"
+	// EnsureTelemetry (Phase 7) restarts the units of the opt-in telemetry after a change (Units: the image units
+	// first) and stops them after telemetry.enabled false (Names). It never restarts the stack.
+	EnsureTelemetry Kind = "ensure-telemetry"
 )
 
 // Action is one step of a plan.
@@ -196,7 +200,10 @@ var cycleUnits = map[string]bool{"care-db": true, "care-redis": true}
 var cutoverUnits = map[string]bool{"care-beat": true, "care-worker": true, "care-api": true}
 
 // Images that do not belong to a running unit.
-var transientImages = map[string]bool{"node": true}
+var transientImages = map[string]bool{"node": true, "vmagent": true, "node-exporter": true}
+
+// telemetryUnits are the units of the opt-in telemetry (Phase 7): a change restarts only them, never the stack.
+var telemetryUnits = map[string]bool{"care-telemetry": true, "care-node-exporter": true}
 
 // Diff compares the desired tree with the current files.
 func Diff(desired render.Tree, current map[string][]byte) []Change {
@@ -256,6 +263,9 @@ func Build(in Input) *Plan {
 		dnsTimer        bool
 		restart         = map[string]bool{}
 		cycle           []string
+		telRestart      = map[string]bool{}
+		telImage        = map[string]bool{}
+		telStop         = map[string]bool{}
 	)
 	if _, ok := in.Desired[paths.SystemdDir+"/"+render.DNSUpdateTimer]; ok {
 		dnsTimer = true
@@ -272,6 +282,16 @@ func Build(in Input) *Plan {
 			unitFiles = true
 			u := unitOf(c.Path)
 			switch {
+			case telemetryUnits[u]:
+				switch {
+				case c.Kind == Delete:
+					telStop[u] = true
+				case path.Ext(c.Path) == ".image":
+					telImage[u] = true
+					telRestart[u] = true
+				default:
+					telRestart[u] = true
+				}
 			case u == "care-pod":
 				podChanged = !podShrinkOnly(in.Desired[c.Path].Content, in.PodLive, in.PodActive, in.HostAddrs)
 			case u == "care-fe-build", u == "care-plug-build", strings.HasPrefix(u, "care-build-"):
@@ -302,9 +322,15 @@ func Build(in Input) *Plan {
 			if b == render.DNSUpdateTimer && c.Kind == Delete {
 				disable = append(disable, b)
 			}
-		case c.Path == paths.FirewallDropIn:
+		case c.Path == paths.FirewallDropIn, c.Path == paths.FirewallDropInLegacy:
 			unitFiles = true
 			firewall = true
+		case strings.HasPrefix(c.Path, paths.RenderedFirewall+"/"):
+			firewall = true
+		case strings.HasPrefix(c.Path, paths.RenderedTelemetry+"/"):
+			if c.Kind != Delete {
+				telRestart["care-telemetry"] = true
+			}
 		case strings.HasPrefix(c.Path, paths.RenderedBackup+"/"):
 			backupConf = true
 		case c.Path == paths.RenderedCare+"/backend.env":
@@ -333,6 +359,10 @@ func Build(in Input) *Plan {
 	}
 	for _, s := range in.SecretsChanged {
 		for _, u := range in.SecretUnits[s] {
+			if telemetryUnits[u] {
+				telRestart[u] = true
+				continue
+			}
 			if cycleUnits[u] {
 				cycle = append(cycle, "secret "+s+" changed")
 			} else {
@@ -481,6 +511,23 @@ func Build(in Input) *Plan {
 	}
 	if in.DNSStale && !in.Bootstrap {
 		add(Action{Kind: UpdateDNS})
+	}
+	// Phase 7: the telemetry units restart alone (an image unit pulls first); after telemetry.enabled false they stop.
+	if (len(telRestart) > 0 || len(telStop) > 0) && !in.Bootstrap {
+		a := Action{Kind: EnsureTelemetry}
+		for _, u := range []string{"care-node-exporter", "care-telemetry"} {
+			if telImage[u] {
+				a.Units = append(a.Units, u+"-image.service")
+			}
+		}
+		for _, u := range []string{"care-node-exporter", "care-telemetry"} {
+			if telRestart[u] {
+				a.Units = append(a.Units, u+".service")
+			} else if telStop[u] {
+				a.Names = append(a.Names, u+".service")
+			}
+		}
+		add(a)
 	}
 	if in.LockChanged {
 		add(Action{Kind: WriteLock})

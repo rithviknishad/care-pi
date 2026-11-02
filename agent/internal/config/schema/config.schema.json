@@ -143,8 +143,14 @@
           "properties": {
             "enabled": { "type": "boolean" },
             "hostname": {
+              "description": "The MagicDNS name. <host>.<tailnet>.ts.net with Tailscale; with control_url (Headscale), a name below the base domain of that server.",
               "type": ["string", "null"],
-              "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+ts\\.net$"
+              "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z][a-z0-9-]{0,61}[a-z0-9]$"
+            },
+            "control_url": {
+              "description": "Phase 7 (O4). The URL of a self-hosted control server (Headscale), for tailscale up --login-server. null: the Tailscale service.",
+              "type": ["string", "null"],
+              "pattern": "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[^\\s]*)?$"
             },
             "manage_daemon": { "type": "boolean" }
           },
@@ -247,6 +253,10 @@
           "description": "Phase 4. The URL of index.json (https:// or file://). null: the default URL of this agent release.",
           "type": ["string", "null"],
           "pattern": "^(https://|file:///)[^\\s]+$"
+        },
+        "require_signed": {
+          "description": "Phase 7. Accept index.json and a solution lock only with a valid minisign signature (<file>.minisig) of a trusted key: the keys of the agent (solutions/keys) and /etc/care-pi/keys/*.pub. Default false.",
+          "type": "boolean"
         }
       }
     },
@@ -359,11 +369,75 @@
     "telemetry": {
       "type": "object",
       "additionalProperties": false,
+      "description": "Phase 7 (O12). Opt-in metrics with remote_write only (docs/telemetry.md). Nothing leaves the device while enabled is false.",
+      "allOf": [
+        {
+          "if": { "properties": { "enabled": { "const": true } }, "required": ["enabled"] },
+          "then": { "required": ["remote_write_url"], "properties": { "remote_write_url": { "type": "string" } } }
+        }
+      ],
       "properties": {
         "enabled": { "type": "boolean" },
         "remote_write_url": {
+          "description": "The Prometheus remote-write URL of the receiver (VictoriaMetrics, Prometheus, Grafana Cloud, Mimir). Required when enabled is true.",
           "type": ["string", "null"],
           "pattern": "^https?://[^\\s]+$"
+        },
+        "username": {
+          "description": "Phase 7. The basic auth user of the remote write. The password is /etc/care-pi/secrets/telemetry_password (care-pi telemetry set-password).",
+          "type": ["string", "null"],
+          "pattern": "^[^\\s:]{1,128}$"
+        },
+        "interval_s": {
+          "description": "Phase 7. The scrape interval in seconds. Default 60.",
+          "type": "integer",
+          "minimum": 15,
+          "maximum": 3600
+        }
+      }
+    },
+    "security": {
+      "description": "Phase 7. The hardening options (docs/console-server.md, section 13).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "firewall": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "policy": {
+              "description": "The input policy of the table inet care-pi. accept (default, S42) or drop (only the allow-list). A switch to drop starts a 90 s rollback timer: care-pi firewall confirm keeps it.",
+              "enum": ["accept", "drop"]
+            }
+          }
+        },
+        "ssh": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allow": {
+              "description": "Accept 22/tcp in the firewall. It matters only with the policy drop. Default true.",
+              "type": "boolean"
+            }
+          }
+        },
+        "waf": {
+          "description": "Phase 7. The optional Coraza WAF with the OWASP CRS on the routes of the Care API (/api/* and the other Django paths). Off by default: expect false positives (file uploads, rich text). Needs the care-pi Caddy image with the Coraza module.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "mode": {
+              "description": "detect: log only (SecRuleEngine DetectionOnly; default). block: deny a request over the anomaly threshold with 403.",
+              "enum": ["detect", "block"]
+            },
+            "paranoia": {
+              "description": "The paranoia level of the CRS (1 to 4). Default 1.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4
+            }
+          }
         }
       }
     }

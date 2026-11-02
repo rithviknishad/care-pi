@@ -178,6 +178,9 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 	if pr.ACMEDNS != "" {
 		secretValues[render.ACMEDNSSecret] = pr.ACMEDNS
 	}
+	if pr.TelemetryPassword != "" {
+		secretValues[render.TelemetrySecret] = pr.TelemetryPassword
+	}
 	secretsChanged, err := changedSecrets(ctx, o, secretValues)
 	if err != nil {
 		return nil, err
@@ -274,6 +277,10 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 		}
 		_, _ = fmt.Fprintln(o.Out, "dry run: nothing was written")
 		return res, nil
+	}
+
+	if err := checkWAFModule(ctx, o, pr, p); err != nil {
+		return res, exitcode.With(exitcode.BadInput, err)
 	}
 
 	ex := &executor{o: o, pr: pr, plan: p, secretValues: secretValues, ensure: ensure, provider: provider}
@@ -568,7 +575,7 @@ func secretNames() []string {
 	for _, s := range secrets.PodmanSecrets() {
 		out = append(out, s.Name)
 	}
-	return append(out, render.AdditionalPlugsSecret, render.ACMEDNSSecret)
+	return append(out, render.AdditionalPlugsSecret, render.ACMEDNSSecret, render.TelemetrySecret)
 }
 
 // secretUnits maps each podman secret to the units that read it.
@@ -579,6 +586,7 @@ func secretUnits() map[string][]string {
 	}
 	units[render.AdditionalPlugsSecret] = []string{"care-beat", "care-worker", "care-api"}
 	units[render.ACMEDNSSecret] = []string{"care-caddy"}
+	units[render.TelemetrySecret] = []string{"care-telemetry"}
 	return units
 }
 

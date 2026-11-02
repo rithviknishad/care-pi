@@ -1,5 +1,6 @@
 // Status, network, host check, config, apply, FE, Care, and power routes of the mock.
 
+import { onApply } from "./security.mjs";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -234,6 +235,18 @@ function plan(state, before, after) {
     });
     if (impact === "none") impact = "reload";
   }
+  if (changed(before.security, after.security)) {
+    changes.push({ path: "/etc/care-pi/rendered/firewall/care-pi.nft", kind: "modify" });
+    actions.push({
+      kind: "reload-firewall",
+      text: "reload-firewall: care-pi-firewall.service",
+      units: ["care-pi-firewall.service"],
+      paths: [],
+      names: [],
+      reason: null,
+    });
+    if (impact === "none") impact = "reload";
+  }
   if (changed(before.backups, after.backups)) {
     const n = after.backups?.destinations?.length ?? 0;
     const disks = (after.backups?.destinations ?? []).filter((d) => d.disk_label).length;
@@ -442,6 +455,7 @@ function configWrite(ctx, nextFile) {
     state.file = before;
     throw e;
   }
+  if (apply) onApply(state, before, nextFile);
   const newTag = etagOf(state.file);
   sendJson(
     res,

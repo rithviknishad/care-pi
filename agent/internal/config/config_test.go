@@ -96,6 +96,21 @@ func TestPhase6Keys(t *testing.T) {
 	}
 }
 
+// Phase 7 (O4): a self-hosted control server (Headscale) allows a MagicDNS name outside ts.net.
+func TestHeadscaleControlURL(t *testing.T) {
+	c, err := Load("testdata/valid-headscale.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.TLS.Tailscale.ControlURL != "https://headscale.example.org" || c.TLS.Tailscale.Hostname != "care.clinic.example.org" {
+		t.Fatalf("tailscale: %+v", c.TLS.Tailscale)
+	}
+	_, err = Load("testdata/invalid-tailscale-not-ts-net.yaml")
+	if err == nil || !strings.Contains(err.Error(), "/tls/tailscale/hostname: must end in .ts.net") {
+		t.Fatalf("a name outside ts.net without control_url must fail, got %v", err)
+	}
+}
+
 // Phase 4 keys: the schema accepts them, and apply implements them (wave 6a).
 func TestPhase4Keys(t *testing.T) {
 	c, err := Load("testdata/valid-phase4.yaml")
@@ -252,5 +267,31 @@ func TestDocsMentionEveryKey(t *testing.T) {
 		if !strings.Contains(string(data), "`"+k+"`") {
 			t.Errorf("docs/config.md does not mention `%s`", k)
 		}
+	}
+}
+
+func TestWithFirewallPolicy(t *testing.T) {
+	data, err := DefaultYAML("", "care", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	same, err := WithFirewallPolicy(data, "accept")
+	if err != nil || string(same) != string(data) {
+		t.Fatalf("accept changed the file: %v", err)
+	}
+	drop, err := WithFirewallPolicy(data, "drop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := Parse(drop, "drop")
+	if err != nil || c.Security.Firewall.Policy != "drop" || !c.Security.SSH.Allow {
+		t.Fatalf("drop: %+v %v", c.Security, err)
+	}
+	if _, err := WithFirewallPolicy(data, "reject"); err == nil {
+		t.Fatal("reject is not a policy")
+	}
+	c, err = Parse(data, "default")
+	if err != nil || c.Security.Firewall.Policy != "accept" || !c.Security.SSH.Allow {
+		t.Fatalf("defaults: %+v %v", c.Security, err)
 	}
 }

@@ -337,10 +337,11 @@ func TestOSUpdateCommands(t *testing.T) {
 	const run = "systemd-run --wait --collect --pipe --quiet "
 	const aptGet = run + "--unit=care-pi-apt -p MemoryMax=512M --setenv=DEBIAN_FRONTEND=noninteractive -- apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "
 	const aptMark = run + "--unit=care-pi-apt-mark -p MemoryMax=512M --setenv=DEBIAN_FRONTEND=noninteractive -- apt-mark -o DPkg::Lock::Timeout=600 "
-	wantApt := []string{run + "--unit=care-pi-apt-conf -p MemoryMax=512M --setenv=DEBIAN_FRONTEND=noninteractive -- tee /etc/apt/apt.conf.d/52care-pi.conf",
+	// The apt configuration is the typed request of the helper (M2 of the Phase 7 review): the runner writes the text.
+	wantApt := []string{host.WriteAptConf + " on",
 		aptGet + "update", aptGet + "-y full-upgrade", aptMark + "unhold podman", aptGet + "-y install podman=5.4.2+ds1-2",
 		aptMark + "hold podman crun netavark aardvark-dns conmon skopeo"}
-	if got := e.fake.Filter("systemd-run"); !reflect.DeepEqual(got, wantApt) {
+	if got := e.fake.Filter("systemd-run", host.WriteAptConf); !reflect.DeepEqual(got, wantApt) {
 		t.Fatalf("apt commands:\n got  %q\n want %q", got, wantApt)
 	}
 	if !res.CareRestarted || len(res.HeldChanged) != 1 || len(res.Upgraded) != 2 {
@@ -353,7 +354,7 @@ func TestOSUpdateCommands(t *testing.T) {
 	if _, err := e.u.OSUpdate(context.Background(), rec, OSOptions{}); !problem.Is(err, problem.OSUpdateFailed) {
 		t.Fatalf("want os-update-failed, got %v", err)
 	}
-	if got := e.fake.Filter("systemd-run"); !reflect.DeepEqual(got[1:], []string{aptGet + "update", aptGet + "-y full-upgrade", wantApt[5]}) {
+	if got := e.fake.Filter("systemd-run", host.WriteAptConf); !reflect.DeepEqual(got[1:], []string{aptGet + "update", aptGet + "-y full-upgrade", wantApt[5]}) {
 		t.Fatalf("apt commands after a failed full upgrade: %q", got)
 	}
 	if got := actions(rec); !reflect.DeepEqual(got, []string{"os-refresh", "os-upgrade", "os-hold"}) {
@@ -367,7 +368,7 @@ func TestOSUpdateCommands(t *testing.T) {
 	if _, err := e.u.OSUpdate(context.Background(), rec, OSOptions{}); !problem.Is(err, problem.OSUpdateFailed) {
 		t.Fatalf("want os-update-failed, got %v", err)
 	}
-	if got := e.fake.Filter("systemd-run"); !reflect.DeepEqual(got[1:], wantApt[1:]) {
+	if got := e.fake.Filter("systemd-run", host.WriteAptConf); !reflect.DeepEqual(got[1:], wantApt[1:]) {
 		t.Fatalf("apt commands after a failed install: %q", got)
 	}
 	// A tested version that is older than the installed one stays held: no unhold, no downgrade.
@@ -381,7 +382,7 @@ func TestOSUpdateCommands(t *testing.T) {
 	if _, err := e.u.OSUpdate(context.Background(), rec, OSOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if got := e.fake.Filter("systemd-run"); !reflect.DeepEqual(got[1:], []string{aptGet + "update", aptGet + "-y full-upgrade", wantApt[5]}) {
+	if got := e.fake.Filter("systemd-run", host.WriteAptConf); !reflect.DeepEqual(got[1:], []string{aptGet + "update", aptGet + "-y full-upgrade", wantApt[5]}) {
 		t.Fatalf("apt commands with an older tested version: %q", got)
 	}
 }
@@ -553,4 +554,35 @@ func TestMakeLockDist(t *testing.T) {
 		t.Fatalf("after rollback %+v", l.Solution)
 	}
 	t.Logf("rollback steps %v; pitr_offer target_time %s restore_point %s", actions(rec), rr.PitrOffer.TargetTime, *rr.PitrOffer.RestorePoint)
+}
+
+// TestOSUpdateFedora: a Fedora host (experimental) runs no apt command: the job refuses with os-update-failed, the
+// view lists nothing, and the security configuration of apt is not written.
+func TestOSUpdateFedora(t *testing.T) {
+	e := newTEnv(t, "stable", "")
+	if err := os.MkdirAll(e.p.Abs("/etc"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(e.p.Abs("/etc/os-release"), []byte("ID=fedora\nVERSION_ID=43\nPRETTY_NAME=\"Fedora Linux 43 (Server Edition)\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.fake.Calls = nil
+	o, err := e.u.OS(context.Background())
+	if err != nil || o.Distro.ID != "fedora" || len(o.Upgradable) != 0 {
+		t.Fatalf("os %+v %v", o, err)
+	}
+	rec := e.job(jobs.KindOSUpdate)
+	if _, err := e.u.OSUpdate(context.Background(), rec, OSOptions{Source: jobs.SourceCLI}); !problem.Is(err, problem.OSUpdateFailed) ||
+		!strings.Contains(err.Error(), "dnf-automatic") {
+		t.Fatalf("want os-update-failed, got %v", err)
+	}
+	cfg, _ := e.u.Config()
+	if changed, err := e.u.SyncSecurityConf(context.Background(), cfg); changed || err != nil {
+		t.Fatalf("security conf %v %v", changed, err)
+	}
+	for _, c := range e.fake.Calls {
+		if strings.Contains(c, "apt") || strings.Contains(c, "dpkg") {
+			t.Fatalf("an apt command on Fedora: %s", c)
+		}
+	}
 }

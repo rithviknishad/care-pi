@@ -30,9 +30,11 @@ var bootstrapFlags struct {
 	preset      string
 	displayName string
 	feProvider  string
-	yes         bool
-	unattended  bool
-	fromImage   bool
+	// firewallPolicy is security.firewall.policy of a new config.yaml (Phase 7).
+	firewallPolicy string
+	yes            bool
+	unattended     bool
+	fromImage      bool
 }
 
 var bootstrapCmd = &cobra.Command{
@@ -131,6 +133,9 @@ bootstrap asks no questions. --yes exists for the installer.`,
 			}
 			data, err := config.DefaultYAML(f.displayName, hostname, f.preset, f.feProvider)
 			if err != nil {
+				return exitcode.With(exitcode.BadInput, err)
+			}
+			if data, err = config.WithFirewallPolicy(data, f.firewallPolicy); err != nil {
 				return exitcode.With(exitcode.BadInput, err)
 			}
 			if err := lock.WriteFileAtomic(cfgPath, data, 0o600); err != nil {
@@ -282,6 +287,7 @@ func init() {
 	f.StringVar(&bootstrapFlags.preset, "preset", "", "solo, small-clinic, or busy-counter (default: small-clinic)")
 	f.StringVar(&bootstrapFlags.displayName, "display-name", "", "name of the clinic (default: CARE)")
 	f.StringVar(&bootstrapFlags.feProvider, "fe-provider", config.DefaultFEProvider, "fe.provider of the new config.yaml: none, artifact, or local")
+	f.StringVar(&bootstrapFlags.firewallPolicy, "firewall-policy", config.DefaultFirewallPolicy, "security.firewall.policy of the new config.yaml: accept or drop (install.sh --firewall-drop)")
 	f.BoolVar(&bootstrapFlags.yes, "yes", false, "do not ask questions (bootstrap asks none)")
 	f.BoolVar(&bootstrapFlags.unattended, "unattended", false, "apply everything now (Phase 1 behaviour); no console setup")
 	f.BoolVar(&bootstrapFlags.fromImage, "from-image", false, "first boot of the Raspberry Pi image (care-firstboot.service): pre-seed, dist snapshot, firstboot marker")

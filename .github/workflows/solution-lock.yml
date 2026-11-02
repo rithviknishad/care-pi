@@ -304,6 +304,24 @@ jobs:
           bin/care-pi solution validate "out/${SOLUTION}-${VERSION}.lock.yaml"
           (cd out && sha256sum "${SOLUTION}-${VERSION}.lock.yaml" > "${SOLUTION}-${VERSION}.lock.yaml.sha256")
 
+      # Phase 7 (docs/solutions.md section 18): a minisign signature of the lock when the owner made the key
+      # (the secret MINISIGN_KEY, a key without a password: minisign -G -W). Without the secret, no signature.
+      - name: Sign the lock with minisign
+        env:
+          MINISIGN_KEY: ${{ secrets.MINISIGN_KEY }}
+        run: |
+          if [ -z "${MINISIGN_KEY}" ]; then
+            echo "::notice::No secret MINISIGN_KEY: the lock has no signature (docs/solutions.md section 18)."
+            exit 0
+          fi
+          sudo apt-get install -y -qq minisign > /dev/null
+          key="${RUNNER_TEMP}/minisign.key"
+          (umask 077 && printf '%s\n' "${MINISIGN_KEY}" > "$key")
+          f="out/${SOLUTION}-${VERSION}.lock.yaml"
+          minisign -S -s "$key" -m "$f" -t "care-pi lock ${SOLUTION} ${VERSION} run ${GITHUB_RUN_ID}"
+          rm -f "$key"
+          minisign -V -p solutions/keys/care-pi.pub -m "$f"
+
       - uses: actions/upload-artifact@v7
         with:
           name: lock-${{ inputs.solution }}-${{ needs.resolve.outputs.version }}
@@ -317,9 +335,12 @@ jobs:
             printf '%s\n\n' "${NOTES:-Solution lock ${SOLUTION} ${VERSION}.}"
             echo "The owner commits the lock file to solutions/${SOLUTION}/locks/${VERSION}.lock.yaml."
           } > release-notes.md
+          assets=("out/${SOLUTION}-${VERSION}.lock.yaml" "out/${SOLUTION}-${VERSION}.lock.yaml.sha256")
+          if [ -f "out/${SOLUTION}-${VERSION}.lock.yaml.minisig" ]; then
+            assets+=("out/${SOLUTION}-${VERSION}.lock.yaml.minisig")
+          fi
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
-            --title "Solution lock ${SOLUTION} ${VERSION}" --notes-file release-notes.md \
-            "out/${SOLUTION}-${VERSION}.lock.yaml" "out/${SOLUTION}-${VERSION}.lock.yaml.sha256"
+            --title "Solution lock ${SOLUTION} ${VERSION}" --notes-file release-notes.md "${assets[@]}"
 
       - name: Write the job summary
         run: |
@@ -338,3 +359,5 @@ jobs:
   index:
     needs: [lock]
     uses: ./.github/workflows/solution-index.yml
+    # MINISIGN_KEY signs index.json (Phase 7).
+    secrets: inherit

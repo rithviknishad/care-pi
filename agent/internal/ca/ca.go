@@ -379,6 +379,73 @@ type State struct {
 	ChangedAt *time.Time `json:"changed_at,omitempty"`
 	// Constraints are the constraints of the root.
 	Constraints Constraints `json:"constraints"`
+	// Reason is the cause of the last change of the root: "migration" (the root of Caddy, Phase 6) or "rotation"
+	// (POST /tls/local-ca/rotate, Phase 7). Empty for a migration of an older agent.
+	Reason string `json:"reason,omitempty"`
+}
+
+// Reasons of a root change.
+const (
+	ReasonMigration = "migration"
+	ReasonRotation  = "rotation"
+)
+
+// PrevCertFile is the root before the last rotation (Phase 7). The certificate page shows it for PrevWindow.
+const PrevCertFile = "root.prev.crt"
+
+// PrevWindow is the time after a rotation while GET /tls shows the previous root.
+const PrevWindow = 7 * 24 * time.Hour
+
+// PrevCertPath is the host path of the previous root.
+func PrevCertPath() string { return paths.CADir + "/" + PrevCertFile }
+
+// Previous returns the root before the last rotation while PrevWindow lasts, else nil.
+func Previous(p paths.Paths, now time.Time) (*x509.Certificate, []byte) {
+	st := ReadState(p)
+	if st.Reason != ReasonRotation || st.ChangedAt == nil || now.After(st.ChangedAt.Add(PrevWindow)) {
+		return nil, nil
+	}
+	data, err := os.ReadFile(p.Abs(PrevCertPath()))
+	if err != nil {
+		return nil, nil
+	}
+	c, der, err := ParseCertPEM(data)
+	if err != nil {
+		return nil, nil
+	}
+	return c, der
+}
+
+// Rotate replaces the root of the agent with a new root (a new key) for the names and addresses of now: a root whose
+// constraints no longer cover a LAN address after a move, or a root that the clinic no longer trusts. It keeps the old
+// certificate as root.prev.crt, removes the intermediate and the leaves of Caddy (the caller restarts care-caddy), and
+// records the change. Each device of the clinic must then install the new root.
+func Rotate(p paths.Paths, hostnames, ips []string, cn string, now time.Time) (*EnsureResult, error) {
+	old, err := Load(p)
+	if err != nil {
+		return nil, fmt.Errorf("ca: no root to rotate: %w", err)
+	}
+	c := Desired(hostnames, ips)
+	r, err := Generate(c, Options{CommonName: cn, Now: now})
+	if err != nil {
+		return nil, err
+	}
+	if err := writeAtomic(p.Abs(PrevCertPath()), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: old.DER}), 0o644); err != nil {
+		return nil, err
+	}
+	if err := ClearCaddyCA(p); err != nil {
+		return nil, err
+	}
+	if err := Write(p, r); err != nil {
+		return nil, err
+	}
+	t := now.UTC().Truncate(time.Second)
+	st := State{Fingerprint: r.Fingerprint(), CreatedAt: t, PreviousFingerprint: old.Fingerprint(), ChangedAt: &t,
+		Constraints: c, Reason: ReasonRotation}
+	if err := writeState(p, st); err != nil {
+		return nil, err
+	}
+	return &EnsureResult{Created: true, Replaced: true, Root: r, State: st}, nil
 }
 
 // ReadState reads state/ca.json. A missing file gives a zero State.
@@ -432,6 +499,7 @@ func Ensure(p paths.Paths, hostnames, ips []string, cn string, now time.Time) (*
 			st.PreviousFingerprint = Fingerprint(der)
 			t := st.CreatedAt
 			st.ChangedAt = &t
+			st.Reason = ReasonMigration
 			res.Replaced = true
 		}
 	}

@@ -34,7 +34,7 @@ browser ──https:443──▶ care-caddy ──▶ Care (care-api), the FE bu
 
 ## 2. `care-pi.service`
 
-The installer writes `/etc/systemd/system/care-pi.service`, enables it, and starts it (installer step 13).
+The installer writes `/etc/systemd/system/care-pi.service`, enables it, and starts it (installer step 14).
 `care-pi apply` never writes this unit: an apply must not restart the process that runs the apply.
 `care-pi bootstrap` enables and starts the unit when the file exists.
 
@@ -298,7 +298,7 @@ stopped with `missing steps: tls`).
 | `/etc/care-pi/secrets/recovery.key`, `recovery.key.pending` | The recovery key (64 hex digits). Never in a response, except `GET /backups/recovery-key` and its download. | root 0600 |
 | `/etc/care-pi/secrets/backup/<id>.json` | The S3 keys of a destination | root 0600 |
 | `/var/lib/care-pi/state/backups/` | `key.json`, `local.json`, `destinations/<id>.json`, `drill.json`, `checkpoints.json` (`docs/backups.md`) | root 0700 |
-| `/run/care-pi/backup/` | The files of one restic run (password, SSH key, S3 keys); deleted after the run | root 0700 |
+| `/run/care-pi-backup/` | The files of one restic run (password, SSH key, S3 keys, `ssh_config`); deleted after the run. Not below `/run/care-pi`, which `care-caddy` mounts | root 0700 |
 | `/var/lib/care-pi/ca/root.crt`, `root.key` | Phase 6: the name-constrained root CA of the agent (`/tls/root-ca`; `docs/connectivity.md`) | root 0644, 0600 |
 | `/var/lib/care-pi/caddy/caddy/pki/authorities/local/root.crt` | The root CA of Caddy. The agent reads it for `/tls/root-ca` only before the Phase 6 switch | root |
 | `/var/lib/care-pi/state/{ca.json,tls-public.json,tls-tailscale.json,wifi.json,pod-live.json}` | Phase 6: the CA switch, the registration with the DNS service, the last Tailscale and Wi-Fi state, the addresses of the pod that runs | root 0600 |
@@ -483,4 +483,271 @@ the install of Tailscale (`systemd-run --unit care-pi-tailscale-install`), the l
 (`care-pi-wifi-country`). `nmcli` and `tailscale` talk to their daemons over D-Bus and unix sockets.
 `care-pi tls public update-address` (the timer) runs as root outside the agent; it takes the apply lock only when it
 applies.
+
+## 13. Phase 7: the firewall (default-drop, S42)
+
+S42 kept the table `inet care-pi` without a drop policy in Phase 1, because a wrong rule cuts SSH on a headless Pi.
+Phase 7 adds the drop policy as an option with a rollback timer.
+
+**Who owns the table.** The installer writes `/etc/care-pi/firewall.nft` (policy `accept`) and
+`care-pi-firewall.service` (S44). From the first apply, the agent owns the table: it renders
+`/etc/care-pi/rendered/firewall/care-pi.nft` from `config.yaml` and the drop-in
+`/etc/systemd/system/care-pi-firewall.service.d/50-care-pi.conf`, which makes the unit load that file (`ExecStart=` and
+`ExecReload=` replaced). The file of the installer stays as the fallback before the first apply. The drop-in of
+Phase 6 (`50-care-pi-tailscale.conf`, the Tailscale port only) goes at the next apply: the table of the agent has the
+port. Without the unit (`install.sh --no-firewall`, ufw, or firewalld), the drop-in does nothing.
+
+**The table.**
+
+| Rule | Policy `accept` | Policy `drop` |
+|---|---|---|
+| `lo`, `established,related` | accept | accept |
+| `ct state invalid` | — | drop |
+| ICMP, ICMPv6 (neighbour discovery, router advertisements) | accept | accept |
+| DHCPv4 offers (`udp sport 67 dport 68`), DHCPv6 replies (`fe80::/10`, `udp sport 547 dport 546`) | accept | accept |
+| 22/tcp | accept when `security.ssh.allow` (default `true`) | the same |
+| 80, 443, 8443/tcp | accept | accept |
+| 5353/udp (mDNS) | accept | accept |
+| 41641/udp (tailscaled) | accept in the Tailscale mode | the same |
+| 53 (tcp, udp) on `podman*` (aardvark-dns of a podman network) | accept | accept |
+| other input | accept | drop |
+
+The forward and output chains are not in the table. The pod publishes 80, 443, and 8443 with DNAT (netavark), so these
+packets pass the forward hook, not the input hook. A check in Docker (`debian:trixie`, podman 5.4.2, netavark, the table
+of the golden case `hardened`, policy `drop`) showed: a container reaches the internet (DNS and HTTPS), a published port
+answers a client on another host (HTTP 200), a port of the host outside the allow-list times out, and
+`nft 'chain inet care-pi input { policy accept ; }'` opens it again at once. NTP replies are `established`.
+
+**Config.** `security.firewall.policy: accept|drop` (default `accept`, so an existing host does not change) and
+`security.ssh.allow` (default `true`). `install.sh --firewall-drop` writes `drop` for a new install (it asks first when
+it runs on a terminal without `--yes`). The image keeps `accept`: nobody can confirm on a headless first boot.
+`drop` is the planned default after the Phase 7 test on lumine.
+
+**The rollback timer.** When the apply loads a `drop` table after an `accept` table (the plan action `reload-firewall`):
+
+0. The apply renders the `drop` table to `/etc/care-pi/rendered/firewall/care-pi.pending.nft`. The boot file
+   `care-pi.nft`, which the unit loads at the boot, keeps the confirmed policy (`accept`) until the confirmation.
+1. The agent starts the transient timer `care-pi-firewall-rollback.timer` (`systemd-run --on-active=90s`) first. Its
+   service runs `care-pi firewall rollback --reason timeout`. When `systemd-run` fails, the agent does not load the table.
+2. The agent loads the pending table (`nft -f …/care-pi.pending.nft`) and writes `/var/lib/care-pi/state/firewall.json`
+   (`policy`, `pending_until`).
+3. The operator checks a **new** SSH session and the console, then confirms: `care-pi firewall confirm`, or
+   Security > Firewall > Keep (`POST /security/firewall/confirm`). The confirmation stops the timer and moves the
+   pending file over `care-pi.nft`: from then on, the boot loads `drop`. The confirmation refuses (`409 state-conflict`)
+   after `pending_until`, and when the pending file is not there.
+4. Without the confirmation, the rollback sets the live policy to `accept` with one `nft` command, then sets
+   `security.firewall.policy: accept` in `config.yaml`, writes the `accept` table, and deletes the pending file, without
+   a full apply (it works while a job holds the apply lock). The next apply renders the same files.
+   `GET /security/firewall` shows `rolled_back_at` and `rollback_reason: timeout`.
+5. The timer is transient, so a reboot in the window stops it. The boot loads `care-pi.nft` (`accept`). Before the
+   load, the drop-in runs `care-pi firewall boot-check` (`ExecStartPre=-`): it ends the trial as the rollback does
+   (`config.yaml`, the pending file, `rollback_reason: timeout`). It also runs at a restart of the unit; a reload does
+   not run it.
+
+The agent does not start the timer when the unit is not active (the table is not loaded then). A later apply in the
+window (for example a new Tailscale rule) loads the pending table again and keeps the timer. A later load of a
+confirmed `drop` table loads `care-pi.nft` and starts no timer. A switch back to `accept` stops a running timer.
+
+**CLI.** `care-pi firewall status [--json]`, `policy accept|drop`, `allow-ssh true|false` (each writes `config.yaml` and
+applies, as `care-pi config set … --apply`), `confirm`, `rollback`, and `boot-check` (hidden; the drop-in runs it).
+
+## 14. Phase 7: the privileged helper (`04` §2)
+
+Before Phase 7, `care-pi serve` ran each host command itself, as root.
+Phase 7 adds a root helper with an allow-list.
+The daemon sends each host command to the helper and runs no program of its own.
+
+### The shape
+
+| Part | Value |
+|---|---|
+| Helper | `care-pi helper` in `care-pi-helper.service` (root, `Type=notify`, `Restart=on-failure`, `MemoryMax=96M`, the sandbox of `care-pi.service`). |
+| Socket | `/run/care-pi-helper/helper.sock`, mode 0660, root:care-pi, from `care-pi-helper.socket` (socket activation: systemd starts the helper at the first connection and after a crash). |
+| User | The system user and group `care-pi` (installer step 13). The group opens the socket. |
+| Daemon | `care-pi serve --helper`. `host.NewHelperClient` implements `host.Runner` and `host.Streamer`, so the service layer is the same. |
+| CLI | `care-pi apply`, the timers, and the other commands of root keep the direct exec (`host.Exec`). |
+| Peer check | The helper reads `SO_PEERCRED` of each connection. It accepts uid 0 and the user `care-pi`. |
+
+The socket is not in `/run/care-pi`: `care-caddy` bind-mounts that directory (the unix socket of the console) and
+runs as root. A helper socket there would give the Caddy container the privileged commands.
+
+### The protocol
+
+One request for each connection, as one JSON line: `{"name", "args", "env", "stdin", "stream"}`.
+The helper answers with JSON lines: one `line` frame for each output line of a stream (`journalctl --follow`), then one
+`done` frame with `stdout`, `code`, `stderr`, or `denied` (the reason of a refusal), or `error`.
+A close of the connection stops the command: the cancel of a job or of an event stream reaches the helper.
+
+### The allow-list
+
+`agent/internal/helper/validate.go` has one rule for each program. A rule checks each argument against the shapes
+that the agent sends: the subcommands, the flags, the unit names (`care*`, the mount units of the backup disks,
+`avahi-daemon`, `systemd-sysctl`, `tailscaled`), the paths (below `/etc/care-pi`, `/var/lib/care-pi`,
+`/run/care-pi-backup`), the image references, and the device names.
+The helper refuses each other program, a terminal command (`care-pi shell`), an unknown environment variable, and a NUL
+byte in an argument.
+The helper does not check the command inside a Care container (the arguments after the container name of
+`podman exec`, and after the image of `podman run`): the daemon owns the data of Care anyway. The helper guards the
+host, not the containers.
+
+**What the helper guards** (the review of Phase 7, M2):
+
+- A program runs only with the flags that the agent gives it. For `restic`, the options before the subcommand are
+  `-o s3.bucket-lookup=path`, `-o s3.region=…`, and `-o sftp.args=-F <ssh_config> -i <key>`; after the subcommand,
+  each subcommand has its own flags (`backup`: `--json`, `--host`, `--tag`, `--exclude` of the agent, and the paths
+  `/etc/care-pi` and below `/var/lib/care-pi`; `restore`: one `--target`, `--include`, `--verify`; `forget`, `check`,
+  `snapshots`, `stats`, `dump`, `cat config`, `init`, `unlock`, `prune`). So `--password-command`, `-o sftp.command`,
+  `-o rclone.program`, `--repo`, and another `--target` or `-t` do not pass.
+- A path that the helper checks is clean and absolute. A restore target and a snapshot path below `/var/lib/care-pi`,
+  and each `--volume` source of `podman run`, must stay below the allowed directory after the resolution of its
+  symbolic links (`filepath.EvalSymlinks`; a part that does not exist yet stays as it is; a link to nothing is
+  refused). The target of a restore is a directory below `/var/lib/care-pi/restore`, or `/var/lib/care-pi/backup/pg`
+  or `/var/lib/care-pi/s3` in place.
+- `podman run` with a volume of the host starts only an image of `/etc/care-pi/lock.yaml` (the reference or the
+  reference with the digest) or of `images.*` in `config.yaml`; the helper reads both files at each request.
+- The text of `/etc/apt/apt.conf.d/52care-pi.conf` comes from the agent binary: the typed request `write-apt-conf on`
+  or `off` (no stdin) makes the helper write it through `systemd-run … tee`. A `tee` of the daemon is refused.
+- The files of a restic or `sftp` run (`ssh_config`, the key) are in `/run/care-pi-backup/<run>/`, or the rendered
+  `/etc/care-pi/rendered/backup/ssh_config`. `/run/care-pi` is not allowed: `care-caddy` mounts it read-write as root,
+  and an `ssh_config` there could name a `ProxyCommand`.
+
+**What the helper does not guard:** the values of the environment variables of `restic` (the repository, the paths of
+the password and key files: a repository of the daemon is a place that the daemon chooses anyway), a symbolic link that
+changes between the check and the start of the program, the files that the daemon writes itself (see "What remains"),
+and the commands inside a container.
+
+| Program | What the helper accepts |
+|---|---|
+| `systemctl` | `start`, `stop`, `restart`, `try-restart`, `reload`, `enable`, `disable`, `daemon-reload`, `reset-failed`, `is-active`, `show`, `list-units`, `list-timers`, `reboot`, `poweroff` on the units above. |
+| `podman` | `ps`, `inspect`, `image` and `secret` subcommands, `pull`, `exec` into a `care-*` container, `run --rm` of an image of the lock or of `images.*` with the volumes of the drills and the restore (`--network none`, `--user postgres`, `--entrypoint pgbackrest`), `run --rm --network none <image> caddy list-modules --skip-standard` of any image (the WAF check of a target; no volume, no network), `pod` inspect. |
+| `systemd-run` | Transient units `care-pi-*` with a fixed set of properties, then `podman`, `restic`, `tailscale`, `apt-get`, `apt-mark`, the disk commands, `raspi-config nonint do_wifi_country`, `care-pi firewall rollback`, or `/bin/sh -c` with one of four constant scripts of the agent (clock, Wi-Fi keyfile, sysctl, Tailscale install), compared byte for byte. |
+| `write-apt-conf` | A typed request: `on` or `off`. The helper writes the fixed text of `52care-pi.conf` itself. |
+| `journalctl` | `--unit` of a Care unit, with `--lines`, `--output`, `--since`, `--after-cursor`, `--follow`. |
+| `restic`, `skopeo`, `sftp` | The subcommands of the backups and of the lock, each with its own flags (see above); the `ssh_config` and the key below `/run/care-pi-backup`. |
+| `nmcli`, `iw`, `ip`, `tailscale`, `hostnamectl`, `timedatectl` | The read commands of the network page, `tailscale status --json` and `serve status --json`, and `tailscale up`/`down`/`logout` with the arguments of the agent (`--login-server` an https URL). |
+| `apt`, `apt-cache`, `dpkg-query` | The read commands of the updates page. |
+| `lsblk`, `wipefs`, `sfdisk`, `partprobe`, `mkfs.ext4`, `udevadm` | The disk preparation of the backups: one `/dev/sd*`, `/dev/nvme*`, or `/dev/mmcblk*` device. |
+| `nft`, `ss`, `sh` | `nft list ruleset`, the accept of the firewall rollback, `ss -ltnpH`, and `sh -c "command -v raspi-config"`. |
+
+The helper logs each request (`helper: run`, the program, the first arguments, the count, the size of stdin) and each
+refusal (`helper: denied`, the reason) to its journal: `journalctl -u care-pi-helper`. It never logs a stdin (a secret
+goes through stdin).
+
+### Turn it on
+
+The installer installs the helper on each host. `install.sh --helper` (or `CARE_PI_HELPER=1`) also writes the drop-in
+`/etc/systemd/system/care-pi.service.d/60-helper.conf`:
+
+```ini
+[Service]
+ExecStart=
+ExecStart=/usr/local/bin/care-pi serve --helper
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER
+```
+
+The daemon then cannot run a program with more rights than its own, and it keeps only the capabilities for the
+files of the agent (the postgres-owned backup directories need `CAP_CHOWN` and `CAP_DAC_OVERRIDE`).
+Run the installer again without `--helper` to remove the drop-in.
+
+### What remains (the gap to the full split)
+
+The default is off: the daemon runs as root without `--helper` until the lumine exit test of Phase 7 passes.
+The full split of `04` §2 (`User=care-pi`, `ProtectSystem=strict`, `NoNewPrivileges=yes`, an empty
+`CapabilityBoundingSet=`) needs these changes first:
+
+1. Typed file requests in the helper: the daemon writes about 250 files as root today (the rendered tree, the quadlets,
+   the units in `/etc/systemd/system`, the secrets, the state, `/etc/hosts`). A request `write-file {path, mode, owner,
+   content}` with the same path allow-list, and `remove`, `rename`, `chown`.
+2. The files of a backup session (`/run/care-pi-backup/<id>/ssh_config`, the key copies): the helper must write them,
+   because an `ssh_config` controls `ProxyCommand`. (Since the review of Phase 7 the directory is not below
+   `/run/care-pi`, so `care-caddy` cannot write them; the daemon still can.)
+3. Read access of the user `care-pi` to `/etc/care-pi` (the config, the auth store, the secrets): a group-readable tree,
+   or the reads through the helper.
+4. `/etc/shadow` for the OS password check of the claim (`auth.Shadow`): a request `check-password` in the helper.
+5. The chown of the postgres directories of the drills, through the helper.
+
+### Tests
+
+- `agent/internal/helper/validate_test.go`: each command shape of the agent passes. A table of bad commands (other
+  programs, other units, path escapes, extra flags, shells, environment variables, NUL bytes) is refused.
+  `TestValidateFuzz` puts a hostile argument (also `--password-command`, `-t`, `/`, `--repo=`) at each position of good
+  commands: the helper refuses each one, except inside a container (see below). It also refuses the bypasses of the
+  review (M2): the restic flags and options of other programs, a restore target or a volume through a symbolic link
+  that points outside, a link to nothing, an image outside the lock, a `tee` of the apt configuration, and the SSH
+  files below `/run/care-pi`.
+- `agent/internal/helper/server_test.go`: a round trip on a temporary socket with the fake executor: output, stdin, an
+  exit code, a refusal, a stream and its cancel, the socket mode, and the journal lines.
+- `CARE_PI_TEST_HELPER=1 go test ./agent/internal/server`: each contract test sends its host commands through the
+  helper and fails on each refusal (a CI step).
+
+## 15. Phase 7: the Coraza WAF (optional, off by default)
+
+`01` section 5 plans an optional web application firewall on `/api/*`. `security.waf` turns it on:
+
+```yaml
+security:
+  waf: {enabled: true, mode: detect, paranoia: 1}
+```
+
+- **Image.** `images/caddy/Containerfile` adds `github.com/corazawaf/coraza-caddy/v2` (pinned, `CORAZA_CADDY_VERSION`).
+  The module embeds the OWASP Core Rule Set v4 (`coraza-coreruleset`): `load_owasp_crs` reads the rules from the binary,
+  so no rule file is on the disk and the rules change with the image of the lock. (The plan said `/etc/caddy/crs`; the
+  embedded CRS is the same set without a second copy.)
+- **The Caddyfile.** The global block gets `order coraza_waf first`; the handler `@api` (`/api/*`, `/staticfiles/*`,
+  `/mediafiles/*`, `/ping/`, `/health/*`, `/app_version/`) gets `coraza_waf` with `coraza.conf-recommended`,
+  `crs-setup.conf.example`, `SecRuleEngine DetectionOnly` (mode `detect`) or `On` (mode `block`), the paranoia level
+  (`tx.blocking_paranoia_level`), the request body on, the response body off, and the audit log of the relevant
+  transactions as JSON on the standard output (parts A, H, Z): `care-pi logs caddy` shows the rule ids. Part B (the
+  request headers) is not in the log: it has the bearer token of Care (`Authorization`) and the console cookie
+  (`__Host-care_pi_session`; the browser sends it to 443, and `header_up` removes it only after the WAF). The S3
+  buckets, the plug bundles, the FE, and the console have no WAF.
+- **Memory.** In Docker, Caddy used 25 MiB without the WAF and 60 MiB with the CRS loaded (cgroup memory; VmRSS 105 MiB).
+  With the WAF, `care-caddy.container` gets `MemoryMax=256M` (else 128M).
+- **Safety.** With the WAF on, the agent checks the Caddy image of the target, not the running Caddy:
+  `podman run --rm --network none <image> caddy list-modules --skip-standard` (in a transient unit). An apply that
+  changes the Caddyfile or the image of `care-caddy`, the staging of an update (step `stage-pull`), and a rollback
+  (step `stage-pull`) stop with `unsupported-config`, which names the image, when it has no `http.handlers.waf` (an
+  image of a lock of before Phase 7), because the next start of Caddy would fail on the unknown directive and stop
+  Care. Nothing is written or stopped then. When the modules cannot be listed (no podman, an image that does not
+  pull), the agent writes a warning and goes on.
+- **False positives.** Expect them on file uploads, rich text (notes, prescriptions), and search with quotes. Use
+  `detect` first, read the audit lines for some days, then `block`. Paranoia 1 is the right level for Care; 2 and more
+  give many more false positives. Off by default, also on a 4 GB Pi.
+- **Test.** `images/caddy/test-waf.sh [IMAGE]`: the module, `caddy validate` of the golden case `hardened` (block,
+  paranoia 2), and live requests with a stub of care-api: a normal request 200; `?search=1' OR '1'='1' -- ` 403 in block
+  mode, 200 with the audit line of the CRS rule 942100 in detect mode. It passed with Caddy 2.11.7 and coraza-caddy
+  2.6.2 (arm64).
+
+## 16. Phase 7: `care-pi doctor` and the support bundle
+
+`care-pi doctor [--json]`, `GET /api/v1/doctor` (session), and Support > Health checks in the console run the same checks.
+They change nothing; each problem has a fix hint (a command or a page). The failed checks come first; the status of the
+report is the worst status (`ok`, `warn`, `fail`, `skip`). The CLI exits with code 1 when a check failed. The checks
+follow the pitfalls of `plans/09-handoff.md` section 3:
+
+| Id | Check | `warn` / `fail` |
+|---|---|---|
+| `host-*` | The host check of the installer (the memory controller, podman 5.4, …) | `fail` for a required item |
+| `ports` | `ss -ltnpH`: another program than conmon on 80, 443, or 8443 of a published address or of all addresses (SP5: `tailscale serve` on 443 of the Tailscale address) | `fail` |
+| `mdns` | avahi announces another name than `<hostname>.local` (a collision: `care-2.local`) or none | `warn` |
+| `clock` | NTP synchronized; the browser time of S52 | `warn` (browser), `fail` (none) |
+| `memory`, `zram` | `MemAvailable` below 256 MiB; no `/dev/zram` in `/proc/swaps` | `warn` |
+| `disk-*` | less than 2 GiB or 10 % free | `warn` |
+| `units` | a unit of Care `failed`; `inactive` after the setup | `fail`, `warn` |
+| `cert-local`, `cert-public` | the end of the local root or of the public certificate in less than 14 days; a LAN address outside the name constraints | `warn`, `fail` (expired) |
+| `backup-<id>`, `backups` | the last snapshot of a destination is older than `backups.alert_after_hours`; no snapshot; no destination | `fail`, `warn` |
+| `firewall` | `care-pi-firewall.service` not active; a policy `drop` that waits for its confirmation; a loaded policy that differs from `config.yaml` | `warn` |
+| `reboot` | `/run/reboot-required` | `warn` |
+| `updates` | a newer lock on the track | `warn` |
+
+**The support bundle** (Support > Make a support bundle, `care-pi support-bundle`) also has, since Phase 7:
+`doctor.json`; `rendered-tree/etc/containers/systemd/care*` and `rendered-tree/etc/care-pi/rendered/**` (env files
+without the values of secret keys; `additional-plugs.json` left out, because plug settings can be secret);
+`nft-ruleset.txt` (`nft list ruleset`); `listening-sockets.txt` (`ss -ltnupH`); `podman-ps.txt`;
+`tailscale-status.json` (`tailscale status --json` without the keys, the peers, and the users); `memory-peaks.txt`
+(`MemoryPeak`, `MemorySwapPeak`, `MemoryMax` of the units `care-*` and `care-pi*`); `firewall-state.json`. The values of
+the secret files are replaced with `<redacted>` in each section, as before. Since the review of Phase 7 (M3), each file
+also has `Bearer <redacted>` and `__Host-care_pi_session=<redacted>` for a bearer token and the console cookie (for
+example in an audit line of the WAF of an older Caddyfile, which logged the request headers).
 

@@ -26,6 +26,8 @@ jobs:
         run: go vet ./...
       - name: Test
         run: go test ./...
+      - name: Contract tests through the privileged helper (allow-list check)
+        run: CARE_PI_TEST_HELPER=1 go test ./agent/internal/server
       - name: Phase 4 end-to-end test with make-lock.sh (fake host, offline)
         run: solutions/scripts/e2e-local.sh "${RUNNER_TEMP}/e2e-local"
       - uses: golangci/golangci-lint-action@v9
@@ -67,6 +69,12 @@ jobs:
       - uses: actions/checkout@v7
       - name: Run shellcheck on installer scripts
         run: find installer -name '*.sh' -type f -print0 | xargs -0 -r shellcheck
+      - name: Check the firewall tables of the golden cases with nft -c (Phase 7)
+        run: |
+          sudo apt-get install -y -qq nftables >/dev/null
+          for f in agent/internal/render/testdata/golden/*/etc/care-pi/rendered/firewall/care-pi*.nft; do
+            sudo nft -c -f "$f"
+          done
       - name: Run shellcheck on the solution scripts
         run: find solutions/scripts -name '*.sh' -type f -print0 | xargs -0 -r shellcheck
       - name: Run shellcheck on the image scripts

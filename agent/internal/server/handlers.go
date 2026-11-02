@@ -14,6 +14,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/auth"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/jobs"
+	"github.com/rithviknishad/care-pi/agent/internal/metrics"
 	"github.com/rithviknishad/care-pi/agent/internal/problem"
 	"github.com/rithviknishad/care-pi/agent/internal/service"
 	"github.com/rithviknishad/care-pi/agent/internal/setup"
@@ -70,6 +71,8 @@ func (s *Server) table() []*route {
 	add(get, "/security/sessions", s.sessions)
 	add(del, "/security/sessions/{session_ref}", s.revokeSession)
 	add(put, "/security/ssh", notImplemented, reauth, phase(7))
+	add(get, "/security/firewall", s.firewall)
+	add(post, "/security/firewall/confirm", s.firewallConfirm)
 
 	add(get, "/setup", s.setupState)
 	add(put, "/setup/steps/recovery-codes", s.stepRecoveryCodes)
@@ -97,6 +100,8 @@ func (s *Server) table() []*route {
 	add(get, "/jobs/{job_id}/events", s.jobEvents)
 	add(post, "/jobs/{job_id}/cancel", s.cancelJob)
 
+	add(get, "/metrics", s.metrics)
+	add(get, "/doctor", s.doctor)
 	add(get, "/logs", s.logUnits)
 	add(get, "/logs/{unit}", s.logs)
 	add(post, "/support-bundle", s.supportBundle)
@@ -112,7 +117,7 @@ func (s *Server) table() []*route {
 	add(get, "/tls/instructions/{os}", s.instructions, publicRead, both)
 	add(put, "/tls/public", s.putPublic)
 	add(put, "/tls/tailscale", s.putTailscale, reauth, credBody)
-	add(post, "/tls/local-ca/rotate", notImplemented, reauth, phase(7))
+	add(post, "/tls/local-ca/rotate", s.rotateLocalCA, reauth)
 
 	add(get, "/fe", s.fe)
 	add(post, "/fe/build", s.feBuild)
@@ -389,6 +394,24 @@ func (s *Server) security(c *reqCtx) error {
 	}
 	if st == nil {
 		return problem.New(problem.NotClaimed, "The device is not claimed.")
+	}
+	s.json(c.w, http.StatusOK, st)
+	return nil
+}
+
+func (s *Server) firewall(c *reqCtx) error {
+	st, err := s.svc.Firewall(c.r.Context())
+	if err != nil {
+		return err
+	}
+	s.json(c.w, http.StatusOK, st)
+	return nil
+}
+
+func (s *Server) firewallConfirm(c *reqCtx) error {
+	st, err := s.svc.FirewallConfirm(c.r.Context(), "console")
+	if err != nil {
+		return err
 	}
 	s.json(c.w, http.StatusOK, st)
 	return nil
@@ -951,9 +974,10 @@ func (s *Server) putPublic(c *reqCtx) error {
 
 func (s *Server) putTailscale(c *reqCtx) error {
 	var req struct {
-		Enabled *bool   `json:"enabled"`
-		AuthKey *string `json:"auth_key"`
-		Reason  *string `json:"reason"`
+		Enabled    *bool   `json:"enabled"`
+		AuthKey    *string `json:"auth_key"`
+		ControlURL *string `json:"control_url"`
+		Reason     *string `json:"reason"`
 	}
 	if err := c.decode(&req, true); err != nil {
 		return err
@@ -966,8 +990,18 @@ func (s *Server) putTailscale(c *reqCtx) error {
 			return err
 		}
 	}
+	if req.ControlURL != nil {
+		if err := lengthOK("/control_url", *req.ControlURL, 0, 200); err != nil {
+			return err
+		}
+	}
 	j, err := s.svc.StartTailscale(c.r.Context(), service.TailscaleRequest{Enabled: *req.Enabled, AuthKey: deref(req.AuthKey),
-		Reason: deref(req.Reason)}, jobs.SourceConsole)
+		ControlURL: req.ControlURL, Reason: deref(req.Reason)}, jobs.SourceConsole)
+	return s.accepted(c, j, err)
+}
+
+func (s *Server) rotateLocalCA(c *reqCtx) error {
+	j, err := s.svc.StartLocalCARotate(c.r.Context(), "", jobs.SourceConsole)
 	return s.accepted(c, j, err)
 }
 
@@ -1029,6 +1063,27 @@ func (s *Server) sendFile(c *reqCtx, f *service.RootCAFile) error {
 	h.Set("Content-Length", strconv.Itoa(len(f.Data)))
 	_, err := c.w.Write(f.Data)
 	return err
+}
+
+func (s *Server) doctor(c *reqCtx) error {
+	rep, err := s.svc.Doctor(c.r.Context())
+	if err != nil {
+		return err
+	}
+	s.json(c.w, http.StatusOK, rep)
+	return nil
+}
+
+func (s *Server) metrics(c *reqCtx) error {
+	set, err := s.svc.Metrics(c.r.Context())
+	if err != nil {
+		return err
+	}
+	c.w.Header().Set("Content-Type", metrics.ContentType)
+	c.w.Header().Set("Cache-Control", "no-store")
+	c.w.WriteHeader(http.StatusOK)
+	_, _ = set.WriteTo(c.w)
+	return nil
 }
 
 func (s *Server) rootCA(c *reqCtx) error {

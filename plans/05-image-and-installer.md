@@ -97,6 +97,12 @@ and asks.
 - Runs `care-pi bootstrap` — identical to first boot. Prints the URL.
 - `--unattended` with a prepared `config.yaml` + secrets for IT people and for CI
   tests.
+- *As built* (Phase 7, S57): podman 5.4 or newer is required (not 4.4). Debian 13 and
+  Raspberry Pi OS trixie are supported; Ubuntu 25.04 and newer pass when the podman
+  check passes (container-tested); Fedora Server 42 and newer are experimental (`dnf`,
+  firewalld integration, SELinux permissive). Debian 12, Ubuntu 24.04 and older,
+  Fedora 41 and older, rpm-ostree hosts, and the RHEL family are refused with a message
+  (`docs/install.md`, "Supported hosts").
 
 ## 7. Testing the image
 

@@ -8,11 +8,13 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/rithviknishad/care-pi/agent/internal/buildinfo"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/exitcode"
+	"github.com/rithviknishad/care-pi/agent/internal/firewall"
 	"github.com/rithviknishad/care-pi/agent/internal/host"
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
 	"github.com/rithviknishad/care-pi/agent/internal/netinfo"
@@ -47,6 +49,8 @@ type Prepared struct {
 	EnsureCA bool
 	// HostAddrs are the IPv4 addresses of the host (netinfo.HostIPv4), the Tailscale address too.
 	HostAddrs []string
+	// TelemetryPassword is the value of the podman secret care-pi-telemetry-password, or "" (Phase 7).
+	TelemetryPassword string
 }
 
 // PrepareOptions controls Prepare.
@@ -201,9 +205,17 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 		return nil, fmt.Errorf("cannot read the network interfaces: %w", err)
 	}
 	conn := readConnectivity(o.Paths, cfg, o.IPs, ips, time.Now())
+	// Phase 7: the basic auth password of the telemetry (docs/telemetry.md), only with telemetry on.
+	var telemetryPassword string
+	if cfg.Telemetry.Enabled {
+		if data, err := os.ReadFile(o.Paths.Abs(paths.TelemetryPasswordFile)); err == nil {
+			telemetryPassword = strings.TrimSpace(string(data))
+		}
+	}
 	m, err := render.NewModel(render.Input{Config: cfg, Solution: sol, Lock: lk, IPs: ips, Bootstrap: bootstrap,
 		SolutionLock: sl, PlugSecrets: plugSecrets, CareBuild: cb,
-		CARoot: conn.caRoot, PublicIssued: conn.publicIssued, ACMEDNS: conn.acmeDNS != "", TailscaleIP: conn.tailscaleIP})
+		CARoot: conn.caRoot, PublicIssued: conn.publicIssued, ACMEDNS: conn.acmeDNS != "", TailscaleIP: conn.tailscaleIP,
+		TelemetryPassword: telemetryPassword != "", FirewallDropConfirmed: firewall.Read(o.Paths).DropConfirmed()})
 	if err != nil {
 		return nil, exitcode.With(exitcode.BadInput, err)
 	}
@@ -222,7 +234,8 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 	}
 	return &Prepared{Config: cfg, Solution: sol, Desire: des, PrevLock: prev, Lock: lk, IPs: ips, Model: m, Tree: tree,
 		Phase: o.Phase, SolutionLock: sl, CareBuild: cb, DistBase: distBase,
-		ACMEDNS: conn.acmeDNS, EnsureCA: conn.caRoot && !conn.caExists, HostAddrs: netinfo.HostIPv4(o.IPs)}, nil
+		ACMEDNS: conn.acmeDNS, EnsureCA: conn.caRoot && !conn.caExists, HostAddrs: netinfo.HostIPv4(o.IPs),
+		TelemetryPassword: telemetryPassword}, nil
 }
 
 // CheckImplemented runs the apply-time checks on a config before it is installed (the pre-seed of the image): the

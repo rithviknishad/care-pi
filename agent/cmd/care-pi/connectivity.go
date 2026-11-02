@@ -31,6 +31,8 @@ var connFlags struct {
 	scheduled bool
 	reason    string
 	newKey    bool
+	// controlURL is tls.tailscale.control_url (Headscale, Phase 7).
+	controlURL string
 }
 
 func printConnJob(cmd *cobra.Command, svc *service.Service, j *jobs.Job, err error) error {
@@ -157,22 +159,49 @@ var tlsPublicRotateCmd = &cobra.Command{
 
 // ---- tls tailscale ----
 
+var tlsLocalCACmd = &cobra.Command{
+	Use:   "local-ca",
+	Short: "The local CA: the root CA of this device for the .local names and the LAN addresses",
+}
+
+var tlsLocalCARotateCmd = &cobra.Command{
+	Use:   "rotate",
+	Short: "Make a new root CA with a new key (POST /tls/local-ca/rotate); each device must install it again",
+	Long: `rotate makes a new root CA for the names and the LAN addresses of now, keeps the old root for the
+Certificate page for 7 days (/var/lib/care-pi/ca/root.prev.crt), and restarts care-caddy for a new intermediate.
+Use it when a LAN address is outside the name constraints (GET /tls: local_ca.uncovered) or when the clinic no
+longer trusts the old root. Each device of the clinic must then install the new root CA: the browsers show a
+certificate warning until then.`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		svc := newService(cmd)
+		j, err := svc.StartLocalCARotate(cmd.Context(), connFlags.reason, jobs.SourceCLI)
+		return printConnJob(cmd, svc, j, err)
+	},
+}
+
 var tlsTailscaleCmd = &cobra.Command{
 	Use:   "tailscale",
 	Short: "The Tailscale mode: the MagicDNS name with the certificate of tailscaled (PUT /tls/tailscale)",
 }
 
 var tlsTailscaleEnableCmd = &cobra.Command{
-	Use:   "enable [--auth-key-stdin]",
+	Use:   "enable [--auth-key-stdin] [--control-url URL]",
 	Short: "Install tailscale, connect to the tailnet, and turn on the Tailscale name",
 	Long: `Install tailscale from the repository of Tailscale (only now: the installer never installs it), then connect.
 With --auth-key-stdin, the auth key comes from the standard input. Without it, the command prints nothing secret:
 open Settings > Connectivity in the console, or run "care-pi tls tailscale status", for the login URL.
-The tailnet must have MagicDNS and HTTPS Certificates on (the DNS page of the Tailscale admin console).`,
+The tailnet must have MagicDNS and HTTPS Certificates on (the DNS page of the Tailscale admin console).
+--control-url sets a self-hosted control server (Headscale) for "tailscale up --login-server"; "" goes back to
+the Tailscale service. Without the flag, the value of tls.tailscale.control_url stays. A new value on a connected
+tailscaled logs in again ("tailscale up --reset --force-reauth"); with tls.tailscale.manage_daemon false, it fails.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
 		svc := newService(cmd)
 		req := service.TailscaleRequest{Enabled: true, Reason: connFlags.reason}
+		if cmd.Flags().Changed("control-url") {
+			req.ControlURL = &connFlags.controlURL
+		}
 		if connFlags.keyStdin {
 			k, err := readSecret(cmd, "auth key")
 			if err != nil {
@@ -334,7 +363,7 @@ var networkWaitAddressCmd = &cobra.Command{
 
 func init() {
 	for _, c := range []*cobra.Command{tlsPublicEnableCmd, tlsPublicDisableCmd, tlsTailscaleEnableCmd, tlsTailscaleDisableCmd,
-		networkWiFiSetCmd, networkWiFiRemoveCmd} {
+		networkWiFiSetCmd, networkWiFiRemoveCmd, tlsLocalCARotateCmd} {
 		c.Flags().StringVar(&connFlags.reason, "reason", "", "the reason in the job journal")
 		c.Flags().BoolVar(&connFlags.json, "json", false, "print the result as JSON")
 	}
@@ -345,6 +374,7 @@ func init() {
 	tlsPublicEnableCmd.Flags().StringVar(&connFlags.acmeCA, "acme-ca", "", "the ACME directory URL (empty: Let's Encrypt)")
 	tlsPublicUpdateCmd.Flags().BoolVar(&connFlags.scheduled, "scheduled", false, "print only changes (the timer)")
 	tlsTailscaleEnableCmd.Flags().BoolVar(&connFlags.keyStdin, "auth-key-stdin", false, "read the auth key from the standard input")
+	tlsTailscaleEnableCmd.Flags().StringVar(&connFlags.controlURL, "control-url", "", "the URL of a self-hosted control server (Headscale); \"\" is the Tailscale service")
 	networkWiFiSetCmd.Flags().StringVar(&connFlags.ssid, "ssid", "", "the network name")
 	networkWiFiSetCmd.Flags().BoolVar(&connFlags.pskStdin, "psk-stdin", false, "read the passphrase from the standard input")
 	networkWiFiSetCmd.Flags().StringVar(&connFlags.country, "country", "", "the Wi-Fi country, for example IN")
@@ -355,7 +385,8 @@ func init() {
 	tlsPublicRotateCmd.Flags().BoolVar(&connFlags.newKey, "new-key", false, "also replace the Ed25519 key of the device")
 	tlsPublicCmd.AddCommand(tlsPublicEnableCmd, tlsPublicDisableCmd, tlsPublicStatusCmd, tlsPublicUpdateCmd, tlsPublicRotateCmd)
 	tlsTailscaleCmd.AddCommand(tlsTailscaleEnableCmd, tlsTailscaleDisableCmd, tlsTailscaleStatusCmd)
-	tlsCmd.AddCommand(tlsPublicCmd, tlsTailscaleCmd)
+	tlsLocalCACmd.AddCommand(tlsLocalCARotateCmd)
+	tlsCmd.AddCommand(tlsPublicCmd, tlsTailscaleCmd, tlsLocalCACmd)
 	networkWiFiCmd.AddCommand(networkWiFiScanCmd, networkWiFiSetCmd, networkWiFiRemoveCmd, networkWiFiStatusCmd)
 	networkCmd.AddCommand(networkWiFiCmd, networkWaitAddressCmd)
 	rootCmd.AddCommand(networkCmd)

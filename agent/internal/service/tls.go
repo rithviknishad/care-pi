@@ -40,6 +40,10 @@ type LocalCATLS struct {
 	PreviousFingerprint *string    `json:"previous_fingerprint_sha256"`
 	// CertPageURL is the page that offers the root from the fragment of a QR code (07 §4.4).
 	CertPageURL string `json:"cert_page_url"`
+	// ChangeReason is migration or rotation (Phase 7), or nil without a change.
+	ChangeReason *string `json:"change_reason"`
+	// PreviousRoot is the root before a rotation, for 7 days (Phase 7), else nil.
+	PreviousRoot *CARoot `json:"previous_root"`
 }
 
 // TLSState is the TLS modes (schema TlsState).
@@ -96,9 +100,17 @@ func (s *Service) TLS(ctx context.Context) *TLSState {
 	if st := ca.ReadState(s.Paths); st.ChangedAt != nil {
 		t.LocalCA.CAChangedAt = st.ChangedAt
 		t.LocalCA.PreviousFingerprint = strPtr(st.PreviousFingerprint)
+		reason := st.Reason
+		if reason == "" {
+			reason = ca.ReasonMigration
+		}
+		t.LocalCA.ChangeReason = &reason
+		if prev, der := ca.Previous(s.Paths, s.now()); prev != nil {
+			t.LocalCA.PreviousRoot = caRoot(prev, der)
+		}
 	}
 	t.Public = s.publicTLS(ctx, cfg.TLS.Public.Enabled, cfg.TLS.Public.ClinicID, cfg.TLS.Public.ACMECA)
-	t.Tailscale = s.tailscaleTLS(ctx, cfg.TLS.Tailscale.Enabled, cfg.TLS.Tailscale.Hostname)
+	t.Tailscale = s.tailscaleTLS(ctx, cfg.TLS.Tailscale.Enabled, cfg.TLS.Tailscale.Hostname, cfg.TLS.Tailscale.ControlURL)
 	return t
 }
 

@@ -44,6 +44,12 @@ FIREWALL_UNIT="care-pi-firewall.service"
 FIREWALL_UNIT_FILE="/etc/systemd/system/$FIREWALL_UNIT"
 AGENT_UNIT="care-pi.service"
 AGENT_UNIT_FILE="/etc/systemd/system/$AGENT_UNIT"
+# Phase 7: the privileged helper (docs/console-server.md section 14).
+AGENT_USER="care-pi"
+HELPER_UNIT="care-pi-helper.service"
+HELPER_SOCKET_UNIT="care-pi-helper.socket"
+HELPER_SOCKET="/run/care-pi-helper/helper.sock"
+HELPER_DROPIN="/etc/systemd/system/$AGENT_UNIT.d/60-helper.conf"
 CONSOLE_PORT=8443
 NFT_NOFLUSH_DIR="/run/systemd/system/nftables.service.d"
 JOURNALD_DROPIN="/etc/systemd/journald.conf.d/50-care-pi.conf"
@@ -58,7 +64,7 @@ HOLD_PACKAGES="podman crun netavark aardvark-dns conmon skopeo"
 # The oldest podman that care-pi supports. "care-pi host check" checks the same
 # version. The .pod quadlets need podman 5.0. care-pi is tested with podman 5.4.2.
 MIN_PODMAN=5.4
-STEP_TOTAL=16
+STEP_TOTAL=17
 
 SELF=$0
 
@@ -72,6 +78,8 @@ FE_PROVIDER="local"
 ASSUME_YES=0
 UNATTENDED=0
 NO_FIREWALL=0
+FIREWALL_DROP=0
+HELPER=0
 NO_AVAHI=0
 NO_APT_HOLD=0
 SKIP_BOOTSTRAP=0
@@ -90,6 +98,11 @@ LAST_WRITE=0
 REBOOT_NEEDED=0
 REBOOT_REASONS=""
 APT_UPDATED=0
+# PKG_MGR is apt (Debian family) or dnf (Fedora, experimental: S57). detect_os sets it.
+PKG_MGR=apt
+ZRAM_PKG="systemd-zram-generator"
+# DNF_AUTOMATIC_CONF overrides the defaults of dnf5 automatic (Fedora 41 and newer).
+DNF_AUTOMATIC_CONF="/etc/dnf/automatic.conf"
 WORK_DIR=""
 AVAHI_SINCE=""
 ADVERTISED_NAME=""
@@ -105,6 +118,7 @@ IS_PI=0
 HOSTNAME_CHANGED=0
 NFT_LEGACY_FOUND=0
 AGENT_CHANGED=0
+HELPER_CHANGED=0
 
 # ---------------------------------------------------------------- output
 
@@ -174,6 +188,15 @@ Options:
   --yes              Do not ask for confirmation.
   --no-firewall      Do not install the care-pi firewall (nftables table and
                      care-pi-firewall.service).
+  --firewall-drop    Write security.firewall.policy: drop to the new config.yaml
+                     (only the allow-list; docs/console-server.md section 13).
+                     The first apply starts a rollback timer of 90 s: confirm
+                     with "care-pi firewall confirm" from a new SSH session.
+                     The script asks first on a terminal without --yes.
+  --helper           Run "care-pi serve --helper": the agent sends each host
+                     command to care-pi-helper.service (root, an allow-list) and
+                     runs with NoNewPrivileges. Phase 7, experimental. The script
+                     always installs the helper and the user care-pi.
   --no-avahi         Do not install or configure avahi (mDNS).
   --no-apt-hold      Do not hold the container packages.
   --skip-bootstrap   Prepare the host, but do not run "care-pi bootstrap".
@@ -186,7 +209,7 @@ Options:
 
 Each option has an environment variable: CARE_PI_VERSION, CARE_PI_HOSTNAME,
 CARE_PI_PRESET, CARE_PI_FE_PROVIDER, CARE_PI_UNATTENDED, CARE_PI_YES,
-CARE_PI_NO_FIREWALL, CARE_PI_NO_AVAHI, CARE_PI_NO_APT_HOLD,
+CARE_PI_NO_FIREWALL, CARE_PI_FIREWALL_DROP, CARE_PI_HELPER, CARE_PI_NO_AVAHI, CARE_PI_NO_APT_HOLD,
 CARE_PI_SKIP_BOOTSTRAP, CARE_PI_BINARY, CARE_PI_IMAGE_BUILD, CARE_PI_DRY_RUN.
 A flag overrides its
 variable. Switch variables accept 1, true, or yes.
@@ -256,11 +279,26 @@ apt_update_once() {
 }
 
 pkg_installed() {
+  if [ "$PKG_MGR" = dnf ]; then
+    # --whatprovides also finds a package by a name that it provides (dnf-automatic is dnf5-plugin-automatic).
+    rpm -q --quiet --whatprovides "$1" 2>/dev/null
+    return
+  fi
   dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q ' ok installed$'
 }
 
 pkg_held() {
   apt-mark showhold 2>/dev/null | grep -qx "$1"
+}
+
+# pkg_install PKG...: install packages with the package manager of the host.
+pkg_install() {
+  if [ "$PKG_MGR" = dnf ]; then
+    run dnf -y --setopt=install_weak_deps=False install "$@"
+    return
+  fi
+  apt_update_once
+  apt_get install "$@"
 }
 
 # write_file PATH MODE CONTENT: write CONTENT and a newline to PATH. Do nothing
@@ -471,6 +509,8 @@ load_env() {
   if is_true "${CARE_PI_UNATTENDED:-}"; then UNATTENDED=1; fi
   if is_true "${CARE_PI_YES:-}"; then ASSUME_YES=1; fi
   if is_true "${CARE_PI_NO_FIREWALL:-}"; then NO_FIREWALL=1; fi
+  if is_true "${CARE_PI_FIREWALL_DROP:-}"; then FIREWALL_DROP=1; fi
+  if is_true "${CARE_PI_HELPER:-}"; then HELPER=1; fi
   if is_true "${CARE_PI_NO_AVAHI:-}"; then NO_AVAHI=1; fi
   if is_true "${CARE_PI_NO_APT_HOLD:-}"; then NO_APT_HOLD=1; fi
   if is_true "${CARE_PI_SKIP_BOOTSTRAP:-}"; then SKIP_BOOTSTRAP=1; fi
@@ -544,6 +584,14 @@ parse_args() {
         ;;
       --no-firewall)
         NO_FIREWALL=1
+        shift
+        ;;
+      --firewall-drop)
+        FIREWALL_DROP=1
+        shift
+        ;;
+      --helper)
+        HELPER=1
         shift
         ;;
       --no-avahi)
@@ -620,6 +668,12 @@ validate_options() {
   if [ "$IMAGE_BUILD" = 1 ] && [ "$UNATTENDED" = 1 ]; then
     usage_error "Use either --image-build or --unattended. The image runs bootstrap at the first boot."
   fi
+  if [ "$FIREWALL_DROP" = 1 ] && [ "$NO_FIREWALL" = 1 ]; then
+    usage_error "Use either --firewall-drop or --no-firewall. Do not use both."
+  fi
+  if [ "$FIREWALL_DROP" = 1 ] && [ "$IMAGE_BUILD" = 1 ]; then
+    usage_error "--firewall-drop is not for the image: nobody can confirm the policy at a headless first boot."
+  fi
 }
 
 # ensure_root re-runs the script with sudo when the user is not root. This works
@@ -657,6 +711,8 @@ ensure_root() {
   if [ "$UNATTENDED" = 1 ]; then set -- "$@" --unattended; fi
   if [ "$ASSUME_YES" = 1 ]; then set -- "$@" --yes; fi
   if [ "$NO_FIREWALL" = 1 ]; then set -- "$@" --no-firewall; fi
+  if [ "$FIREWALL_DROP" = 1 ]; then set -- "$@" --firewall-drop; fi
+  if [ "$HELPER" = 1 ]; then set -- "$@" --helper; fi
   if [ "$NO_AVAHI" = 1 ]; then set -- "$@" --no-avahi; fi
   if [ "$NO_APT_HOLD" = 1 ]; then set -- "$@" --no-apt-hold; fi
   if [ "$SKIP_BOOTSTRAP" = 1 ]; then set -- "$@" --skip-bootstrap; fi
@@ -698,8 +754,19 @@ detect_os() {
   OS_PRETTY=$(. /etc/os-release && printf '%s' "${PRETTY_NAME:-$OS_ID}")
 
   case $OS_ID in
-    fedora | rhel | centos | rocky | almalinux)
-      die "$OS_PRETTY is not supported in this version. This version supports Debian-family hosts only. Fedora support is planned (plans/06-roadmap.md, Phase 7)."
+    fedora)
+      if [ -e /run/ostree-booted ]; then
+        die "$OS_PRETTY uses rpm-ostree (CoreOS, IoT, or an Atomic desktop). It is not supported. Use Fedora Server 42 or newer."
+      fi
+      if [ -z "$OS_VERSION" ] || ! version_ge "$OS_VERSION" 42; then
+        die "$OS_PRETTY is not supported. Care on Fedora needs Fedora 42 or newer (podman 5.8). Use Fedora Server 42 or newer, Raspberry Pi OS (trixie), or Debian 13."
+      fi
+      PKG_MGR=dnf
+      ZRAM_PKG="zram-generator"
+      warn "Fedora support is experimental (docs/install.md, Fedora). SELinux must be permissive. 'care-pi update --os' is not available: dnf-automatic installs the security updates."
+      ;;
+    rhel | centos | rocky | almalinux)
+      die "$OS_PRETTY is not supported in this version. Supported hosts: Raspberry Pi OS (trixie), Debian 13, Ubuntu 25.04 or newer, and Fedora 42 or newer (experimental)."
       ;;
     debian | raspbian)
       if [ -n "$OS_VERSION" ] && ! version_ge "$OS_VERSION" 12; then
@@ -715,7 +782,7 @@ detect_os() {
       if ! version_ge "$OS_VERSION" 25.04; then
         die "Ubuntu $OS_VERSION is not supported in this version. Care needs podman 5.4 or newer. Ubuntu 24.04 ships podman 4.9, and Ubuntu 22.04 ships podman 3.4. Debian 13 (trixie) ships podman 5.4. Use Raspberry Pi OS (trixie) or Debian 13."
       fi
-      warn "$OS_PRETTY is not tested. The podman check decides."
+      warn "$OS_PRETTY is tested in a container only, not on hardware. The podman check decides."
       ;;
     *)
       case " $OS_ID_LIKE " in
@@ -728,8 +795,23 @@ detect_os() {
       esac
       ;;
   esac
+  if [ "$PKG_MGR" = dnf ]; then
+    if ! command -v dnf >/dev/null 2>&1 || ! command -v rpm >/dev/null 2>&1; then
+      die "dnf and rpm are required on Fedora."
+    fi
+    detect_selinux
+    return 0
+  fi
   if ! command -v apt-get >/dev/null 2>&1 || ! command -v dpkg >/dev/null 2>&1; then
     die "apt-get and dpkg are required. This host is not Debian-family."
+  fi
+}
+
+# detect_selinux stops on Fedora when SELinux enforces: the quadlets of Care
+# bind-mount host directories without SELinux labels (:z, :Z) in this version.
+detect_selinux() {
+  if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce 2>/dev/null)" = Enforcing ]; then
+    die_unless_dry "SELinux is enforcing. Care on Fedora is experimental and needs SELinux in permissive mode: the containers of Care bind-mount host directories without SELinux labels. Run 'sudo setenforce 0' and set SELINUX=permissive in /etc/selinux/config, then run the script again."
   fi
 }
 
@@ -741,7 +823,7 @@ detect_arch() {
       die "The CPU architecture $(uname -m) is not supported. Use a 64-bit Raspberry Pi OS (arm64) or an amd64 host."
       ;;
   esac
-  if [ "$(dpkg --print-architecture)" != "$ARCH" ]; then
+  if [ "$PKG_MGR" = apt ] && [ "$(dpkg --print-architecture)" != "$ARCH" ]; then
     die "The kernel is $ARCH, but the user space is $(dpkg --print-architecture). Install a 64-bit operating system."
   fi
 }
@@ -819,6 +901,17 @@ other_ntp_installed() {
 }
 
 build_package_list() {
+  if [ "$PKG_MGR" = dnf ]; then
+    # Fedora: dnf-automatic for the security updates; chrony is the NTP client of Fedora.
+    PKG_LIST="podman skopeo restic nftables dnf-automatic ca-certificates curl shadow-utils catatonit iproute diffutils"
+    if [ "$NO_AVAHI" != 1 ]; then
+      PKG_LIST="$PKG_LIST avahi"
+    fi
+    if ! other_ntp_installed >/dev/null; then
+      PKG_LIST="$PKG_LIST chrony"
+    fi
+    return 0
+  fi
   PKG_LIST="podman skopeo restic nftables unattended-upgrades ca-certificates curl uidmap catatonit iproute2"
   if [ "$NO_AVAHI" != 1 ]; then
     PKG_LIST="$PKG_LIST avahi-daemon"
@@ -843,10 +936,18 @@ confirm_plan() {
     log "  - download the agent ($AGENT_VERSION) and verify its checksum"
   fi
   log "  - install and start care-pi.service (the console on port $CONSOLE_PORT)"
+  log "  - create the system user $AGENT_USER and install $HELPER_SOCKET_UNIT (the privileged helper)"
+  if [ "$HELPER" = 1 ]; then
+    log "  - run care-pi.service with --helper and NoNewPrivileges (experimental)"
+  fi
   if [ "$UNATTENDED" = 1 ]; then
     log "  - run care-pi bootstrap --unattended (host name $HOSTNAME_ARG, preset $PRESET, FE provider $FE_PROVIDER)"
   else
     log "  - run care-pi bootstrap in setup mode (host name $HOSTNAME_ARG); print the claim code"
+  fi
+  if [ "$FIREWALL_DROP" = 1 ]; then
+    log "  - write security.firewall.policy: drop (only the allow-list). The first apply starts a rollback"
+    log "    timer of 90 s: open a NEW SSH session, then run 'sudo care-pi firewall confirm'."
   fi
   if ! ask "Continue? [y/N]"; then
     die "Stopped by the user. The script changed nothing."
@@ -887,6 +988,16 @@ podman_version() {
 
 # Stop before the install when apt offers only an old podman.
 check_podman_candidate() {
+  if [ "$PKG_MGR" = dnf ]; then
+    pc_ver=$(dnf -q repoquery --latest-limit=1 --qf '%{version}\n' podman 2>/dev/null | sed -n '1s/^\([0-9][0-9.]*\).*/\1/p')
+    if [ -z "$pc_ver" ]; then
+      die "The dnf repositories have no podman package."
+    fi
+    if ! version_ge "$pc_ver" "$MIN_PODMAN"; then
+      podman_too_old "$pc_ver" "the version in the dnf repositories"
+    fi
+    return 0
+  fi
   pc_ver=$(apt-cache policy podman 2>/dev/null | sed -n 's/^ *Candidate: \([0-9][0-9.]*\).*/\1/p')
   if [ -z "$pc_ver" ]; then
     die "The apt sources have no podman package."
@@ -940,11 +1051,17 @@ step_packages() {
   if [ $# -gt 0 ]; then
     STEP_CHANGED=1
     log "Install: $*"
-    apt_update_once
+    if [ "$PKG_MGR" = apt ]; then
+      apt_update_once
+    fi
     if [ "$DRY_RUN" != 1 ] && ! pkg_installed podman; then
       check_podman_candidate
     fi
-    apt_get install "$@" || die "apt-get install failed. Read the output above."
+    if [ "$PKG_MGR" = dnf ]; then
+      pkg_install "$@" || die "dnf install failed. Read the output above."
+    else
+      apt_get install "$@" || die "apt-get install failed. Read the output above."
+    fi
   fi
   check_podman
 }
@@ -1100,10 +1217,9 @@ zram_with_rpi_swap() {
 }
 
 zram_with_generator() {
-  if ! pkg_installed systemd-zram-generator; then
+  if ! pkg_installed "$ZRAM_PKG"; then
     STEP_CHANGED=1
-    apt_update_once
-    apt_get install systemd-zram-generator || die "Cannot install systemd-zram-generator."
+    pkg_install "$ZRAM_PKG" || die "Cannot install $ZRAM_PKG."
   fi
   # A drop-in overrides the main file. Ubuntu ships a main file with a default [zram0].
   ensure_dir "$ZRAM_GENERATOR_DROPIN_DIR" 755 0:0
@@ -1273,6 +1389,11 @@ step_avahi() {
 # --- 6. time
 
 step_time() {
+  # Fedora: chrony is the NTP client (step 1 installs it when no other one is there).
+  if [ "$PKG_MGR" = dnf ] && { pkg_installed chrony || ! other_ntp_installed >/dev/null; }; then
+    ensure_service chronyd.service
+    return 0
+  fi
   if sn_other=$(other_ntp_installed); then
     STEP_SKIP="$sn_other is installed and keeps the clock in sync"
     return 0
@@ -1380,10 +1501,12 @@ nft_rules() {
     tcp dport 22 accept"
   fi
   cat <<EOF
-# Managed by care-pi install.sh. Do not edit. $FIREWALL_UNIT loads this file.
+# Managed by care-pi install.sh. Do not edit. $FIREWALL_UNIT loads this file
+# until the first apply of the agent. From then, the drop-in 50-care-pi.conf of the
+# unit loads /etc/care-pi/rendered/firewall/care-pi.nft, the table of the agent
+# (security.firewall.policy, docs/console-server.md section 13).
 # The chain accepts the Care ports (80, 443) and the console (8443, S48). It drops nothing. The policy is
-# "accept". The default-drop policy comes in Phase 7 (hardening). Allow DHCP
-# (udp 68) before that change.
+# "accept".
 # The file changes only the table inet care-pi. It does not touch the tables of
 # podman (netavark) or Tailscale.
 # The first two commands make "nft -f" idempotent: create the table when it is
@@ -1648,6 +1771,10 @@ step_firewall() {
   if [ "$SYSTEMD" = 1 ]; then
     for sf_unit in ufw.service firewalld.service; do
       if systemctl is-active --quiet "$sf_unit" 2>/dev/null; then
+        if [ "$sf_unit" = firewalld.service ]; then
+          firewalld_allow
+          return 0
+        fi
         STEP_SKIP="$sf_unit manages the firewall. Allow 80/tcp, 443/tcp, $CONSOLE_PORT/tcp, and 5353/udp there"
         return 0
       fi
@@ -1718,6 +1845,32 @@ step_firewall() {
   nft_service_retire
 }
 
+# firewalld_allow opens the ports of Care in the default zone of firewalld (Fedora).
+# firewalld keeps its own policy (default-drop in the FedoraServer zone), and the
+# script does not install the care-pi table: security.firewall.policy has no effect.
+firewalld_allow() {
+  fa_zone=$(firewall-cmd --get-default-zone 2>/dev/null)
+  if [ -z "$fa_zone" ]; then
+    die "firewalld is active, but firewall-cmd gives no default zone. Allow 80/tcp, 443/tcp, $CONSOLE_PORT/tcp, and 5353/udp in firewalld, or use --no-firewall."
+  fi
+  set --
+  for fa_svc in http https mdns; do
+    if ! firewall-cmd --permanent --zone="$fa_zone" --query-service="$fa_svc" >/dev/null 2>&1; then
+      set -- "$@" "--add-service=$fa_svc"
+    fi
+  done
+  if ! firewall-cmd --permanent --zone="$fa_zone" --query-port="$CONSOLE_PORT/tcp" >/dev/null 2>&1; then
+    set -- "$@" "--add-port=$CONSOLE_PORT/tcp"
+  fi
+  if [ $# -eq 0 ]; then
+    log "firewalld (zone $fa_zone) allows http, https, mdns, and $CONSOLE_PORT/tcp."
+    return 0
+  fi
+  STEP_CHANGED=1
+  run firewall-cmd --permanent --zone="$fa_zone" "$@" || die "firewall-cmd failed. Allow 80/tcp, 443/tcp, $CONSOLE_PORT/tcp, and 5353/udp in firewalld, or use --no-firewall."
+  run firewall-cmd --reload || die "firewall-cmd --reload failed. Run: systemctl status firewalld"
+}
+
 # --- 9. unattended-upgrades
 
 unattended_conf() {
@@ -1731,7 +1884,26 @@ APT::Periodic::Unattended-Upgrade "1";
 EOF
 }
 
+# dnf_automatic_conf prints the dnf5 automatic configuration of Fedora: install
+# the security updates, never reboot (Care reboots in its update window).
+dnf_automatic_conf() {
+  cat <<'EOF'
+# Managed by care-pi install.sh.
+# Install security updates automatically. Never reboot by itself.
+[commands]
+upgrade_type = security
+download_updates = yes
+apply_updates = yes
+reboot = never
+EOF
+}
+
 step_upgrades() {
+  if [ "$PKG_MGR" = dnf ]; then
+    write_file "$DNF_AUTOMATIC_CONF" 644 "$(dnf_automatic_conf)"
+    ensure_service dnf5-automatic.timer
+    return 0
+  fi
   write_file /etc/apt/apt.conf.d/52care-pi.conf 644 "$(unattended_conf)"
   if pkg_installed unattended-upgrades; then
     if ! apt-config dump | grep -i 'Unattended-Upgrade::\(Origins-Pattern\|Allowed-Origins\)' | grep -qi security; then
@@ -1747,6 +1919,10 @@ step_upgrades() {
 step_holds() {
   if [ "$NO_APT_HOLD" = 1 ]; then
     STEP_SKIP="--no-apt-hold"
+    return 0
+  fi
+  if [ "$PKG_MGR" = dnf ]; then
+    STEP_SKIP="Fedora (experimental): the script holds no packages. dnf-automatic installs only the security updates"
     return 0
   fi
   set --
@@ -1925,6 +2101,119 @@ WantedBy=multi-user.target
 EOF
 }
 
+# --- Phase 7: the privileged helper (docs/console-server.md section 14)
+
+helper_socket_unit() {
+  cat <<EOF
+# Managed by care-pi install.sh. Do not edit.
+# The socket of the privileged helper of the care-pi agent. Only root and the
+# group $AGENT_USER can connect. systemd starts $HELPER_UNIT at the first
+# connection, and again after a stop or a crash.
+[Unit]
+Description=care-pi privileged helper socket ($HELPER_SOCKET)
+Documentation=https://github.com/rithviknishad/care-pi
+
+[Socket]
+ListenStream=$HELPER_SOCKET
+SocketUser=root
+SocketGroup=$AGENT_USER
+SocketMode=0660
+DirectoryMode=0755
+RemoveOnStop=yes
+
+[Install]
+WantedBy=sockets.target
+EOF
+}
+
+# helper_unit prints care-pi-helper.service. The helper runs as root. It runs only
+# the commands of its allow-list ("care-pi helper"). It has the sandbox of
+# care-pi.service: the same commands ran in care-pi.service before Phase 7.
+helper_unit() {
+  cat <<EOF
+# Managed by care-pi install.sh. Do not edit.
+# The privileged helper of the care-pi agent: "care-pi serve --helper" sends each
+# host command to it. Each request and each refusal is in its journal.
+[Unit]
+Description=care-pi privileged helper (the host commands of care-pi.service)
+Documentation=https://github.com/rithviknishad/care-pi
+Requires=$HELPER_SOCKET_UNIT
+After=$HELPER_SOCKET_UNIT
+
+[Service]
+Type=notify
+ExecStart=$BIN_PATH helper
+Restart=on-failure
+RestartSec=2
+MemoryMax=96M
+OOMScoreAdjust=-100
+ProtectSystem=strict
+ReadWritePaths=/etc/care-pi /var/lib/care-pi /run /etc/containers/systemd /etc/systemd/system /var/lib/containers -/var/cache/containers -/etc/hosts
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+EOF
+}
+
+# helper_dropin prints the drop-in of care-pi.service for --helper. The daemon
+# runs no program of its own: NoNewPrivileges, and only the capabilities for
+# the files of the agent (the postgres-owned backup directories need CAP_CHOWN
+# and CAP_DAC_OVERRIDE). The daemon stays uid 0: the move to the user care-pi
+# waits for the typed file writes of the helper (section 14).
+helper_dropin() {
+  cat <<EOF
+# Managed by care-pi install.sh (--helper). Do not edit.
+[Unit]
+Wants=$HELPER_SOCKET_UNIT
+After=$HELPER_SOCKET_UNIT
+
+[Service]
+ExecStart=
+ExecStart=$BIN_PATH serve --helper
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_FOWNER
+EOF
+}
+
+ensure_agent_user() {
+  if getent passwd "$AGENT_USER" >/dev/null 2>&1; then
+    return 0
+  fi
+  STEP_CHANGED=1
+  if ! getent group "$AGENT_USER" >/dev/null 2>&1; then
+    run groupadd --system "$AGENT_USER" || die "Cannot create the group $AGENT_USER."
+  fi
+  run useradd --system --gid "$AGENT_USER" --no-create-home --home-dir /nonexistent \
+    --shell /usr/sbin/nologin --comment "care-pi agent" "$AGENT_USER" || die "Cannot create the user $AGENT_USER."
+}
+
+step_helper() {
+  ensure_agent_user
+  write_file "/etc/systemd/system/$HELPER_SOCKET_UNIT" 644 "$(helper_socket_unit)"
+  hs_written=$LAST_WRITE
+  write_file "/etc/systemd/system/$HELPER_UNIT" 644 "$(helper_unit)"
+  if [ "$LAST_WRITE" = 1 ]; then hs_written=1; fi
+  if [ "$HELPER" = 1 ]; then
+    if [ ! -d "${HELPER_DROPIN%/*}" ]; then
+      ensure_dir "${HELPER_DROPIN%/*}" 755 0:0
+    fi
+    write_file "$HELPER_DROPIN" 644 "$(helper_dropin)"
+    if [ "$LAST_WRITE" = 1 ]; then hs_written=1; fi
+  elif [ -e "$HELPER_DROPIN" ]; then
+    STEP_CHANGED=1
+    hs_written=1
+    run rm -f "$HELPER_DROPIN"
+  fi
+  if [ "$hs_written" = 1 ]; then HELPER_CHANGED=1; fi
+  if [ "$hs_written" = 1 ] && [ "$SYSTEMD" = 1 ] && [ "$IMAGE_BUILD" != 1 ]; then
+    run systemctl daemon-reload
+    # A running helper keeps its old binary and unit until a restart.
+    run systemctl try-restart "$HELPER_UNIT" || true
+  fi
+  ensure_service "$HELPER_SOCKET_UNIT"
+}
+
 step_agent_service() {
   if [ "$IMAGE_BUILD" = 1 ]; then
     write_file "$AGENT_UNIT_FILE" 644 "$(care_pi_unit)"
@@ -1955,7 +2244,7 @@ step_agent_service() {
     return 0
   fi
   if systemctl is-active --quiet "$AGENT_UNIT"; then
-    if [ "$as_written" = 1 ] || [ "$AGENT_CHANGED" = 1 ]; then
+    if [ "$as_written" = 1 ] || [ "$AGENT_CHANGED" = 1 ] || [ "$HELPER_CHANGED" = 1 ]; then
       STEP_CHANGED=1
       run systemctl restart "$AGENT_UNIT" || warn "$AGENT_UNIT did not restart. Run: systemctl status $AGENT_UNIT"
     fi
@@ -2077,6 +2366,9 @@ step_sysctl() {
 # bootstrap_args prints the arguments of "care-pi bootstrap".
 bootstrap_args() {
   ba="bootstrap --hostname $EFFECTIVE_HOSTNAME --preset $PRESET --fe-provider $FE_PROVIDER --yes"
+  if [ "$FIREWALL_DROP" = 1 ]; then
+    ba="$ba --firewall-policy drop"
+  fi
   if [ "$UNATTENDED" = 1 ]; then
     ba="$ba --unattended"
   fi
@@ -2235,6 +2527,7 @@ main() {
   step "Hold the container packages" step_holds
   step "Create the directories" step_dirs
   step "Install the agent" step_agent
+  step "Install the privileged helper" step_helper
   step "Install the agent service" step_agent_service
   step "Install the NetworkManager hook" step_nm_hook
   step "Let the pod publish on an absent address" step_sysctl

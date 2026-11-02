@@ -96,9 +96,28 @@ const (
 	WiFiSecretFile          = "/etc/care-pi/secrets/wifi.json"
 	// TailscaleSocketDir is the directory of the socket of tailscaled. care-caddy mounts it when Tailscale is on.
 	TailscaleSocketDir = "/run/tailscale"
-	// FirewallDropIn adds the Tailscale port (41641/udp) to the table of care-pi-firewall.service (installer).
-	FirewallUnit   = "care-pi-firewall.service"
-	FirewallDropIn = "/etc/systemd/system/care-pi-firewall.service.d/50-care-pi-tailscale.conf"
+	// FirewallUnit loads the table inet care-pi (the installer writes it). FirewallDropIn (Phase 7) makes it load
+	// FirewallFile, the table of the agent (security.firewall, security.ssh, tls.tailscale). FirewallDropInLegacy is
+	// the drop-in of Phase 6 (the Tailscale port only); apply deletes it.
+	FirewallUnit         = "care-pi-firewall.service"
+	FirewallDropIn       = "/etc/systemd/system/care-pi-firewall.service.d/50-care-pi.conf"
+	FirewallDropInLegacy = "/etc/systemd/system/care-pi-firewall.service.d/50-care-pi-tailscale.conf"
+	RenderedFirewall     = "/etc/care-pi/rendered/firewall"
+	FirewallFile         = "/etc/care-pi/rendered/firewall/care-pi.nft"
+	// FirewallPendingFile is the table with the policy drop before its confirmation. FirewallFile, which the boot
+	// loads, keeps the confirmed policy; "care-pi firewall confirm" moves this file over it.
+	FirewallPendingFile = "/etc/care-pi/rendered/firewall/care-pi.pending.nft"
+	// FirewallState records the policy of the last load and the rollback timer (Phase 7, S42 default-drop).
+	FirewallState = "/var/lib/care-pi/state/firewall.json"
+	// Telemetry (Phase 7, docs/telemetry.md). RenderedTelemetry holds the scrape configuration of vmagent;
+	// TelemetryDir holds the text file of the agent for node_exporter and the queue of vmagent.
+	RenderedTelemetry     = "/etc/care-pi/rendered/telemetry"
+	TelemetryDir          = "/var/lib/care-pi/telemetry"
+	TelemetryTextfileDir  = "/var/lib/care-pi/telemetry/textfile"
+	TelemetryQueueDir     = "/var/lib/care-pi/telemetry/vmagent"
+	TelemetryPasswordFile = "/etc/care-pi/secrets/telemetry_password"
+	// KeysDir holds the minisign public keys that this host trusts in addition to the keys of the agent (Phase 7).
+	KeysDir = "/etc/care-pi/keys"
 	// SysctlFile sets net.ipv4.ip_nonlocal_bind=1: the pod can publish on an address that is not there yet
 	// (tailscale0, a second LAN address). The installer and apply write it; systemd-sysctl.service loads it.
 	SysctlFile = "/etc/sysctl.d/50-care-pi.conf"
@@ -109,8 +128,18 @@ const (
 	ApplyLock = "/run/care-pi/apply.lock"
 	// AgentSocket is the socket of "care-pi serve". Caddy is its only client.
 	AgentSocket = "/run/care-pi/api.sock"
-	// RunBackupDir holds the files of one restic run (password file, SSH key, S3 credentials). tmpfs.
-	RunBackupDir = "/run/care-pi/backup"
+	// HelperSocket is the socket of the privileged helper (Phase 7, care-pi-helper.socket, 0660 root:care-pi). It is
+	// not in RunDir: care-caddy mounts RunDir, and Caddy runs as root in its container.
+	HelperDir    = "/run/care-pi-helper"
+	HelperSocket = "/run/care-pi-helper/helper.sock"
+	// HelperUnit and HelperSocketUnit are the units of the helper (the installer writes them).
+	HelperUnit       = "care-pi-helper.service"
+	HelperSocketUnit = "care-pi-helper.socket"
+	// AgentUser is the system user of the daemon after the privilege split, and the group of HelperSocket.
+	AgentUser = "care-pi"
+	// RunBackupDir holds the files of one restic run (password file, SSH key, S3 credentials, ssh_config). tmpfs, root
+	// 0700. Not below RunDir: care-caddy (root) mounts RunDir, and an ssh_config there could name a ProxyCommand.
+	RunBackupDir = "/run/care-pi-backup"
 	// AgentUnit runs "care-pi serve". The installer writes it.
 	AgentUnit     = "care-pi.service"
 	AgentUnitFile = "/etc/systemd/system/care-pi.service"

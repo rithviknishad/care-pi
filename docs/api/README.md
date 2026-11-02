@@ -523,6 +523,7 @@ An operation with a session can also return `csrf` (403); see §3.
 | `build-required-offline` | 409 | Phase 4. The change needs a download or a local build, and the host has no internet. |
 | `index-unavailable` | 502 | Phase 4. The agent cannot fetch or read `index.json`. |
 | `artefact-invalid` | 502 | Phase 4. A downloaded lock or bundle is missing (HTTP 404), has another SHA-256, or fails its schema. |
+| `lock-signature-invalid` | 502 | Phase 7. `updates.require_signed` is on, and `index.json` or a lock has no valid minisign signature of a trusted key. |
 | `rollback-unavailable` | 409 | Phase 4. No previous lock exists. |
 | `checkpoint-failed` | 500 | Phase 4, job error. The checkpoint before the migrations failed. Nothing changed. |
 | `migration-failed` | 500 | Phase 4, job error. `care-beat` did not become healthy. The previous lock runs again; `pitr_offer` is set. |
@@ -836,7 +837,7 @@ A change of the derivation needs a new salt (`v2`), and the agent must keep the 
 
 - The agent writes the cipher pass to `secrets/pgbackrest_repo_cipher_pass`, because care-db reads it as a podman secret.
   It derives the restic password and the SSH key in memory for each run. restic uses the OpenSSH client of the host,
-  so the agent writes the private key to a directory of the run below `/run/care-pi/backup/` (tmpfs, root 0700, the key 0600)
+  so the agent writes the private key to a directory of the run below `/run/care-pi-backup/` (tmpfs, root 0700, the key 0600)
   and deletes the directory after the run.
 - One SSH key serves each SFTP destination. A restored device derives the same key, so the servers still accept it.
   A new recovery key gives a new SSH key.
@@ -1320,7 +1321,7 @@ Notes on the earlier sections, which stay as they are:
 artefacts, the on-device lock version 2, the tracks, the update steps, rollback, the window, OS updates, and plugs.
 This section tells how the API shows them. The operations have `x-phase: 4`. Until an agent implements Phase 4,
 they return `501 not-implemented-in-this-version`. The agent of Phase 4 wave 6a implements each of them
-(`docs/console-server.md` section 11).
+(`docs/console-server.md` section 13).
 
 ### 14.1 Resources
 
@@ -1697,3 +1698,75 @@ All changes are additive.
   `ClockSource` (S52).
 - `PublicStatus.firstboot_error`: why the first boot of the image did not use the pre-seed (`docs/image.md` section 5).
   The claim page of the console and the setup page on port 443 show it until the setup is finished.
+
+## 17. Hardening and breadth (Phase 7)
+
+Phase 7 adds options for a hardened host and more hosts. Each addition is optional and off by default, except where a
+section tells otherwise. The design notes are `docs/console-server.md`, `docs/connectivity.md`, `docs/solutions.md`,
+`docs/telemetry.md`, and `docs/install.md`.
+
+### 17.1 Headscale (O4)
+
+`tls.tailscale.control_url` (config) and `TailscaleRequest.control_url` (request) set a self-hosted control server:
+`tailscale up --login-server <url>`. `TlsTailscale.control_url` shows it in `GET /tls`. The Tailscale service stays the
+default. Without `control_url`, an auth key must start with `tskey-` (`422 invalid-request`, `/auth_key`), and the
+MagicDNS name must end in `.ts.net`. A control server that gives no certificate fails the enrol job with
+`tailscale-https-disabled` (`docs/connectivity.md` section 4.4).
+
+### 17.2 The firewall (S42 default-drop)
+
+`security.firewall.policy` (`accept` default, `drop`) and `security.ssh.allow` are config keys: change them with
+`PATCH /config` and `apply=true`, as each other key. A switch to `drop` starts a rollback timer of 90 s in the apply
+(plan action `reload-firewall`). `GET /security/firewall` (`FirewallState`) shows the timer (`pending_until`);
+`POST /security/firewall/confirm` stops it (`409 state-conflict` when no timer runs). Without the confirmation,
+`care-pi firewall rollback --reason timeout` sets `accept` in nftables and in `config.yaml` (`rolled_back_at`,
+`rollback_reason`). The console sends the confirmation from Security > Firewall, so the request itself shows that the
+console works through the new rules. Detail: `docs/console-server.md` section 13.
+
+### 17.3 A new root CA
+
+`POST /tls/local-ca/rotate` (reauthentication; no longer `x-phase: 7`) starts the job `tls-local-ca-rotate` (apply lock;
+steps `ca-rotate`, `restart-caddy`; result `TlsLocalCaRotateResult`). `409 state-conflict` when the local CA mode is off
+or the device has no root of its own yet. After it, `TlsState.local_ca` has `change_reason: rotation`, the new root,
+`ca_changed_at`, `previous_fingerprint_sha256`, and for 7 days `previous_root` (a `CaRoot`). The console shows the
+warning of the certificate page with both fingerprints (`docs/connectivity.md` section 2.5).
+
+### 17.4 Signed index and locks
+
+`updates.require_signed` (config, default `false`) makes the agent check a minisign signature (`<url>.minisig`) of
+`index.json` and of each lock before it accepts them. A failure is `502 lock-signature-invalid` in the update jobs and
+in `GET /solutions/{name}/locks/{version}`; the cache stays. CLI: `care-pi solution verify FILE`. The keys, CI, and the
+key ceremony: `docs/solutions.md` section 18.
+
+### 17.5 Telemetry and metrics
+
+`GET /metrics` (session; `text/plain; version=0.0.4`) gives the metrics of the agent in the Prometheus text format;
+CLI `care-pi metrics`. The config keys `telemetry.{enabled, remote_write_url, username, interval_s}` turn on the opt-in
+telemetry (node_exporter and vmagent, remote write only; `docs/telemetry.md`). The plan action `ensure-telemetry` starts,
+restarts, or stops only its units.
+
+### 17.6 The WAF
+
+`security.waf.{enabled, mode, paranoia}` (config) turns on the Coraza WAF on the Care API routes of port 443
+(`docs/console-server.md` section 15). The console API (port 8443) has no WAF. No operation changes.
+
+### 17.7 Doctor
+
+`GET /doctor` (session) runs the checks of `care-pi doctor` and gives `DoctorReport` (`status`, `checks[]` with `id`,
+`title`, `status`, `detail`, `fix`). The console shows it on the Support page with a "Run again" button. The support
+bundle has `doctor.json` and the other sections of `docs/console-server.md` section 16.
+
+### 17.9 Changes of contract 0.8.0
+
+All changes are additive.
+
+- `TailscaleRequest.control_url`, `TlsTailscale.control_url` (section 17.1).
+- `GET /security/firewall`, `POST /security/firewall/confirm`, the schema `FirewallState`; the config keys
+  `security.firewall.policy` and `security.ssh.allow` (section 17.2).
+- `POST /tls/local-ca/rotate` is implemented (no `x-phase`); the job kind `tls-local-ca-rotate` and
+  `TlsLocalCaRotateResult`; `TlsState.local_ca.change_reason` and `TlsState.local_ca.previous_root` (section 17.3).
+- The config key `updates.require_signed` and the problem type `lock-signature-invalid` (section 17.4).
+- `GET /metrics`; the plan action kind and the step key `ensure-telemetry`; the config keys `telemetry.username` and
+  `telemetry.interval_s` (section 17.5).
+- The config keys `security.waf.enabled`, `security.waf.mode`, `security.waf.paranoia` (section 17.6).
+- `GET /doctor`, the schemas `DoctorReport`, `DoctorCheck`, `DoctorStatus` (section 17.7).

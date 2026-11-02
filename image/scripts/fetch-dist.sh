@@ -38,6 +38,8 @@ fetch() {
 	mkdir -p "${OUT}/${tag}"
 	gh release download "${tag}" --repo "${REPO}" --pattern "${file}" --dir "${OUT}/${tag}" --clobber
 	gh release download "${tag}" --repo "${REPO}" --pattern "${file}.sha256" --dir "${OUT}/${tag}" --clobber || true
+	# Phase 7: the minisign signature of a lock, when CI signed it (docs/solutions.md section 18).
+	gh release download "${tag}" --repo "${REPO}" --pattern "${file}.minisig" --dir "${OUT}/${tag}" --clobber 2>/dev/null || true
 	got="$(sha256sum "${OUT}/${rel}" | cut -d' ' -f1)"
 	if [ -z "${want}" ] && [ -f "${OUT}/${rel}.sha256" ]; then
 		want="$(cut -d' ' -f1 "${OUT}/${rel}.sha256")"

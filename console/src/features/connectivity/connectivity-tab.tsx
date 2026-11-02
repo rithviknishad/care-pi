@@ -38,6 +38,7 @@ import {
   signalLevel,
   sortNetworks,
   validAuthKey,
+  validControlUrl,
   validHint,
   validateWifi,
   type RebindResult,
@@ -365,13 +366,15 @@ function TailscaleCard({
   const ts = tls.tailscale;
   const { withReauth } = useReauth();
   const [key, setKey] = useState("");
-  const keyError = !validAuthKey(key) ? cs.authKeyInvalid : undefined;
+  const [controlUrl, setControlUrl] = useState(ts.control_url ?? "");
+  const keyError = !validAuthKey(key, controlUrl) ? cs.authKeyInvalid : undefined;
+  const controlError = !validControlUrl(controlUrl) ? cs.controlUrlInvalid : undefined;
   const run = useMutation({
     mutationFn: (enabled: boolean) =>
       withReauth(() =>
         call(
           api.PUT("/tls/tailscale", {
-            body: enabled ? { enabled: true, auth_key: key || null } : { enabled: false },
+            body: enabled ? { enabled: true, auth_key: key || null, control_url: controlUrl } : { enabled: false },
           }),
         ),
       ),
@@ -410,6 +413,12 @@ function TailscaleCard({
             <DataRow label={cs.state} value={cs.tsStates[ts.backend_state ?? "NoState"] ?? ts.backend_state} />
             <DataRow label={cs.tailnet} value={ts.tailnet ?? "—"} />
             <DataRow label={cs.tsAddress} value={ts.ipv4 ?? "—"} />
+            {ts.control_url ? (
+              <DataRow
+                label={cs.controlUrl}
+                value={<span data-testid="tailscale-control-url">{ts.control_url}</span>}
+              />
+            ) : null}
           </DataList>
           {!ts.https_enabled ? (
             <Alert variant="warning">
@@ -436,7 +445,7 @@ function TailscaleCard({
           className="flex flex-col gap-2"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!keyError) run.mutate(true);
+            if (!keyError && !controlError) run.mutate(true);
           }}
         >
           <p className="text-xs text-soft-foreground">{cs.tailscaleNeeds}</p>
@@ -451,8 +460,27 @@ function TailscaleCard({
               className="max-w-md"
             />
           </FormField>
+          <FormField id="tailscale-control" label={cs.controlUrl} help={cs.controlUrlHelp} error={controlError}>
+            <Input
+              id="tailscale-control"
+              value={controlUrl}
+              autoComplete="off"
+              inputMode="url"
+              placeholder="https://headscale.example.org"
+              onChange={(e) => setControlUrl(e.target.value.trim())}
+              aria-invalid={controlError ? true : undefined}
+              aria-describedby={describedBy("tailscale-control", true, controlError)}
+              className="max-w-md"
+              data-testid="tailscale-control-input"
+            />
+          </FormField>
           <p className="text-xs text-soft-foreground">{cs.restartNote}</p>
-          <Button type="submit" className="self-start" disabled={busy || Boolean(keyError)} data-testid="tailscale-on">
+          <Button
+            type="submit"
+            className="self-start"
+            disabled={busy || Boolean(keyError) || Boolean(controlError)}
+            data-testid="tailscale-on"
+          >
             {run.isPending ? <Spinner data-icon="inline-start" /> : null}
             {cs.turnOn}
           </Button>

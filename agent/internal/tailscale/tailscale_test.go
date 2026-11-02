@@ -69,7 +69,7 @@ func TestUpWithKeyKeepsTheKeyOffTheCommandLine(t *testing.T) {
 		return host.Response{}, false
 	}
 	c := Client{Runner: f, RunDir: dir}
-	if err := c.UpWithKey(context.Background(), "care", "tskey-auth-SECRET"); err != nil {
+	if err := c.UpWithKey(context.Background(), "care", "", "tskey-auth-SECRET"); err != nil {
 		t.Fatal(err)
 	}
 	if seen != "tskey-auth-SECRET" {
@@ -94,7 +94,7 @@ func TestLoginFlow(t *testing.T) {
 		host.Response{Out: StatusJSON(StateNeedsLogin, "https://login.tailscale.com/a/abc"), Code: 1},
 		host.Response{Out: StatusJSON(StateRunning, "")})
 	c := Client{Runner: f, Poll: time.Millisecond}
-	if err := c.StartLogin(context.Background(), "care"); err != nil {
+	if err := c.StartLogin(context.Background(), "care", ""); err != nil {
 		t.Fatal(err)
 	}
 	if got := f.Filter("systemd-run"); len(got) != 1 || !strings.Contains(got[0], "--unit="+UpUnit+" -- tailscale up --hostname=care") ||
@@ -121,6 +121,25 @@ func TestStatusWithoutTailscale(t *testing.T) {
 	}
 }
 
+func TestUpArgsControlURL(t *testing.T) {
+	got := strings.Join(UpArgs("care", ""), " ")
+	if strings.Contains(got, "--login-server") {
+		t.Fatalf("SaaS up has a login server: %s", got)
+	}
+	got = strings.Join(UpArgs("care", "https://hs.example.org"), " ")
+	if !strings.HasSuffix(got, "--reset --login-server=https://hs.example.org") {
+		t.Fatalf("Headscale up %q", got)
+	}
+	f := host.NewFake()
+	c := Client{Runner: f}
+	if err := c.StartLogin(context.Background(), "care", "https://hs.example.org"); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Filter("systemd-run"); len(got) != 1 || !strings.Contains(got[0], "--login-server=https://hs.example.org --timeout=") {
+		t.Fatalf("start login %q", got)
+	}
+}
+
 // serveJSON is "tailscale serve status --json" of lumine (tailscale 1.104): a serve on 443 of the node, and a
 // Tailscale Service with its own address. Only the TCP map of the node counts.
 const serveJSON = `{"TCP":{"443":{"HTTPS":true}},"Web":{"lumine.orthrus-bass.ts.net:443":{"Handlers":{"/":{"Proxy":"http://10.43.99.23:8080"}}}},
@@ -141,12 +160,13 @@ func TestServePorts(t *testing.T) {
 	}
 	f := host.NewFake()
 	f.On("tailscale serve status --json", host.Response{Out: serveJSON})
-	if got := (Client{Runner: f}).ServePorts(context.Background()); !equalInts(got, []int{443}) {
-		t.Fatalf("client %v", got)
+	if got, err := (Client{Runner: f}).ServePorts(context.Background()); err != nil || !equalInts(got, []int{443}) {
+		t.Fatalf("client %v %v", got, err)
 	}
+	// B1 (Phase 7 review): a failed command (for example a refusal of the helper) is an error, not "no ports".
 	f.Set("tailscale serve status --json", host.Response{Code: 1})
-	if got := (Client{Runner: f}).ServePorts(context.Background()); got != nil {
-		t.Fatalf("a failed command gives no ports, got %v", got)
+	if got, err := (Client{Runner: f}).ServePorts(context.Background()); err == nil || got != nil {
+		t.Fatalf("a failed command must give an error, got %v %v", got, err)
 	}
 }
 
@@ -160,4 +180,20 @@ func equalInts(a, b []int) bool {
 		}
 	}
 	return true
+}
+
+// TestForceReauth (m3 of the Phase 7 review): a connected tailscaled changes its control server only with a new login.
+func TestForceReauth(t *testing.T) {
+	f := host.NewFake()
+	c := Client{Runner: f, ForceReauth: true}
+	if err := c.StartLogin(context.Background(), "care", "https://hs.example.org"); err != nil {
+		t.Fatal(err)
+	}
+	got := f.Filter("systemd-run")
+	if len(got) != 1 || !strings.HasSuffix(got[0], "--reset --login-server=https://hs.example.org --force-reauth --timeout=15m0s") {
+		t.Fatalf("login %q", got)
+	}
+	if strings.Contains(strings.Join(UpArgs("care", ""), " "), "force-reauth") {
+		t.Fatal("UpArgs must not force a new login")
+	}
 }

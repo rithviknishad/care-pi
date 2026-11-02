@@ -162,6 +162,8 @@ Postgres always gets `max_connections=40` and `work_mem=4MB`.
 | `tls.public.clinic_id` | string, or `null` | `null` | Phase 6 | The id that the DNS service gives (for example `sunrise-k3x9`). Required when `tls.public.enabled` is `true`. Do not type it: the enrol job writes it. |
 | `tls.public.acme_ca` | `https://` URL, or `null` | `null` | Phase 6 | The ACME directory. `null` uses Let's Encrypt. For a test, use the staging directory `https://acme-staging-v02.api.letsencrypt.org/directory` (browsers do not trust its certificates). |
 | `tls.tailscale.enabled` | boolean | `false` | Phase 6 | Tailscale mode: the MagicDNS name with the certificate of `tailscaled`. Use `care-pi tls tailscale enable` or `PUT /tls/tailscale`: the enrol job installs Tailscale, connects, and sets `hostname`. |
+| `tls.tailscale.hostname` | `<host>.<tailnet>.ts.net`, or `null` | `null` | Phase 6 | The MagicDNS name. Required when `tls.tailscale.enabled` is `true`. The enrol job writes it from `tailscale status --json`. It must end in `.ts.net` when `control_url` is not set. |
+| `tls.tailscale.control_url` | `https://…`, or `null` | `null` | Phase 7 | A self-hosted control server (Headscale, O4): `tailscale up --login-server`. `null` is the Tailscale service. `docs/connectivity.md` section 4.4. |
 | `tls.tailscale.hostname` | `<host>.<tailnet>.ts.net`, or `null` | `null` | Phase 6 | The MagicDNS name. Required when `tls.tailscale.enabled` is `true`. The enrol job writes it from `tailscale status --json`. |
 | `tls.tailscale.manage_daemon` | boolean | `true` | Phase 6 | `false`: the operator runs `tailscaled` (for example a host that was in a tailnet before care-pi). The enrol job then never installs Tailscale and never runs `tailscale up`; it needs a connected `tailscaled`. The off job never runs `tailscale down` or `tailscale logout`. |
 
@@ -246,6 +248,7 @@ A new recovery key gives a new directory. docs/api/README.md section 13 tells th
 | `updates.os_reboot` | boolean | `true` | Phase 4 | Reboot inside the window when `/run/reboot-required` exists and no job runs. |
 | `updates.os_full` | boolean | `false` | Phase 4 | Run `care-pi update --os` (apt `full-upgrade`, and the tested versions of the held container packages) inside the window, after the Care update. |
 | `updates.index_url` | `https://` or `file:///` URL, or `null` | `null` | Phase 4 | The URL of `index.json`. `null`: the default of the agent release, `https://github.com/rithviknishad/care-pi/releases/download/index/index.json`. A `file:///` URL lets a device update from a USB drive. |
+| `updates.require_signed` | boolean | `false` | Phase 7 | Accept `index.json` and a solution lock only with a valid minisign signature (`<file>.minisig`) of a trusted key (`solutions/keys/*.pub` of the agent, `/etc/care-pi/keys/*.pub`). Else `lock-signature-invalid`. `docs/solutions.md` section 18. |
 
 `docs/solutions.md` describes the window, the timers, and the update steps (sections 8 to 11).
 
@@ -345,5 +348,19 @@ The address of `tailscale0` is a separate source: the pod also publishes on it w
 
 | Key | Type | Default | Phase | Description |
 |---|---|---|---|---|
-| `telemetry.enabled` | boolean | `false` | validate (Phase 7) | Opt-in metrics. |
-| `telemetry.remote_write_url` | `http(s)://` URL, or `null` | `null` | validate (Phase 7) | The Prometheus remote-write URL. |
+| `telemetry.enabled` | boolean | `false` | Phase 7 | Opt-in metrics: node_exporter and vmagent with remote write (`docs/telemetry.md`). Nothing leaves the device while it is `false`. |
+| `telemetry.remote_write_url` | `http(s)://` URL, or `null` | `null` | Phase 7 | The Prometheus remote-write URL. Required when `enabled` is `true`. |
+| `telemetry.username` | string, or `null` | `null` | Phase 7 | The basic auth user. The password is `/etc/care-pi/secrets/telemetry_password` (`care-pi telemetry set-password`). |
+| `telemetry.interval_s` | integer 15 to 3600 | `60` | Phase 7 | The scrape interval. |
+
+## `security`
+
+Phase 7. The hardening options. `docs/console-server.md` section 13 has the firewall in detail.
+
+| Key | Type | Default | Phase | Meaning |
+|---|---|---|---|---|
+| `security.firewall.policy` | `accept` \| `drop` | `accept` | Phase 7 | The input policy of the table `inet care-pi`. `accept` keeps S42: the table accepts the Care ports and drops nothing. `drop` accepts only the allow-list. A switch to `drop` starts a rollback timer of 90 s: without `care-pi firewall confirm` (or the button in Security), the policy goes back to `accept`. `install.sh --firewall-drop` writes `drop` for a new install. |
+| `security.ssh.allow` | boolean | `true` | Phase 7 | Accept 22/tcp. It matters only with the policy `drop`. `care-pi firewall allow-ssh false` closes SSH from the network. |
+| `security.waf.enabled` | boolean | `false` | Phase 7 | The Coraza WAF with the OWASP CRS v4 on the routes of the Care API (`/api/*` and the other Django paths). Expect false positives (file uploads, rich text): start with `detect`. Needs the care-pi Caddy image with the Coraza module; the apply refuses it otherwise. care-caddy gets `MemoryMax=256M`. `docs/console-server.md` section 15. |
+| `security.waf.mode` | `detect` \| `block` | `detect` | Phase 7 | `detect`: log only (`SecRuleEngine DetectionOnly`). `block`: `403` for a request over the anomaly threshold. |
+| `security.waf.paranoia` | integer 1 to 4 | `1` | Phase 7 | The paranoia level of the CRS (`tx.blocking_paranoia_level`). Each level adds rules and false positives. |

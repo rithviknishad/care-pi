@@ -98,11 +98,11 @@ Full detail per spike in `08-spike-log.md`; folded into `01` §4/§5/§8, `02`, 
 
 ## 5. Open questions and when they block
 
-From `00` §C (resolved ones struck there): **O4** Tailscale SaaS vs Headscale (Phase 6);
+From `00` §C (resolved ones struck there): ~~**O4** Tailscale SaaS vs Headscale~~ (S59: both, SaaS default);
 **O6** Clinic plug set confirmation (`03` §1.1 — Phase 4 CI matrix); **O7** timing of the
 upstream care_fe PR for relative `meta.url` (ask before opening; stopgap = CORS from Caddy;
 only when multihost is on); **O9** password + recovery codes vs SSH reset (Phase 2); **O11**
-Pi 4 in v1 acceptance; **O12** who hosts the telemetry side (Phase 7); **O13** Renovate for
+Pi 4 in v1 acceptance; ~~**O12** who hosts the telemetry side~~ (S56: `remote_write` only); **O13** Renovate for
 upstream bumps (CI design, Phase 4); **O16** expose Django admin? (Phase 2); **O17** on-Pi DNS
 advice for "internet up, LAN DNS down" (Phase 6). Also from `07` §6: Q-c name-constraint set
 (`.local` + Pi IP + `*.care-pi.rithviknishad.dev` assumed) and Q-d require Imager
@@ -439,7 +439,7 @@ lumine. The console of the same contract is wave 5b (`5eb08f6`, a parallel agent
 
 | Area | Content |
 |---|---|
-| `agent/internal/backup` | The recovery key (24 BIP-39 words, HKDF-SHA256 v1: key id, pgBackRest cipher pass, restic password, SSH ed25519 seed; QR and `.txt`), the key store (`recovery.key`, `.pending`, `state/backups/key.json`), the destinations (repository `care-pi-<key id>`), the restic session of each run (`/run/care-pi/backup/`, only paths in the environment), pgBackRest (`info`, the encrypted `backup.info`), the state files, the locks, the health and the banners, the destination tests (SSH TOFU, the SSH key, S3 with `create_bucket`, the posix probe), `ensure-repositories`. |
+| `agent/internal/backup` | The recovery key (24 BIP-39 words, HKDF-SHA256 v1: key id, pgBackRest cipher pass, restic password, SSH ed25519 seed; QR and `.txt`), the key store (`recovery.key`, `.pending`, `state/backups/key.json`), the destinations (repository `care-pi-<key id>`), the restic session of each run (`/run/care-pi-backup/`, only paths in the environment), pgBackRest (`info`, the encrypted `backup.info`), the state files, the locks, the health and the banners, the destination tests (SSH TOFU, the SSH key, S3 with `create_bucket`, the posix probe), `ensure-repositories`. |
 | `agent/internal/restore` | PITR (maintenance, then the checkpoint; rollback to the checkpoint on failure), files (in place or side directory), the drill (a throwaway container, `archive_mode=off`), the rotation and the re-key, the restore from backup of a new device. |
 | `agent/internal/disks` | `lsblk` and the disk preparation (GPT, one ext4 partition `care-…`, mount and automount units). |
 | Render, plan, apply | `care-backup.target`, the timers and services (the CLI runs them), the mount units, `ssh_config` and `known_hosts`; the plan actions `ensure-mounts`, `ensure-repositories`, `ensure-timers`; the restore apply (`NoStart`). Golden tree `backups`. |
@@ -758,6 +758,48 @@ Decisions (owner informed; override in `00` if wrong):
 
 Next step: a first boot of a fresh image on a Pi without internet: the claim, the setup, Care starts, and the banner;
 then internet: the banner goes within 15 s of the NTP synchronization (`timedatectl show -p NTPSynchronized`).
+
+### 8p. Phase 7: hardening and breadth (2026-11-02)
+
+Code complete on the branch `phase-7-hardening` (from `main` at `e130030`); not run on a Pi. One signed commit for each
+part (the WAF and the telemetry share one commit). The contract is `docs/api/openapi.yaml` 0.8.0 (additive;
+`docs/api/README.md` section 17). Decisions S53 to S60 (`00`); the security status is `04` section 9; the exit test plan is
+`08-spike-log.md`, "Phase 7 exit test — plan".
+
+| Part | What exists | Commit |
+|---|---|---|
+| Headscale (S59) | `tls.tailscale.control_url` → `tailscale up --login-server`; CLI `--control-url`; console field; `GET /tls` shows it | `c12e420` |
+| Firewall (S54) | The agent renders `inet care-pi` and the loader drop-in; `security.firewall.policy`, `security.ssh.allow`; the rollback timer; `GET /security/firewall`, `POST /security/firewall/confirm`; CLI `care-pi firewall status\|policy\|allow-ssh\|confirm\|rollback`; installer `--firewall-drop`; console Security > Firewall; `nft -c` of each golden in CI | `7e738d6` |
+| CA rotation (S60) | `POST /tls/local-ca/rotate`, job `tls-local-ca-rotate`, `ca/root.prev.crt`, both fingerprints for 7 days; CLI `care-pi tls local-ca rotate`; console card and banner | `747388c` |
+| Signing (S55) | `agent/internal/minisign` (interop with minisign 0.12), `updates.require_signed`, `lock-signature-invalid`, `care-pi solution verify`; CI signs when `MINISIGN_KEY` is set | `070030e` |
+| WAF (S58), telemetry (S56) | coraza-caddy in the Caddy image, `security.waf`; `telemetry.*` with vmagent and node_exporter, `GET /api/v1/metrics`, CLI `care-pi metrics`, `care-pi telemetry set-password` | `836f8ac` |
+| Doctor | `care-pi doctor [--json]`, `GET /api/v1/doctor`, Support > Health checks; the support bundle has 8 more files | `e2f55e4` |
+| Helper (S53) | `care-pi helper`, `host.NewHelperClient`, `serve --helper`; installer user `care-pi`, `care-pi-helper.socket` and `.service`, `--helper` drop-in; uninstaller | `b81f1d7` |
+| Installer breadth (S57) | Ubuntu 25.04 and newer by the podman check; Fedora Server 42 and newer experimental (dnf, firewalld, SELinux permissive) | `d376e90` |
+| Docs site | MkDocs Material + Redoc (`docs/site/`), `docs-site.yml` (artifact; Pages with `DOCS_PAGES=true`); clinic quick start, troubleshooting, releasing | `cf95730` |
+
+Shrunk or skipped (state them in a review):
+
+- The helper is opt-in and the daemon stays uid 0 (S53): the full split needs typed file requests in the helper
+  (`docs/console-server.md` section 14 lists 5 items). `CARE_PI_TEST_HELPER=1` runs every contract test through the
+  helper (a CI step), so the allow-list covers what the tests exercise; the live run of step 1 of the plan finds the rest.
+- `PUT /security/ssh` (the SSH switch) stays `501`; `security.ssh.allow` only opens or closes 22/tcp in the table.
+- No key `solutions/keys/care-pi.pub` yet: the owner makes it (`docs/solutions.md` section 18), then sets the secret
+  `MINISIGN_KEY`; only then can `require_signed` default to `true`.
+- The WAF uses the CRS that the module embeds (`load_owasp_crs`), not files in `/etc/caddy/crs`.
+- Fedora: SELinux enforcing is refused (no `:z`/`:Z` labels in the quadlets); no test on a Fedora host with systemd.
+  `quadlet -dryrun` of podman 5.8.9 (fedora:43) passes on each golden.
+- The docs site is an artifact only while the repository is private.
+
+Checks on the Mac: section "Verification" of the report of this wave; the Docker runs: `nft -c` of each golden
+(nftables 1.1.3), podman 5.4.2 under the policy `drop` (egress, DNAT of a published port, a dropped port, the accept of
+the rollback), the Caddy image with the WAF (`images/caddy/test-waf.sh`: block 403, detect 200 and rule 942100),
+vmagent and node_exporter against VictoriaMetrics (`quadlets/scripts/test-telemetry.sh`), `quadlet -dryrun` of the 10
+goldens with podman 5.4.2 and 5.8.9, and the installer on debian:trixie, ubuntu:26.04, fedora:43 (dry run and two
+idempotent runs), debian:bookworm and ubuntu:24.04 (refused).
+
+Next step: the Phase 7 exit test on lumine after the Phase 6 exit test (`08-spike-log.md`); then the final acceptance
+(§8k).
 
 
 ### 8o. Phase 6 exit test result (waves 8 and 8-ts, 2026-11-02)

@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"path"
+
+	"github.com/rithviknishad/care-pi/agent/internal/buildinfo"
 	"regexp"
 	"sort"
 	"strings"
@@ -36,6 +38,9 @@ const (
 	ImageRedis        = "docker.io/library/redis:8-alpine"
 	ImageS3           = "docker.io/versity/versitygw:latest"
 	ImageNode         = "docker.io/library/node:22-bookworm-slim"
+	// Telemetry (Phase 7, S56): vmagent and node_exporter, 44 + 40 MB on arm64 (Grafana Alloy: 641 MB).
+	ImageVMAgent      = "docker.io/victoriametrics/vmagent:v1.131.0"
+	ImageNodeExporter = "quay.io/prometheus/node-exporter:v1.10.2"
 )
 
 // Ports on the pod localhost.
@@ -203,12 +208,66 @@ type Model struct {
 	TailscaleSocketDir string
 	// HSTS is the value of Strict-Transport-Security of the public and the Tailscale sites. The local CA sites never send it (F7).
 	HSTS string
-	// DNSUpdate renders care-dns-update.timer (public mode). FirewallTailscale renders the firewall drop-in (Tailscale mode).
+	// DNSUpdate renders care-dns-update.timer (public mode). FirewallTailscale accepts the port of tailscaled in the
+	// table of the agent (Tailscale mode).
 	DNSUpdate         bool
 	FirewallTailscale bool
 	// FirewallUnit is the unit of the firewall drop-in. WaitAddressTimeout bounds the wait of care-pod for the Tailscale address.
 	FirewallUnit       string
 	WaitAddressTimeout string
+	// Firewall is the policy of the table inet care-pi (Phase 7). FirewallFile is the rendered table and
+	// FirewallDropInFile the drop-in of FirewallUnit that loads it.
+	Firewall           FirewallModel
+	FirewallFile       string
+	FirewallDropInFile string
+	// FirewallDropConfirmed is true when the live policy is a confirmed drop (state/firewall.json). Without it, the
+	// policy drop of config.yaml goes to paths.FirewallPendingFile, and FirewallFile, which the boot loads, keeps accept.
+	FirewallDropConfirmed bool
+	// WAF is the Coraza WAF on the @api routes (Phase 7).
+	WAF WAFModel
+	// Telemetry is the opt-in telemetry (Phase 7, docs/telemetry.md): vmagent and node_exporter.
+	Telemetry TelemetryModel
+}
+
+// TelemetrySecret is the podman secret with secrets/telemetry_password (the basic auth of the remote write).
+const TelemetrySecret = "care-pi-telemetry-password"
+
+// TelemetryModel is telemetry of config.yaml.
+type TelemetryModel struct {
+	Enabled        bool
+	RemoteWriteURL string
+	Username       string
+	// PasswordSecret is TelemetrySecret when secrets/telemetry_password exists, else "".
+	PasswordSecret string
+	// Interval is the scrape interval, for example "60s". Instance is the label instance (the host name).
+	Interval string
+	Instance string
+	Version  string
+	// Ports on the loopback of the host.
+	ExporterPort int
+	AgentPort    int
+	RenderedDir  string
+	TextfileDir  string
+	QueueDir     string
+}
+
+func telemetry(m *Model) bool { return m.Telemetry.Enabled && !m.Bootstrap }
+
+// WAFModel is security.waf of config.yaml (the Coraza WAF of the Caddyfile, Phase 7).
+type WAFModel struct {
+	Enabled bool
+	// Engine is the SecRuleEngine value: DetectionOnly (mode detect) or On (mode block).
+	Engine   string
+	Paranoia int
+}
+
+// FirewallModel is security.firewall and security.ssh of config.yaml.
+type FirewallModel struct {
+	Policy string
+	SSH    bool
+	// Waits is true in the boot file while the policy drop of config.yaml waits for its confirmation: the file
+	// then has the policy accept.
+	Waits bool
 }
 
 // ACMEDNSSecret is the podman secret with secrets/acme_dns.json (the acmedns module of Caddy reads it as a file).
@@ -300,6 +359,10 @@ type Input struct {
 	ACMEDNS bool
 	// TailscaleIP is the IPv4 address of tailscale0, or "".
 	TailscaleIP string
+	// TelemetryPassword is true when secrets/telemetry_password exists (Phase 7).
+	TelemetryPassword bool
+	// FirewallDropConfirmed is true when the live policy is a confirmed drop (firewall.State.DropConfirmed).
+	FirewallDropConfirmed bool
 }
 
 // Hostnames returns the DNS names that the config serves, the canonical name first (docs/connectivity.md):
@@ -434,6 +497,11 @@ func DesireLock(cfg *config.Config, sol *solution.Solution, sl *solution.Lock, c
 	if cfg.FE.Provider == "local" {
 		w.Images["node"] = firstNonEmpty(cfg.Images.Node, lockRef("node", ImageNode))
 	}
+	// Phase 7: the images of the opt-in telemetry, only when it is on (docs/telemetry.md).
+	if cfg.Telemetry.Enabled {
+		w.Images["vmagent"] = lockRef("vmagent", ImageVMAgent)
+		w.Images["node-exporter"] = lockRef("node-exporter", ImageNodeExporter)
+	}
 	plugEnv := solution.PlugEnv(plugs)
 	backend := solution.MergeEnv(nil, backendDefaults(cfg), sol.Env.Backend, plugEnv.Backend, cfg.Env.Backend)
 	frontend := solution.MergeEnv(solution.MultiValueFrontendKeys, sol.Env.Frontend, plugEnv.Frontend, cfg.Env.Frontend)
@@ -548,6 +616,19 @@ func NewModel(in Input) (*Model, error) {
 	if err := connectivity(m, cfg, in); err != nil {
 		return nil, err
 	}
+	if t := cfg.Telemetry; t.Enabled && !in.Bootstrap {
+		interval := t.IntervalS
+		if interval <= 0 {
+			interval = config.DefaultTelemetryIntervalS
+		}
+		m.Telemetry = TelemetryModel{Enabled: true, RemoteWriteURL: t.RemoteWriteURL, Username: t.Username,
+			Interval: fmt.Sprintf("%ds", interval), Instance: cfg.Identity.Hostname, Version: buildinfo.Version,
+			ExporterPort: 9100, AgentPort: 8429, RenderedDir: paths.RenderedTelemetry, TextfileDir: paths.TelemetryTextfileDir,
+			QueueDir: paths.TelemetryQueueDir}
+		if in.TelemetryPassword {
+			m.Telemetry.PasswordSecret = TelemetrySecret
+		}
+	}
 
 	s := m.Sizing
 	m.MemAPI = config.MemAPI(s.GunicornWorkers)
@@ -557,6 +638,16 @@ func NewModel(in Input) (*Model, error) {
 	m.MemRed = config.MemRedis
 	m.MemS3 = config.MemS3
 	m.MemCad = config.MemCaddy
+	if w := cfg.Security.WAF; w.Enabled {
+		m.WAF = WAFModel{Enabled: true, Engine: "DetectionOnly", Paranoia: w.Paranoia}
+		if w.Mode == "block" {
+			m.WAF.Engine = "On"
+		}
+		if m.WAF.Paranoia < 1 {
+			m.WAF.Paranoia = 1
+		}
+		m.MemCad = config.MemCaddyWAF
+	}
 
 	for name := range pl.Wants.Images {
 		if in.Bootstrap && name != "caddy" {
@@ -656,6 +747,23 @@ func NewModel(in Input) (*Model, error) {
 	return m, nil
 }
 
+// FirewallOf returns the firewall part of the model for cfg. An empty policy is the default accept.
+func FirewallOf(cfg *config.Config) FirewallModel {
+	f := FirewallModel{Policy: cfg.Security.Firewall.Policy, SSH: cfg.Security.SSH.Allow}
+	if f.Policy == "" {
+		f.Policy = config.DefaultFirewallPolicy
+	}
+	return f
+}
+
+// FirewallTable renders the table inet care-pi for cfg, as apply renders it. "care-pi firewall rollback" uses it to
+// write the table without a full apply.
+func FirewallTable(cfg *config.Config) ([]byte, error) {
+	m := &Model{Header: Header, Firewall: FirewallOf(cfg), FirewallUnit: paths.FirewallUnit, FirewallFile: paths.FirewallFile,
+		FirewallDropInFile: paths.FirewallDropIn, ConsolePort: paths.ConsolePort, FirewallTailscale: TailscaleHost(cfg) != ""}
+	return renderOne("firewall.nft.tmpl", m)
+}
+
 // connectivity fills the Phase 6 part of the model (docs/connectivity.md).
 func connectivity(m *Model, cfg *config.Config, in Input) error {
 	m.LocalHosts = LocalHostnames(cfg)
@@ -665,6 +773,10 @@ func connectivity(m *Model, cfg *config.Config, in Input) error {
 	}
 	m.HSTS = HSTSValue
 	m.FirewallUnit = paths.FirewallUnit
+	m.Firewall = FirewallOf(cfg)
+	m.FirewallFile = paths.FirewallFile
+	m.FirewallDropInFile = paths.FirewallDropIn
+	m.FirewallDropConfirmed = in.FirewallDropConfirmed
 	m.WaitAddressTimeout = "30s"
 	m.TailscaleSocketDir = paths.TailscaleSocketDir
 	if in.CARoot {
@@ -944,6 +1056,10 @@ var MaintenanceSteps = map[string]string{
 	"wifi-connect":      "Connect to the Wi-Fi network",
 	"wifi-verify":       "Check the network routes",
 	"wifi-remove":       "Remove the Wi-Fi network",
+	// Phase 7 (docs/api/README.md section 17).
+	"ca-rotate":        "Make a new root certificate",
+	"restart-caddy":    "Restart the web server for the new certificate",
+	"ensure-telemetry": "Start or stop the telemetry",
 }
 
 // GitHubSlug returns OWNER/NAME for a https://github.com/OWNER/NAME URL, else "".
