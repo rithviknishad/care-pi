@@ -3,7 +3,8 @@
 #   1. the image has the module http.handlers.waf;
 #   2. "caddy validate" accepts the Caddyfile of the golden case "hardened" (the WAF in block mode, paranoia 2);
 #   3. a live request with a classic SQL injection to /api/* gets 403 in block mode, and 200 (from a stub of
-#      care-api) with an audit log line in detect mode; a normal request gets 200 in both modes.
+#      care-api) with an audit log line in detect mode; a normal request gets 200 in both modes;
+#   4. the audit line has no request header: the bearer token and the console cookie of the request are not in the log.
 # Usage: images/caddy/test-waf.sh [IMAGE]. Without IMAGE, the script builds images/caddy/Containerfile.
 # Needs: docker. It changes nothing outside a temporary work directory of this repository (local/).
 set -eu
@@ -42,9 +43,11 @@ docker run --rm -v "$work/ca:/ca" "$image" sh -c '
   openssl req -x509 -new -key /ca/root.key -days 30 -subj "/CN=care-pi WAF test root" \
     -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" -out /ca/root.crt' >/dev/null 2>&1
 
-status() { # $1: path and query; prints the HTTP status (curl in the network namespace of Caddy)
+status() { # $1: path and query, then more curl arguments; prints the HTTP status (curl in the network namespace of Caddy)
+  url=$1
+  shift
   docker run --rm --network "container:$name" "$curl" -sk -o /dev/null -w '%{http_code}' \
-    --resolve care.local:443:127.0.0.1 "https://care.local$1" 2>/dev/null || true
+    --resolve care.local:443:127.0.0.1 "$@" "https://care.local$url" 2>/dev/null || true
 }
 
 run_caddy() { # $1: the Caddyfile directory
@@ -97,7 +100,7 @@ mkdir -p "$work/detect"
 cp -R "$golden/." "$work/detect/"
 sed 's/SecRuleEngine On/SecRuleEngine DetectionOnly/' "$golden/Caddyfile" > "$work/detect/Caddyfile"
 run_caddy "$work/detect"
-got=$(status "$sqli")
+got=$(status "$sqli" -H "Authorization: Bearer waf-test-token.secret" -H "Cookie: __Host-care_pi_session=waf-test-session")
 [ "$got" = 200 ] || { echo "FAIL: detect mode gave $got, not 200" >&2; exit 1; }
 sleep 1
 if docker logs "$name" 2>&1 | grep -q '"942100"\|id "942100"\|942100'; then
@@ -107,4 +110,9 @@ else
   echo "FAIL: no audit line of the CRS rule 942100" >&2
   exit 1
 fi
+if docker logs "$name" 2>&1 | grep -q 'waf-test-token\|waf-test-session'; then
+  echo "FAIL: the audit log has the bearer token or the console cookie of the request" >&2
+  exit 1
+fi
+echo "ok: the audit log has no request header (no bearer token, no console cookie)"
 echo "PASS"

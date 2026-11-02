@@ -87,3 +87,50 @@ func TestDoctor(t *testing.T) {
 		t.Fatalf("no rendered tree in the bundle: %v", len(files))
 	}
 }
+
+// TestSupportBundleRedactsCredentials (M3 of the Phase 7 review): the WAF audit log of an older Caddyfile had the
+// request headers (part B); the bundle replaces a bearer token and the session cookie of the console in each file.
+// The rendered Caddyfile logs parts A, H, and Z only (the golden case hardened).
+func TestSupportBundleRedactsCredentials(t *testing.T) {
+	e, _ := readyConnEnv(t)
+	const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoxfQ.c2lnbmF0dXJl"
+	const session = "console-session-value-1234"
+	audit := `2026-11-02T10:00:00+0000 care caddy[1]: {"transaction":{"id":"x","request":{"uri":"/api/v1/patient/","headers":{` +
+		`"authorization":["Bearer ` + jwt + `"],"cookie":["__Host-care_pi_session=` + session + `; csrftoken=abc"]}},` +
+		`"messages":[{"data":{"id":942100}}]}}` + "\n"
+	next := e.fake.Hook
+	e.fake.Hook = func(c host.Cmd, stdin []byte) (host.Response, bool) {
+		if c.Name == "journalctl" && len(c.Args) > 1 && c.Args[1] == "care-caddy.service" {
+			return host.Response{Out: audit}, true
+		}
+		return next(c, stdin)
+	}
+	r := e.do("POST", "/api/v1/support-bundle", map[string]any{"log_lines": 100, "since_hours": 1})
+	e.want(r, 202, "")
+	j := e.waitJob(r.json(t)["id"].(string))
+	var res jobs.SupportBundleResult
+	must(t, json.Unmarshal(j.Result, &res))
+	r = e.do("GET", res.DownloadPath, nil)
+	e.want(r, 200, "")
+	gz, err := gzip.NewReader(bytes.NewReader(r.body))
+	must(t, err)
+	tr := tar.NewReader(gz)
+	caddy := ""
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		must(t, err)
+		data, _ := io.ReadAll(tr)
+		if strings.Contains(string(data), jwt) || strings.Contains(string(data), session) {
+			t.Fatalf("%s has a credential:\n%s", h.Name, data)
+		}
+		if strings.HasSuffix(h.Name, "logs/caddy.log") {
+			caddy = string(data)
+		}
+	}
+	if !strings.Contains(caddy, `"Bearer <redacted>"`) || !strings.Contains(caddy, "__Host-care_pi_session=<redacted>; csrftoken=abc") || !strings.Contains(caddy, "942100") {
+		t.Fatalf("logs/caddy.log:\n%s", caddy)
+	}
+}

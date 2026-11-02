@@ -698,7 +698,9 @@ security:
   `/mediafiles/*`, `/ping/`, `/health/*`, `/app_version/`) gets `coraza_waf` with `coraza.conf-recommended`,
   `crs-setup.conf.example`, `SecRuleEngine DetectionOnly` (mode `detect`) or `On` (mode `block`), the paranoia level
   (`tx.blocking_paranoia_level`), the request body on, the response body off, and the audit log of the relevant
-  transactions as JSON on the standard output (parts A, B, H, Z): `care-pi logs caddy` shows the rule ids. The S3
+  transactions as JSON on the standard output (parts A, H, Z): `care-pi logs caddy` shows the rule ids. Part B (the
+  request headers) is not in the log: it has the bearer token of Care (`Authorization`) and the console cookie
+  (`__Host-care_pi_session`; the browser sends it to 443, and `header_up` removes it only after the WAF). The S3
   buckets, the plug bundles, the FE, and the console have no WAF.
 - **Memory.** In Docker, Caddy used 25 MiB without the WAF and 60 MiB with the CRS loaded (cgroup memory; VmRSS 105 MiB).
   With the WAF, `care-caddy.container` gets `MemoryMax=256M` (else 128M).
@@ -741,5 +743,7 @@ without the values of secret keys; `additional-plugs.json` left out, because plu
 `nft-ruleset.txt` (`nft list ruleset`); `listening-sockets.txt` (`ss -ltnupH`); `podman-ps.txt`;
 `tailscale-status.json` (`tailscale status --json` without the keys, the peers, and the users); `memory-peaks.txt`
 (`MemoryPeak`, `MemorySwapPeak`, `MemoryMax` of the units `care-*` and `care-pi*`); `firewall-state.json`. The values of
-the secret files are replaced with `<redacted>` in each section, as before.
+the secret files are replaced with `<redacted>` in each section, as before. Since the review of Phase 7 (M3), each file
+also has `Bearer <redacted>` and `__Host-care_pi_session=<redacted>` for a bearer token and the console cookie (for
+example in an audit line of the WAF of an older Caddyfile, which logged the request headers).
 

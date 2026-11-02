@@ -42,6 +42,7 @@
 	handle @api {
 		# The Coraza WAF with the OWASP CRS v4 of the module (security.waf; docs/console-server.md section 15).
 		# Mode block, paranoia level 2. The audit log goes to the journal of care-caddy.
+		# Parts A, H, Z only: part B (the request headers) has the bearer token of Care and the console cookie.
 		coraza_waf {
 			load_owasp_crs
 			directives `
@@ -54,7 +55,7 @@
 				SecAuditLogType Serial
 				SecAuditLog /dev/stdout
 				SecAuditLogFormat JSON
-				SecAuditLogParts ABHZ
+				SecAuditLogParts AHZ
 				SecAction "id:900000,phase:1,pass,t:none,nolog,setvar:tx.blocking_paranoia_level=2"
 				Include @owasp_crs/*.conf
 			`

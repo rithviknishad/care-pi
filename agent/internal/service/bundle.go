@@ -98,11 +98,28 @@ type bundleWriter struct {
 	secrets []string
 }
 
+// credentialREs match the credentials that a log line can carry: a bearer token (the JWT of Care) and the session
+// cookie of the console. Since the review of Phase 7 (M3), the audit log of the WAF has no request headers; this is a
+// second guard for each file of the bundle.
+var credentialREs = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`),
+	regexp.MustCompile(`(__Host-care_pi_session=)[^;\s"'\\,]+`),
+}
+
+// redactCredentials replaces the value of each bearer token and session cookie with <redacted>.
+func redactCredentials(text string) string {
+	for _, re := range credentialREs {
+		text = re.ReplaceAllString(text, "${1}<redacted>")
+	}
+	return text
+}
+
 func (b *bundleWriter) add(name string, data []byte) error {
 	text := string(data)
 	for _, v := range b.secrets {
 		text = strings.ReplaceAll(text, v, "<redacted>")
 	}
+	text = redactCredentials(text)
 	hdr := &tar.Header{Name: "care-pi-support/" + name, Mode: 0o600, Size: int64(len(text)), ModTime: b.now}
 	if err := b.tw.WriteHeader(hdr); err != nil {
 		return err
