@@ -2215,10 +2215,15 @@ step_helper() {
     run rm -f "$HELPER_DROPIN"
   fi
   if [ "$hs_written" = 1 ]; then HELPER_CHANGED=1; fi
-  if [ "$hs_written" = 1 ] && [ "$SYSTEMD" = 1 ] && [ "$IMAGE_BUILD" != 1 ]; then
-    run systemctl daemon-reload
-    # A running helper keeps its old binary and unit until a restart.
-    run systemctl try-restart "$HELPER_UNIT" || true
+  if [ "$SYSTEMD" = 1 ] && [ "$IMAGE_BUILD" != 1 ]; then
+    if [ "$hs_written" = 1 ]; then
+      run systemctl daemon-reload
+    fi
+    # A running helper keeps its old binary and unit until a restart: also after a new agent binary (step 12),
+    # else it refuses the commands of the new allow-list.
+    if [ "$hs_written" = 1 ] || [ "$AGENT_CHANGED" = 1 ]; then
+      run systemctl try-restart "$HELPER_UNIT" || true
+    fi
   fi
   ensure_service "$HELPER_SOCKET_UNIT"
 }

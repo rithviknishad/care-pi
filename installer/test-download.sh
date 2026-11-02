@@ -4,7 +4,8 @@
 #   - the release URLs of agent_base_url (a tag, latest, CARE_PI_DOWNLOAD_BASE),
 #   - the asset names: install.sh downloads care-pi_linux_<arch> and SHA256SUMS; .github/workflows/release.yml and
 #     the Makefile make them,
-#   - sums_lookup on a SHA256SUMS file in the format of the workflow (sha256sum).
+#   - sums_lookup on a SHA256SUMS file in the format of the workflow (sha256sum),
+#   - step_helper restarts a running helper after a new agent binary (it runs the binary of the agent).
 # Run it from any directory: sh installer/test-download.sh
 # The checks compare literal text of the files, with $ in single quotes:
 # shellcheck disable=SC2016
@@ -76,6 +77,22 @@ check "sums_lookup arm64" "$(printf '%s\n' "$sums" | sums_lookup /dev/stdin care
 check "sums_lookup amd64 (binary marker)" "$(printf '%s\n' "$sums" | sums_lookup /dev/stdin care-pi_linux_amd64)" "$b"
 check "sums_lookup install.sh (directory)" "$(printf '%s\n' "$sums" | sums_lookup /dev/stdin install.sh)" "$c"
 check "sums_lookup missing" "$(printf '%s\n' "$sums" | sums_lookup /dev/stdin care-pi_linux_riscv64)" ""
+
+# step_helper with stubs (no file is written): a new agent binary (step 12) restarts a running helper, also when the
+# units of the helper did not change; without a new binary and new units, nothing restarts.
+RUNS=""
+run() { RUNS="$RUNS|$*"; }
+ensure_agent_user() { :; }
+ensure_dir() { :; }
+ensure_service() { :; }
+write_file() { LAST_WRITE=0; }
+SYSTEMD=1 IMAGE_BUILD=0 HELPER=0 HELPER_DROPIN=/nonexistent/60-helper.conf
+AGENT_CHANGED=1
+step_helper
+check "step_helper: a new agent binary restarts the helper" "$RUNS" "|systemctl try-restart care-pi-helper.service"
+RUNS="" AGENT_CHANGED=0
+step_helper
+check "step_helper: no change, no restart" "$RUNS" ""
 
 if [ "$fails" -gt 0 ]; then
   printf '%d check(s) failed\n' "$fails"
