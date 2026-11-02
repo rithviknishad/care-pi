@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -61,6 +62,10 @@ var updateCmd = &cobra.Command{
 
 func runOSUpdate(cmd *cobra.Command) error {
 	svc := newService(cmd)
+	// The reboot of --reboot --now and of the job (--reboot-if-required) runs after a delay. This process must
+	// wait for it: the timer of the service ends with the process.
+	var pw powerWaiter
+	svc.AfterPower = pw.after
 	w := cmd.OutOrStdout()
 	f := updateFlags
 	switch {
@@ -87,17 +92,36 @@ func runOSUpdate(cmd *cobra.Command) error {
 			return cliError(err)
 		}
 		if f.json {
-			return printJSON(w, r)
+			err = printJSON(w, r)
+		} else {
+			_, _ = fmt.Fprintf(w, "reboot at %s (scheduled: %v)\n", r.At.Format(time.RFC3339), r.Scheduled)
 		}
-		_, _ = fmt.Fprintf(w, "reboot at %s (scheduled: %v)\n", r.At.Format(time.RFC3339), r.Scheduled)
-		return nil
+		pw.wait()
+		return err
 	}
 	j, err := svc.StartOSUpdate(cmd.Context(), service.OSRequest{Now: f.now, RebootIfRequired: f.rebootIfRequired, Reason: f.reason}, jobs.SourceCLI)
 	if err != nil {
 		return cliError(err)
 	}
-	return follow(cmd, svc, j)
+	err = follow(cmd, svc, j)
+	pw.wait()
+	return err
 }
+
+// powerWaiter runs the delayed power actions of the service (service.Service.AfterPower) in goroutines, so that
+// a CLI command can wait for them before it exits.
+type powerWaiter struct{ wg sync.WaitGroup }
+
+func (p *powerWaiter) after(d time.Duration, fn func()) {
+	p.wg.Add(1)
+	go func() {
+		defer p.wg.Done()
+		time.Sleep(d)
+		fn()
+	}()
+}
+
+func (p *powerWaiter) wait() { p.wg.Wait() }
 
 // follow prints the events of a job of this process until it ends.
 func follow(cmd *cobra.Command, svc *service.Service, j *jobs.Job) error {
