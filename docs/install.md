@@ -77,8 +77,13 @@ The script is one file. Run it from a pipe:
 curl -fsSL https://raw.githubusercontent.com/rithviknishad/care-pi/main/installer/install.sh | sudo sh -s -- --yes
 ```
 
-The repository is private today. This URL returns 404 until the repository is public.
-See [Develop and test](#develop-and-test).
+The script downloads the agent of the newest release (`--version TAG` for another one). The workflow `release`
+publishes each release (`docs/releasing.md`, "An agent release"). To install a version with its own script, use the
+`install.sh` of that release:
+
+```sh
+curl -fsSL https://github.com/rithviknishad/care-pi/releases/download/v0.1.0/install.sh | sudo sh -s -- --version v0.1.0 --yes
+```
 
 The `sh -s --` words do this:
 
@@ -236,8 +241,12 @@ It installs the binary with a copy and a rename, so the file is never half writt
 Then it runs `care-pi version`.
 
 The release URL is `https://github.com/rithviknishad/care-pi/releases/download/<version>/`.
-For `latest`, the URL is `https://github.com/rithviknishad/care-pi/releases/latest/download/`.
-`CARE_PI_DOWNLOAD_BASE` replaces this URL.
+For `latest`, the URL is `https://github.com/rithviknishad/care-pi/releases/latest/download/`: the newest agent
+release. The workflow `release` marks each agent release as the latest; the bundle, lock, and image releases are never
+the latest. `CARE_PI_DOWNLOAD_BASE` replaces this URL.
+The workflow `release` publishes `care-pi_linux_arm64`, `care-pi_linux_amd64`, `SHA256SUMS`, `install.sh`, and
+`uninstall.sh` in each release. `installer/test-download.sh` checks that the URLs and the names of the script match
+the workflow (a CI step).
 
 If the agent is already installed and you give no `--version`, the script keeps it.
 To change the agent, add `--version TAG`.
@@ -378,9 +387,7 @@ A real run stops there.
 
 ## Develop and test
 
-The care-pi repository is private today.
-The default download URL returns 404 until the repository is public.
-Use one of these two methods.
+To test a binary that is not in a release, use one of these two methods.
 
 **Method 1: a local binary.**
 Build the binary on your computer. Copy it and the script to the host. Install the agent from the file:
@@ -509,7 +516,8 @@ Caddy runs, but the agent does not. Run `sudo systemctl status care-pi.service` 
 Start it with `sudo systemctl start care-pi.service`. If the unit file is not there, run the script again.
 
 **The download fails.**
-The repository is private today. Use `--binary` or `CARE_PI_DOWNLOAD_BASE`.
+Check the network and the tag of `--version` (the releases are at `https://github.com/rithviknishad/care-pi/releases`).
+Or use `--binary` or `CARE_PI_DOWNLOAD_BASE`.
 If the checksum fails, download the files again.
 
 **The firewall step fails.**

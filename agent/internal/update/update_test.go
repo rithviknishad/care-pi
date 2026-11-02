@@ -460,6 +460,46 @@ func TestWithdrawnAndAgentTooOld(t *testing.T) {
 	}
 }
 
+// TestAgentTooOldReleaseBuild: a release build v0.1.0 cannot install a lock that needs v0.2.0 (agent-too-old in the
+// check and in the target resolution); a dev build counts as the newest agent and can.
+func TestAgentTooOldReleaseBuild(t *testing.T) {
+	e := newTEnv(t, "stable", "")
+	cfgData, err := config.DefaultYAML("Sunrise Clinic", "care", "small-clinic", "artifact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Parse(cfgData, "config.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.fx, err = updatetest.Build(e.fx.Dir, solutionFile, cfg, updatetest.MinAgent("v0.2.0")); err != nil {
+		t.Fatal(err)
+	}
+	e.u.AgentVersion = "v0.1.0"
+	rec := e.job(jobs.KindUpdateCheck)
+	cr, err := e.u.Check(context.Background(), rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := cr.BlockedBy; cr.UpdateAvailable || b == nil || b.Code != problem.AgentTooOld || b.MinAgentVersion == nil || *b.MinAgentVersion != "v0.2.0" {
+		t.Fatalf("check %+v blocked_by %+v", cr, cr.BlockedBy)
+	}
+	_, err = e.u.ResolveTarget(context.Background(), mustConfig(t, e.cfg), "", "", false)
+	if p := problem.From(err); !problem.Is(err, problem.AgentTooOld) || p.MinAgentVersion != "v0.2.0" || !strings.Contains(p.Detail, "This agent is v0.1.0") {
+		t.Fatalf("want agent-too-old, got %v", err)
+	}
+	for _, dev := range []string{"v0.1.0-3-g9ff6634", "v0.1.0-dirty", "9ff6634", "dev"} {
+		e.u.AgentVersion = dev
+		if _, err := e.u.ResolveTarget(context.Background(), mustConfig(t, e.cfg), "", "", false); err != nil {
+			t.Errorf("dev build %s: %v", dev, err)
+		}
+	}
+	e.u.AgentVersion = "v0.2.0"
+	if _, err := e.u.ResolveTarget(context.Background(), mustConfig(t, e.cfg), "", "", false); err != nil {
+		t.Errorf("v0.2.0: %v", err)
+	}
+}
+
 func mustConfig(t *testing.T, p string) *config.Config {
 	t.Helper()
 	c, err := config.Load(p)

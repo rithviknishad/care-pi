@@ -23,13 +23,23 @@ func TestVersions(t *testing.T) {
 	if NormalizeLockVersion("2026.1.3") != "2026.01.3" {
 		t.Fatal("normalize")
 	}
+	for v, want := range map[string]bool{"v0.1.0": true, "v10.20.30": true, "0.1.0": false, "v0.1.0-dirty": false,
+		"v0.1.0-3-g9ff6634": false, "9ff6634": false, "dev": false, "v0.1": false} {
+		if IsRelease(v) != want {
+			t.Errorf("IsRelease(%q) = %v", v, !want)
+		}
+	}
+	// Only a release build compares; a dev build (git describe after the tag, -dirty, a commit, "dev") is the newest.
 	for _, c := range []struct {
 		agent, min string
 		old        bool
 		warn       bool
 	}{
-		{"v0.4.0", "v0.4.0", false, false}, {"v0.3.9", "v0.4.0", true, false}, {"v0.4.0-12-gabcdef-dirty", "v0.4.0", false, false},
-		{"v0.3.0-1-gabc", "v0.4.0", true, false}, {"dev", "v0.4.0", false, true}, {"v1.0.0", "v0.9.9", false, false},
+		{"v0.4.0", "v0.4.0", false, false}, {"v0.3.9", "v0.4.0", true, false}, {"v0.4.0-12-gabcdef-dirty", "v0.4.0", false, true},
+		{"v0.3.0-1-gabc", "v0.4.0", false, true}, {"dev", "v0.4.0", false, true}, {"v1.0.0", "v0.9.9", false, false},
+		{"v0.1.0", "v0.2.0", true, false}, {"v0.1.0", "v0.1.0", false, false}, {"v0.2.0", "v0.1.0", false, false},
+		{"v0.1.0-dirty", "v0.2.0", false, true}, {"9ff6634", "v0.2.0", false, true}, {"9ff6634-dirty", "v0.2.0", false, true},
+		{"v0.1.0", "", false, false}, {"v0.10.0", "v0.9.0", false, false},
 	} {
 		old, warn := AgentTooOld(c.agent, c.min)
 		if old != c.old || (warn != "") != c.warn {

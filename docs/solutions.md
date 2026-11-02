@@ -149,8 +149,8 @@ Rules that make the move a change of one value:
 - The default URL of `index.json` is `<dist base>index/index.json`. `updates.index_url` overrides it.
 - Integrity comes from the SHA-256 in the lock and in the index, not from the host.
 
-The repository is private now. A release asset of a private repository gives HTTP 404 without a token,
-so `stable` cannot fetch `index.json` until the repository is public (open point 1). The images on ghcr are public (S43).
+The repository and the images on ghcr are public (S43), so a device fetches the release assets without a token.
+`stable` gets `index.json` when `solution-index.yml` has published the release `index`.
 For a test, set `updates.index_url` to a `file:///` URL or to another host.
 A `file:///` index with a `file:///` `dist_base` also updates a device from a USB drive without internet.
 
@@ -548,8 +548,10 @@ the `custom` track "unsupported" (`03` §3.2).
 
 - **Never down.** An automatic update never installs a lock that is older than the running lock. A withdrawn
   running lock gives a banner with the reason; the operator can roll back or pin.
-- **`agent-too-old`.** The agent compares `vX.Y.Z` as numbers. A dev build (`v0.4.0-12-gabcdef-dirty`) compares
-  its last tag (`v0.4.0`). A build without a tag passes, with a warning in the job log.
+- **`agent-too-old`.** Only a release build compares: its version is a tag `vX.Y.Z` (the workflow `release`), and the
+  agent compares the three numbers (`v0.1.0` is older than `v0.2.0`). Each other version is a dev build and counts as
+  the newest agent: `dev`, a commit (`9ff6634`), a build after a tag (`v0.1.0-3-g9ff6634`), and a version with
+  `-dirty`. A dev build passes, with a warning in the job log.
   The fix: install a newer agent (run the installer again). Phase 4 does not replace the agent binary.
 - **Offline.** Without the index, the agent uses its cache and its embedded locks. A check fails with
   `index-unavailable`, and the device keeps running. The update window does nothing without a target.
@@ -982,9 +984,8 @@ the default env never builds care_fe for an update.
 
 ## 16. Open points for the owner
 
-1. **Where devices fetch from until Pages exists.** The repository is private, so its release assets give HTTP 404 to
-   a device. Options: make the repository public (S38); or a public repository `rithviknishad/care-pi-dist` that holds
-   only the releases (and later Pages); the dist base is then `https://github.com/rithviknishad/care-pi-dist/releases/download/`.
+1. **Where devices fetch from until Pages exists.** Closed: the repository is public, so its release assets are the
+   dist base.
 2. **Superset image and superset FE registration** (section 1.5). The alternative is a build on each plug switch. A plug
    with heavy or conflicting Python dependencies can need an opt-out later.
 3. **`plug_config` writes.** Chosen: `manage.py shell` in `care-api` (no Care credential, no extra user in Care). The
@@ -1035,9 +1036,10 @@ Decisions of wave 6a:
 
 - **CI flow.** `solution-lock.yml` publishes the release `lock-<solution>-<version>` at once and writes `index.json` again.
   It opens no pull request and does not push. The owner commits the lock file (section 5.2).
-- **min_agent_version.** `solution.yaml`, else the newest tag `vX.Y.Z` of the repository, else `v0.4.0`.
+- **min_agent_version.** `solution.yaml`, else the newest tag `vX.Y.Z` of the repository, else `v0.1.0` (the first agent
+  release; `make-lock.sh` uses `solution.yaml`, else `v0.1.0`).
 - **Default index URL.** `https://github.com/rithviknishad/care-pi/releases/download/index/index.json` (`solution.DefaultIndexURL`).
-  It gives HTTP 404 while the repository is private (open point 1). Use `updates.index_url` with `file:///` for tests.
+  It gives HTTP 404 until `solution-index.yml` publishes the release `index`. Use `updates.index_url` with `file:///` for tests.
 - **Conditional requests.** The agent sends `If-None-Match` and `If-Modified-Since` only for `https://`. A `file://`
   index is read each time.
 - **Migrate limit.** 20 minutes.

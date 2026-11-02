@@ -30,6 +30,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/render"
 	"github.com/rithviknishad/care-pi/agent/internal/s3admin"
 	"github.com/rithviknishad/care-pi/agent/internal/setup"
+	"github.com/rithviknishad/care-pi/agent/internal/solution"
 	"github.com/rithviknishad/care-pi/agent/internal/status"
 	"github.com/rithviknishad/care-pi/agent/internal/update"
 )
@@ -129,10 +130,8 @@ func (s *Service) configPath() string {
 	return s.Paths.Abs(paths.ConfigFile)
 }
 
-var releaseTag = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
-
 // DevBuild reports whether the agent is a dev build: its version is not a release tag vX.Y.Z.
-func DevBuild() bool { return !releaseTag.MatchString(buildinfo.Version) }
+func DevBuild() bool { return !solution.IsRelease(buildinfo.Version) }
 
 // Config loads config.yaml.
 func (s *Service) Config() (*config.Config, error) {

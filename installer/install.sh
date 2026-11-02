@@ -1961,6 +1961,9 @@ EOF
 
 # --- 12. agent binary
 
+# agent_base_url prints the URL of the release files. The release workflow (.github/workflows/release.yml) publishes
+# care-pi_linux_arm64, care-pi_linux_amd64, SHA256SUMS, install.sh, and uninstall.sh in the release <tag>.
+# installer/test-download.sh checks these URLs and names.
 agent_base_url() {
   if [ -n "${CARE_PI_DOWNLOAD_BASE:-}" ]; then
     printf '%s' "${CARE_PI_DOWNLOAD_BASE%/}"
@@ -1973,8 +1976,14 @@ agent_base_url() {
 
 fetch() {
   if ! run curl -fsSL --retry 3 --connect-timeout 15 -o "$2" "$1"; then
-    die "Download failed: $1. The care-pi repository is private today, so the default URL returns 404. Use --binary PATH, or set CARE_PI_DOWNLOAD_BASE to a URL that serves the files."
+    die "Download failed: $1. Check the network and the release tag (--version TAG; the releases are at $RELEASES_URL). Or use --binary PATH, or set CARE_PI_DOWNLOAD_BASE to a URL that serves the files."
   fi
+}
+
+# sums_lookup FILE ASSET prints the sha256 sum of ASSET in the SHA256SUMS file FILE (sha256sum format, with or
+# without the binary marker '*' and a directory part).
+sums_lookup() {
+  awk -v a="$2" '{ f = $2; sub(/^\*/, "", f); sub(/.*\//, "", f); if (f == a) { print $1; exit } }' "$1"
 }
 
 install_binary() {
@@ -2015,7 +2024,7 @@ agent_from_release() {
   WORK_DIR="/var/lib/care-pi/state/install.$$"
   install -d -m 700 "$WORK_DIR"
   fetch "$ar_base/SHA256SUMS" "$WORK_DIR/SHA256SUMS"
-  ar_want=$(awk -v a="$ar_asset" '{ f = $2; sub(/^\*/, "", f); sub(/.*\//, "", f); if (f == a) { print $1; exit } }' "$WORK_DIR/SHA256SUMS")
+  ar_want=$(sums_lookup "$WORK_DIR/SHA256SUMS" "$ar_asset")
   if [ -z "$ar_want" ]; then
     die "SHA256SUMS has no line for $ar_asset."
   fi
@@ -2545,4 +2554,7 @@ main() {
   fi
 }
 
-main "$@"
+# installer/test-download.sh sources this file with CARE_PI_SOURCE_ONLY=1 to test its functions. Then nothing runs.
+if [ "${CARE_PI_SOURCE_ONLY:-0}" != 1 ]; then
+  main "$@"
+fi

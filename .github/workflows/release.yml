@@ -1,0 +1,117 @@
+name: release
+
+# An agent release (docs/releasing.md, "An agent release"). A push of a tag vX.Y.Z builds the console and the agent
+# binaries with that version, writes SHA256SUMS, and publishes the GitHub release vX.Y.Z with the installer. The
+# installer downloads releases/download/<tag>/care-pi_linux_<arch> and SHA256SUMS, or releases/latest/download/ for
+# "latest" (docs/install.md, "Agent download"). This workflow does not make the tag.
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check the tag
+        id: tag
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if ! printf '%s\n' "$tag" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::The tag ${tag} is not vX.Y.Z. Only a tag vX.Y.Z makes an agent release."
+            exit 1
+          fi
+          # The previous agent release: the newest tag vX.Y.Z before this one. The first release has none.
+          prev="$(git tag --list 'v*' --merged "${tag}^" --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "prev=${prev}" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      - name: Vet and test
+        run: |
+          go vet ./...
+          go test ./...
+      - name: Build the console and the agent binaries
+        env:
+          CGO_ENABLED: "0"
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: make build-linux VERSION="${TAG}"
+      - name: Check the version of the binary
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          out="$(bin/care-pi_linux_amd64 version)"
+          printf '%s\n' "$out"
+          if ! printf '%s\n' "$out" | grep -qx "version: ${TAG}"; then
+            echo "::error::care-pi version does not print ${TAG}."
+            exit 1
+          fi
+      - name: Write SHA256SUMS
+        run: |
+          mkdir -p release
+          cp bin/care-pi_linux_arm64 bin/care-pi_linux_amd64 installer/install.sh installer/uninstall.sh release/
+          cd release
+          sha256sum care-pi_linux_arm64 care-pi_linux_amd64 install.sh uninstall.sh > SHA256SUMS
+          cat SHA256SUMS
+      - name: Write the release notes
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          PREV: ${{ steps.tag.outputs.prev }}
+        run: |
+          {
+            echo "The care-pi agent ${TAG}: the binaries for Linux arm64 and amd64 (with the console), the installer, and SHA256SUMS."
+            echo
+            echo "Install this version on a Raspberry Pi OS or Debian host (docs/install.md):"
+            echo
+            echo '```sh'
+            echo "curl -fsSL https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/install.sh | sudo sh -s -- --version ${TAG} --yes"
+            echo '```'
+            echo
+            if [ -n "${PREV}" ]; then
+              echo "## Commits since ${PREV}"
+              range="${PREV}..${TAG}"
+            else
+              echo "## Commits (the first release)"
+              range="${TAG}"
+            fi
+            echo
+            git log --no-merges --format='- %s (%h)' "${range}"
+          } > release-notes.md
+          cat release-notes.md
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          PREV: ${{ steps.tag.outputs.prev }}
+        run: |
+          assets=(release/care-pi_linux_arm64 release/care-pi_linux_amd64 release/SHA256SUMS release/install.sh release/uninstall.sh)
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" > /dev/null 2>&1; then
+            # A second run of the same tag replaces the assets.
+            gh release upload "${TAG}" --repo "${GITHUB_REPOSITORY}" --clobber "${assets[@]}"
+            exit 0
+          fi
+          # --latest: releases/latest/download/ of the installer must find the agent, not a bundle or lock release
+          # (those workflows use --latest=false). The generated notes need the previous agent tag as the start: without
+          # it, GitHub starts at the newest release of any kind (a bundle), so the first release has only the commits.
+          generated=()
+          if [ -n "${PREV}" ]; then
+            generated=(--generate-notes --notes-start-tag "${PREV}")
+          fi
+          gh release create "${TAG}" --repo "${GITHUB_REPOSITORY}" --verify-tag --latest --title "care-pi ${TAG}" \
+            --notes-file release-notes.md "${generated[@]}" "${assets[@]}"

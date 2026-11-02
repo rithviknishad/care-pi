@@ -9,7 +9,12 @@ import (
 var (
 	lockVersionRE = regexp.MustCompile(`^([0-9]{4})\.([0-9]{1,2})\.([0-9]+)$`)
 	semverRE      = regexp.MustCompile(`^v?([0-9]+)\.([0-9]+)\.([0-9]+)`)
+	releaseRE     = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`)
 )
+
+// IsRelease reports whether an agent version is a release tag vX.Y.Z. Each other version ("dev", a commit, a
+// version from git describe with commits after the tag or with -dirty) is a dev build.
+func IsRelease(v string) bool { return releaseRE.MatchString(v) }
 
 // ParseLockVersion splits a lock version YYYY.MM.N into its three numbers.
 func ParseLockVersion(v string) ([3]int, bool) {
@@ -60,7 +65,7 @@ func CompareLockVersions(a, b string) int {
 	return 0
 }
 
-// ParseSemver reads vX.Y.Z at the start of v. A dev build (v0.4.0-12-gabcdef-dirty) gives its last tag.
+// ParseSemver reads vX.Y.Z at the start of v. A version of git describe (v0.4.0-12-gabcdef-dirty) gives its last tag.
 func ParseSemver(v string) ([3]int, bool) {
 	m := semverRE.FindStringSubmatch(v)
 	if m == nil {
@@ -74,7 +79,8 @@ func ParseSemver(v string) ([3]int, bool) {
 }
 
 // AgentTooOld reports whether the agent version is older than min (docs/solutions.md, section 7.4).
-// A version without a tag passes; then warn tells it.
+// Only a release build (vX.Y.Z) compares. A dev build (IsRelease false) counts as the newest agent: it passes, and
+// warn tells it.
 func AgentTooOld(agent, min string) (tooOld bool, warn string) {
 	if min == "" {
 		return false, ""
@@ -83,10 +89,10 @@ func AgentTooOld(agent, min string) (tooOld bool, warn string) {
 	if !ok {
 		return false, ""
 	}
-	have, ok := ParseSemver(agent)
-	if !ok {
-		return false, fmt.Sprintf("the agent version %q has no tag; it cannot compare with min_agent_version %s", agent, min)
+	if !IsRelease(agent) {
+		return false, fmt.Sprintf("the agent %q is a dev build: it counts as newer than min_agent_version %s", agent, min)
 	}
+	have, _ := ParseSemver(agent)
 	for i := range 3 {
 		if have[i] != want[i] {
 			return have[i] < want[i], ""

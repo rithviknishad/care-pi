@@ -95,11 +95,10 @@ A reboot may be necessary after step 2 or step 3. Then the script prints `REBOOT
 
 ## Develop and test
 
-### Private repository
+### A local build
 
-The care-pi repository is private today.
-The default download URL returns 404.
-Use a local binary or a local web server.
+The default download URL is the newest agent release (the workflow `release`, `docs/releasing.md`).
+To test a binary that is not in a release, use a local binary or a local web server.
 
 ```sh
 make build-linux                                    # bin/care-pi_linux_arm64, bin/care-pi_linux_amd64
@@ -116,9 +115,13 @@ sudo CARE_PI_DOWNLOAD_BASE=http://<your-computer>:8000 sh installer/install.sh -
 ### Static checks
 
 ```sh
-shellcheck -S style installer/install.sh installer/uninstall.sh
+shellcheck -S style installer/install.sh installer/uninstall.sh installer/test-download.sh
 sh -n installer/install.sh && bash -n installer/install.sh
+sh installer/test-download.sh   # the release URLs and the asset names against .github/workflows/release.yml
 ```
+
+`test-download.sh` sources `install.sh` with `CARE_PI_SOURCE_ONLY=1`: the script then defines its functions and runs
+nothing.
 
 ### Container checks
 

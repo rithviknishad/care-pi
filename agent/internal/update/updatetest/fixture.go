@@ -93,9 +93,21 @@ func write(dir, tag, asset string, data []byte) (rel, sum string, size int64, er
 	return tag + "/" + asset, sum, int64(len(data)), nil
 }
 
+// Option changes the fixture.
+type Option func(*options)
+
+type options struct{ minAgent string }
+
+// MinAgent sets min_agent_version of each lock (default v0.0.1).
+func MinAgent(v string) Option { return func(o *options) { o.minAgent = v } }
+
 // Build makes the fixture in dir for the solution file and the config (its frontend env gives the FE
 // build id). The two versions differ in the care image, the solution image, and care_fe.
-func Build(dir, solutionFile string, cfg *config.Config) (*Fixture, error) {
+func Build(dir, solutionFile string, cfg *config.Config, opts ...Option) (*Fixture, error) {
+	o := options{minAgent: "v0.0.1"}
+	for _, f := range opts {
+		f(&o)
+	}
 	data, err := os.ReadFile(solutionFile)
 	if err != nil {
 		return nil, err
@@ -118,7 +130,7 @@ func Build(dir, solutionFile string, cfg *config.Config) (*Fixture, error) {
 	var releases []solution.IndexRelease
 	for i, v := range Versions {
 		in := solution.LockInput{Solution: data, Version: v, CreatedAt: fmt.Sprintf("2026-11-%02dT10:00:00Z", 14+7*i),
-			CreatedBy: "updatetest", Notes: "Test lock " + v + ".\n", MinAgentVersion: "v0.0.1", Commit: SHA("commit-" + v),
+			CreatedBy: "updatetest", Notes: "Test lock " + v + ".\n", MinAgentVersion: o.minAgent, Commit: SHA("commit-" + v),
 			CareFESHA: SHA("care_fe-" + v), Plugs: map[string]solution.PlugInput{}, Images: map[string]solution.LockImg{}}
 		in.Care.Digest, in.Care.GitSHA = Digest("care-"+v), SHA("care-git-"+v)
 		in.SolutionImage.Image, in.SolutionImage.Tag, in.SolutionImage.Digest = render.ImageCareSolution, sol.Name+"-"+v, Digest("solution-image-"+v)

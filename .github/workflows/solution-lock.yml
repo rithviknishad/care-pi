@@ -274,10 +274,10 @@ jobs:
             plugs="$(jq -c --arg id "$id" --arg url "${tag}/${tag}.tar.gz" --arg sum "$(sha256sum "$file" | cut -d' ' -f1)" \
               --argjson size "$(stat -c %s "$file")" '.[$id] += {frontend_url: $url, frontend_sha256: $sum, frontend_size_bytes: $size}' <<< "$plugs")"
           done
-          # min_agent_version: solution.yaml, else the version of the agent that this run builds (its last tag).
+          # min_agent_version: solution.yaml, else the version of the agent that this run builds (its last tag), else v0.1.0.
           min_agent="$(bin/care-pi solution validate --json "solutions/${SOLUTION}/solution.yaml" | jq -r '.min_agent_version // empty')"
           if [ -z "$min_agent" ]; then
-            min_agent="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' 2> /dev/null || echo v0.4.0)"
+            min_agent="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' 2> /dev/null || echo v0.1.0)"
           fi
           jq -n \
             --arg min_agent "$min_agent" \

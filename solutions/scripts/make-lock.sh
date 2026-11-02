@@ -37,7 +37,7 @@ Options:
   --plug ID=SHA             the backend sha of a plug (repeat; default: resolve the ref)
   --plug-bundle ID=FILE     a built FE plug bundle (tar.gz of plug-bundle.yml, with care-pi-plug.json) (repeat)
   --image NAME=DIGEST       the digest of a base image: postgres, caddy, redis, s3, node (repeat; default: resolve)
-  --min-agent vX.Y.Z        min_agent_version (default: solution.yaml, else v0.4.0)
+  --min-agent vX.Y.Z        min_agent_version (default: solution.yaml, else v0.1.0, the first agent release)
   --offline                 resolve nothing
   --care-pi BIN             the care-pi binary (default: go run ./agent/cmd/care-pi)
 EOF
@@ -136,7 +136,7 @@ git_sha_of() {
 CARE_IMAGE="$(field care.image)"; CARE_IMAGE="${CARE_IMAGE:-ghcr.io/ohcnetwork/care}"
 CARE_REF="$(field care.ref)"; CARE_REF="${CARE_REF:-latest}"
 CARE_FE_REPO="$(field care_fe.repo)"; CARE_FE_REF="$(field care_fe.ref)"
-MIN_AGENT="${MIN_AGENT:-$(field min_agent_version)}"; MIN_AGENT="${MIN_AGENT:-v0.4.0}"
+MIN_AGENT="${MIN_AGENT:-$(field min_agent_version)}"; MIN_AGENT="${MIN_AGENT:-v0.1.0}"
 
 [ -n "$CARE_DIGEST" ] || CARE_DIGEST="$(digest_of "$CARE_IMAGE:$CARE_REF")"
 if [ -z "$CARE_GIT_SHA" ] && [ "$OFFLINE" = 0 ]; then
