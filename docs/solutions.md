@@ -897,7 +897,10 @@ name (IP addresses do not count). Phase 4 serves only `<hostname>.local`, so the
 name and the Tailscale name (`docs/connectivity.md` section 5): with a second name, the count crosses 1, the plug turns
 on, and the plan path is `cutover` (the plug is in the image). When the count goes back to 1, the plug turns off (a
 cutover too). `ALLOWED_HOSTS` of the plug defaults to `configs` of the solution (`*.local`, `*.ts.net`,
-`*.care-pi.rithviknishad.dev`); the operator can change it. The canonical host is the public name when it is on.
+`*.care-pi.rithviknishad.dev`); the operator can change it. At each render, the agent adds each name of the device (the
+public name, `<hostname>.local`, the Tailscale name) that no pattern of the list matches (the match of the plug:
+`fnmatch`, without case), so a lock made before Phase 6 or an operator list cannot break the file links of a name of
+the device. IP addresses are not added. The canonical host is the public name when it is on.
 O7: the `plug_config` rows keep the canonical host; Caddy sends `Access-Control-Allow-Origin: *` on `/plugs/*`
 (`01` §5). The upstream change for root-relative `meta.url` is open (O7).
 

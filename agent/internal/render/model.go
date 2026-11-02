@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -718,9 +719,16 @@ func customFrontendRefs(cfg *config.Config) bool {
 // SecretMask replaces a secret value in rendered/care/additional-plugs.json.
 const SecretMask = "<secret>"
 
+// MultihostHostsKey is the backend config of a plug with auto: when_multihost that lists the host name patterns
+// of the file links (care_multihost_files_be, O7): the plug signs a link for the host of the request only when a
+// pattern matches that host and the canonical host.
+const MultihostHostsKey = "ALLOWED_HOSTS"
+
 // PlugConfigs returns the configs of the ADDITIONAL_PLUGS entry of a plug (docs/solutions.md, section 1.4):
 // backend.configs, then the default of each backend setting, then the operator values of
 // solution.plugs.<id>.settings.backend, then the secrets. red has each secret value replaced by SecretMask.
+// For a plug with auto: when_multihost, MultihostHostsKey also gets each name of the device that no pattern
+// matches (docs/solutions.md, section 12.3), so an old lock or an operator value cannot break the file links.
 func PlugConfigs(cfg *config.Config, p solution.Plug, secretValues map[string]any) (full, red map[string]any) {
 	full = map[string]any{}
 	if p.Backend != nil {
@@ -733,10 +741,12 @@ func PlugConfigs(cfg *config.Config, p solution.Plug, secretValues map[string]an
 		op = ch.Settings.Backend
 	}
 	secretKeys := map[string]bool{}
+	declared := map[string]bool{}
 	for _, st := range p.TypedSettings() {
 		if st.Part != solution.PartBackend {
 			continue
 		}
+		declared[st.Key] = true
 		if st.Type == solution.TypeSecret {
 			secretKeys[st.Key] = true
 			if v, ok := secretValues[st.Key]; ok && v != nil {
@@ -751,6 +761,13 @@ func PlugConfigs(cfg *config.Config, p solution.Plug, secretValues map[string]an
 			full[st.Key] = solution.DeepCopy(v)
 		}
 	}
+	if p.Auto == solution.AutoWhenMultihost && !secretKeys[MultihostHostsKey] {
+		if _, ok := full[MultihostHostsKey]; ok || declared[MultihostHostsKey] {
+			if hosts, ok := withDeviceHosts(full[MultihostHostsKey], Hostnames(cfg)); ok {
+				full[MultihostHostsKey] = hosts
+			}
+		}
+	}
 	red = map[string]any{}
 	for k, v := range full {
 		red[k] = v
@@ -761,6 +778,48 @@ func PlugConfigs(cfg *config.Config, p solution.Plug, secretValues map[string]an
 		}
 	}
 	return full, red
+}
+
+// withDeviceHosts returns the list v (nil: an empty list) with each name of names that no pattern of v matches.
+// The match is the one of the plug (Python fnmatchcase on the lower-case name and pattern); path.Match is the
+// same for host names, which have no "/". ok is false when v is not a list of strings.
+func withDeviceHosts(v any, names []string) (out []any, ok bool) {
+	var patterns []string
+	switch l := v.(type) {
+	case nil:
+	case []string:
+		patterns = append(patterns, l...)
+	case []any:
+		for _, e := range l {
+			s, isStr := e.(string)
+			if !isStr {
+				return nil, false
+			}
+			patterns = append(patterns, s)
+		}
+	default:
+		return nil, false
+	}
+	for _, p := range patterns {
+		out = append(out, p)
+	}
+	for _, n := range names {
+		matched := false
+		for _, p := range patterns {
+			if m, err := path.Match(strings.ToLower(p), strings.ToLower(n)); err == nil && m {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			out = append(out, n)
+			patterns = append(patterns, n)
+		}
+	}
+	if out == nil {
+		out = []any{}
+	}
+	return out, true
 }
 
 // MaintenanceSteps are the texts of the maintenance page for each JobStep.action: a verbatim copy of

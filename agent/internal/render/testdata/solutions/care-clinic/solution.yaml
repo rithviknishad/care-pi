@@ -30,6 +30,16 @@ plugs:
       name: care_multihost_files_be
       package: git+https://github.com/ohcnetwork/care_multihost_files_be.git
       ref: main
+      # As in a lock made before Phase 6 (no *.care-pi.rithviknishad.dev): the render adds the public name.
+      configs:
+        ALLOWED_HOSTS:
+          - "*.local"
+          - "*.ts.net"
+    settings:
+      - part: backend
+        key: ALLOWED_HOSTS
+        label: Addresses that can open files
+        type: list
   - id: care_filly
     label: Filly
     enabled: false

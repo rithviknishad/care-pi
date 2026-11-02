@@ -3,6 +3,12 @@
     "name": "care_multihost_files_be",
     "package_name": "git+https://github.com/ohcnetwork/care_multihost_files_be.git",
     "version": "@cccccccccccccccccccccccccccccccccccccccc",
-    "configs": {}
+    "configs": {
+      "ALLOWED_HOSTS": [
+        "*.local",
+        "*.ts.net",
+        "sunrise-4f2a.care-pi.rithviknishad.dev"
+      ]
+    }
   }
 ]

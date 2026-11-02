@@ -259,7 +259,11 @@ name. `CSRF_TRUSTED_ORIGINS` has `https://<name>` for each name. The Origin chec
 `https://<name>:8443` for each name that Caddy serves.
 
 With more than 1 name, the plug `care_multihost_files_be` turns on (`auto: when_multihost`, O7). It signs the file
-links for the host of the request, so a file link works from each name. A change of the name set is a cutover.
+links for the host of the request, so a file link works from each name. The plug rewrites a link only when a pattern of
+its `ALLOWED_HOSTS` matches the host of the request and the canonical host; the agent adds each name of the device that
+no pattern matches (`docs/solutions.md` section 12.3). A request on an IP address gets a link on the canonical host. When
+the number of names crosses 1, the plug turns on or off: a cutover. The Tailscale mode on or off also changes the
+addresses of the pod: a full cycle of `care.target` (about 60 s on a Pi 5).
 Caddy sends `Access-Control-Allow-Origin: *` on `/plugs/*`, so the plug bundles load from each name.
 
 ## 6. The first contact
