@@ -837,7 +837,7 @@ A change of the derivation needs a new salt (`v2`), and the agent must keep the 
 
 - The agent writes the cipher pass to `secrets/pgbackrest_repo_cipher_pass`, because care-db reads it as a podman secret.
   It derives the restic password and the SSH key in memory for each run. restic uses the OpenSSH client of the host,
-  so the agent writes the private key to a directory of the run below `/run/care-pi/backup/` (tmpfs, root 0700, the key 0600)
+  so the agent writes the private key to a directory of the run below `/run/care-pi-backup/` (tmpfs, root 0700, the key 0600)
   and deletes the directory after the run.
 - One SSH key serves each SFTP destination. A restored device derives the same key, so the servers still accept it.
   A new recovery key gives a new SSH key.

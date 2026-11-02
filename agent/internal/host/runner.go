@@ -60,8 +60,12 @@ type Exec struct {
 	Log io.Writer
 }
 
-// Run implements Runner.
+// Run implements Runner. It builds the command of a typed request (WriteAptConf) itself.
 func (e Exec) Run(ctx context.Context, c Cmd) ([]byte, error) {
+	c, err := expand(c)
+	if err != nil {
+		return nil, err
+	}
 	if e.Log != nil {
 		_, _ = fmt.Fprintln(e.Log, "+", c.String())
 	}
@@ -80,8 +84,7 @@ func (e Exec) Run(ctx context.Context, c Cmd) ([]byte, error) {
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 	}
-	err := cmd.Run()
-	if err != nil {
+	if err := cmd.Run(); err != nil {
 		var xe *exec.ExitError
 		if errors.As(err, &xe) {
 			return stdout.Bytes(), &ExitError{Cmd: c.String(), Code: xe.ExitCode(), Stderr: stderr.String()}

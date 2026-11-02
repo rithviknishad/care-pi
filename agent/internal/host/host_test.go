@@ -3,6 +3,7 @@ package host
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -198,5 +199,34 @@ func TestDevBackupCommands(t *testing.T) {
 	out, _ := d.Run(ctx, Cmd{Name: "restic", Args: []string{"backup", "--json"}})
 	if !strings.Contains(string(out), `"message_type":"summary"`) {
 		t.Fatalf("%q", out)
+	}
+}
+
+// TestWriteAptConf (M2 of the Phase 7 review): the typed request names only on or off; the runner builds the command
+// and its fixed text, so a caller (or the daemon through the helper) cannot choose the file or the text.
+func TestWriteAptConf(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		c, err := expand(WriteAptConfCmd(on))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.String() != "systemd-run --wait --collect --pipe --quiet --unit=care-pi-apt-conf -- tee /etc/apt/apt.conf.d/52care-pi.conf" {
+			t.Fatalf("command %q", c.String())
+		}
+		in, _ := io.ReadAll(c.Stdin)
+		if string(in) != AptSecurityConf(on) || !strings.Contains(string(in), "Automatic-Reboot \"false\"") {
+			t.Fatalf("stdin %q", in)
+		}
+	}
+	if !strings.Contains(AptSecurityConf(true), `Unattended-Upgrade "1"`) || !strings.Contains(AptSecurityConf(false), `Unattended-Upgrade "0"`) {
+		t.Fatal("the text does not follow on and off")
+	}
+	for _, args := range [][]string{nil, {"yes"}, {"on", "/etc/shadow"}} {
+		if _, err := (Exec{}).Run(context.Background(), Cmd{Name: WriteAptConf, Args: args, Stdin: strings.NewReader("evil")}); err == nil {
+			t.Fatalf("%q ran", args)
+		}
+	}
+	if c, _ := expand(Cmd{Name: "true"}); c.Name != "true" {
+		t.Fatal("another command changed")
 	}
 }

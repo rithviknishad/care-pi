@@ -137,8 +137,9 @@ const (
 	HelperSocketUnit = "care-pi-helper.socket"
 	// AgentUser is the system user of the daemon after the privilege split, and the group of HelperSocket.
 	AgentUser = "care-pi"
-	// RunBackupDir holds the files of one restic run (password file, SSH key, S3 credentials). tmpfs.
-	RunBackupDir = "/run/care-pi/backup"
+	// RunBackupDir holds the files of one restic run (password file, SSH key, S3 credentials, ssh_config). tmpfs, root
+	// 0700. Not below RunDir: care-caddy (root) mounts RunDir, and an ssh_config there could name a ProxyCommand.
+	RunBackupDir = "/run/care-pi-backup"
 	// AgentUnit runs "care-pi serve". The installer writes it.
 	AgentUnit     = "care-pi.service"
 	AgentUnitFile = "/etc/systemd/system/care-pi.service"

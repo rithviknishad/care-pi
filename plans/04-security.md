@@ -147,7 +147,7 @@ ethernet LAN rather than public Wi-Fi for setup).
 
 | Item | State | Where |
 |---|---|---|
-| Privileged helper | Built; opt-in (`--helper`); daemon still uid 0 | S53, `docs/console-server.md` §14 |
+| Privileged helper | Built; opt-in (`--helper`); daemon still uid 0. After the review (M2): the flags of each `restic` subcommand only (no `--password-command`, `-o sftp.command`, `-o rclone.program`; a restore target below `/var/lib/care-pi/restore`, or the data directories in place); the symbolic links of a volume or a target resolved; `podman run` with a volume only of an image of the lock or of `images.*`; the apt configuration as the typed request `write-apt-conf on\|off`; the files of a restic run in `/run/care-pi-backup` (not mounted into a container) | S53, `docs/console-server.md` §14 |
 | Default-drop firewall | Built; opt-in, with the rollback timer | S54, `docs/console-server.md` §13 |
 | Local-CA rotation | Built (`POST /tls/local-ca/rotate`) | S60, `docs/connectivity.md` §2.5 |
 | Lock signing | Built; opt-in (`updates.require_signed`); no key yet | S55, `docs/solutions.md` §18 |

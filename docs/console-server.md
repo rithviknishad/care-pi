@@ -298,7 +298,7 @@ stopped with `missing steps: tls`).
 | `/etc/care-pi/secrets/recovery.key`, `recovery.key.pending` | The recovery key (64 hex digits). Never in a response, except `GET /backups/recovery-key` and its download. | root 0600 |
 | `/etc/care-pi/secrets/backup/<id>.json` | The S3 keys of a destination | root 0600 |
 | `/var/lib/care-pi/state/backups/` | `key.json`, `local.json`, `destinations/<id>.json`, `drill.json`, `checkpoints.json` (`docs/backups.md`) | root 0700 |
-| `/run/care-pi/backup/` | The files of one restic run (password, SSH key, S3 keys); deleted after the run | root 0700 |
+| `/run/care-pi-backup/` | The files of one restic run (password, SSH key, S3 keys, `ssh_config`); deleted after the run. Not below `/run/care-pi`, which `care-caddy` mounts | root 0700 |
 | `/var/lib/care-pi/ca/root.crt`, `root.key` | Phase 6: the name-constrained root CA of the agent (`/tls/root-ca`; `docs/connectivity.md`) | root 0644, 0600 |
 | `/var/lib/care-pi/caddy/caddy/pki/authorities/local/root.crt` | The root CA of Caddy. The agent reads it for `/tls/root-ca` only before the Phase 6 switch | root |
 | `/var/lib/care-pi/state/{ca.json,tls-public.json,tls-tailscale.json,wifi.json,pod-live.json}` | Phase 6: the CA switch, the registration with the DNS service, the last Tailscale and Wi-Fi state, the addresses of the pod that runs | root 0600 |
@@ -582,21 +582,48 @@ A close of the connection stops the command: the cancel of a job or of an event 
 
 `agent/internal/helper/validate.go` has one rule for each program. A rule checks each argument against the shapes
 that the agent sends: the subcommands, the flags, the unit names (`care*`, the mount units of the backup disks,
-`avahi-daemon`, `systemd-sysctl`, `tailscaled`), the paths (below `/etc/care-pi`, `/var/lib/care-pi`, `/run/care-pi`),
-the image references, and the device names.
+`avahi-daemon`, `systemd-sysctl`, `tailscaled`), the paths (below `/etc/care-pi`, `/var/lib/care-pi`,
+`/run/care-pi-backup`), the image references, and the device names.
 The helper refuses each other program, a terminal command (`care-pi shell`), an unknown environment variable, and a NUL
 byte in an argument.
 The helper does not check the command inside a Care container (the arguments after the container name of
 `podman exec`, and after the image of `podman run`): the daemon owns the data of Care anyway. The helper guards the
 host, not the containers.
 
+**What the helper guards** (the review of Phase 7, M2):
+
+- A program runs only with the flags that the agent gives it. For `restic`, the options before the subcommand are
+  `-o s3.bucket-lookup=path`, `-o s3.region=…`, and `-o sftp.args=-F <ssh_config> -i <key>`; after the subcommand,
+  each subcommand has its own flags (`backup`: `--json`, `--host`, `--tag`, `--exclude` of the agent, and the paths
+  `/etc/care-pi` and below `/var/lib/care-pi`; `restore`: one `--target`, `--include`, `--verify`; `forget`, `check`,
+  `snapshots`, `stats`, `dump`, `cat config`, `init`, `unlock`, `prune`). So `--password-command`, `-o sftp.command`,
+  `-o rclone.program`, `--repo`, and another `--target` or `-t` do not pass.
+- A path that the helper checks is clean and absolute. A restore target and a snapshot path below `/var/lib/care-pi`,
+  and each `--volume` source of `podman run`, must stay below the allowed directory after the resolution of its
+  symbolic links (`filepath.EvalSymlinks`; a part that does not exist yet stays as it is; a link to nothing is
+  refused). The target of a restore is a directory below `/var/lib/care-pi/restore`, or `/var/lib/care-pi/backup/pg`
+  or `/var/lib/care-pi/s3` in place.
+- `podman run` with a volume of the host starts only an image of `/etc/care-pi/lock.yaml` (the reference or the
+  reference with the digest) or of `images.*` in `config.yaml`; the helper reads both files at each request.
+- The text of `/etc/apt/apt.conf.d/52care-pi.conf` comes from the agent binary: the typed request `write-apt-conf on`
+  or `off` (no stdin) makes the helper write it through `systemd-run … tee`. A `tee` of the daemon is refused.
+- The files of a restic or `sftp` run (`ssh_config`, the key) are in `/run/care-pi-backup/<run>/`, or the rendered
+  `/etc/care-pi/rendered/backup/ssh_config`. `/run/care-pi` is not allowed: `care-caddy` mounts it read-write as root,
+  and an `ssh_config` there could name a `ProxyCommand`.
+
+**What the helper does not guard:** the values of the environment variables of `restic` (the repository, the paths of
+the password and key files: a repository of the daemon is a place that the daemon chooses anyway), a symbolic link that
+changes between the check and the start of the program, the files that the daemon writes itself (see "What remains"),
+and the commands inside a container.
+
 | Program | What the helper accepts |
 |---|---|
 | `systemctl` | `start`, `stop`, `restart`, `try-restart`, `reload`, `enable`, `disable`, `daemon-reload`, `reset-failed`, `is-active`, `show`, `list-units`, `list-timers`, `reboot`, `poweroff` on the units above. |
-| `podman` | `ps`, `inspect`, `image` and `secret` subcommands, `pull`, `exec` into a `care-*` container, `run --rm` of the images of the lock (the drills, the FE build), `pod` inspect. |
-| `systemd-run` | Transient units `care-pi-*` with a fixed set of properties, then `podman`, `restic`, `tailscale`, `apt-get`, `apt-mark`, the disk commands, `raspi-config nonint do_wifi_country`, `tee` of `52care-pi.conf`, `care-pi firewall rollback`, or `/bin/sh -c` with one of four constant scripts of the agent (clock, Wi-Fi keyfile, sysctl, Tailscale install), compared byte for byte. |
+| `podman` | `ps`, `inspect`, `image` and `secret` subcommands, `pull`, `exec` into a `care-*` container, `run --rm` of an image of the lock or of `images.*` with the volumes of the drills and the restore (`--network none`, `--user postgres`, `--entrypoint pgbackrest`), `pod` inspect. |
+| `systemd-run` | Transient units `care-pi-*` with a fixed set of properties, then `podman`, `restic`, `tailscale`, `apt-get`, `apt-mark`, the disk commands, `raspi-config nonint do_wifi_country`, `care-pi firewall rollback`, or `/bin/sh -c` with one of four constant scripts of the agent (clock, Wi-Fi keyfile, sysctl, Tailscale install), compared byte for byte. |
+| `write-apt-conf` | A typed request: `on` or `off`. The helper writes the fixed text of `52care-pi.conf` itself. |
 | `journalctl` | `--unit` of a Care unit, with `--lines`, `--output`, `--since`, `--after-cursor`, `--follow`. |
-| `restic`, `skopeo`, `sftp` | The subcommands of the backups and of the lock; the repository and key paths below the directories of the agent. |
+| `restic`, `skopeo`, `sftp` | The subcommands of the backups and of the lock, each with its own flags (see above); the `ssh_config` and the key below `/run/care-pi-backup`. |
 | `nmcli`, `iw`, `ip`, `tailscale`, `hostnamectl`, `timedatectl` | The read commands of the network page, `tailscale status --json` and `serve status --json`, and `tailscale up`/`down`/`logout` with the arguments of the agent (`--login-server` an https URL). |
 | `apt`, `apt-cache`, `dpkg-query` | The read commands of the updates page. |
 | `lsblk`, `wipefs`, `sfdisk`, `partprobe`, `mkfs.ext4`, `udevadm` | The disk preparation of the backups: one `/dev/sd*`, `/dev/nvme*`, or `/dev/mmcblk*` device. |
@@ -632,8 +659,9 @@ The full split of `04` §2 (`User=care-pi`, `ProtectSystem=strict`, `NoNewPrivil
 1. Typed file requests in the helper: the daemon writes about 250 files as root today (the rendered tree, the quadlets,
    the units in `/etc/systemd/system`, the secrets, the state, `/etc/hosts`). A request `write-file {path, mode, owner,
    content}` with the same path allow-list, and `remove`, `rename`, `chown`.
-2. The files of a backup session (`/run/care-pi/backup/<id>/ssh_config`, the key copies): the helper must write them,
-   because an `ssh_config` controls `ProxyCommand`.
+2. The files of a backup session (`/run/care-pi-backup/<id>/ssh_config`, the key copies): the helper must write them,
+   because an `ssh_config` controls `ProxyCommand`. (Since the review of Phase 7 the directory is not below
+   `/run/care-pi`, so `care-caddy` cannot write them; the daemon still can.)
 3. Read access of the user `care-pi` to `/etc/care-pi` (the config, the auth store, the secrets): a group-readable tree,
    or the reads through the helper.
 4. `/etc/shadow` for the OS password check of the claim (`auth.Shadow`): a request `check-password` in the helper.
@@ -643,8 +671,11 @@ The full split of `04` §2 (`User=care-pi`, `ProtectSystem=strict`, `NoNewPrivil
 
 - `agent/internal/helper/validate_test.go`: each command shape of the agent passes. A table of bad commands (other
   programs, other units, path escapes, extra flags, shells, environment variables, NUL bytes) is refused.
-  `TestValidateFuzz` puts a hostile argument at each position of good commands: the helper refuses each one, except
-  inside a container (see below).
+  `TestValidateFuzz` puts a hostile argument (also `--password-command`, `-t`, `/`, `--repo=`) at each position of good
+  commands: the helper refuses each one, except inside a container (see below). It also refuses the bypasses of the
+  review (M2): the restic flags and options of other programs, a restore target or a volume through a symbolic link
+  that points outside, a link to nothing, an image outside the lock, a `tee` of the apt configuration, and the SSH
+  files below `/run/care-pi`.
 - `agent/internal/helper/server_test.go`: a round trip on a temporary socket with the fake executor: output, stdin, an
   exit code, a refusal, a stream and its cancel, the socket mode, and the journal lines.
 - `CARE_PI_TEST_HELPER=1 go test ./agent/internal/server`: each contract test sends its host commands through the

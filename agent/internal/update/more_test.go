@@ -297,10 +297,11 @@ func TestOSUpdateCommands(t *testing.T) {
 	const run = "systemd-run --wait --collect --pipe --quiet "
 	const aptGet = run + "--unit=care-pi-apt -p MemoryMax=512M --setenv=DEBIAN_FRONTEND=noninteractive -- apt-get -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "
 	const aptMark = run + "--unit=care-pi-apt-mark -p MemoryMax=512M --setenv=DEBIAN_FRONTEND=noninteractive -- apt-mark -o DPkg::Lock::Timeout=600 "
-	wantApt := []string{run + "--unit=care-pi-apt-conf -p MemoryMax=512M --setenv=DEBIAN_FRONTEND=noninteractive -- tee /etc/apt/apt.conf.d/52care-pi.conf",
+	// The apt configuration is the typed request of the helper (M2 of the Phase 7 review): the runner writes the text.
+	wantApt := []string{host.WriteAptConf + " on",
 		aptGet + "update", aptGet + "-y full-upgrade", aptMark + "unhold podman", aptGet + "-y install podman=5.4.2+ds1-2",
 		aptMark + "hold podman crun netavark aardvark-dns conmon skopeo"}
-	if got := e.fake.Filter("systemd-run"); !reflect.DeepEqual(got, wantApt) {
+	if got := e.fake.Filter("systemd-run", host.WriteAptConf); !reflect.DeepEqual(got, wantApt) {
 		t.Fatalf("apt commands:\n got  %q\n want %q", got, wantApt)
 	}
 	if !res.CareRestarted || len(res.HeldChanged) != 1 || len(res.Upgraded) != 2 {
@@ -313,7 +314,7 @@ func TestOSUpdateCommands(t *testing.T) {
 	if _, err := e.u.OSUpdate(context.Background(), rec, OSOptions{}); !problem.Is(err, problem.OSUpdateFailed) {
 		t.Fatalf("want os-update-failed, got %v", err)
 	}
-	if got := e.fake.Filter("systemd-run"); !reflect.DeepEqual(got[1:], []string{aptGet + "update", aptGet + "-y full-upgrade", wantApt[5]}) {
+	if got := e.fake.Filter("systemd-run", host.WriteAptConf); !reflect.DeepEqual(got[1:], []string{aptGet + "update", aptGet + "-y full-upgrade", wantApt[5]}) {
 		t.Fatalf("apt commands after a failed full upgrade: %q", got)
 	}
 	if got := actions(rec); !reflect.DeepEqual(got, []string{"os-refresh", "os-upgrade", "os-hold"}) {
@@ -327,7 +328,7 @@ func TestOSUpdateCommands(t *testing.T) {
 	if _, err := e.u.OSUpdate(context.Background(), rec, OSOptions{}); !problem.Is(err, problem.OSUpdateFailed) {
 		t.Fatalf("want os-update-failed, got %v", err)
 	}
-	if got := e.fake.Filter("systemd-run"); !reflect.DeepEqual(got[1:], wantApt[1:]) {
+	if got := e.fake.Filter("systemd-run", host.WriteAptConf); !reflect.DeepEqual(got[1:], wantApt[1:]) {
 		t.Fatalf("apt commands after a failed install: %q", got)
 	}
 	// A tested version that is older than the installed one stays held: no unhold, no downgrade.
@@ -341,7 +342,7 @@ func TestOSUpdateCommands(t *testing.T) {
 	if _, err := e.u.OSUpdate(context.Background(), rec, OSOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if got := e.fake.Filter("systemd-run"); !reflect.DeepEqual(got[1:], []string{aptGet + "update", aptGet + "-y full-upgrade", wantApt[5]}) {
+	if got := e.fake.Filter("systemd-run", host.WriteAptConf); !reflect.DeepEqual(got[1:], []string{aptGet + "update", aptGet + "-y full-upgrade", wantApt[5]}) {
 		t.Fatalf("apt commands with an older tested version: %q", got)
 	}
 }

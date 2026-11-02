@@ -8,14 +8,22 @@ package helper
 import (
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 
+	"go.yaml.in/yaml/v3"
+
 	"github.com/rithviknishad/care-pi/agent/internal/apply"
+	"github.com/rithviknishad/care-pi/agent/internal/backup"
+	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/disks"
 	"github.com/rithviknishad/care-pi/agent/internal/host"
+	"github.com/rithviknishad/care-pi/agent/internal/lock"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/tailscale"
 	"github.com/rithviknishad/care-pi/agent/internal/wifi"
@@ -91,7 +99,11 @@ var envAllowed = map[string]map[string]bool{
 }
 
 // Validate checks a command against the allow-list. It returns nil or an error that wraps ErrDenied.
-func Validate(c host.Cmd) error {
+func Validate(c host.Cmd) error { return ValidateIn("", c) }
+
+// ValidateIn is Validate with the paths of the agent below root (Server.Root of a test; "" on a host). The arguments
+// are host paths; the rules read the symbolic links, lock.yaml, and config.yaml below root.
+func ValidateIn(root string, c host.Cmd) error {
 	if c.Attach {
 		return deny("a terminal command")
 	}
@@ -110,48 +122,128 @@ func Validate(c host.Cmd) error {
 	if !ok {
 		return deny("the program %q", c.Name)
 	}
-	return rule(c.Args)
+	return rule(view{root: root}, c.Args)
 }
 
-type rule func(args []string) error
+// view is what a rule reads from the host (M2 of the Phase 7 review): the symbolic links of a path, and the images of
+// lock.yaml and config.yaml. root is the root of the paths of the agent: "" on a host.
+type view struct{ root string }
+
+func (v view) abs(p string) string {
+	if v.root == "" {
+		return p
+	}
+	return filepath.Join(v.root, p)
+}
+
+// realPath resolves the symbolic links of p. A part that does not exist yet stays as it is (it cannot be a link); a
+// link to nothing is an error.
+func realPath(p string) (string, error) {
+	q, err := filepath.EvalSymlinks(p)
+	if err == nil || !errors.Is(err, fs.ErrNotExist) {
+		return q, err
+	}
+	if fi, lerr := os.Lstat(p); lerr == nil && fi.Mode()&fs.ModeSymlink != 0 {
+		return "", fmt.Errorf("%s is a symbolic link to nothing", p)
+	}
+	parent := filepath.Dir(p)
+	if parent == p {
+		return p, nil
+	}
+	r, err := realPath(parent)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(r, filepath.Base(p)), nil
+}
+
+// under reports whether the host path p is a clean absolute path below one of the directories, also after the
+// resolution of its symbolic links: a link below an allowed directory that points outside it does not pass.
+func (v view) under(p string, dirs ...string) bool {
+	if !absUnder(p, dirs...) {
+		return false
+	}
+	real, err := realPath(v.abs(p))
+	if err != nil {
+		return false
+	}
+	for _, d := range dirs {
+		if rd, err := realPath(v.abs(d)); err == nil && strings.HasPrefix(real, rd+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// images returns the images that "podman run" with a volume of the host may start: each image of lock.yaml (the
+// reference and the reference with the digest) and each images.* of config.yaml.
+func (v view) images() map[string]bool {
+	out := map[string]bool{}
+	if lk, err := lock.Read(v.abs(paths.LockFile)); err == nil && lk != nil {
+		for _, img := range lk.Images {
+			out[img.Pull()], out[img.Ref] = true, true
+		}
+	}
+	var cfg struct {
+		Images config.Images `yaml:"images"`
+	}
+	if data, err := os.ReadFile(v.abs(paths.ConfigFile)); err == nil && yaml.Unmarshal(data, &cfg) == nil {
+		im := cfg.Images
+		for _, ref := range []string{im.Care, im.Postgres, im.Caddy, im.Redis, im.S3, im.Node} {
+			if ref != "" {
+				out[ref] = true
+			}
+		}
+	}
+	delete(out, "")
+	return out
+}
+
+type rule func(v view, args []string) error
+
+// pure is a rule that reads nothing from the host.
+func pure(f func(args []string) error) rule {
+	return func(_ view, args []string) error { return f(args) }
+}
 
 var rules map[string]rule
 
 func init() {
 	rules = map[string]rule{
-		"systemctl":   systemctl,
-		"podman":      podman,
-		"journalctl":  journalctl,
-		"systemd-run": systemdRun,
-		"skopeo":      skopeo,
-		"timedatectl": oneOf([]string{"show", "--property", "NTPSynchronized", "--value"}),
-		"restic":      restic,
-		"nmcli":       nmcli,
-		"tailscale":   tailscaleRule,
-		"hostnamectl": hostnamectl,
-		"apt":         oneOf([]string{"list", "--upgradable"}),
-		"apt-cache":   aptCache,
-		"dpkg-query":  dpkgQuery,
-		"lsblk":       oneOf(disks.LsblkArgs),
-		"wipefs":      wipefs,
-		"sfdisk":      sfdisk,
-		"partprobe":   oneDevice,
-		"mkfs.ext4":   mkfs,
-		"udevadm":     oneOf([]string{"settle", "--timeout=30"}),
-		"ip":          oneOf([]string{"-json", "route", "show", "default"}, []string{"-json", "address", "show"}),
-		"iw":          iw,
-		"sh":          oneOf([]string{"-c", "command -v raspi-config"}),
-		"sftp":        sftp,
-		paths.Binary:  carePiSelf,
-		"nft":         oneOf([]string{"list", "ruleset"}, []string{"chain inet care-pi input { policy accept ; }"}, firewallLoadPending),
-		"ss":          oneOf([]string{"-ltnpH"}, []string{"-ltnupH"}),
+		"systemctl":       pure(systemctl),
+		"podman":          podman,
+		"journalctl":      pure(journalctl),
+		"systemd-run":     systemdRun,
+		"skopeo":          pure(skopeo),
+		"timedatectl":     pure(oneOf([]string{"show", "--property", "NTPSynchronized", "--value"})),
+		"restic":          restic,
+		"nmcli":           pure(nmcli),
+		"tailscale":       pure(tailscaleRule),
+		"hostnamectl":     pure(hostnamectl),
+		"apt":             pure(oneOf([]string{"list", "--upgradable"})),
+		"apt-cache":       pure(aptCache),
+		"dpkg-query":      pure(dpkgQuery),
+		"lsblk":           pure(oneOf(disks.LsblkArgs)),
+		"wipefs":          pure(wipefs),
+		"sfdisk":          pure(sfdisk),
+		"partprobe":       pure(oneDevice),
+		"mkfs.ext4":       pure(mkfs),
+		"udevadm":         pure(oneOf([]string{"settle", "--timeout=30"})),
+		"ip":              pure(oneOf([]string{"-json", "route", "show", "default"}, []string{"-json", "address", "show"})),
+		"iw":              pure(iw),
+		"sh":              pure(oneOf([]string{"-c", "command -v raspi-config"})),
+		"sftp":            pure(sftp),
+		paths.Binary:      pure(carePiSelf),
+		"nft":             pure(oneOf([]string{"list", "ruleset"}, []string{"chain inet care-pi input { policy accept ; }"}, firewallLoadPending)),
+		"ss":              pure(oneOf([]string{"-ltnpH"}, []string{"-ltnupH"})),
+		host.WriteAptConf: pure(oneOf([]string{"on"}, []string{"off"})),
 	}
 }
 
 // firewallLoadPending is firewall.LoadPendingCmd: the drop table of a trial (docs/console-server.md, section 13).
 var firewallLoadPending = []string{"-f", paths.FirewallPendingFile}
 
-func oneOf(wants ...[]string) rule {
+func oneOf(wants ...[]string) func(args []string) error {
 	return func(args []string) error {
 		for _, w := range wants {
 			if strings.Join(args, "\x00") == strings.Join(w, "\x00") {
@@ -240,7 +332,7 @@ func flagsThenPatterns(args []string, flags map[string]bool) error {
 	return nil
 }
 
-func podman(args []string) error {
+func podman(v view, args []string) error {
 	if len(args) == 0 {
 		return deny("podman without a command")
 	}
@@ -280,7 +372,7 @@ func podman(args []string) error {
 	case "exec":
 		return podmanExec(args[1:])
 	case "run":
-		return podmanRun(args[1:])
+		return podmanRun(v, args[1:])
 	}
 	return deny("podman %q", args)
 }
@@ -313,49 +405,61 @@ func podmanExec(args []string) error {
 	return deny("podman exec without a container")
 }
 
-// podmanRun allows the "podman run --rm" of a restore or a drill (restore.PodmanRun).
-func podmanRun(args []string) error {
+// podmanRun allows the "podman run --rm" of a restore or a drill (restore.PodmanRun): the image is an image of
+// lock.yaml or config.yaml, and each volume source is below /var/lib/care-pi or /etc/care-pi/rendered, also after
+// the resolution of its symbolic links.
+func podmanRun(v view, args []string) error {
+	var sources []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
-		v := ""
+		val := ""
 		if a != "--rm" && strings.HasPrefix(a, "--") {
 			if i+1 >= len(args) {
 				return deny("podman run %s without a value", a)
 			}
 			i++
-			v = args[i]
+			val = args[i]
 		}
 		switch a {
 		case "--rm":
 		case "--name":
-			if !containerRE.MatchString(v) {
-				return deny("podman run --name %q", v)
+			if !containerRE.MatchString(val) {
+				return deny("podman run --name %q", val)
 			}
 		case "--network":
-			if v != "none" {
-				return deny("podman run --network %q", v)
+			if val != "none" {
+				return deny("podman run --network %q", val)
 			}
 		case "--user":
-			if v != "postgres" {
-				return deny("podman run --user %q", v)
+			if val != "postgres" {
+				return deny("podman run --user %q", val)
 			}
 		case "--entrypoint":
-			if v != "pgbackrest" {
-				return deny("podman run --entrypoint %q", v)
+			if val != "pgbackrest" {
+				return deny("podman run --entrypoint %q", val)
 			}
 		case "--volume":
-			src, rest, _ := strings.Cut(v, ":")
+			src, rest, _ := strings.Cut(val, ":")
 			if !absUnder(src, paths.DataDir, paths.RenderedDir) || strings.Contains(rest, ",") {
-				return deny("podman run --volume %q", v)
+				return deny("podman run --volume %q", val)
 			}
+			sources = append(sources, src)
 		case "--secret":
-			name, _, _ := strings.Cut(v, ",")
+			name, _, _ := strings.Cut(val, ",")
 			if !secretRE.MatchString(name) {
-				return deny("podman run --secret %q", v)
+				return deny("podman run --secret %q", val)
 			}
 		default:
 			if strings.HasPrefix(a, "-") || !imageRE.MatchString(a) {
 				return deny("podman run %q", a)
+			}
+			for _, src := range sources {
+				if !v.under(src, paths.DataDir, paths.RenderedDir) {
+					return deny("podman run --volume %q: a symbolic link outside the directories of the agent", src)
+				}
+			}
+			if !v.images()[a] {
+				return deny("podman run of the image %q: not an image of lock.yaml or config.yaml", a)
 			}
 			return nil
 		}
@@ -418,7 +522,7 @@ var propAllowed = map[string]*regexp.Regexp{
 	"IOSchedulingClass": regexp.MustCompile(`^idle$`),
 }
 
-func systemdRun(args []string) error {
+func systemdRun(v view, args []string) error {
 	i := 0
 	for ; i < len(args) && args[i] != "--"; i++ {
 		a := args[i]
@@ -474,17 +578,12 @@ func systemdRun(args []string) error {
 		if len(rest) == 3 && rest[0] == "nonint" && rest[1] == "do_wifi_country" && countryRE.MatchString(rest[2]) {
 			return nil
 		}
-	case "tee":
-		// The apt configuration of updates.os_security, outside the sandbox of care-pi.service.
-		if len(rest) == 1 && rest[0] == paths.AptConfCarePi {
-			return nil
-		}
 	case "apt-get":
 		return aptGet(rest)
 	case "apt-mark":
 		return aptMark(rest)
 	case "podman", "restic", "tailscale", "wipefs", "sfdisk", "partprobe", "mkfs.ext4", paths.Binary:
-		return rules[name](rest)
+		return rules[name](v, rest)
 	}
 	return deny("systemd-run -- %q", inner)
 }
@@ -541,14 +640,29 @@ func skopeo(args []string) error {
 	return deny("skopeo %q", args)
 }
 
-var resticSubs = map[string]bool{"init": true, "cat": true, "backup": true, "snapshots": true, "forget": true, "check": true,
-	"stats": true, "restore": true, "dump": true, "unlock": true, "prune": true}
+var (
+	sftpArgsRE   = regexp.MustCompile(`^sftp\.args=-F (\S+) -i (\S+)$`)
+	snapIDRE     = regexp.MustCompile(`^[0-9a-f]{8,64}$`)
+	tagRE        = regexp.MustCompile(`^[a-z0-9-]{1,40}$`)
+	keepWithinRE = regexp.MustCompile(`^[0-9]{1,5}[hdwmy]$`)
+	readSubsetRE = regexp.MustCompile(`^--read-data-subset=[0-9]{1,3}%$`)
+	snapPathRE   = regexp.MustCompile(`^/[^\x00\n]{0,1000}$`)
+)
 
-var sftpArgsRE = regexp.MustCompile(`^sftp\.args=-F (\S+) -i (\S+)$`)
+// resticExcludes are the --exclude values of a snapshot (backup.Excludes).
+var resticExcludes = func() map[string]bool {
+	m := map[string]bool{}
+	for _, x := range backup.Excludes {
+		m[x] = true
+	}
+	return m
+}()
 
-// restic allows the options of a care-pi repository and the subcommands that care-pi runs. A restore must write below
-// /var/lib/care-pi; the SSH options of an SFTP repository must name the files of the agent (no ProxyCommand option).
-func restic(args []string) error {
+// restic allows the options of a care-pi repository, then one subcommand of the agent with only the flags that the
+// agent gives it (backup/restic.go, backup/ops.go, restore/*.go). So --password-command, -o sftp.command,
+// -o rclone.program, --repo, and a --target or -t outside the directories of a restore do not pass. The SSH options
+// of an SFTP repository must name the files of the agent (no ProxyCommand option).
+func restic(v view, args []string) error {
 	i := 0
 	for ; i+1 < len(args) && args[i] == "-o"; i += 2 {
 		o := args[i+1]
@@ -565,18 +679,82 @@ func restic(args []string) error {
 			return deny("restic -o %q", o)
 		}
 	}
-	if i >= len(args) || !resticSubs[args[i]] {
+	if i >= len(args) {
+		return deny("restic without a subcommand")
+	}
+	sub, rest := args[i], args[i+1:]
+	ok := false
+	switch sub {
+	case "init", "unlock", "prune":
+		ok = len(rest) == 0
+	case "cat":
+		ok = len(rest) == 1 && rest[0] == "config"
+	case "snapshots":
+		ok = len(rest) >= 1 && rest[0] == "--json" && (len(rest) == 1 || len(rest) == 2 && snapIDRE.MatchString(rest[1]))
+	case "stats":
+		ok = strings.Join(rest, " ") == "--mode raw-data --json"
+	case "check":
+		ok = len(rest) == 1 && readSubsetRE.MatchString(rest[0])
+	case "dump":
+		ok = len(rest) == 2 && snapIDRE.MatchString(rest[0]) && snapPathRE.MatchString(rest[1])
+	case "forget":
+		if len(rest) == 2 && rest[0] == "--keep-tag" && rest[1] == "care-pi-keep-nothing" {
+			return nil
+		}
+		return resticFlags(sub, rest, map[string]func(string) bool{
+			"--tag": tagRE.MatchString, "--group-by": func(x string) bool { return x == "host,tags" },
+			"--keep-last": numberRE.MatchString, "--keep-within": keepWithinRE.MatchString, "--keep-daily": numberRE.MatchString,
+			"--keep-weekly": numberRE.MatchString, "--keep-monthly": numberRE.MatchString,
+		}, nil, nil)
+	case "backup":
+		// The paths of a snapshot: /etc/care-pi and the directories below /var/lib/care-pi (backup.SnapshotPaths, the CAs).
+		return resticFlags(sub, rest, map[string]func(string) bool{
+			"--host": hostnameRE.MatchString, "--tag": tagRE.MatchString, "--exclude": func(x string) bool { return resticExcludes[x] },
+		}, map[string]bool{"--json": true}, func(p string) bool { return p == paths.EtcDir || v.under(p, paths.DataDir) })
+	case "restore":
+		// "restore SNAPSHOT:/dir --target DIR [--include /path]... [--verify]" (backup.RestoreArgs). The target is a
+		// directory below /var/lib/care-pi/restore, or /var/lib/care-pi/backup/pg or /var/lib/care-pi/s3 in place.
+		if len(rest) == 0 {
+			return deny("restic restore without a snapshot")
+		}
+		id, dir, found := strings.Cut(rest[0], ":")
+		if !found || !snapIDRE.MatchString(id) || !strings.HasPrefix(dir, "/") || path.Clean(dir) != dir {
+			return deny("restic restore %q", rest[0])
+		}
+		targets := 0
+		err := resticFlags(sub, rest[1:], map[string]func(string) bool{
+			"--target": func(t string) bool {
+				targets++
+				return t == paths.BackupPG || t == paths.S3Data || v.under(t, paths.RestoreDir)
+			},
+			"--include": snapPathRE.MatchString,
+		}, map[string]bool{"--verify": true}, nil)
+		if err == nil && targets != 1 {
+			return deny("restic restore without one --target below %s", paths.RestoreDir)
+		}
+		return err
+	}
+	if !ok {
 		return deny("restic %q", args)
 	}
-	if args[i] == "restore" {
-		ok := false
-		for j := i; j < len(args)-1; j++ {
-			if args[j] == "--target" {
-				ok = absUnder(args[j+1], paths.DataDir)
+	return nil
+}
+
+// resticFlags checks the arguments of a restic subcommand: each flag of values takes the next argument and checks it;
+// each flag of bare has no value; pos checks each other argument (nil: none).
+func resticFlags(sub string, args []string, values map[string]func(string) bool, bare map[string]bool, pos func(string) bool) error {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch check := values[a]; {
+		case check != nil:
+			if i+1 >= len(args) || !check(args[i+1]) {
+				return deny("restic %s %s: a bad value", sub, a)
 			}
-		}
-		if !ok {
-			return deny("restic restore without a --target below %s", paths.DataDir)
+			i++
+		case bare[a]:
+		case pos != nil && !strings.HasPrefix(a, "-") && pos(a):
+		default:
+			return deny("restic %s %q", sub, a)
 		}
 	}
 	return nil

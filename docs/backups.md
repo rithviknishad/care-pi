@@ -102,7 +102,8 @@ The BIP-39 list is `agent/internal/backup/bip39-english.txt` (SHA-256 `2f5eed53â
 
 - The agent writes the cipher pass to `secrets/pgbackrest_repo_cipher_pass`. care-db reads it as a podman secret at its start.
 - The agent derives the restic password and the SSH key for each run. It writes them to a directory of the run below
-  `/run/care-pi/backup/` (tmpfs, 0700; the files 0600), and it deletes the directory after the run.
+  `/run/care-pi-backup/` (tmpfs, 0700; the files 0600), and it deletes the directory after the run. The directory is
+  not below `/run/care-pi`: `care-caddy` mounts that directory as root.
   restic gets only paths: `RESTIC_PASSWORD_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, and `-o sftp.args=-F <ssh_config> -i <key>`.
   No secret is in an argument or in the environment.
 - One SSH key serves each SFTP destination. A restored device derives the same key, so the servers still accept it.

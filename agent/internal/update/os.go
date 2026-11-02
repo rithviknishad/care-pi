@@ -321,21 +321,10 @@ func (u *Updater) osSummary(cfg *config.Config, st State) OSSummary {
 }
 
 // SecurityConf returns /etc/apt/apt.conf.d/52care-pi.conf for updates.os_security.
-func SecurityConf(cfg *config.Config) string {
-	on := "1"
-	if !cfg.Updates.OSSecurity {
-		on = "0"
-	}
-	return "// Managed by care-pi (updates.os_security in /etc/care-pi/config.yaml).\n" +
-		"// Install security updates automatically. Never reboot by itself: Care reboots\n" +
-		"// inside the update window that the operator sets.\n" +
-		"Unattended-Upgrade::Automatic-Reboot \"false\";\n" +
-		"APT::Periodic::Update-Package-Lists \"1\";\n" +
-		"APT::Periodic::Unattended-Upgrade \"" + on + "\";\n"
-}
+func SecurityConf(cfg *config.Config) string { return host.AptSecurityConf(cfg.Updates.OSSecurity) }
 
-// SyncSecurityConf writes 52care-pi.conf when it differs. The file is outside the sandbox of
-// care-pi.service, so a transient unit writes it.
+// SyncSecurityConf writes 52care-pi.conf when it differs. The file is outside the sandbox of care-pi.service: the
+// typed request host.WriteAptConf (on or off) makes the runner (or the helper) write the fixed text in a transient unit.
 func (u *Updater) SyncSecurityConf(ctx context.Context, cfg *config.Config) (bool, error) {
 	if !aptHost(readDistro(u.Paths)) {
 		return false, nil
@@ -344,9 +333,7 @@ func (u *Updater) SyncSecurityConf(ctx context.Context, cfg *config.Config) (boo
 	if data, err := os.ReadFile(u.Paths.Abs(paths.AptConfCarePi)); err == nil && string(data) == want {
 		return false, nil
 	}
-	c := AptRun("care-pi-apt-conf", "tee", paths.AptConfCarePi)
-	c.Stdin = strings.NewReader(want)
-	if _, err := u.Host.Runner.Run(ctx, c); err != nil {
+	if _, err := u.Host.Runner.Run(ctx, host.WriteAptConfCmd(cfg.Updates.OSSecurity)); err != nil {
 		return false, fmt.Errorf("cannot write %s: %w", paths.AptConfCarePi, err)
 	}
 	return true, nil

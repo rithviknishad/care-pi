@@ -114,6 +114,7 @@ stop_care() {
   log "Stop care-pi.service (the console agent)."
   systemctl disable --now care-pi.service 2>/dev/null || true
   rm -f /run/care-pi/api.sock
+  rm -rf /run/care-pi-backup
   log "Stop the privileged helper (care-pi-helper.socket and care-pi-helper.service)."
   systemctl disable --now care-pi-helper.socket 2>/dev/null || true
   systemctl stop care-pi-helper.service 2>/dev/null || true

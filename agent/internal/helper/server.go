@@ -34,8 +34,8 @@ type Server struct {
 	MaxRequest int
 	// Denied, when it is set, gets each refused command (a test fails on it).
 	Denied func(c host.Cmd, err error)
-	// Root is the root of the paths of the agent in a test (paths.Paths.Root): the validation sees the host paths.
-	// Empty or "/" on a host.
+	// Root is the root of the paths of the agent in a test (paths.Paths.Root): the validation sees the host paths, and
+	// reads the symbolic links, lock.yaml, and config.yaml below it. Empty or "/" on a host.
 	Root string
 }
 
@@ -113,7 +113,7 @@ func (s *Server) handle(ctx context.Context, conn net.Conn) {
 		return
 	}
 	c := host.Cmd{Name: req.Name, Args: req.Args, Env: req.Env}
-	if err := Validate(s.hostView(c)); err != nil {
+	if err := ValidateIn(s.Root, s.hostView(c)); err != nil {
 		s.Log.Warn("helper: denied", "peer", peer, "cmd", Describe(c), "reason", err.Error())
 		if s.Denied != nil {
 			s.Denied(c, err)

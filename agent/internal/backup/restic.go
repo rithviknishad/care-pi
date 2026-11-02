@@ -55,7 +55,7 @@ type Repo struct {
 // KeyID returns the key id of the repository.
 func (r Repo) KeyID() string { return r.Key.ID() }
 
-// Session is one run of restic: a directory below /run/care-pi/backup with the password file,
+// Session is one run of restic: a directory below /run/care-pi-backup with the password file,
 // the SSH key, and the S3 credentials (tmpfs, root 0600). Close deletes it.
 type Session struct {
 	Repo Repo
