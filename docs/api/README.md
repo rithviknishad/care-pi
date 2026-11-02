@@ -1320,7 +1320,7 @@ Notes on the earlier sections, which stay as they are:
 artefacts, the on-device lock version 2, the tracks, the update steps, rollback, the window, OS updates, and plugs.
 This section tells how the API shows them. The operations have `x-phase: 4`. Until an agent implements Phase 4,
 they return `501 not-implemented-in-this-version`. The agent of Phase 4 wave 6a implements each of them
-(`docs/console-server.md` section 11).
+(`docs/console-server.md` section 13).
 
 ### 14.1 Resources
 
@@ -1712,9 +1712,20 @@ default. Without `control_url`, an auth key must start with `tskey-` (`422 inval
 MagicDNS name must end in `.ts.net`. A control server that gives no certificate fails the enrol job with
 `tailscale-https-disabled` (`docs/connectivity.md` section 4.4).
 
+### 17.2 The firewall (S42 default-drop)
+
+`security.firewall.policy` (`accept` default, `drop`) and `security.ssh.allow` are config keys: change them with
+`PATCH /config` and `apply=true`, as each other key. A switch to `drop` starts a rollback timer of 90 s in the apply
+(plan action `reload-firewall`). `GET /security/firewall` (`FirewallState`) shows the timer (`pending_until`);
+`POST /security/firewall/confirm` stops it (`409 state-conflict` when no timer runs). Without the confirmation,
+`care-pi firewall rollback --reason timeout` sets `accept` in nftables and in `config.yaml` (`rolled_back_at`,
+`rollback_reason`). The console sends the confirmation from Security > Firewall, so the request itself shows that the
+console works through the new rules. Detail: `docs/console-server.md` section 13.
+
 ### 17.9 Changes of contract 0.8.0
 
 All changes are additive.
 
 - `TailscaleRequest.control_url`, `TlsTailscale.control_url` (section 17.1).
-
+- `GET /security/firewall`, `POST /security/firewall/confirm`, the schema `FirewallState`; the config keys
+  `security.firewall.policy` and `security.ssh.allow` (section 17.2).

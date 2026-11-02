@@ -347,3 +347,12 @@ The address of `tailscale0` is a separate source: the pod also publishes on it w
 |---|---|---|---|---|
 | `telemetry.enabled` | boolean | `false` | validate (Phase 7) | Opt-in metrics. |
 | `telemetry.remote_write_url` | `http(s)://` URL, or `null` | `null` | validate (Phase 7) | The Prometheus remote-write URL. |
+
+## `security`
+
+Phase 7. The hardening options. `docs/console-server.md` section 13 has the firewall in detail.
+
+| Key | Type | Default | Phase | Meaning |
+|---|---|---|---|---|
+| `security.firewall.policy` | `accept` \| `drop` | `accept` | Phase 7 | The input policy of the table `inet care-pi`. `accept` keeps S42: the table accepts the Care ports and drops nothing. `drop` accepts only the allow-list. A switch to `drop` starts a rollback timer of 90 s: without `care-pi firewall confirm` (or the button in Security), the policy goes back to `accept`. `install.sh --firewall-drop` writes `drop` for a new install. |
+| `security.ssh.allow` | boolean | `true` | Phase 7 | Accept 22/tcp. It matters only with the policy `drop`. `care-pi firewall allow-ssh false` closes SSH from the network. |

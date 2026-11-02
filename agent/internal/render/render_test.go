@@ -104,7 +104,7 @@ func fixture(t *testing.T, name string) (Tree, *lock.Lock) {
 
 func TestGolden(t *testing.T) {
 	for _, name := range []string{"solo", "small-clinic", "busy-counter", "custom", "small-clinic-bootstrap", "backups", "custom-build",
-		"public", "public-tailscale"} {
+		"public", "public-tailscale", "hardened"} {
 		t.Run(name, func(t *testing.T) {
 			tree, lk := fixture(t, name)
 			lockData, err := lk.Marshal()

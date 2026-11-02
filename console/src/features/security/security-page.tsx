@@ -24,6 +24,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDateTime, formatRelative } from "@/lib/format";
 import { fmt, strings } from "@/lib/strings";
+import { FirewallCard } from "./firewall-card";
 
 const sc = strings.security;
 
@@ -386,6 +387,7 @@ export default function SecurityPage() {
           <TotpCard />
         </div>
       </div>
+      <FirewallCard />
       <SessionsCard />
       <ClaimCard />
     </div>

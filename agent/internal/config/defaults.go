@@ -11,6 +11,8 @@ const (
 	DefaultWALArchiveTimeout = 5
 	DefaultFEProvider        = "local"
 	DefaultUploadMaxBodyMB   = 200
+	// DefaultFirewallPolicy keeps each existing host as it is (S42). install.sh --firewall-drop sets drop.
+	DefaultFirewallPolicy = "accept"
 )
 
 // Default returns a config with every default set.
@@ -61,5 +63,9 @@ func Default() *Config {
 		},
 		FE:      FE{Provider: DefaultFEProvider},
 		Uploads: Uploads{MaxBodyMB: DefaultUploadMaxBodyMB},
+		Security: Security{
+			Firewall: Firewall{Policy: DefaultFirewallPolicy},
+			SSH:      SSHSecurity{Allow: true},
+		},
 	}
 }

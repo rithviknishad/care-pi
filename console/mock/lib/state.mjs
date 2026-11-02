@@ -237,6 +237,10 @@ export function effectiveConfig(state) {
     uploads: { max_body_mb: 100 },
     network: { wifi: null },
     telemetry: { enabled: false, remote_write_url: null },
+    security: {
+      firewall: { policy: "accept", ...f.security?.firewall },
+      ssh: { allow: true, ...f.security?.ssh },
+    },
   };
 }
 

@@ -11,6 +11,7 @@ export type Session = S["Session"];
 export type ClaimResponse = S["ClaimResponse"];
 export type RecoverResponse = S["RecoverResponse"];
 export type SecurityState = S["SecurityState"];
+export type FirewallState = S["FirewallState"];
 export type RecoveryCodes = S["RecoveryCodes"];
 export type TotpEnrolment = S["TotpEnrolment"];
 export type SessionInfo = S["SessionInfo"];

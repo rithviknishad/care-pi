@@ -212,10 +212,10 @@ the addresses of the host. The setting is only for IPv4; care-pi publishes on IP
 When a unit of the stack is `failed` (for example a pod of an older care-pi that failed at the boot), the next `apply`
 starts `care.target` again (`docs/apply.md`, plan rules).
 
-The apply writes the drop-in `/etc/systemd/system/care-pi-firewall.service.d/50-care-pi-tailscale.conf`.
-It adds `udp dport 41641 accept` to the table `inet care-pi` after the unit of the installer loads the table.
-The plan action `reload-firewall` reloads the unit. With the Tailscale mode off, the apply deletes the drop-in and
-reloads the unit again.
+The table of the agent (`/etc/care-pi/rendered/firewall/care-pi.nft`, Phase 7, `docs/console-server.md` section 13) has
+`udp dport 41641 accept` in the Tailscale mode. The plan action `reload-firewall` reloads `care-pi-firewall.service`
+after a change. With the Tailscale mode off, the rule goes. (Phase 6 used the drop-in `50-care-pi-tailscale.conf`; the
+next apply deletes it.)
 
 ### 4.3 Turn it on and off
 
@@ -356,7 +356,7 @@ The Wi-Fi settings of the Raspberry Pi Imager are NetworkManager profiles too (f
 | `/var/lib/care-pi/state/wifi.json` | agent | The last state of the Wi-Fi job. |
 | `/var/lib/care-pi/state/pod-live.json` | agent | The published addresses of the pod that runs. |
 | `/etc/systemd/system/care-dns-update.{timer,service}` | apply | The address updates (public mode only). |
-| `/etc/systemd/system/care-pi-firewall.service.d/50-care-pi-tailscale.conf` | apply | UDP 41641 (Tailscale mode only). |
+| `/etc/systemd/system/care-pi-firewall.service.d/50-care-pi.conf`, `/etc/care-pi/rendered/firewall/care-pi.nft` | apply | The table of the agent (Phase 7); UDP 41641 in the Tailscale mode. |
 | `/etc/sysctl.d/50-care-pi.conf` | installer and apply | `net.ipv4.ip_nonlocal_bind = 1` (section 4.2). |
 
 ## 9. Troubleshooting

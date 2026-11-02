@@ -1101,6 +1101,30 @@ export const strings = {
   },
   security: {
     title: "Security",
+    firewall: {
+      title: "Firewall",
+      intro:
+        "The firewall of the device. Care, the console, and mDNS stay open with each policy. The policy drop closes each other port.",
+      loaded: "Loaded policy",
+      notLoaded: "Not loaded yet",
+      unit: "Firewall service",
+      unitInactive: "Not active (no care-pi firewall on this device): the policy has no effect.",
+      policy: "Policy",
+      policies: { accept: "Accept", drop: "Drop" } as Record<string, string>,
+      policyHelp: {
+        accept: "Accept each connection. The rules only list the ports of Care.",
+        drop: "Accept only the ports of Care, the console, mDNS, DHCP, and SSH (when allowed). After the change, keep it within 90 seconds, or it goes back to accept.",
+      } as Record<string, string>,
+      ssh: "Allow SSH (port 22)",
+      sshHelp: "Only with the policy drop. Turn it off when nobody uses SSH.",
+      pendingTitle: "Keep the new firewall?",
+      pending:
+        "The policy drop is loaded. Open a new SSH session or a new console tab to check that you still have access, then keep it. Without a click, it goes back to accept in {seconds} s.",
+      keep: "Keep the new firewall",
+      rolledBack: "Last rollback",
+      rolledBackAt: "{time} ({reason})",
+      reasons: { timeout: "nobody confirmed in time", manual: "by a command" } as Record<string, string>,
+    },
     password: "Console password",
     passwordSet: "Changed {time}.",
     changePassword: "Change the password",

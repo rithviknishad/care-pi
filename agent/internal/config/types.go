@@ -18,6 +18,26 @@ type Config struct {
 	Uploads   Uploads   `yaml:"uploads" json:"uploads"`
 	Network   Network   `yaml:"network" json:"network"`
 	Telemetry Telemetry `yaml:"telemetry" json:"telemetry"`
+	Security  Security  `yaml:"security" json:"security"`
+}
+
+// Security holds the hardening options (Phase 7).
+type Security struct {
+	Firewall Firewall    `yaml:"firewall" json:"firewall"`
+	SSH      SSHSecurity `yaml:"ssh" json:"ssh"`
+}
+
+// Firewall is the input policy of the table inet care-pi.
+type Firewall struct {
+	// Policy is "accept" (the default, S42) or "drop" (the allow-list only). A switch to drop starts the rollback
+	// timer: without "care-pi firewall confirm" within 90 s, the policy goes back to accept.
+	Policy string `yaml:"policy" json:"policy"`
+}
+
+// SSHSecurity is the SSH rule of the firewall.
+type SSHSecurity struct {
+	// Allow accepts 22/tcp. It matters only with the policy drop.
+	Allow bool `yaml:"allow" json:"allow"`
 }
 
 // Identity names the clinic and the host.

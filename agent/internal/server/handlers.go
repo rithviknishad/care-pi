@@ -70,6 +70,8 @@ func (s *Server) table() []*route {
 	add(get, "/security/sessions", s.sessions)
 	add(del, "/security/sessions/{session_ref}", s.revokeSession)
 	add(put, "/security/ssh", notImplemented, reauth, phase(7))
+	add(get, "/security/firewall", s.firewall)
+	add(post, "/security/firewall/confirm", s.firewallConfirm)
 
 	add(get, "/setup", s.setupState)
 	add(put, "/setup/steps/recovery-codes", s.stepRecoveryCodes)
@@ -389,6 +391,24 @@ func (s *Server) security(c *reqCtx) error {
 	}
 	if st == nil {
 		return problem.New(problem.NotClaimed, "The device is not claimed.")
+	}
+	s.json(c.w, http.StatusOK, st)
+	return nil
+}
+
+func (s *Server) firewall(c *reqCtx) error {
+	st, err := s.svc.Firewall(c.r.Context())
+	if err != nil {
+		return err
+	}
+	s.json(c.w, http.StatusOK, st)
+	return nil
+}
+
+func (s *Server) firewallConfirm(c *reqCtx) error {
+	st, err := s.svc.FirewallConfirm(c.r.Context(), "console")
+	if err != nil {
+		return err
 	}
 	s.json(c.w, http.StatusOK, st)
 	return nil

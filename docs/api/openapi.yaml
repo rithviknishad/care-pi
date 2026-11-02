@@ -682,6 +682,64 @@ paths:
           $ref: '#/components/responses/UnprocessableContent'
         '501':
           $ref: '#/components/responses/NotImplemented'
+  /security/firewall:
+    get:
+      tags: [security]
+      operationId: getFirewall
+      summary: Get the firewall policy and the rollback timer
+      description: |
+        Phase 7. `security.firewall.policy` of `config.yaml`, the policy that the agent loaded last, and the rollback timer
+        of the policy `drop`. Change the policy with `PATCH /config` (`security.firewall.policy`, `apply=true`): a switch
+        to `drop` starts a timer of 90 s; `POST /security/firewall/confirm` stops it. Without the confirmation, the agent
+        sets the policy to `accept` again (`docs/console-server.md` section 13).
+      x-phase: 7
+      x-cli: care-pi firewall status --json
+      x-problems: [not-authenticated, not-implemented-in-this-version]
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The firewall state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FirewallState'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+  /security/firewall/confirm:
+    post:
+      tags: [security]
+      operationId: confirmFirewall
+      summary: Keep the policy drop
+      description: |
+        Phase 7. Stops the rollback timer of the policy `drop`. The console sends it from the page where the operator
+        switched the policy, so the request itself shows that the console still works through the new rules.
+        `409 state-conflict` when no timer runs.
+      security:
+        - session: []
+          csrf: []
+      x-phase: 7
+      x-cli: care-pi firewall confirm
+      x-problems: [not-authenticated, csrf, state-conflict, not-implemented-in-this-version]
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The firewall state after the confirmation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FirewallState'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
   /setup:
     get:
       tags: [setup]
@@ -5531,6 +5589,54 @@ components:
           $ref: '#/components/schemas/TotpCode'
       examples:
         - code: '492039'
+    FirewallState:
+      x-phase: 7
+      type: object
+      additionalProperties: false
+      description: The firewall table `inet care-pi` (Phase 7, `docs/console-server.md` section 13).
+      required: [policy, live_policy, ssh_allowed, unit_active, pending_until, confirmed_at, rolled_back_at, rollback_reason]
+      properties:
+        policy:
+          type: string
+          enum: [accept, drop]
+          description: '`security.firewall.policy` of `config.yaml`.'
+        live_policy:
+          type: [string, 'null']
+          enum: [accept, drop, null]
+          description: The policy of the last load of the table of the agent. `null` before the first load.
+        ssh_allowed:
+          type: boolean
+          description: '`security.ssh.allow`: the table accepts 22/tcp. It matters only with the policy `drop`.'
+        unit_active:
+          type: boolean
+          description: |
+            `care-pi-firewall.service` is active. `false` after `install.sh --no-firewall` or with ufw or firewalld: then no
+            policy of the agent is loaded.
+        pending_until:
+          type: [string, 'null']
+          format: date-time
+          description: The time of the rollback to `accept` while the timer runs. `null` when no timer runs.
+        confirmed_at:
+          type: [string, 'null']
+          format: date-time
+          description: The last confirmation of the policy `drop`.
+        rolled_back_at:
+          type: [string, 'null']
+          format: date-time
+          description: The last rollback to `accept`.
+        rollback_reason:
+          type: [string, 'null']
+          enum: [timeout, manual, null]
+          description: '`timeout`: nobody confirmed within 90 s. `manual`: `care-pi firewall rollback`.'
+      examples:
+        - policy: drop
+          live_policy: drop
+          ssh_allowed: true
+          unit_active: true
+          pending_until: '2026-11-02T10:01:30Z'
+          confirmed_at: null
+          rolled_back_at: null
+          rollback_reason: null
     SshSettings:
       x-phase: 7
       type: object

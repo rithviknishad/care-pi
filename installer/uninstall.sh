@@ -176,12 +176,15 @@ remove_pod() {
 remove_firewall() {
   log "Remove the care-pi firewall (care-pi-firewall.service and the table inet care-pi)."
   if [ "$SYSTEMD" = 1 ]; then
+    # Phase 7: the rollback timer of the policy drop must not run after the uninstall.
+    systemctl stop care-pi-firewall-rollback.timer 2>/dev/null || true
     systemctl disable --now care-pi-firewall.service 2>/dev/null || true
   fi
   if command -v nft >/dev/null 2>&1 && nft list table inet care-pi >/dev/null 2>&1; then
     nft delete table inet care-pi || warn "nft could not delete the table inet care-pi."
   fi
   rm -f /etc/systemd/system/care-pi-firewall.service /etc/care-pi/firewall.nft
+  rm -rf /etc/systemd/system/care-pi-firewall.service.d
   # An older install.sh wrote /etc/nftables.d/care-pi.nft and added an include
   # line (after a blank line and a comment) to the stock nftables.conf.
   rm -f /etc/nftables.d/care-pi.nft

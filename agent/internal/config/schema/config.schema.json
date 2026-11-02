@@ -371,6 +371,33 @@
           "pattern": "^https?://[^\\s]+$"
         }
       }
+    },
+    "security": {
+      "description": "Phase 7. The hardening options (docs/console-server.md, section 13).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "firewall": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "policy": {
+              "description": "The input policy of the table inet care-pi. accept (default, S42) or drop (only the allow-list). A switch to drop starts a 90 s rollback timer: care-pi firewall confirm keeps it.",
+              "enum": ["accept", "drop"]
+            }
+          }
+        },
+        "ssh": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "allow": {
+              "description": "Accept 22/tcp in the firewall. It matters only with the policy drop. Default true.",
+              "type": "boolean"
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {

@@ -96,9 +96,16 @@ const (
 	WiFiSecretFile          = "/etc/care-pi/secrets/wifi.json"
 	// TailscaleSocketDir is the directory of the socket of tailscaled. care-caddy mounts it when Tailscale is on.
 	TailscaleSocketDir = "/run/tailscale"
-	// FirewallDropIn adds the Tailscale port (41641/udp) to the table of care-pi-firewall.service (installer).
-	FirewallUnit   = "care-pi-firewall.service"
-	FirewallDropIn = "/etc/systemd/system/care-pi-firewall.service.d/50-care-pi-tailscale.conf"
+	// FirewallUnit loads the table inet care-pi (the installer writes it). FirewallDropIn (Phase 7) makes it load
+	// FirewallFile, the table of the agent (security.firewall, security.ssh, tls.tailscale). FirewallDropInLegacy is
+	// the drop-in of Phase 6 (the Tailscale port only); apply deletes it.
+	FirewallUnit         = "care-pi-firewall.service"
+	FirewallDropIn       = "/etc/systemd/system/care-pi-firewall.service.d/50-care-pi.conf"
+	FirewallDropInLegacy = "/etc/systemd/system/care-pi-firewall.service.d/50-care-pi-tailscale.conf"
+	RenderedFirewall     = "/etc/care-pi/rendered/firewall"
+	FirewallFile         = "/etc/care-pi/rendered/firewall/care-pi.nft"
+	// FirewallState records the policy of the last load and the rollback timer (Phase 7, S42 default-drop).
+	FirewallState = "/var/lib/care-pi/state/firewall.json"
 	// SysctlFile sets net.ipv4.ip_nonlocal_bind=1: the pod can publish on an address that is not there yet
 	// (tailscale0, a second LAN address). The installer and apply write it; systemd-sysctl.service loads it.
 	SysctlFile = "/etc/sysctl.d/50-care-pi.conf"

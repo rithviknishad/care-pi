@@ -83,6 +83,9 @@ var outputs = []output{
 	{"fe-build.sh.tmpl", paths.RenderedFE + "/" + FEBuildScriptName, 0o700, 0, feBuild},
 	// Phase 6 (docs/connectivity.md, section 4.2): a publish on an absent optional address does not stop the pod.
 	{"sysctl.conf.tmpl", paths.SysctlFile, 0o644, 0, always},
+	// Phase 7 (docs/console-server.md, section 13): the table of the agent and the drop-in that loads it.
+	{"firewall.nft.tmpl", paths.FirewallFile, 0o644, 0, always},
+	{"firewall.conf.tmpl", paths.FirewallDropIn, 0o644, 0, always},
 }
 
 // phase4Outputs are the outputs of Phase 4 (docs/solutions.md).
@@ -98,11 +101,9 @@ var phase4Outputs = []dynOutput{
 	// Phase 6 (docs/connectivity.md).
 	{output{"care-dns-update.timer.tmpl", systemd(DNSUpdateTimer), 0o644, 0, dnsUpdate}, nil},
 	{output{"care-dns-update.service.tmpl", systemd("care-dns-update.service"), 0o644, 0, dnsUpdate}, nil},
-	{output{"firewall-tailscale.conf.tmpl", paths.FirewallDropIn, 0o644, 0, firewallTailscale}, nil},
 }
 
-func dnsUpdate(m *Model) bool         { return m.DNSUpdate && !m.Bootstrap }
-func firewallTailscale(m *Model) bool { return m.FirewallTailscale }
+func dnsUpdate(m *Model) bool { return m.DNSUpdate && !m.Bootstrap }
 
 // TimerUnits are the update timers that apply enables (docs/solutions.md, section 10.2).
 var TimerUnits = []string{"care-update-check.timer", "care-update-apply.timer"}
@@ -273,7 +274,8 @@ func Owned(p string) bool {
 	case p == systemd("care-update-check.timer"), p == systemd("care-update-check.service"),
 		p == systemd("care-update-apply.timer"), p == systemd("care-update-apply.service"):
 		return true
-	case p == systemd(DNSUpdateTimer), p == systemd("care-dns-update.service"), p == paths.FirewallDropIn, p == paths.SysctlFile:
+	case p == systemd(DNSUpdateTimer), p == systemd("care-dns-update.service"), p == paths.FirewallDropIn,
+		p == paths.FirewallDropInLegacy, p == paths.SysctlFile:
 		return true
 	}
 	return false

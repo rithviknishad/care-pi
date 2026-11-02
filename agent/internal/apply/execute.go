@@ -14,6 +14,7 @@ import (
 
 	"github.com/rithviknishad/care-pi/agent/internal/backup"
 	"github.com/rithviknishad/care-pi/agent/internal/fe"
+	"github.com/rithviknishad/care-pi/agent/internal/firewall"
 	"github.com/rithviknishad/care-pi/agent/internal/host"
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
@@ -215,8 +216,8 @@ func (x *executor) run(ctx context.Context, a plan.Action) error {
 		return nil
 	case plan.ReloadFirewall:
 		// try-reload-or-restart does nothing when the installer did not install the firewall (--no-firewall).
-		_, err := h.Runner.Run(ctx, host.Cmd{Name: "systemctl", Args: append([]string{"try-reload-or-restart"}, a.Units...)})
-		return err
+		// A switch to the policy drop starts the rollback timer first (Phase 7).
+		return firewall.Reload(ctx, h, x.o.Paths, render.FirewallOf(x.pr.Config).Policy, x.o.Now(), x.o.Out)
 	case plan.UpdateDNS:
 		return x.updateDNS(ctx)
 	case plan.PlugConfig:

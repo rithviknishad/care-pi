@@ -142,3 +142,25 @@ func DefaultYAML(displayName, hostname, preset, feProvider string) ([]byte, erro
 	}
 	return b.Bytes(), nil
 }
+
+// WithFirewallPolicy adds security.firewall.policy to a config that DefaultYAML wrote (bootstrap --firewall-policy,
+// install.sh --firewall-drop). The default policy accept adds nothing.
+func WithFirewallPolicy(data []byte, policy string) ([]byte, error) {
+	switch policy {
+	case "", DefaultFirewallPolicy:
+		return data, nil
+	case "drop":
+	default:
+		return nil, fmt.Errorf("firewall policy %q is not valid; use accept or drop", policy)
+	}
+	out := append(append([]byte{}, data...), []byte(`security:
+  firewall:
+    policy: drop      # The first apply starts a rollback timer of 90 s: run "care-pi firewall confirm".
+  ssh:
+    allow: true
+`)...)
+	if _, err := Parse(out, "default config"); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

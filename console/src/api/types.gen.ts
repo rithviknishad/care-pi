@@ -365,6 +365,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/security/firewall": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the firewall policy and the rollback timer
+         * @description Phase 7. `security.firewall.policy` of `config.yaml`, the policy that the agent loaded last, and the rollback timer
+         *     of the policy `drop`. Change the policy with `PATCH /config` (`security.firewall.policy`, `apply=true`): a switch
+         *     to `drop` starts a timer of 90 s; `POST /security/firewall/confirm` stops it. Without the confirmation, the agent
+         *     sets the policy to `accept` again (`docs/console-server.md` section 13).
+         */
+        get: operations["getFirewall"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/security/firewall/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Keep the policy drop
+         * @description Phase 7. Stops the rollback timer of the policy `drop`. The console sends it from the page where the operator
+         *     switched the policy, so the request itself shows that the console still works through the new rules.
+         *     `409 state-conflict` when no timer runs.
+         */
+        post: operations["confirmFirewall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/setup": {
         parameters: {
             query?: never;
@@ -3298,6 +3343,58 @@ export interface components {
          */
         TotpVerifyRequest: {
             code: components["schemas"]["TotpCode"];
+        };
+        /**
+         * @description The firewall table `inet care-pi` (Phase 7, `docs/console-server.md` section 13).
+         * @example {
+         *       "policy": "drop",
+         *       "live_policy": "drop",
+         *       "ssh_allowed": true,
+         *       "unit_active": true,
+         *       "pending_until": "2026-11-02T10:01:30Z",
+         *       "confirmed_at": null,
+         *       "rolled_back_at": null,
+         *       "rollback_reason": null
+         *     }
+         */
+        FirewallState: {
+            /**
+             * @description `security.firewall.policy` of `config.yaml`.
+             * @enum {string}
+             */
+            policy: "accept" | "drop";
+            /**
+             * @description The policy of the last load of the table of the agent. `null` before the first load.
+             * @enum {string|null}
+             */
+            live_policy: "accept" | "drop" | null;
+            /** @description `security.ssh.allow`: the table accepts 22/tcp. It matters only with the policy `drop`. */
+            ssh_allowed: boolean;
+            /**
+             * @description `care-pi-firewall.service` is active. `false` after `install.sh --no-firewall` or with ufw or firewalld: then no
+             *     policy of the agent is loaded.
+             */
+            unit_active: boolean;
+            /**
+             * Format: date-time
+             * @description The time of the rollback to `accept` while the timer runs. `null` when no timer runs.
+             */
+            pending_until: string | null;
+            /**
+             * Format: date-time
+             * @description The last confirmation of the policy `drop`.
+             */
+            confirmed_at: string | null;
+            /**
+             * Format: date-time
+             * @description The last rollback to `accept`.
+             */
+            rolled_back_at: string | null;
+            /**
+             * @description `timeout`: nobody confirmed within 90 s. `manual`: `care-pi firewall rollback`.
+             * @enum {string|null}
+             */
+            rollback_reason: "timeout" | "manual" | null;
         };
         /**
          * @description The SSH settings (Phase 7). Password login is always off when the agent turns SSH on.
@@ -6410,7 +6507,8 @@ export interface components {
          *         "tailnet": null,
          *         "ipv4": null,
          *         "https_enabled": false,
-         *         "published": false
+         *         "published": false,
+         *         "control_url": null
          *       }
          *     }
          */
@@ -12349,6 +12447,20 @@ export interface components {
                 enabled?: boolean;
                 remote_write_url?: string | null;
             };
+            /** @description Phase 7. The hardening options (docs/console-server.md, section 13). */
+            security?: {
+                firewall?: {
+                    /**
+                     * @description The input policy of the table inet care-pi. accept (default, S42) or drop (only the allow-list). A switch to drop starts a 90 s rollback timer: care-pi firewall confirm keeps it.
+                     * @enum {unknown}
+                     */
+                    policy?: "accept" | "drop";
+                };
+                ssh?: {
+                    /** @description Accept 22/tcp in the firewall. It matters only with the policy drop. Default true. */
+                    allow?: boolean;
+                };
+            };
             $defs: {
                 dnsLabel: string;
                 ref: unknown;
@@ -13938,6 +14050,54 @@ export interface operations {
             401: components["responses"]["NotAuthenticated"];
             403: components["responses"]["Forbidden"];
             422: components["responses"]["UnprocessableContent"];
+            501: components["responses"]["NotImplemented"];
+            default: components["responses"]["UnexpectedProblem"];
+        };
+    };
+    getFirewall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The firewall state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FirewallState"];
+                };
+            };
+            401: components["responses"]["NotAuthenticated"];
+            501: components["responses"]["NotImplemented"];
+            default: components["responses"]["UnexpectedProblem"];
+        };
+    };
+    confirmFirewall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The firewall state after the confirmation. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FirewallState"];
+                };
+            };
+            401: components["responses"]["NotAuthenticated"];
+            403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
             501: components["responses"]["NotImplemented"];
             default: components["responses"]["UnexpectedProblem"];
         };

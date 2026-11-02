@@ -72,6 +72,7 @@ FE_PROVIDER="local"
 ASSUME_YES=0
 UNATTENDED=0
 NO_FIREWALL=0
+FIREWALL_DROP=0
 NO_AVAHI=0
 NO_APT_HOLD=0
 SKIP_BOOTSTRAP=0
@@ -174,6 +175,11 @@ Options:
   --yes              Do not ask for confirmation.
   --no-firewall      Do not install the care-pi firewall (nftables table and
                      care-pi-firewall.service).
+  --firewall-drop    Write security.firewall.policy: drop to the new config.yaml
+                     (only the allow-list; docs/console-server.md section 13).
+                     The first apply starts a rollback timer of 90 s: confirm
+                     with "care-pi firewall confirm" from a new SSH session.
+                     The script asks first on a terminal without --yes.
   --no-avahi         Do not install or configure avahi (mDNS).
   --no-apt-hold      Do not hold the container packages.
   --skip-bootstrap   Prepare the host, but do not run "care-pi bootstrap".
@@ -186,7 +192,7 @@ Options:
 
 Each option has an environment variable: CARE_PI_VERSION, CARE_PI_HOSTNAME,
 CARE_PI_PRESET, CARE_PI_FE_PROVIDER, CARE_PI_UNATTENDED, CARE_PI_YES,
-CARE_PI_NO_FIREWALL, CARE_PI_NO_AVAHI, CARE_PI_NO_APT_HOLD,
+CARE_PI_NO_FIREWALL, CARE_PI_FIREWALL_DROP, CARE_PI_NO_AVAHI, CARE_PI_NO_APT_HOLD,
 CARE_PI_SKIP_BOOTSTRAP, CARE_PI_BINARY, CARE_PI_IMAGE_BUILD, CARE_PI_DRY_RUN.
 A flag overrides its
 variable. Switch variables accept 1, true, or yes.
@@ -471,6 +477,7 @@ load_env() {
   if is_true "${CARE_PI_UNATTENDED:-}"; then UNATTENDED=1; fi
   if is_true "${CARE_PI_YES:-}"; then ASSUME_YES=1; fi
   if is_true "${CARE_PI_NO_FIREWALL:-}"; then NO_FIREWALL=1; fi
+  if is_true "${CARE_PI_FIREWALL_DROP:-}"; then FIREWALL_DROP=1; fi
   if is_true "${CARE_PI_NO_AVAHI:-}"; then NO_AVAHI=1; fi
   if is_true "${CARE_PI_NO_APT_HOLD:-}"; then NO_APT_HOLD=1; fi
   if is_true "${CARE_PI_SKIP_BOOTSTRAP:-}"; then SKIP_BOOTSTRAP=1; fi
@@ -544,6 +551,10 @@ parse_args() {
         ;;
       --no-firewall)
         NO_FIREWALL=1
+        shift
+        ;;
+      --firewall-drop)
+        FIREWALL_DROP=1
         shift
         ;;
       --no-avahi)
@@ -620,6 +631,12 @@ validate_options() {
   if [ "$IMAGE_BUILD" = 1 ] && [ "$UNATTENDED" = 1 ]; then
     usage_error "Use either --image-build or --unattended. The image runs bootstrap at the first boot."
   fi
+  if [ "$FIREWALL_DROP" = 1 ] && [ "$NO_FIREWALL" = 1 ]; then
+    usage_error "Use either --firewall-drop or --no-firewall. Do not use both."
+  fi
+  if [ "$FIREWALL_DROP" = 1 ] && [ "$IMAGE_BUILD" = 1 ]; then
+    usage_error "--firewall-drop is not for the image: nobody can confirm the policy at a headless first boot."
+  fi
 }
 
 # ensure_root re-runs the script with sudo when the user is not root. This works
@@ -657,6 +674,7 @@ ensure_root() {
   if [ "$UNATTENDED" = 1 ]; then set -- "$@" --unattended; fi
   if [ "$ASSUME_YES" = 1 ]; then set -- "$@" --yes; fi
   if [ "$NO_FIREWALL" = 1 ]; then set -- "$@" --no-firewall; fi
+  if [ "$FIREWALL_DROP" = 1 ]; then set -- "$@" --firewall-drop; fi
   if [ "$NO_AVAHI" = 1 ]; then set -- "$@" --no-avahi; fi
   if [ "$NO_APT_HOLD" = 1 ]; then set -- "$@" --no-apt-hold; fi
   if [ "$SKIP_BOOTSTRAP" = 1 ]; then set -- "$@" --skip-bootstrap; fi
@@ -847,6 +865,10 @@ confirm_plan() {
     log "  - run care-pi bootstrap --unattended (host name $HOSTNAME_ARG, preset $PRESET, FE provider $FE_PROVIDER)"
   else
     log "  - run care-pi bootstrap in setup mode (host name $HOSTNAME_ARG); print the claim code"
+  fi
+  if [ "$FIREWALL_DROP" = 1 ]; then
+    log "  - write security.firewall.policy: drop (only the allow-list). The first apply starts a rollback"
+    log "    timer of 90 s: open a NEW SSH session, then run 'sudo care-pi firewall confirm'."
   fi
   if ! ask "Continue? [y/N]"; then
     die "Stopped by the user. The script changed nothing."
@@ -1380,10 +1402,12 @@ nft_rules() {
     tcp dport 22 accept"
   fi
   cat <<EOF
-# Managed by care-pi install.sh. Do not edit. $FIREWALL_UNIT loads this file.
+# Managed by care-pi install.sh. Do not edit. $FIREWALL_UNIT loads this file
+# until the first apply of the agent. From then, the drop-in 50-care-pi.conf of the
+# unit loads /etc/care-pi/rendered/firewall/care-pi.nft, the table of the agent
+# (security.firewall.policy, docs/console-server.md section 13).
 # The chain accepts the Care ports (80, 443) and the console (8443, S48). It drops nothing. The policy is
-# "accept". The default-drop policy comes in Phase 7 (hardening). Allow DHCP
-# (udp 68) before that change.
+# "accept".
 # The file changes only the table inet care-pi. It does not touch the tables of
 # podman (netavark) or Tailscale.
 # The first two commands make "nft -f" idempotent: create the table when it is
@@ -2077,6 +2101,9 @@ step_sysctl() {
 # bootstrap_args prints the arguments of "care-pi bootstrap".
 bootstrap_args() {
   ba="bootstrap --hostname $EFFECTIVE_HOSTNAME --preset $PRESET --fe-provider $FE_PROVIDER --yes"
+  if [ "$FIREWALL_DROP" = 1 ]; then
+    ba="$ba --firewall-policy drop"
+  fi
   if [ "$UNATTENDED" = 1 ]; then
     ba="$ba --unattended"
   fi

@@ -53,7 +53,8 @@ const (
 	EnsureCA Kind = "ensure-ca"
 	// DisableUnits (Phase 6) stops and disables a timer before apply deletes its file (care-dns-update.timer).
 	DisableUnits Kind = "disable-units"
-	// ReloadFirewall (Phase 6) reloads care-pi-firewall.service after a change of its drop-in (Tailscale port).
+	// ReloadFirewall (Phase 6) reloads care-pi-firewall.service after a change of its drop-in or of the table of the
+	// agent (Phase 7). A change of the policy from accept to drop first starts the rollback timer.
 	ReloadFirewall Kind = "reload-firewall"
 	// UpdateDNS (Phase 6) sends a new LAN address to the DNS service (public mode). A failure is a warning.
 	UpdateDNS Kind = "update-dns"
@@ -295,8 +296,10 @@ func Build(in Input) *Plan {
 			if b == render.DNSUpdateTimer && c.Kind == Delete {
 				disable = append(disable, b)
 			}
-		case c.Path == paths.FirewallDropIn:
+		case c.Path == paths.FirewallDropIn, c.Path == paths.FirewallDropInLegacy:
 			unitFiles = true
+			firewall = true
+		case strings.HasPrefix(c.Path, paths.RenderedFirewall+"/"):
 			firewall = true
 		case strings.HasPrefix(c.Path, paths.RenderedBackup+"/"):
 			backupConf = true

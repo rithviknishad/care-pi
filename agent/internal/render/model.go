@@ -202,12 +202,24 @@ type Model struct {
 	TailscaleSocketDir string
 	// HSTS is the value of Strict-Transport-Security of the public and the Tailscale sites. The local CA sites never send it (F7).
 	HSTS string
-	// DNSUpdate renders care-dns-update.timer (public mode). FirewallTailscale renders the firewall drop-in (Tailscale mode).
+	// DNSUpdate renders care-dns-update.timer (public mode). FirewallTailscale accepts the port of tailscaled in the
+	// table of the agent (Tailscale mode).
 	DNSUpdate         bool
 	FirewallTailscale bool
 	// FirewallUnit is the unit of the firewall drop-in. WaitAddressTimeout bounds the wait of care-pod for the Tailscale address.
 	FirewallUnit       string
 	WaitAddressTimeout string
+	// Firewall is the policy of the table inet care-pi (Phase 7). FirewallFile is the rendered table and
+	// FirewallDropInFile the drop-in of FirewallUnit that loads it.
+	Firewall           FirewallModel
+	FirewallFile       string
+	FirewallDropInFile string
+}
+
+// FirewallModel is security.firewall and security.ssh of config.yaml.
+type FirewallModel struct {
+	Policy string
+	SSH    bool
 }
 
 // ACMEDNSSecret is the podman secret with secrets/acme_dns.json (the acmedns module of Caddy reads it as a file).
@@ -655,6 +667,23 @@ func NewModel(in Input) (*Model, error) {
 	return m, nil
 }
 
+// FirewallOf returns the firewall part of the model for cfg. An empty policy is the default accept.
+func FirewallOf(cfg *config.Config) FirewallModel {
+	f := FirewallModel{Policy: cfg.Security.Firewall.Policy, SSH: cfg.Security.SSH.Allow}
+	if f.Policy == "" {
+		f.Policy = config.DefaultFirewallPolicy
+	}
+	return f
+}
+
+// FirewallTable renders the table inet care-pi for cfg, as apply renders it. "care-pi firewall rollback" uses it to
+// write the table without a full apply.
+func FirewallTable(cfg *config.Config) ([]byte, error) {
+	m := &Model{Header: Header, Firewall: FirewallOf(cfg), FirewallUnit: paths.FirewallUnit, FirewallFile: paths.FirewallFile,
+		FirewallDropInFile: paths.FirewallDropIn, ConsolePort: paths.ConsolePort, FirewallTailscale: TailscaleHost(cfg) != ""}
+	return renderOne("firewall.nft.tmpl", m)
+}
+
 // connectivity fills the Phase 6 part of the model (docs/connectivity.md).
 func connectivity(m *Model, cfg *config.Config, in Input) error {
 	m.LocalHosts = LocalHostnames(cfg)
@@ -664,6 +693,9 @@ func connectivity(m *Model, cfg *config.Config, in Input) error {
 	}
 	m.HSTS = HSTSValue
 	m.FirewallUnit = paths.FirewallUnit
+	m.Firewall = FirewallOf(cfg)
+	m.FirewallFile = paths.FirewallFile
+	m.FirewallDropInFile = paths.FirewallDropIn
 	m.WaitAddressTimeout = "30s"
 	m.TailscaleSocketDir = paths.TailscaleSocketDir
 	if in.CARoot {

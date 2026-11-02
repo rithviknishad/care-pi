@@ -92,6 +92,7 @@ If there is no terminal, it stops and asks you to add `--yes`.
 | `--unattended` | `CARE_PI_UNATTENDED` | off | Ask no questions. Imply `--yes`. Run `care-pi bootstrap --unattended`: install Care at once, without the console setup (the Phase 1 behaviour). Use it for CI tests and prepared hosts. |
 | `--yes` | `CARE_PI_YES` | off | Do not ask for confirmation. |
 | `--no-firewall` | `CARE_PI_NO_FIREWALL` | off | Do not install the care-pi firewall (`care-pi-firewall.service` and its nftables table). |
+| `--firewall-drop` | `CARE_PI_FIREWALL_DROP` | off | Phase 7. Bootstrap writes `security.firewall.policy: drop` (only the allow-list). The first apply starts a rollback timer of 90 s: open a new SSH session and run `sudo care-pi firewall confirm`. Without it, the policy goes back to `accept`. Not with `--no-firewall` or `--image-build` (`docs/console-server.md` section 13). |
 | `--no-avahi` | `CARE_PI_NO_AVAHI` | off | Do not install or configure avahi. |
 | `--no-apt-hold` | `CARE_PI_NO_APT_HOLD` | off | Do not hold the container packages. |
 | `--skip-bootstrap` | `CARE_PI_SKIP_BOOTSTRAP` | off | Prepare the host. Do not run `care-pi bootstrap`. |

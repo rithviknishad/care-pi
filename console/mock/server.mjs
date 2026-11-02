@@ -28,6 +28,7 @@ import { DR_KEY } from "./lib/backups-state.mjs";
 import { freshState, now } from "./lib/state.mjs";
 import { freshUpdates, updatesRoutes } from "./lib/updates.mjs";
 import { connectivityRoutes, freshConnectivity, tailscaleLogin } from "./lib/connectivity.mjs";
+import { freshSecurity, securityRoutes } from "./lib/security.mjs";
 
 const PORT = Number(process.env.MOCK_PORT ?? 4011);
 const PRISM_URL = process.env.PRISM_URL ?? null;
@@ -36,6 +37,7 @@ function fresh(options) {
   const s = freshState(options);
   s.u = freshUpdates(options);
   s.conn = freshConnectivity(options);
+  s.sec = freshSecurity(options);
   return s;
 }
 
@@ -73,6 +75,7 @@ const ROUTES = [
   ...restoreRoutes,
   ...updatesRoutes,
   ...connectivityRoutes,
+  ...securityRoutes,
   ...phaseRoutes,
 ].map(compile);
 const UNSAFE = new Set(["POST", "PUT", "PATCH", "DELETE"]);

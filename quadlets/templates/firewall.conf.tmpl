@@ -1,0 +1,11 @@
+# {{.Header}}
+# {{.FirewallUnit}} (the installer writes the unit) loads the table of the agent instead of the file of the
+# installer: the table follows config.yaml (security.firewall, security.ssh, tls.tailscale). The plan action
+# reload-firewall reloads the unit after a change. Without the unit (install.sh --no-firewall, or ufw or firewalld),
+# this file does nothing.
+
+[Service]
+ExecStart=
+ExecStart=/usr/sbin/nft -f {{.FirewallFile}}
+ExecReload=
+ExecReload=/usr/sbin/nft -f {{.FirewallFile}}

@@ -484,3 +484,61 @@ the install of Tailscale (`systemd-run --unit care-pi-tailscale-install`), the l
 `care-pi tls public update-address` (the timer) runs as root outside the agent; it takes the apply lock only when it
 applies.
 
+## 13. Phase 7: the firewall (default-drop, S42)
+
+S42 kept the table `inet care-pi` without a drop policy in Phase 1, because a wrong rule cuts SSH on a headless Pi.
+Phase 7 adds the drop policy as an option with a rollback timer.
+
+**Who owns the table.** The installer writes `/etc/care-pi/firewall.nft` (policy `accept`) and
+`care-pi-firewall.service` (S44). From the first apply, the agent owns the table: it renders
+`/etc/care-pi/rendered/firewall/care-pi.nft` from `config.yaml` and the drop-in
+`/etc/systemd/system/care-pi-firewall.service.d/50-care-pi.conf`, which makes the unit load that file (`ExecStart=` and
+`ExecReload=` replaced). The file of the installer stays as the fallback before the first apply. The drop-in of
+Phase 6 (`50-care-pi-tailscale.conf`, the Tailscale port only) goes at the next apply: the table of the agent has the
+port. Without the unit (`install.sh --no-firewall`, ufw, or firewalld), the drop-in does nothing.
+
+**The table.**
+
+| Rule | Policy `accept` | Policy `drop` |
+|---|---|---|
+| `lo`, `established,related` | accept | accept |
+| `ct state invalid` | — | drop |
+| ICMP, ICMPv6 (neighbour discovery, router advertisements) | accept | accept |
+| DHCPv4 offers (`udp sport 67 dport 68`), DHCPv6 replies (`fe80::/10`, `udp sport 547 dport 546`) | accept | accept |
+| 22/tcp | accept when `security.ssh.allow` (default `true`) | the same |
+| 80, 443, 8443/tcp | accept | accept |
+| 5353/udp (mDNS) | accept | accept |
+| 41641/udp (tailscaled) | accept in the Tailscale mode | the same |
+| 53 (tcp, udp) on `podman*` (aardvark-dns of a podman network) | accept | accept |
+| other input | accept | drop |
+
+The forward and output chains are not in the table. The pod publishes 80, 443, and 8443 with DNAT (netavark), so these
+packets pass the forward hook, not the input hook. A check in Docker (`debian:trixie`, podman 5.4.2, netavark, the table
+of the golden case `hardened`, policy `drop`) showed: a container reaches the internet (DNS and HTTPS), a published port
+answers a client on another host (HTTP 200), a port of the host outside the allow-list times out, and
+`nft 'chain inet care-pi input { policy accept ; }'` opens it again at once. NTP replies are `established`.
+
+**Config.** `security.firewall.policy: accept|drop` (default `accept`, so an existing host does not change) and
+`security.ssh.allow` (default `true`). `install.sh --firewall-drop` writes `drop` for a new install (it asks first when
+it runs on a terminal without `--yes`). The image keeps `accept`: nobody can confirm on a headless first boot.
+`drop` is the planned default after the Phase 7 test on lumine.
+
+**The rollback timer.** When the apply loads a `drop` table after an `accept` table (the plan action `reload-firewall`):
+
+1. The agent starts the transient timer `care-pi-firewall-rollback.timer` (`systemd-run --on-active=90s`) first. Its
+   service runs `care-pi firewall rollback --reason timeout`. When `systemd-run` fails, the agent does not load the table.
+2. The agent loads the table (`systemctl try-reload-or-restart care-pi-firewall.service`) and writes
+   `/var/lib/care-pi/state/firewall.json` (`policy`, `pending_until`).
+3. The operator checks a **new** SSH session and the console, then confirms: `care-pi firewall confirm`, or
+   Security > Firewall > Keep (`POST /security/firewall/confirm`). The confirmation stops the timer.
+4. Without the confirmation, the rollback sets the live policy to `accept` with one `nft` command, then sets
+   `security.firewall.policy: accept` in `config.yaml` and writes the `accept` table, without a full apply (it works while
+   a job holds the apply lock). The next apply renders the same table. `GET /security/firewall` shows `rolled_back_at` and
+   `rollback_reason: timeout`.
+
+The agent does not start the timer when the unit is not active (the table is not loaded then), or for a later load of a
+`drop` table (for example a new Tailscale rule). A switch back to `accept` stops a running timer.
+
+**CLI.** `care-pi firewall status [--json]`, `policy accept|drop`, `allow-ssh true|false` (each writes `config.yaml` and
+applies, as `care-pi config set … --apply`), `confirm`, `rollback`.
+

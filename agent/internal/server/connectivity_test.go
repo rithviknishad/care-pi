@@ -384,8 +384,8 @@ func TestTailscale(t *testing.T) {
 	if !strings.Contains(string(pod), "PublishPort=100.101.102.103:443:443") {
 		t.Fatalf("the pod does not publish on the Tailscale address:\n%s", pod)
 	}
-	if _, err := os.Stat(e.p.Abs(paths.FirewallDropIn)); err != nil {
-		t.Fatal("no firewall drop-in for 41641/udp")
+	if nft, err := os.ReadFile(e.p.Abs(paths.FirewallFile)); err != nil || !strings.Contains(string(nft), "udp dport 41641 accept") {
+		t.Fatalf("no firewall rule for 41641/udp: %v\n%s", err, nft)
 	}
 	if len(e.fake.Filter("systemctl try-reload-or-restart care-pi-firewall.service")) == 0 {
 		t.Fatal("the firewall did not reload")
@@ -401,8 +401,8 @@ func TestTailscale(t *testing.T) {
 	if got := e.fake.Filter("tailscale down", "tailscale logout"); len(got) != 2 {
 		t.Fatalf("down and logout %v", got)
 	}
-	if _, err := os.Stat(e.p.Abs(paths.FirewallDropIn)); err == nil {
-		t.Fatal("the firewall drop-in is still there")
+	if nft, _ := os.ReadFile(e.p.Abs(paths.FirewallFile)); strings.Contains(string(nft), "41641") {
+		t.Fatal("the firewall still accepts 41641/udp")
 	}
 }
 
