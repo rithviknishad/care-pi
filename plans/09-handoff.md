@@ -580,9 +580,19 @@ and F5; F1 on a device. Next phase: Phase 5 (the image).
 The owner asked to keep these for the end. Do them on lumine before the project is called done:
 
 - `care-pi update --os --now` with a real `apt-get full-upgrade` and the reboot path (Phase 4 §11).
-- `agent-too-old` with a release build that has a version tag.
-- Backend plug *off* (`restart` path): 56 s API downtime without a maintenance page. Decide: show the page, or accept.
-- `care-api` peak 487 of 512 MiB on `small-clinic`: decide whether to raise the cap to 576M.
+- `agent-too-old` with a release build that has a version tag. The tooling is built (wave 9, §8q): the workflow
+  `release`, a dev build counts as the newest agent. Test it with `v0.1.0` after the tag (§8q, "Acceptance").
+- ~~Backend plug *off* (`restart` path): 56 s API downtime without a maintenance page. Decide: show the page, or
+  accept.~~ Decided S62, built in wave 9 (§8q); check it on lumine.
+- ~~`care-api` peak 487 of 512 MiB on `small-clinic`: decide whether to raise the cap to 576M.~~ Decided S63 (576M,
+  832M for `busy-counter`), built in wave 9 (§8q); watch the peak on lumine.
+- S61 (the client address on the Tailscale name): built as the fallback (no WhoIs identity, §8q); check it on lumine
+  with the Mac as the one tailnet client.
+- `care-caddy` reached 115.8 of 128 MiB with 3 names (wave 8-ts, `08` "Phase 6 exit test" follow-ups). S63 covers
+  `care-api` only. Decide whether to raise the Caddy cap (for example 160M), after a measure with the 3 names and the
+  WAF off.
+- The `care-api` cap of `custom` with 4 or more workers stays 64M + 200M for each worker (S63 names the presets only):
+  4 workers get 896M, only 64M more than the 832M of 3 workers. Decide whether to use 64M + 256M for each worker.
 - Test leftovers to remove: on lumine the `w5-s3` container, `/var/lib/care-pi-test`, `/srv/care-backups`; on the
   Mac the restricted `authorized_keys` line and `~/care-pi-sftp-backups/care-pi-b7616345`. They are live test
   destinations until then.
@@ -871,3 +881,85 @@ decision); (2) the agent reached its 128M cap during 3 browser journeys (no OOM;
 the local name of the device on the public card (follow-up 3) and a certificate state for the Tailscale name (follow-up
 10); (4) a real phone on mobile data, Wi-Fi and the cable pull, the offline fallback, a fresh device in public mode, F7,
 S52 on hardware, when the owner wants them; (5) the design for a host that keeps its own `tailscale serve` (follow-up 2).
+
+### 8q. Final code wave (wave 9, 2026-11-02)
+
+On `main` after `9ff6634`: 4 signed commits, one for each item. Not run on a Pi; the acceptance wave on lumine is next
+(§8k and "Acceptance" below). No contract change (`docs/api/openapi.yaml` stays 0.8.0).
+
+| Item | What exists | Commit |
+|---|---|---|
+| S61, the fallback | Each Caddy site sends `X-Care-Pi-Listener` (`local`, `public`, `tailscale`) to the agent (`import care <name>`, `import console <name>`; the value replaces the header of a client). On the Tailscale site, a request whose address is not a tailnet address gets the shared client address `tailscale`: no address lock for a failed password, claim secret, or recovery code (the account and claim locks stay), a failed TOTP code still counts, 600 public reads each minute. A tailnet address (no masquerade) keeps its own limits. `docs/connectivity.md` §4.7. | `b073b99` |
+| S62 | `apply.RestartBehindPage`: the plan action `restart` with `care-api.service` and the plug path `restart` set the maintenance flag (`maintenance.json`: the kind of the job, `step: restart`), restart, wait until `care-api` is healthy (5 min at most), and delete the flag, also after a failure. A page of a cutover or a restore stays as it is. The page shows "CARE restarts. This takes about 1 minute."; `plan.maintenance` is `true` for the plug path `restart`. | `5ae0ec3` |
+| S63 | `care-api` 576M / 128M (`small-clinic`, 2 workers) and 832M / 128M (`busy-counter`, 3 workers): 64M + 256M for each worker. `solo` stays 320M / 64M. | `3310e51` |
+| Release | `.github/workflows/release.yml` (a tag `vX.Y.Z`: test, the console, `care-pi_linux_{arm64,amd64}` with the version of the tag, `SHA256SUMS`, the release with `install.sh` and `uninstall.sh`, `--latest`). `installer/test-download.sh` (a CI step) checks the installer URLs and names against it. Only a release build `vX.Y.Z` compares with `min_agent_version`; a dev build is the newest agent. The fallback `min_agent_version` is `v0.1.0`. `docs/releasing.md`, "An agent release". | `8c595a0` |
+
+**S61: why the fallback.** The `tailscale_auth` provider of `caddy-tailscale` calls WhoIs of `tailscaled` with the TCP peer
+of the request. On the Tailscale site that peer is the pod bridge (`10.88.0.1`, the masquerade of `ts-postrouting`), so
+WhoIs gives "peer not found", and the provider answers `401` to each request. It also names the user, not the device. A
+test with the image of `images/caddy` (the modules of `9ff6634`) and a fake local API shows it: the WhoIs query had the
+address of the Docker gateway, and Caddy logged `auth provider returned error … peer not found`
+(`local/wave9/ts-exp/result.txt`). The agent cannot find the device either. A real address for each device needs a
+`tailscaled` without the masquerade (`--snat-subnet-routes=false` is a candidate, not tested; an operator setting). The
+agent then keeps the address of each device by itself. This closes `08` follow-up 9 as far as the agent can.
+
+Decisions of wave 9 (owner informed; override in `00` if wrong):
+
+- S61: the fallback of the brief, plus two rules: a failed TOTP code still counts for the address lock of `tailscale`
+  (the account lock does not count TOTP codes, so without it a client with the password could try codes at 10 each
+  minute), and the shared address has 600 public reads each minute (the console polls each 3 to 15 s, the page each
+  5 s). The credential limit (10 each minute) stays shared. A tailnet device that comes through a subnet router to the
+  LAN or public name also has the bridge address; those sites keep the address lock.
+- S62: only a restart with `care-api` shows the page. On a failure the page goes (Caddy then gives `502`), unlike a
+  cutover, where the page stays until the rollback. The restart text is on the page only: the console keeps "Start the
+  changed services again" for the step `restart`, because the step also restarts other units.
+- S63: `custom` with 4 or more workers is unchanged (§8k).
+- `agent-too-old`: a build after a tag (`v0.1.0-3-g9ff6634`) is a dev build and counts as the newest agent (before: it
+  compared its last tag). The fallback `min_agent_version` of `make-lock.sh` and `solution-lock.yml` is `v0.1.0`, not
+  `v0.4.0`: no release `v0.4.0` exists, and a lock without a minimum must install on the first release.
+- The first release has the commits as its notes, without `--generate-notes`: GitHub would start the notes at the
+  newest release of any kind (a bundle). From the second release, `--generate-notes --notes-start-tag <previous>`.
+- The installer has a source guard (`CARE_PI_SOURCE_ONLY=1`: define the functions, run nothing) for its test.
+- The repository is public: the "private repository" notes of the install and solution docs are gone.
+
+Checks on the Mac: `go build`, `go vet`, `go test -race ./...` (38 packages), `CARE_PI_TEST_HELPER=1 go test
+./agent/internal/server`, golangci-lint v2.15.0 (0 issues), `make api-lint`, shellcheck (installer, `solutions/scripts`,
+`image`), actionlint, `installer/test-download.sh` (on macOS and in `debian:trixie`), the console `api:check`,
+`typecheck`, `lint`, `test` (143), and `test:e2e` (167 passed, 1 skipped), `solutions/scripts/e2e-local.sh`;
+`caddy validate` of the 10 golden Caddyfiles with the image of `images/caddy`, and `caddy adapt` of `public-tailscale`
+(each site sets its own listener name; a spoofed header on a local site arrives as `local`); `quadlet -dryrun` of the 10
+goldens with podman 5.4.2 (`care-api` `MemoryMax=576M` for `small-clinic`, `832M` for `busy-counter`, `320M` for `solo`);
+`make build-linux VERSION=v0.1.0`: both binaries print `version: v0.1.0`; the download step of `install.sh` from a
+release layout (`file://`, in `debian:trixie`) installs `v0.1.0`, and a changed binary fails the checksum.
+
+**Acceptance (lumine; the Mac is the only tailnet client):**
+
+1. **Deploy.** The agent of this wave, then `sudo care-pi apply`. Expect: the Caddyfile reloads; `care-api` restarts
+   behind the maintenance page (its unit changed: S63 and S62 at once). `systemctl show care-api -p MemoryMax` gives
+   `603979776` (576M).
+2. **S61, one client.** From the Mac through the tailnet, 6 wrong passwords at
+   `https://lumine.orthrus-bass.ts.net:8443/api/v1/session/login`: each is `401 bad-credentials` (before: the sixth was
+   `429 locked-out`). `journalctl -u care-pi -g 'password failed'` shows `address=tailscale`. Log in with the password
+   (fewer than 10 failures in a row, so no account lock); `care-pi auth sessions` shows `tailscale`. On lumine itself,
+   5 wrong passwords at `https://lumine.local:8443` (the LAN site, with `Origin: https://lumine.local:8443`) lock the
+   address `192.168.165.91`: the sixth request
+   is `429` with "from this address"; then `sudo care-pi auth unlock`. On the LAN site, a request with
+   `X-Care-Pi-Listener: tailscale` still logs the LAN address (Caddy replaces the header). 61 reads of
+   `/_care-pi/status` in one minute through the ts.net name give 61 × `200`; through `lumine.local`, the 61st gives `429`.
+3. **S62.** Change a backend setting (for example `care-pi plugs set care_multihost_files_be --setting
+   backend.ALLOWED_HOSTS=… --apply`, or `env.backend` and `care-pi apply`). While it runs: `https://lumine.local/`
+   gives `503` with "CARE restarts. This takes about 1 minute.", and `GET /_care-pi/status` has `maintenance.active:
+   true`, `kind` of the job, `step: restart`. After it: the page is gone, Care gives `200`. Record the time of the page.
+4. **S63.** Watch `memory.peak` of the `care-api` cgroup during the browser journeys; the old peak was 487–491 MiB.
+5. **Release.** The orchestrator makes and pushes the signed tag `v0.1.0`. Check: the run of `release` passes; the
+   release `v0.1.0` has 5 files and is the latest (`gh api repos/rithviknishad/care-pi/releases/latest --jq .tag_name`);
+   `curl -fsSL https://github.com/rithviknishad/care-pi/releases/latest/download/SHA256SUMS` lists the 4 files.
+6. **`agent-too-old`.** Install `v0.1.0` on lumine (`curl -fsSL
+   https://github.com/rithviknishad/care-pi/releases/download/v0.1.0/install.sh | sudo sh -s -- --version v0.1.0 --yes`,
+   or the binary and its sum). `care-pi version` gives `v0.1.0`. The locks of the lumine dist have
+   `min_agent_version: v0.4.0` (made by `make-lock.sh` before this wave): `care-pi update check` gives `agent-too-old`
+   ("… needs agent v0.4.0 or newer. This agent is v0.1.0."), and the Updates page shows the blocker. The running lock
+   keeps working (apply does not check it). A lock made with `--min-agent v0.1.0` (or by `solution-lock.yml` after the
+   tag) installs. Put the dev agent back after the test, or the old locks stay blocked.
+7. **`curl | sh`** of the Phase 1 fresh-flash test (§8k) uses the same release: the default `latest` downloads `v0.1.0`.
+   The default index (`releases/download/index/index.json`) exists only after `solution-lock.yml` runs.

@@ -162,7 +162,7 @@ Fedora enforcing. The exit test on lumine is planned, not run (`08-spike-log.md`
 | WAF false positives (file uploads, rich text) | Care requests blocked | medium in `block` mode | off by default; `detect` first; per-rule tuning after the exit test |
 | The signing key is lost or leaks | no signed release, or forged locks accepted | low | `require_signed` opt-in; two keys during a rotation; the ceremony in `docs/solutions.md` §18 |
 
-## Status (2026-11-02, after the Phase 6 exit test on lumine)
+## Status (2026-11-02, after the final code wave)
 
 Phase 0: SP1–SP6 are done (results in `08-spike-log.md`, folded back into `01`/`02`/`03`/`05`);
 SP7–SP11 are pending. All proposals in `00` §B are accepted (S37, S40); S41–S43 were added
@@ -181,9 +181,9 @@ exit test", `09-handoff.md` §8g). The Phase 3 console journeys (`backups.spec.t
 second Pi is still to do. **Phases 3 and 4 are merged, and the Phase 4 exit test passed on lumine** (wave 6b, 2026-11-01:
 an update N → N+1 by the window timer with the maintenance page, 65 s; a forced migration failure rolled back and the PITR
 offer restored the database through the API; FE and backend plug switches; Phase 3 run, verify, and reboot after the merge;
-8 fixes; `08-spike-log.md` "Phase 4 exit test", `09-handoff.md` §8j). Open for Phase 4: public images and release assets
-(`docs/solutions.md` open point 1), a maintenance page for the path `restart`, `agent-too-old` with a tagged build,
-`update --os --now` on a device, and the follow-ups in `08`.
+8 fixes; `08-spike-log.md` "Phase 4 exit test", `09-handoff.md` §8j). Open for Phase 4: `agent-too-old` with a tagged build (the tooling exists since wave 9),
+`update --os --now` on a device, and the follow-ups in `08`. The images, the repository, and its release assets are
+public; the maintenance page for the path `restart` is S62 (wave 9).
 **Phase 5 code is complete; the image builds and passes its checks, not yet on a Pi** (wave 7, 2026-11-01, branch
 `phase-5-image`; `08-spike-log.md` "SP10" and "Phase 5 build", `09-handoff.md` §8l, `docs/image.md`). SP10: `rpi-image-gen`
 has no Imager customisation → pi-gen `arm64`. `image/build.sh` makes `care-pi-<version>-<solution>.img.xz` (1.05 GB;
@@ -198,5 +198,10 @@ run of `pi-image.yml` on GitHub. The clock gate decision is S52 (browser time at
 then production), the Tailscale mode (after the owner removed the stale `tailscale serve` of lumine), files across the 3
 names, the disable paths, the reboots, and the Phase 1–5 regression pass with 10 fixes (`08` "Phase 6 exit test — lumine",
 `09-handoff.md` §8o). Not run: Wi-Fi and the cable pull, the offline fallback, a fresh device, F7, S52 on hardware.
+**The final code wave is complete** (wave 9, 2026-11-02, on `main`, `09-handoff.md` §8q): S61 as the fallback (the
+Tailscale site has the shared client address `tailscale`; the WhoIs identity cannot work behind the masquerade), S62 (the
+maintenance page on each restart of `care-api`), S63 (the `care-api` caps 576M and 832M), and the workflow `release` of
+an agent release `vX.Y.Z` with the installer check. Next: the tag `v0.1.0`, then the final acceptance on lumine
+(`09-handoff.md` §8k and §8q, "Acceptance").
 The remaining open questions (`00` §C: O4, O6 plug set, O7 upstream PR timing, O9, O11, O12,
 O13, O16, O17) each become blocking only in the phase noted there.
