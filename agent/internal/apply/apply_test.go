@@ -839,9 +839,10 @@ func TestApplyWaitsForTheAddress(t *testing.T) {
 	if err != nil || !strings.Contains(string(pod), "PublishPort=192.168.1.10:443:443") {
 		t.Fatalf("care.pod does not publish on the address: %v\n%s", err, pod)
 	}
-	// The wait comes before the render: 2 reads without the address, 1 with it, then Prepare.
-	if src.reads != 4 {
-		t.Fatalf("reads = %d, want 4", src.reads)
+	// The wait comes before the render: 2 reads without the address, 1 with it, then Prepare (the LAN addresses,
+	// and the addresses of the host for the publishes of the running pod).
+	if src.reads != 5 {
+		t.Fatalf("reads = %d, want 5", src.reads)
 	}
 }
 

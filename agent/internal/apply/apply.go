@@ -222,6 +222,7 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 		PlugConfig:     pr.Phase != setup.PhaseBootstrap && plugcfg.NeedsSync(o.Paths, plugcfg.Desired(pr.Config, pr.Desire.Plugs, pr.Lock)),
 		EnsureCA:       pr.EnsureCA,
 		PodLive:        readPodLive(o.Paths),
+		HostAddrs:      pr.HostAddrs,
 		DNSStale:       dnsStale(o.Paths, pr.Config, pr.IPs),
 	})
 	if o.NoStart {

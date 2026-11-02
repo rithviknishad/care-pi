@@ -147,6 +147,10 @@ type Input struct {
 	// removes PublishPort lines of the running pod (for example the address of eth0 after a Wi-Fi failover),
 	// the running pod keeps its publishes and needs no full cycle (docs/connectivity.md).
 	PodLive []byte
+	// HostAddrs are the IPv4 addresses of the host now (netinfo.HostIPv4). A PublishPort line that the new care.pod
+	// drops for an address that is still here (the Tailscale mode off with tls.tailscale.manage_daemon false) needs
+	// a full cycle: else the running pod keeps the ports of that address.
+	HostAddrs []string
 	// DNSStale is true when the DNS service has another LAN address than the primary address (public mode).
 	DNSStale bool
 }
@@ -269,7 +273,7 @@ func Build(in Input) *Plan {
 			u := unitOf(c.Path)
 			switch {
 			case u == "care-pod":
-				podChanged = !podShrinkOnly(in.Desired[c.Path].Content, in.PodLive, in.PodActive)
+				podChanged = !podShrinkOnly(in.Desired[c.Path].Content, in.PodLive, in.PodActive, in.HostAddrs)
 			case u == "care-fe-build", u == "care-plug-build", strings.HasPrefix(u, "care-build-"):
 				// Transient unit: daemon-reload is enough.
 			case cycleUnits[u]:
@@ -503,11 +507,17 @@ func dedupe(s []string) []string {
 // publishes: each line of the new file is in the running file in the same order, and each line that the new
 // file does not have is a PublishPort line, a comment, an empty line, or a line of the Tailscale wait.
 // The running pod then keeps the old publishes: an address that went away (eth0 after a Wi-Fi failover)
-// does no harm, and the pod needs no full cycle when the address comes back. active is the ActiveState of
-// care-pod.service, not of care.target: a pod that failed has no publishes to keep.
-func podShrinkOnly(desired, live []byte, active bool) bool {
+// does no harm, and the pod needs no full cycle when the address comes back. A dropped PublishPort line of an
+// address that is still on the host (hostAddrs) is not a shrink: the running pod would keep serving it (the
+// Tailscale mode off while tailscaled keeps its address). active is the ActiveState of care-pod.service, not of
+// care.target: a pod that failed has no publishes to keep.
+func podShrinkOnly(desired, live []byte, active bool, hostAddrs []string) bool {
 	if !active || live == nil || desired == nil {
 		return false
+	}
+	present := map[string]bool{}
+	for _, a := range hostAddrs {
+		present[a] = true
 	}
 	want := strings.Split(strings.TrimSpace(string(desired)), "\n")
 	have := strings.Split(strings.TrimSpace(string(live)), "\n")
@@ -519,7 +529,11 @@ func podShrinkOnly(desired, live []byte, active bool) bool {
 		}
 		t := strings.TrimSpace(l)
 		switch {
-		case t == "", strings.HasPrefix(t, "#"), strings.HasPrefix(t, "PublishPort="),
+		case strings.HasPrefix(t, "PublishPort="):
+			if addr, _, ok := strings.Cut(strings.TrimPrefix(t, "PublishPort="), ":"); ok && present[addr] {
+				return false
+			}
+		case t == "", strings.HasPrefix(t, "#"),
 			t == "[Service]", t == "After=tailscaled.service",
 			strings.HasPrefix(t, "ExecStartPre=-") && strings.Contains(t, " network wait-address "):
 		default:

@@ -192,6 +192,31 @@ func TailscaleIPv4(src Source) string {
 	return ""
 }
 
+// HostIPv4 returns each IPv4 address of the up interfaces of the host, also the Tailscale address and the loopback
+// (nil when src is nil or cannot be read). apply compares it with the publishes of the running pod: an address that
+// the new care.pod drops but that is still on the host needs a new pod (plan.Input.HostAddrs).
+func HostIPv4(src Source) []string {
+	if src == nil {
+		return nil
+	}
+	ifs, err := src.Interfaces()
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, i := range ifs {
+		if !i.Up {
+			continue
+		}
+		for _, p := range i.Addrs {
+			if a := p.Addr(); a.Is4() {
+				out = append(out, a.String())
+			}
+		}
+	}
+	return out
+}
+
 // WaitAddress waits until an up interface has the address, or until timeout ends.
 // The pod unit runs it before the start when it publishes on the Tailscale address (care-pi network wait-address).
 func WaitAddress(ctx context.Context, src Source, addr string, timeout, poll time.Duration) bool {

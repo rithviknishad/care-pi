@@ -403,35 +403,51 @@ PublishPort=10.0.0.5:443:443
 PublishPort=127.0.0.1:19000:9000`
 	newAddress := strings.Replace(failover, "10.0.0.5", "10.0.0.6", 1)
 	newKey := strings.Replace(failover, "PodName=care", "PodName=care\nNetwork=host", 1)
+	// The addresses of the host after a failover (no 192.168.1.10), and with the Tailscale address gone too.
+	afterFailover := []string{"127.0.0.1", "10.0.0.5", "100.101.102.103"}
+	noTailnet := []string{"127.0.0.1", "192.168.1.10", "10.0.0.5"}
+	all := []string{"127.0.0.1", "192.168.1.10", "10.0.0.5", "100.101.102.103"}
 	cases := []struct {
 		name    string
 		desired string
 		live    string
 		active  bool
+		hosts   []string
 		want    bool
 	}{
-		{"eth0 address went away", failover, livePod, true, true},
-		{"the address came back", livePod, livePod, true, true},
-		{"tailscale address went away", noTailscale, livePod, true, true},
-		{"a new address", newAddress, livePod, true, false},
-		{"a new key", newKey, livePod, true, false},
-		{"no record of the running pod", failover, "", true, false},
-		{"stack not running", failover, livePod, false, false},
+		{"eth0 address went away", failover, livePod, true, afterFailover, true},
+		{"the address came back", livePod, livePod, true, all, true},
+		{"tailscale address went away", noTailscale, livePod, true, noTailnet, true},
+		{"no list of the host addresses", noTailscale, livePod, true, nil, true},
+		// wave 8-ts on lumine: the Tailscale mode off with manage_daemon false. tailscaled keeps 100.x, and the
+		// running pod kept 100.x:80/443/8443 (the owner's "tailscale serve" could not bind 443 again).
+		{"tailscale mode off, the address stays", noTailscale, livePod, true, all, false},
+		{"a dropped LAN address that is still there", failover, livePod, true, all, false},
+		{"a new address", newAddress, livePod, true, all, false},
+		{"a new key", newKey, livePod, true, all, false},
+		{"no record of the running pod", failover, "", true, afterFailover, false},
+		{"stack not running", failover, livePod, false, afterFailover, false},
 	}
 	for _, c := range cases {
 		var live []byte
 		if c.live != "" {
 			live = []byte(c.live)
 		}
-		if got := podShrinkOnly([]byte(c.desired), live, c.active); got != c.want {
+		if got := podShrinkOnly([]byte(c.desired), live, c.active, c.hosts); got != c.want {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
 	}
 	// In a plan: the pod file is written and systemd reloads it, but nothing restarts.
 	p := Build(Input{Desired: tree(with(base(), pod, failover)), Current: current(with(base(), pod, livePod)), TargetActive: true,
-		PodActive: true, PodLive: []byte(livePod)})
+		PodActive: true, PodLive: []byte(livePod), HostAddrs: afterFailover})
 	if got := kinds(p); !reflect.DeepEqual(got, []Kind{EnsureDirs, WriteFiles, DaemonReload}) {
 		t.Fatalf("failover plan %v", got)
+	}
+	// The Tailscale mode off while tailscaled keeps its address: a full cycle frees the ports of 100.x.
+	p = Build(Input{Desired: tree(with(base(), pod, noTailscale)), Current: current(with(base(), pod, livePod)), TargetActive: true,
+		PodActive: true, PodLive: []byte(livePod), HostAddrs: all})
+	if !p.Has(FullCycle) {
+		t.Fatalf("tailscale off with the address on the host needs a full cycle: %v", kinds(p))
 	}
 	p = Build(Input{Desired: tree(with(base(), pod, newAddress)), Current: current(with(base(), pod, livePod)), TargetActive: true,
 		PodActive: true, PodLive: []byte(livePod)})

@@ -229,7 +229,8 @@ The step `tailscale-login` stops the job when `tailscale serve` (or `funnel`) us
 (section 9).
 
 Off: `care-pi tls tailscale disable`, or `PUT /tls/tailscale {"enabled": false}`. The job sets the config, applies
-(the site and the drop-in go), runs `tailscale down` and `tailscale logout`. The package stays installed and
+(the site, the drop-in, and the publishes on the Tailscale address go: a full cycle, about 60 s on a Pi 5), runs
+`tailscale down` and `tailscale logout`. The package stays installed and
 `tailscaled` stays enabled, so a new enable is fast. To remove it: `apt-get purge tailscale`.
 
 A `tailscaled` that is already connected (`BackendState: Running`) stays as it is: the job does not install and does

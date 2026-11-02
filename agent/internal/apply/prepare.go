@@ -45,6 +45,8 @@ type Prepared struct {
 	ACMEDNS string
 	// EnsureCA is true when the root of the agent does not exist and a LAN address is known (Phase 6).
 	EnsureCA bool
+	// HostAddrs are the IPv4 addresses of the host (netinfo.HostIPv4), the Tailscale address too.
+	HostAddrs []string
 }
 
 // PrepareOptions controls Prepare.
@@ -220,7 +222,7 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 	}
 	return &Prepared{Config: cfg, Solution: sol, Desire: des, PrevLock: prev, Lock: lk, IPs: ips, Model: m, Tree: tree,
 		Phase: o.Phase, SolutionLock: sl, CareBuild: cb, DistBase: distBase,
-		ACMEDNS: conn.acmeDNS, EnsureCA: conn.caRoot && !conn.caExists}, nil
+		ACMEDNS: conn.acmeDNS, EnsureCA: conn.caRoot && !conn.caExists, HostAddrs: netinfo.HostIPv4(o.IPs)}, nil
 }
 
 // CheckImplemented runs the apply-time checks on a config before it is installed (the pre-seed of the image): the
