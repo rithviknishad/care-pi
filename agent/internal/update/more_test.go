@@ -130,6 +130,46 @@ func TestPlugPlans(t *testing.T) {
 	}
 }
 
+// TestPlugPlanExistingValue: a change or a removal of an operator value that config.yaml already has (wave 8-ts on
+// lumine: "plugs set care_multihost_files_be --setting backend.ALLOWED_HOSTS=null" gave path none, and nothing ran).
+// PlanChange changed the settings map of the config that it compared with, so before and after were equal.
+func TestPlugPlanExistingValue(t *testing.T) {
+	e := newTEnv(t, "pinned", "2026.11.0")
+	e.install()
+	cfg := mustConfig(t, e.cfg)
+	on := true
+	backend := func(v []any) map[string]config.PlugChoice {
+		return map[string]config.PlugChoice{
+			"care_multihost_files_be": {Enabled: &on, Settings: &config.PlugSettings{Backend: map[string]any{"ALLOWED_HOSTS": v}}},
+			"care_onboarding_fe":      {Settings: &config.PlugSettings{Frontend: map[string]any{"config.redirect_after_login": false}}},
+		}
+	}
+	cases := []struct {
+		id     string
+		change PlugChange
+		path   string
+	}{
+		{"care_multihost_files_be", PlugChange{Backend: map[string]any{"ALLOWED_HOSTS": nil}}, PathRestart},
+		{"care_multihost_files_be", PlugChange{Backend: map[string]any{"ALLOWED_HOSTS": []any{"*.lan", "*.home"}}}, PathRestart},
+		{"care_multihost_files_be", PlugChange{Backend: map[string]any{"ALLOWED_HOSTS": []any{"*.lan"}}}, PathNone},
+		{"care_onboarding_fe", PlugChange{Frontend: map[string]any{"config.redirect_after_login": true}}, PathPlugConfig},
+		{"care_onboarding_fe", PlugChange{Frontend: map[string]any{"config.redirect_after_login": nil}}, PathPlugConfig},
+	}
+	for _, c := range cases {
+		cfg.Solution.Plugs = backend([]any{"*.lan"})
+		out, err := e.u.PlanChange(context.Background(), cfg, c.id, c.change)
+		if err != nil {
+			t.Fatalf("%s %+v: %v", c.id, c.change, err)
+		}
+		if out.Plan.Path != c.path {
+			t.Errorf("%s %+v: path %s, want %s", c.id, c.change, out.Plan.Path, c.path)
+		}
+		if want := backend([]any{"*.lan"}); !reflect.DeepEqual(cfg.Solution.Plugs, want) {
+			t.Errorf("%s %+v: PlanChange changed the config it got: %+v", c.id, c.change, cfg.Solution.Plugs[c.id].Settings)
+		}
+	}
+}
+
 // TestPlugChangeRestart: a backend setting renders ADDITIONAL_PLUGS with the secret into the podman
 // secret, keeps the secret out of the rendered files, and restarts beat, worker, and api.
 func TestPlugChangeRestart(t *testing.T) {

@@ -420,6 +420,11 @@ func (u *Updater) PlanChange(ctx context.Context, cfg *config.Config, id string,
 		return nil, plugUnknown(cfg.Solution.Name, id)
 	}
 	choice := cfg.Solution.Plugs[id]
+	// The settings of the choice are a pointer and maps of cfg: copy them, so that the change does not reach cfg,
+	// which planChange compares with.
+	if choice.Settings != nil {
+		choice.Settings = &config.PlugSettings{Backend: copySettings(choice.Settings.Backend), Frontend: copySettings(choice.Settings.Frontend)}
+	}
 	if ch.SetEnabled {
 		choice.Enabled = ch.Enabled
 	}
@@ -523,6 +528,14 @@ func (u *Updater) PlanChange(ctx context.Context, cfg *config.Config, id string,
 	}
 	plan := planChange(pc, before, &after, cfg, &newCfg, pc.secrets[id], sec)
 	return &ChangeOutcome{Choice: choice, Secrets: sec, SecretsSet: secretsSet, Plan: plan, After: view, NewConfig: &newCfg}, nil
+}
+
+// copySettings returns a deep copy of the setting values of one part (nil stays nil).
+func copySettings(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	return solution.DeepCopy(m).(map[string]any)
 }
 
 // planChange computes the path of a plug change.
