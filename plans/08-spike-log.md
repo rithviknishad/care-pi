@@ -1389,11 +1389,11 @@ gate (`clock.policy: ntp`). Without internet and without an NTP server on the LA
 
 ## Phase 6 exit test — plan (agent and console; run after the merge of `phase-6-connectivity`)
 
-Status: **run on lumine on 2026-11-02 (wave 8), partly**: the CA switch, the public name (staging, then 1 production
-certificate), the disable paths, the re-registration, the reboot, and the Phase 1–5 regression pass with 6 fixes; the
-Tailscale mode is blocked by the `tailscale serve` of the owner on port 443 of the node; Wi-Fi, the cable pull, the offline
-fallback, F7, and the fresh device did not run. The record is "Phase 6 exit test — lumine, 2026-11-02" below; the raw output
-is in `local/wave8-p6/` (S39). The specification is `docs/connectivity.md`; the contract is `docs/api/README.md` §15.
+Status: **run on lumine on 2026-11-02 (waves 8 and 8-ts): complete except Wi-Fi**: the CA switch, the public name
+(staging, then 1 production certificate), the Tailscale mode (wave 8-ts, after the owner removed the stale `tailscale serve`
+of lumine), files across the 3 names, the disable paths, the re-registration, the reboots, and the Phase 1–5 regression
+pass with 10 fixes; Wi-Fi, the cable pull, the offline fallback, F7, and the fresh device did not run. The record is
+"Phase 6 exit test — lumine, 2026-11-02" below; the raw output is in `local/wave8-p6/` and `local/wave8-ts/` (S39). The specification is `docs/connectivity.md`; the contract is `docs/api/README.md` §15.
 
 Exit criteria (`06` Phase 6):
 
@@ -1635,12 +1635,19 @@ To check on lumine with the Phase 6 exit test:
 - m3 and S52 need a fresh image: a bad pre-seed shows the error on the claim page; a first boot without internet passes
   the clock gate after the claim, and the banner goes when the Pi reaches NTP.
 
-## Phase 6 exit test — lumine, 2026-11-02 — **PARTIAL: the CA switch and the public name PASS (6 fixes); the Tailscale mode is blocked by the owner's `tailscale serve`**
+## Phase 6 exit test — lumine, 2026-11-02 — **PASS except Wi-Fi: the CA switch, the public name, and the Tailscale mode; both exit criteria (10 fixes, waves 8 and 8-ts)**
 
 Wave 8. The merged tree (`e130030`, Phases 5 and 6 with the review fixes and S52) on lumine, from the Phase 4 state
 (agent `137057a`, lock 2026.11.1 `stable`, 4 backup destinations). One agent ran the test; it was the only agent on lumine.
 The agent binary is `make build-linux` (with the console); each fix went to lumine before the next step (last binary
 `e130030-dirty`, sha256 `b3787278…`: `e130030` and the 6 fixes). Scripts and raw output: `local/wave8-p6/` (S39).
+
+**Wave 8-ts** (the same day, 15:32–16:16 IST): the owner's go-ahead to remove the stale `tailscale serve` of lumine (keep the
+login, keep `tls.tailscale.manage_daemon: false`). The agent of `main` (`55b57e5` = `36a861d` with the record; the dry run
+had no changes), then 4 fixes, each deployed before the next step (last binary `85d5d3b`, sha256 `0570c063…`). Scripts and
+raw output: `local/wave8-ts/` (S39); screenshots in the session files (`wave8-ts-shots/`, `wave8-ts-shots-final/`).
+lumine had rebooted at about 15:25 before the wave (not by the test): `care-backup-db@usb` had failed again (the loop
+device); `losetup` and a start of the unit, then `usb` is `ok`.
 
 **Deviations from the plan.**
 
@@ -1654,14 +1661,18 @@ The agent binary is `make build-linux` (with the console); each fix went to lumi
 - **The Mac and the LAN.** The Mac was on the LAN of lumine (`192.168.165.149`), but each process of the agent runtime got
   `No route to host` for LAN addresses (macOS Local Network privacy); `tailscaled` itself had a direct path to
   `192.168.165.91:41641`. So the checks of LAN addresses ran on lumine itself, or through the ssh tunnel and
-  `local/wave8-p6/proxy.mjs` (wave 4c pattern; the proxy also maps the public name).
+  `local/wave8-p6/proxy.mjs` (wave 4c pattern; the proxy also maps the public name). In wave 8-ts the Mac was **not** on
+  the LAN of lumine: it reached lumine only through the tailnet (`100.127.72.71` → `100.67.15.72`), so it stands in for the
+  phone on mobile data; the public name ran through the ssh tunnel (`--connect-to`) or through `100.67.15.72` with its SNI.
 - **`tailscale serve` of the owner.** `tailscale serve status --json` on lumine has `TCP 443` for the node
   (`lumine.orthrus-bass.ts.net:443 → http://10.43.99.23:8080`) and a Tailscale Service `svc:care-box`. `tailscaled`
   listens on `100.67.15.72%tailscale0:443`; a bind of `100.67.15.72:443` gives `EADDRINUSE` (80 and 8443 are free). A pod
   with `PublishPort=100.67.15.72:443:443` cannot start, and all of Care stops with it. The owner's serve stays (guardrail),
-  so the Tailscale mode did not run on lumine (fix 3 makes the job refuse it).
+  so the Tailscale mode did not run on lumine in wave 8 (fix 3 makes the job refuse it). **Wave 8-ts:** the owner decided to
+  remove it: `sudo tailscale serve reset` was the only change of the Tailscale state (no `up`, `down`, `logout`).
 - S52 on hardware and the plan sections 5–7 (Wi-Fi and the cable pull, the offline fallback, the fresh device) and F7 (the
-  name constraints in the browsers) did not run.
+  name constraints in the browsers) did not run. No real phone: the Mac on the tailnet (Chromium and WebKit with the system
+  trust only) is the phone on mobile data.
 
 | # | Criterion | Result |
 |---|---|---|
@@ -1670,26 +1681,36 @@ The agent binary is `make build-linux` (with the console); each fix went to lumi
 | 2 | Public name, staging | **PASS with fix 1** — `tls public enable --hostname-hint lumine --acme-ca <staging>`: `dns-register` gave **`lumine-ooyb`**, `dns-address`, `write-config`, the apply (secrets, 7 files, the DNS timer, `cutover` for `care_multihost_files_be`: Care down **60.5 s**). Caddy did not get the new config: the cutover restarts only beat, worker, and api (fix 1). A manual restart of care-caddy: the staging certificate 15 s later (DNS-01 through acme-dns: 8 s to `valid`). `dig @1.1.1.1` and `@8.8.8.8`: `192.168.165.91`, TTL 60. `GET /tls`: `issuer (STAGING) Artificial Amaranth YE1`, `staging: true`, `issued`, `primary: false`. Port 80: `308` to the same host (M2). `https://lumine-ooyb…/ping/`: 200 with `-k` (on lumine, and from the Mac through the tunnel with that SNI); curl 60 without `-k`. HSTS on the public name only. `CURRENT_DOMAIN`, `BUCKET_EXTERNAL_ENDPOINT`: the public name; `DJANGO_ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS` have it. The multihost plug is on (`source: auto`, `hostname_count: 2`). Timer active |
 | 3 | Public name, production (the same id after the switch) | **PASS with fixes 4, 5, 6** — `tls public enable --acme-ca ""` on **`lumine-shaj`** reloaded Caddy, and Caddy kept the staging certificate: no order in 5 min (fix 5). With fix 5: back to staging (2 s, restart), then production: the certificate **17 s** after the switch, the job 18 s, the second apply sends port 80 to the name. Chain: leaf ← `YE2` ← `Root YE` ← `ISRG Root X2` ← `ISRG Root X1`, verify 0 against the system store; `GET /tls` `staging: false`, `issued`, `not_after 2027-01-31`, `primary: true`. `http://lumine.local/` → **`302` + `Cache-Control: no-store`** to `https://lumine-shaj.care-pi.rithviknishad.dev/`; `http://192.168.165.91/` → `308` to the same host. Origin check: a login with `Origin: https://lumine-shaj…:8443` passes the check (401 for a wrong password), a foreign origin gets 403. Browser, Chromium without a care-pi root (a dummy SPKI pin turns off `ignoreHTTPSErrors`; the Mac keychain has no care-pi root): `connectivity.spec.ts` (`PUBLIC_HINT=lumine`, read only: name, "Issued") **pass**; the negative control on `https://lumine.local:8443` fails with `ERR_CERT_AUTHORITY_INVALID`. `desktop.login.spec.ts` pass; `phone.ready.spec.ts` failed (a card moved: fix 6), then pass (WebKit ignores certificate errors in this config) |
 | 3b | File links across the names (criterion 2 with 2 names) | **PASS after an operator setting** — The lock 2026.11.1 of lumine (wave 6b, before Phase 6) gives the plug `ALLOWED_HOSTS *.local, *.ts.net`. The plug rewrites a link only when the canonical host also matches, so each link named the public name, also for a request on `lumine.local` (follow-up 1). `plugs set care_multihost_files_be --setting backend.ALLOWED_HOSTS=[…, "*.care-pi.rithviknishad.dev"] --apply`: path `restart`, 60 s (API down 55 s, no page). Then: an upload through the public name has a PUT link on the public name; through `lumine.local` on `lumine.local`. Each read link names the host of the request; the bytes of both new files and the file of wave 5 are equal through both names. A request on the IP address gets the canonical host |
-| 4 | Tailscale mode (the owner's login) | **BLOCKED** (`tailscale serve` of the owner on 443) — with `tls.tailscale.manage_daemon: false` (fix 2): `tailscale-install` installs nothing, no `tailscale up` ("tailscaled is connected"), `tailscale-login` sees `Running`, HTTPS on, then stops with `state-conflict` "tailscale serve (or funnel) uses the port 443 of 100.67.15.72" (fix 3), at once; no config change, no apply, Care up, the prefs of tailscaled unchanged (`CorpDNS true`, `AdvertiseServices [svc:care-box]`). **Partial check on hardware:** a probe container of the care-pi Caddy image (`localhost/care-pi/caddy:2`) with `tls { get_certificate tailscale }` and `/run/tailscale` on `100.67.15.72:8443`: from the Mac over the tailnet, `https://lumine.orthrus-bass.ts.net:8443/` 200, verify 0 without `-k`, chain `YE1` ← `Root YE` ← `ISRG Root X2`, HSTS, 0.15 s. Removed after the check |
-| 5 | "Phone on mobile data" (simulated: the Mac on Tailscale only) | **NOT RUN** (needs step 4). Only the probe above ran over the tailnet |
+| 4 | Tailscale mode (the owner's login), wave 8 | **BLOCKED** (`tailscale serve` of the owner on 443; wave 8-ts: rows 4a–4d) — with `tls.tailscale.manage_daemon: false` (fix 2): `tailscale-install` installs nothing, no `tailscale up` ("tailscaled is connected"), `tailscale-login` sees `Running`, HTTPS on, then stops with `state-conflict` "tailscale serve (or funnel) uses the port 443 of 100.67.15.72" (fix 3), at once; no config change, no apply, Care up, the prefs of tailscaled unchanged (`CorpDNS true`, `AdvertiseServices [svc:care-box]`). **Partial check on hardware:** a probe container of the care-pi Caddy image (`localhost/care-pi/caddy:2`) with `tls { get_certificate tailscale }` and `/run/tailscale` on `100.67.15.72:8443`: from the Mac over the tailnet, `https://lumine.orthrus-bass.ts.net:8443/` 200, verify 0 without `-k`, chain `YE1` ← `Root YE` ← `ISRG Root X2`, HSTS, 0.15 s. Removed after the check |
+| 4a | Wave 8-ts: the serve reset (the owner's go-ahead) | **PASS** — before (`local/wave8-ts/10-serve-reset.txt`): `TCP 443` of the node (`lumine.orthrus-bass.ts.net:443 → http://10.43.99.23:8080`) and the Service `svc:care-box` (`care-box.orthrus-bass.ts.net:443 → http://127.0.0.1:8080`). `sudo tailscale serve reset`: `serve status --json` is `{}`; it clears the handlers of the Service too. The pref `AdvertiseServices: [svc:care-box]` stays (a pref, not serve config: the node still advertises the Service, now without a handler; left as it is). tailscaled no longer listens on `100.67.15.72:443` and `[fd7a:…]:443`; nothing on 80, 443, 8443 of `100.67.15.72`; `BackendState: Running`; `CertDomains` unchanged (`lumine…`, `care-box…`) |
+| 4b | Wave 8-ts: Tailscale on (`manage_daemon: false`) | **PASS** — agent `55b57e5` (= `main`). Job **61 s**: `tailscale-install` installs nothing ("tailscaled is connected; no tailscale up"), `tailscale-login` (tailnet `rithviknishad.github`, HTTPS on, no serve port), `write-config`, the apply: 6 files (the Caddyfile with the site of the name, `get_certificate tailscale` on 443 and 8443; `care-caddy.container` with `/run/tailscale`; `care.pod` with `100.67.15.72:80/443/8443` and the wait; `backend.env`; the setup page; the firewall drop-in), `reload-firewall`, `full-cycle` (pod changed; the plug was already on, so no cutover). Care down **58.6 s**. `ss -ltnp`: conmon on `100.67.15.72:80/443/8443`; `ip_nonlocal_bind = 1`; `udp dport 41641 accept`. `GET /tls`: `tailscale {enabled, hostname lumine.orthrus-bass.ts.net, installed, backend_state Running, tailnet, ipv4 100.67.15.72, https_enabled, published}` (the contract has no certificate state for Tailscale: follow-up 10). Caddy lists the name for its automatic TLS; `get_certificate tailscale` asks tailscaled at the handshake (no log line). From the Mac, no `-k`: `/ping/` 200, verify 0, 59 ms; chain `CN=lumine.orthrus-bass.ts.net` ← `YE1` ← `Root YE` ← `ISRG Root X2` ← `ISRG Root X1` (the certificate that tailscaled has had since 2026-10-23, until 2027-01-21: no new order); HSTS; port 80 → `308` to the same host; the console HTML and `/_care-pi/status` on `:8443` 200. `DJANGO_ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS` have the name; `hostname_count 3`; the multihost plug on. The prefs of tailscaled are unchanged; no `up`, `down`, or `logout` in the journal |
+| 4c | Wave 8-ts: files over Tailscale (criterion 2) | **PASS; the presigned URL names the host of the request** — from the Mac (`30-files-ts.sh`): `POST /api/v1/files/` through the ts.net name gives `signed_url` on **`lumine.orthrus-bass.ts.net`**; `PUT` 1 MiB 200 in 0.16 s; `mark_upload_completed` 200; the `read_signed_url` of each name names that name; the bytes are equal through the ts.net name and the public name, both ways; the file of wave 5 through the ts.net name. The `--resolve` workaround was not needed (the operator `ALLOWED_HOSTS` of wave 8 and `*.ts.net` of the lock cover the names). Then fix 7 (the agent adds the names of the device) and the removal of the operator setting (fix 8: the first removal ran nothing): `ALLOWED_HOSTS = ["*.local", "*.ts.net", "lumine-shaj.care-pi.rithviknishad.dev"]` (the lock list and the public name from the agent; 2 restarts, API down 55 s each); an upload through the ts.net name and through the public name, each read through the 3 names (`lumine.local` with the root of the agent): 6 of 6 equal, each link on the host of the request (`65-files-3names.txt`) |
+| 4d | Wave 8-ts: Tailscale off and on again | **PASS with fix 9** — off (agent `65ef0a1`): job 58 s, Care down 56.1 s; the site, the drop-in, `41641`, and the state file gone; tailscaled `Running`, prefs unchanged, no `down`/`logout`; 2 names, the plug on. But the plan was a restart (the rule "the pod only loses addresses" of a Wi-Fi failover), and the running pod kept `100.67.15.72:80/443/8443`: from the Mac, 443 gave a TLS alert (Caddy has no site for the name) and 80 an empty 200, and the owner's serve could not bind 443 (fix 9). On again from that pod: a restart only, Care down 55.6 s. Off with fix 9: `full-cycle`, job 69 s, Care down **63.9 s**, nothing on `100.67.15.72`, the Mac gets "connection refused". On again (the end state): `full-cycle`, job 60 s, Care down **57.7 s** |
+| 5 | "Phone on mobile data" (simulated: the Mac reaches lumine only through the tailnet) | **PASS** (wave 8-ts) — Playwright with `BASE_URL=https://lumine.orthrus-bass.ts.net:8443`, no proxy, no `CA_CERT`, Chromium with a dummy SPKI pin (system trust only): `connectivity.spec.ts` (read only: the public name `Issued`, the Tailscale name) pass, `desktop.login.spec.ts` pass, `phone.ready.spec.ts` (WebKit, iPhone 13) pass in 57 s. WebKit without `ignoreHTTPSErrors` (`43-webkit-trust.mjs`): `:443` and `:8443` 200 (TLS 1.3), the console login to the dashboard in 1.4 s, care_fe loads (`CARE`); the negative control `https://lumine.local:8443` fails ("The certificate for this server is invalid"). The dashboard showed the problem "The IP address changed." (fix 10); with fix 10 the 3 journeys pass again and show "No problems." |
 | 6 | Disable paths, the re-registration | **PASS** — Tailscale off with `manage_daemon: false`: no site, no publish, no firewall drop-in, no state file; `tailscale status` `Running`, prefs unchanged. `tls public rotate --new-key` (m1): new key and acme-dns credentials, restart of care-caddy, no `dns_client.key.pending`; the next signed request (the delete) worked. Public off (`lumine-ooyb`): job 72 s, plan `cutover` then `restart: care-caddy.service` (fix 1), Care down 61 s; `dns-delete`; `NXDOMAIN` at `@1.1.1.1` at the first check, 57 s after the delete; no site in the running Caddy; canonical host `lumine.local`; the plug off (`additional-plugs.json` `[]`); the timer, the secret, and `state/tls-public.json` gone; port 80 `308` to `https://lumine.local/`. Public on again: the new id **`lumine-shaj`**, the staging certificate **79 s** after the start (job 84 s, Care down 57 s, no manual step). End state: `lumine-shaj` in production |
 | 7 | Reboot with the public name on | **PASS** — SSH back in 32 s; `/ping/` 200 on the public name and on `lumine.local` **114 s** after the reboot command; boot 1 min 39 s, `multi-user.target` 9.0 s; `care-pod` active 11 s after the boot (no publish error); the certificate and the `302` stay; the DNS timer ran 2 min after the boot. The NetworkManager hook started `care.target` (apply, no full cycle). `systemctl --failed`: `care-backup-db@usb.service` (the loop device again, known) and one transient podman health-check unit of care-worker (status 1 while the worker started; podman behaviour) |
 | 8 | S52 on hardware | **Not run** (too invasive on a live box; the unit tests cover it) |
+| 7b | Wave 8-ts: reboot with the 3 names | **PASS** — the command at 16:07:28; the kernel at 16:07:44; sshd at 16:07:50 (**22 s**); tailscaled 16:07:51; `care-pod` active at 16:08:00 (`Result=success`, 0 restarts: no publish error, B1); the NetworkManager hook `apply complete` at 16:09:22 (no full cycle); `/ping/` 200 from the Mac on the ts.net name and on the public name (through `100.67.15.72`) **110 s** after the command; boot 1 min 37.7 s, `multi-user.target` 11.4 s. The pod publishes on `192.168.165.91` and `100.67.15.72` (80, 443, 8443); `41641` in the table; port 80 of `lumine.local` `302` (`no-store`) to the public name. `systemctl --failed`: `care-backup-db@usb` (the loop device, known) and one transient podman health check |
+| 9b | Wave 8-ts: regression after the reboot | **PASS** — `losetup`, the usb unit ok; `backup run --scope local-db --type incr` 2 s; the 4 destinations `ok`; `status` ok (its false note "the addresses changed": fix 10); `apply --dry-run` no changes; 15 care timers; `systemctl --failed` empty |
 | 9 | Phase 1–5 regression | **PASS** — `backup run --scope all` 34 s and `backup verify --scope all` 41 s, the 4 destinations `ok`; `update check`: target 2026.11.1 = the running lock (no update); `fe status`: `local`, `114c8add61551748`; `apply --dry-run`: no changes; `status`: ok; 15 care timers (12 backup, 2 update, 1 DNS); `systemctl --failed` empty |
 | — | Wi-Fi | **Not run** (owner choice) |
-| — | Exit criterion 1 | **Half**: a laptop on the LAN through the public name, without a warning and without the care-pi root: PASS. The phone through Tailscale: BLOCKED |
-| — | Exit criterion 2 | **Half**: file links between the public name and `lumine.local`: PASS. From Tailscale: BLOCKED |
+| — | Exit criterion 1 | **PASS**: a laptop on the LAN through the public name (wave 8) and the "phone" through Tailscale (wave 8-ts, the Mac only on the tailnet), without a warning and without the care-pi root |
+| — | Exit criterion 2 | **PASS**: file links between the public name, `lumine.local`, and the Tailscale name, each way (waves 8 and 8-ts) |
 
-### Fixes (each is one commit with a test; 1Password refused the signature, so they are staged, with one patch for each in `local/wave8-p6/patches/`)
+### Fixes (each with a test; 1–6 of wave 8: 1Password refused each signature during the wave, so they were staged, then committed signed together as `36a861d`; 7–10 of wave 8-ts: one signed commit each)
 
 | # | Symptom on lumine | Cause | Fix | Commit |
 |---|---|---|---|---|
-| 1 | Public name on: `wait-certificate` timed out; the running Caddy had no public site and no `/run/secrets/care-pi-acme-dns` | The plan of a backend-plug cutover dropped the restart of care-caddy (unit changed: the secret) and the Caddyfile reload; that cutover restarts only beat, worker, and api | After a cutover without a full-cycle reason, the plan restarts the other changed units (care-caddy, care-s3) and reloads a changed Caddyfile (`plan_test`, 3 cases) | staged (`0001-plan-cutover-restarts-other-units.patch`) |
-| 2 | The off job runs `tailscale down` and `tailscale logout`: the owner's device would leave the tailnet | The agent always manages tailscaled | `tls.tailscale.manage_daemon` (default `true`); `false`: no install, no `up`, no `down`, no `logout`; the job needs `Running` (schema, `docs/config.md`, `docs/connectivity.md` 4.3; `TestTailscaleUnmanaged`) | staged (`0002`) |
-| 3 | The Tailscale mode would publish `100.67.15.72:443`, which tailscaled holds for the owner's serve: the pod and all of Care would fail | No check of `tailscale serve` | The step `tailscale-login` reads `tailscale serve status --json` and stops with `state-conflict` when the node uses 80, 443, or 8443, before the config changes (`TestServePorts`, `TestTailscaleServePort`) | staged (`0003`) |
-| 4 | After the switch to production, the job said `certificate: issued` at once (the staging certificate) and the second apply rendered no redirect | `wait-certificate` counted each unexpired certificate | Without a staging directory, the job waits for `ca.ValidCert` (`TestPublicSwitchToProduction`) | staged (`0004`) |
-| 5 | Staging → production on the same name: Caddy reloaded and asked Let's Encrypt for nothing for 5 min | A reload keeps the staging certificate in the cache of Caddy | The unit of care-caddy has `Label=care-pi.acme-ca=<directory>` when `acme_ca` is set, so a switch restarts care-caddy (`TestACMEDirectoryInCaddyUnit`, golden `public-tailscale`) | staged (`0005`) |
-| 6 | `phone.ready.spec.ts` on the public name: the dashboard showed "cannot read the container health: podman ps …: exit code -1", "A required host check failed", "Synchronized: No"; 10 s later the card was smaller | A status read of a request that ended early had its commands killed, and the agent kept the result for 2 s for the next client | `Status` and `PublicStatus` do not keep a result when the context is done (`TestStatusNotKeptAfterCancel`) | staged (`0006`) |
+| 1 | Public name on: `wait-certificate` timed out; the running Caddy had no public site and no `/run/secrets/care-pi-acme-dns` | The plan of a backend-plug cutover dropped the restart of care-caddy (unit changed: the secret) and the Caddyfile reload; that cutover restarts only beat, worker, and api | After a cutover without a full-cycle reason, the plan restarts the other changed units (care-caddy, care-s3) and reloads a changed Caddyfile (`plan_test`, 3 cases) | `36a861d` |
+| 2 | The off job runs `tailscale down` and `tailscale logout`: the owner's device would leave the tailnet | The agent always manages tailscaled | `tls.tailscale.manage_daemon` (default `true`); `false`: no install, no `up`, no `down`, no `logout`; the job needs `Running` (schema, `docs/config.md`, `docs/connectivity.md` 4.3; `TestTailscaleUnmanaged`) | `36a861d` |
+| 3 | The Tailscale mode would publish `100.67.15.72:443`, which tailscaled holds for the owner's serve: the pod and all of Care would fail | No check of `tailscale serve` | The step `tailscale-login` reads `tailscale serve status --json` and stops with `state-conflict` when the node uses 80, 443, or 8443, before the config changes (`TestServePorts`, `TestTailscaleServePort`) | `36a861d` |
+| 4 | After the switch to production, the job said `certificate: issued` at once (the staging certificate) and the second apply rendered no redirect | `wait-certificate` counted each unexpired certificate | Without a staging directory, the job waits for `ca.ValidCert` (`TestPublicSwitchToProduction`) | `36a861d` |
+| 5 | Staging → production on the same name: Caddy reloaded and asked Let's Encrypt for nothing for 5 min | A reload keeps the staging certificate in the cache of Caddy | The unit of care-caddy has `Label=care-pi.acme-ca=<directory>` when `acme_ca` is set, so a switch restarts care-caddy (`TestACMEDirectoryInCaddyUnit`, golden `public-tailscale`) | `36a861d` |
+| 6 | `phone.ready.spec.ts` on the public name: the dashboard showed "cannot read the container health: podman ps …: exit code -1", "A required host check failed", "Synchronized: No"; 10 s later the card was smaller | A status read of a request that ended early had its commands killed, and the agent kept the result for 2 s for the next client | `Status` and `PublicStatus` do not keep a result when the context is done (`TestStatusNotKeptAfterCancel`) | `36a861d` |
+| 7 | (Follow-up 1 of wave 8.) With an old lock (`*.local`, `*.ts.net`), each file link named the public name, also on `lumine.local` and the ts.net name; lumine needed an operator setting | The plug rewrites a link only when a pattern of `ALLOWED_HOSTS` matches the host of the request and the canonical host | For a plug with `auto: when_multihost`, `render.PlugConfigs` adds each name of the device that no pattern matches (the `fnmatch` of the plug, no case; no IP addresses); the render, the plug views, and the plug planner agree; a list that covers the names does not change (no restart at the deploy). `TestPlugConfigsDeviceHosts`; goldens `public`, `public-tailscale`; `docs/solutions.md` 12.3, `docs/connectivity.md` 5, `docs/apply.md` | `0d8e8e5` |
+| 8 | `plugs set care_multihost_files_be --setting backend.ALLOWED_HOSTS=null --apply`: "path none", no job; `config.yaml` changed, the running plug kept the old list, and the next `apply --dry-run` showed the restart | `PlanChange` changed the settings of the choice in place (a pointer and maps of the config), so the config it compared with changed too: each change or removal of an existing operator value (backend or frontend) gave path none | Copy the settings of the choice before the change. On lumine: the removal is a `restart` (60 s). `TestPlugPlanExistingValue` | `65ef0a1` |
+| 9 | Tailscale off with `manage_daemon: false`: the running pod kept `100.67.15.72:80/443/8443` (a TLS alert on the name; the owner's serve could not bind 443) | The plan kept the running pod when `care.pod` only loses addresses (the Wi-Fi failover rule); tailscaled keeps its address in this mode | The shrink rule also needs that each dropped address is gone from the host: `netinfo.HostIPv4` → `plan.Input.HostAddrs`; a dropped publish of an address that is still there gives a full cycle. `TestPodShrinkOnly` (2 cases, a plan); `docs/apply.md`, `docs/connectivity.md` 4.3 | `db43a92` |
+| 10 | With the Tailscale mode on, the dashboard showed "The IP address changed.", `GET /network` `address_changed: true`, `care-pi status` "run care-pi apply", while apply had no changes | The flag compared the LAN addresses (never `tailscale0`) with each published address | `status.AddressChanged` leaves out the address of `tailscale0` now (a changed Tailscale address still counts); the CLI, `GET /status` flags, `GET /network`; the description of `address_changed` in the contract (no schema change; console types regenerated). `TestAddressChanged` | `85d5d3b` |
 
 ### Timings
 
@@ -1701,7 +1722,13 @@ The agent binary is `make build-linux` (with the console); each fix went to lumi
 | Staging → production on the same name (fix 5): switch → certificate / job | **17 s** / 18 s |
 | Multihost cutover (public on / public off) | Care down 60.5 s and 57 s / 61 s |
 | Multihost `ALLOWED_HOSTS` change (path `restart`) | 60 s (API down 55 s, no page) |
-| Tailscale on (refused by fix 3) / off (`manage_daemon: false`) | under 1 s / under 1 s |
+| Tailscale on (refused by fix 3) / off (`manage_daemon: false`), wave 8 | under 1 s / under 1 s |
+| Wave 8-ts: `tailscale serve reset` | under 1 s |
+| Wave 8-ts: Tailscale on (job / Care down, full cycle): first / end state | 61 s / 58.6 s; 60 s / 57.7 s |
+| Wave 8-ts: Tailscale off (job / Care down): before fix 9 (restart) / with fix 9 (full cycle) | 58 s / 56.1 s; 69 s / 63.9 s |
+| Wave 8-ts: a `PUT` of 1 MiB through the ts.net name (from the Mac) / `/ping/` | 0.16 s / 59 ms (TLS 40 ms) |
+| Wave 8-ts: reboot with 3 names: SSH / Care on the ts.net and public names / boot / `multi-user.target` | 22 s / 110 s / 1 min 37.7 s / 11.4 s |
+| Wave 8-ts: `backup run --scope local-db --type incr` | 2 s |
 | `rotate --new-key` | 2 s |
 | Public off: job / `NXDOMAIN` after the delete | 72 s / at the first check, 57 s (TTL 60) |
 | Reboot: SSH / Care on both names / boot / `multi-user.target` | 32 s / 114 s / 1 min 39 s / 9.0 s |
@@ -1714,22 +1741,29 @@ The agent binary is `make build-linux` (with the console); each fix went to lumi
 | `care-pi.service` (the agent: the switch jobs and 5 Playwright runs in one instance) | **110 MiB** (128M); 82.8 MiB in the next instance (wave 6b: 72.5 MiB) |
 | `care-caddy` (after the ACME order of id 1 / after the boot) | 98.5 MiB / 99.5 MiB (128M) |
 | `care-api` | 491 MiB (512M) |
+| Wave 8-ts: `care-pi.service` (in 3 min: 3 Playwright journeys over the tailnet after a restart) | **128 MiB = the cap** (`memory.events`: `max 3`, `oom 0`; the cgroup reclaimed page cache) |
+| Wave 8-ts: `care-caddy` (3 names, after the reboot and the browser runs) / `care-api` | 115.8 MiB (128M) / 377 MiB (512M) |
 
 ### Follow-ups (not fixed; the owner decides)
 
 1. **The multihost plug and the canonical public name.** The plug rewrites a link only when the canonical host matches
    `ALLOWED_HOSTS` too. The solution on `main` has `*.care-pi.rithviknishad.dev`; the lock of lumine (2026.11.1, made before
    Phase 6) did not, and each link named the public name, also on `lumine.local`. That works on a LAN with internet DNS,
-   but not offline (S36.3) and not from Tailscale. lumine has the operator setting now. Proposal: the agent adds the names
-   of the device to `ALLOWED_HOSTS` at the render, so a solution or an old lock cannot break it.
+   but not offline (S36.3) and not from Tailscale. **Done in wave 8-ts (fix 7):** the agent adds the names of the device
+   to `ALLOWED_HOSTS` at the render; lumine has no operator setting any more.
 2. **The Tailscale mode and an operator's `tailscale serve`.** care-pi needs 80, 443, and 8443 of the node. A host with a
    serve or funnel on one of them cannot use the mode (fix 3 refuses it). For lumine: the owner removes the serve
    (`tailscale serve reset`; its backend `10.43.99.23:8080` did not answer), then step 4, step 5, and the second half of
-   both exit criteria can run. Design option: let `tailscale serve` be the front of the Tailscale name (TLS by tailscaled,
-   a proxy to Caddy on a local port), or a Tailscale Service like `svc:care-box`; both live with other serve entries.
+   both exit criteria can run (**done in wave 8-ts**). Design option, still open for a host that keeps a serve: let
+   `tailscale serve` be the front of the Tailscale name (TLS by tailscaled, a proxy to Caddy on a local port), or a
+   Tailscale Service like `svc:care-box`; both live with other serve entries.
 3. **Console text**: the public card says "Port 80 of care.local …", "care.local and the IP addresses do not get HSTS",
    and "use care.local" with the fixed name; lumine is `lumine.local`. Use the local name of `GET /tls`.
-4. **The agent peak** was 110 MiB of its 128M cap in the instance with the switch jobs and 5 browser runs. Watch it.
+4. **The agent peak** was 110 MiB of its 128M cap in the instance with the switch jobs and 5 browser runs. In wave 8-ts it
+   reached the cap (`memory.events max 3`, no OOM) within 3 minutes of 3 browser journeys over the tailnet (logins,
+   status reads, the log follow). The cgroup counts the page cache and the child processes; measure the Go heap
+   (`VmHWM`, `GODEBUG=gctrace=1`) under the same load before a change of the cap. `care-caddy` reached 115.8 MiB of 128M
+   with 3 names (99.5 MiB with 2).
 5. **A new id costs a certificate** of the shared 50 each week (no renewal). Each "off and on" of the public name is one.
    The docs now say to switch the same name with `--acme-ca ""` after a staging test.
 6. The CLI prints each line of the inner apply twice in the jobs of Phase 6 (`    ==> x` and `==> x`); `state/tls-public.json`
@@ -1738,9 +1772,37 @@ The agent binary is `make build-linux` (with the console); each fix went to lumi
    section 7), F7 (`evil.example` in the browsers), M1 (an update while the certificate is pending), S52 on hardware.
 8. Test environment: macOS Local Network privacy blocked the LAN for the processes of the agent runtime, also on the same
    LAN; use the tunnel or run the check on the device.
+9. **Every client in the tailnet has the address `10.88.0.1`** (wave 8-ts; Caddy `remote_ip`, the request log of the
+   agent). tailscaled marks each packet that comes in on `tailscale0` and is forwarded (`0x40000` in `ts-forward`), and
+   `ts-postrouting` masquerades the marked packets; netavark's DNAT to the pod makes each request to `100.67.15.72` a
+   forwarded packet, so it leaves on `podman0` with the bridge address. LAN clients keep their address. So each limit of
+   one client address is shared by every device in the tailnet: 5 wrong console passwords lock the console for all of
+   them for 15 minutes, `GET /_care-pi/status` has 60 requests a minute for all of them, and the throttles of Care see one
+   client; the logs lose the client. Options: tailscaled with `--snat-subnet-routes=false` (an operator pref; with
+   `manage_daemon: false` not ours to set; to check that it removes this rule), a publish that is not a forward (Caddy in
+   the host network for the Tailscale address), or limits that know the bridge address. The owner decides.
+10. **`GET /tls` has no certificate state for the Tailscale name** (`TlsTailscale` has `https_enabled` and `published`
+    only). Caddy gets the certificate from tailscaled at the first handshake; when that fails (HTTPS certificates off
+    after the enrol, a tailscaled without the socket in the container), the console shows nothing. A probe of the name
+    (as `public.certificate`) would close it (a contract change).
+11. The plug view (`GET /plugs`, the console) shows the `ALLOWED_HOSTS` of the lock or of the operator, without the names
+    that the agent adds (fix 7); the effective list is in `rendered/care/additional-plugs.json`. Add a help line.
+12. After `tailscale serve reset`, the pref `AdvertiseServices: [svc:care-box]` of the owner stays: the node advertises the
+    Service without a handler. The owner can run `tailscale set --advertise-services=` (not done: the daemon is the
+    owner's).
+13. The dashboard skeleton is smaller than the Network card with 3 names (the cards below move by 84 px when the data comes;
+    42 px with 2 names). Cosmetic.
 
-lumine after the test: public name `lumine-shaj.care-pi.rithviknishad.dev` (production, until 2027-01-31), Tailscale mode
+lumine after wave 8: public name `lumine-shaj.care-pi.rithviknishad.dev` (production, until 2027-01-31), Tailscale mode
 off with `tls.tailscale.manage_daemon: false`, the owner's tailscaled and serve unchanged, the root `D5:12:73:DB:…:1A:44`,
 the multihost plug on (auto) with the operator `ALLOWED_HOSTS`, the 4 destinations `ok`. The registration `lumine-ooyb` is
 deleted. Leftovers: `~/wave8/` (scripts, logs, `api.py`), the Care files of the test (`w8-public`, `w8-local`, 4 files of
 `W5 Patient One`).
+
+**lumine after wave 8-ts (the end state):** agent `85d5d3b` (`main` with fixes 7–10); 3 names: the public name
+(production, primary), `lumine.local` (the root of the agent), and **`lumine.orthrus-bass.ts.net` (the Tailscale mode on,
+`manage_daemon: false`)**; the pod publishes on `192.168.165.91` and `100.67.15.72`; `41641/udp` in the table; no
+`tailscale serve` (reset with the owner's go-ahead; the login, the prefs, and `AdvertiseServices: [svc:care-box]` unchanged);
+the multihost plug on (auto) without an operator setting (`ALLOWED_HOSTS` = the lock list + the public name from the agent);
+the 4 destinations `ok`; `systemctl --failed` empty. Leftovers: `~/wave8ts/` (scripts, logs, the agent binary), 4 more Care
+files of `W5 Patient One` (`w8ts-tailscale`, `w8ts-public`, twice; 1 MiB each).

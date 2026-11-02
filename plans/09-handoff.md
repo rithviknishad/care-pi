@@ -760,11 +760,13 @@ Next step: a first boot of a fresh image on a Pi without internet: the claim, th
 then internet: the banner goes within 15 s of the NTP synchronization (`timedatectl show -p NTPSynchronized`).
 
 
-### 8o. Phase 6 exit test result (wave 8, 2026-11-02)
+### 8o. Phase 6 exit test result (waves 8 and 8-ts, 2026-11-02)
 
-**PARTIAL on lumine, with 6 fixes.** The CA switch and the public name pass; the Tailscale mode is blocked by the
-`tailscale serve` of the owner on port 443 of the node. The record is `08-spike-log.md`, "Phase 6 exit test — lumine,
-2026-11-02"; the raw output is `local/wave8-p6/`. lumine runs `e130030` with the 6 fixes (`e130030-dirty`).
+**PASS on lumine except Wi-Fi (owner choice), with 10 fixes; both exit criteria pass.** Wave 8 ran the CA switch and the
+public name and found the Tailscale mode blocked by the owner's `tailscale serve`; in wave 8-ts the owner removed that
+serve, and the Tailscale mode, its files, its browsers, off and on, a reboot, and the regression passed. The record is
+`08-spike-log.md`, "Phase 6 exit test — lumine, 2026-11-02"; the raw output is `local/wave8-p6/` and `local/wave8-ts/`.
+lumine runs `85d5d3b` (`main` with fixes 7–10).
 
 - **CA switch (S36).** The first apply of the merged agent made the name-constrained root (critical: `.local`,
   `.care-pi.rithviknishad.dev`, `192.168.165.0/24`) in 1 s, and restarted only care-caddy; Care kept running. The console
@@ -775,40 +777,55 @@ then internet: the banner goes within 15 s of the NTP synchronization (`timedate
   (`308` with staging, M2). Chromium without a care-pi root loads the console on the public name with no warning
   (`connectivity.spec.ts`, `desktop.login.spec.ts`; `phone.ready.spec.ts` in WebKit). Registration → certificate 79 s;
   the switch staging → production 17 s; each name change is a cutover of the multihost plug (Care down 57–61 s).
-- **Files.** With the public zone in `ALLOWED_HOSTS` of `care_multihost_files_be`, each link names the host of the
-  request, and a file uploaded through one name opens through the other. The lock of lumine (2026.11.1, made before
-  Phase 6) lacked the zone; lumine has it as an operator setting now.
-- **Tailscale.** With `tls.tailscale.manage_daemon: false` the job reuses the owner's login (no install, no `up`), and
-  then refuses the mode: tailscaled holds `100.67.15.72:443` for the serve of the owner, and a pod that publishes there
-  would not start. A probe with the Caddy image of care-pi (`get_certificate tailscale` on `100.67.15.72:8443`) gave the
-  Mac on the tailnet a valid certificate of `lumine.orthrus-bass.ts.net` without `-k`. Step 5 (the phone, simulated)
-  did not run.
-- **Disable, reboot, regression.** Tailscale off leaves tailscaled `Running`. Public off deletes the registration
-  (`NXDOMAIN` within 1 min), turns the plug off, and sends port 80 back to `lumine.local`. Reboot with the public name on:
-  Care on both names after 114 s. Phase 1–5: backup run and verify of the 4 destinations, update check, FE status, a dry
-  run with no changes.
+- **Tailscale (wave 8-ts).** `sudo tailscale serve reset` (the only change of the Tailscale state; it clears the handlers
+  of `svc:care-box` too, the pref `AdvertiseServices` stays). With `tls.tailscale.manage_daemon: false` the enrol job
+  reuses the owner's login (no install, no `up`): 61 s, one full cycle (the pod gets `100.67.15.72:80/443/8443`; Care down
+  58.6 s), 3 names. Caddy gets the certificate of `lumine.orthrus-bass.ts.net` from tailscaled (`YE1` ← `ISRG Root X2`/`X1`,
+  verify 0 on the Mac without `-k`). From the Mac, which reaches lumine only through the tailnet (the phone on mobile
+  data): Chromium and WebKit with the system trust only load the console and Care with no warning
+  (`connectivity.spec.ts`, `desktop.login.spec.ts`, `phone.ready.spec.ts`, a WebKit check without
+  `ignoreHTTPSErrors`; `lumine.local` fails as the negative control).
+- **Files.** Each presigned link names the host of the request: a 1 MiB file uploaded through the ts.net name opens through
+  the public name and `lumine.local`, and the reverse. With fix 7 the agent adds the names of the device to `ALLOWED_HOSTS`
+  of `care_multihost_files_be`, so lumine no longer needs the operator setting of wave 8 (removed; with fix 8).
+- **Disable, reboot, regression.** Tailscale off leaves tailscaled `Running` and its prefs unchanged; with fix 9 it frees the
+  ports of `100.67.15.72` (a full cycle, Care down 63.9 s); on again 57.7 s. Public off deletes the registration
+  (`NXDOMAIN` within 1 min). Reboot with 3 names: SSH 22 s, Care on the ts.net and public names 110 s, `care-pod` did not
+  fail (B1). Phase 1–5: backup runs and verify of the 4 destinations, update check, FE status, dry runs with no changes,
+  `systemctl --failed` empty.
 
-The fixes (staged; 1Password refused each signature; one patch for each in `local/wave8-p6/patches/`, in this order;
-to commit them: `git stash push --staged`, `git am -S local/wave8-p6/patches/000*.patch`, `git stash drop`):
+The fixes (each with a test):
 
 1. `plan`: a cutover of the backend plugs restarts the other changed units (care-caddy) and reloads a changed Caddyfile.
-   Without it, Caddy never got the public site.
 2. `tls.tailscale.manage_daemon` (default `true`): `false` never installs, connects, or disconnects tailscaled.
 3. The Tailscale job stops with `state-conflict` when `tailscale serve`/`funnel` uses 80, 443, or 8443 of the node.
 4. `wait-certificate` waits for a certificate of the configured directory (not the staging one after the switch).
-5. `care-caddy.container` has the label `care-pi.acme-ca`: a switch of the ACME directory restarts Caddy (a reload kept
-   the staging certificate).
-6. The agent does not keep the status read of a cancelled request (false problems for 2 s; `phone.ready` failed).
+5. `care-caddy.container` has the label `care-pi.acme-ca`: a switch of the ACME directory restarts Caddy.
+6. The agent does not keep the status read of a cancelled request.
+7. The agent adds each name of the device that no pattern matches to `ALLOWED_HOSTS` of a plug with
+   `auto: when_multihost` (`0d8e8e5`).
+8. A change or removal of an existing operator value of a plug planned "path none" and ran nothing (`65ef0a1`).
+9. The Tailscale mode off kept the publishes of the Tailscale address in the running pod (`db43a92`).
+10. With the Tailscale mode on, every status said "The IP address changed." (`85d5d3b`; the description of
+    `address_changed` in the contract, no schema change).
 
-Decisions of wave 8 (owner informed; override in `00` if wrong):
+Fixes 1–6 were staged in wave 8 (1Password refused each signature then) and are committed signed together as `36a861d`;
+7–10 are one signed commit each.
+
+Decisions of waves 8 and 8-ts (owner informed; override in `00` if wrong):
 
 - To keep 1 production certificate and end with a re-registered id in production, the re-registration ran with staging,
   and the production switch came after it.
 - `manage_daemon: false` stays in the `config.yaml` of lumine, so a later test cannot log the owner's device out.
 - A Tailscale serve conflict is `state-conflict` with a message (no new problem type, no contract change).
+- The owner removed the stale `tailscale serve` of lumine (wave 8-ts); the Tailscale mode stays **on** as the end state of
+  lumine, with the public name: 3 names.
+- The names of the device are always in `ALLOWED_HOSTS` of the multihost plug; an operator cannot remove them (fix 7).
+- The Tailscale mode off is a full cycle when tailscaled keeps its address (fix 9): about 60 s of downtime, as before.
 
-Next steps: (1) the owner decides the Tailscale front (remove the serve of lumine for the test, or the design of `08`
-follow-up 2), then steps 4 and 5 and the second half of both exit criteria; (2) commit the 6 fixes signed; (3) the agent
-adds the names of the device to `ALLOWED_HOSTS` of the multihost plug (follow-up 1); (4) the console names the local name
-of the device on the public card (follow-up 3); (5) Wi-Fi and the cable pull, the offline fallback, a fresh device in
-public mode, F7, when the owner wants them.
+Next steps: (1) every client in the tailnet has the address `10.88.0.1` (the masquerade of tailscaled on forwarded
+packets): the per-address limits of the console and of Care are shared by the tailnet (`08` follow-up 9; an owner
+decision); (2) the agent reached its 128M cap during 3 browser journeys (no OOM; `08` follow-up 4); (3) the console names
+the local name of the device on the public card (follow-up 3) and a certificate state for the Tailscale name (follow-up
+10); (4) a real phone on mobile data, Wi-Fi and the cable pull, the offline fallback, a fresh device in public mode, F7,
+S52 on hardware, when the owner wants them; (5) the design for a host that keeps its own `tailscale serve` (follow-up 2).

@@ -111,14 +111,16 @@ Deliverables:
 Exit: a phone on mobile data (Tailscale) and a laptop on the clinic LAN (public
 name) both use the same Care without warnings; file links work from both.
 
-Status (2026-11-02): **the Phase 6 exit test ran on lumine, partly** (wave 8, `08-spike-log.md` "Phase 6 exit test —
-lumine, 2026-11-02", `09-handoff.md` §8o; 6 fixes, staged because 1Password refused the signatures). PASS: the one-time
-switch to the name-constrained root (1 s, Care kept running), the public name with the live DNS service (staging, then 1
-production certificate of Let's Encrypt; a laptop browser without a care-pi root has no warning), file links across the
-public name and `lumine.local`, the disable paths, a new id, a reboot, and the Phase 1–5 regression. BLOCKED: the Tailscale
-mode, because the owner's `tailscale serve` holds port 443 of the node (the job now refuses it; a probe showed that Caddy gets
-the certificate of tailscaled). Not run: Wi-Fi (owner), the offline fallback, a fresh device, F7. So exit criterion 1 and 2
-pass for the laptop on the LAN and wait for the Tailscale front (an owner decision).
+Status (2026-11-02): **the Phase 6 exit test is complete on lumine, except Wi-Fi (owner choice)** (waves 8 and 8-ts,
+`08-spike-log.md` "Phase 6 exit test — lumine, 2026-11-02", `09-handoff.md` §8o). Wave 8 (6 fixes): the one-time switch to
+the name-constrained root (1 s, Care kept running), the public name with the live DNS service (staging, then 1 production
+certificate of Let's Encrypt), file links across the public name and `lumine.local`, the disable paths, a new id, a reboot,
+and the Phase 1–5 regression. Wave 8-ts (the owner removed the stale `tailscale serve` of lumine; 4 fixes): the Tailscale
+mode with the owner's login (`manage_daemon: false`), 3 names; from a Mac on the tailnet with the system trust only
+(Chromium and WebKit), the console and Care load without a warning; a file uploaded through each of the 3 names opens
+through the other 2; off and on again, a reboot, the regression. **Both exit criteria pass** (the phone on mobile data is
+simulated: a Mac that reaches lumine only through the tailnet). Not run: Wi-Fi and the cable pull (owner), the offline
+fallback, a fresh device in public mode, F7, S52 on hardware, and a real phone on mobile data.
 
 ## Phase 7 — Hardening and breadth · size M
 
@@ -178,10 +180,10 @@ build, and `care-firstboot.service`; `os_list.json` for Imager 2.x (`init_format
 boot, and setup mode from the pre-pulled images. Open: the boot and the exit test on a Pi 5 and a Pi 4 (`docs/image.md`
 §9), the clock gate without internet (an owner decision, `docs/image.md` §10 point 5), a QEMU boot in CI, and the first
 run of `pi-image.yml` on GitHub. The clock gate decision is S52 (browser time at the claim), to implement next.
-**Phase 6 code is complete; its exit test ran on lumine, partly** (wave 8, 2026-11-02; the DNS/ACME service is live at
-`https://care-pi.rithviknishad.dev`). The CA switch, the public name (staging, then production), files across 2 names,
-the disable paths, the reboot, and the Phase 1–5 regression pass with 6 fixes (`08` "Phase 6 exit test — lumine",
-`09-handoff.md` §8o). The Tailscale mode waits for an owner decision (the serve of the owner on port 443 of lumine);
-Wi-Fi did not run (owner choice).
+**Phase 6 code is complete, and its exit test is complete on lumine except Wi-Fi (owner choice)** (waves 8 and 8-ts,
+2026-11-02; the DNS/ACME service is live at `https://care-pi.rithviknishad.dev`). The CA switch, the public name (staging,
+then production), the Tailscale mode (after the owner removed the stale `tailscale serve` of lumine), files across the 3
+names, the disable paths, the reboots, and the Phase 1–5 regression pass with 10 fixes (`08` "Phase 6 exit test — lumine",
+`09-handoff.md` §8o). Not run: Wi-Fi and the cable pull, the offline fallback, a fresh device, F7, S52 on hardware.
 The remaining open questions (`00` §C: O4, O6 plug set, O7 upstream PR timing, O9, O11, O12,
 O13, O16, O17) each become blocking only in the phase noted there.
