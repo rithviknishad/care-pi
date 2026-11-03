@@ -395,3 +395,42 @@ func TestFirewallPendingFile(t *testing.T) {
 		}
 	}
 }
+
+// TestFirewallAllowPorts (S64): each entry of security.firewall.allow_ports is one rule after the rules of care-pi, in
+// the boot file of a trial too; the comment keeps only [A-Za-z0-9 ._-]. The Tailscale mode does not open all of
+// tailscale0.
+func TestFirewallAllowPorts(t *testing.T) {
+	tree, _ := fixture(t, "hardened")
+	for _, p := range []string{paths.FirewallFile, paths.FirewallPendingFile} {
+		table := string(tree[p].Content)
+		for _, want := range []string{
+			"    iifname \"eth0\" tcp dport 9100 accept comment \"node exporter avocado\"\n",
+			"    iifname \"tailscale0\" tcp dport 9256 accept comment \"process exporter\"\n",
+			"    udp dport 51820 accept\n",
+			"    udp dport 41641 accept\n",
+		} {
+			if !strings.Contains(table, want) {
+				t.Errorf("%s has no %q:\n%s", p, want, table)
+			}
+		}
+		if strings.Index(table, "allow_ports") < strings.Index(table, "podman*") {
+			t.Errorf("%s: the extra ports must come after the rules of care-pi:\n%s", p, table)
+		}
+		if strings.Contains(table, "iifname \"tailscale0\" accept") {
+			t.Errorf("%s: the Tailscale mode must not accept all input on tailscale0:\n%s", p, table)
+		}
+	}
+	if tree, _ := fixture(t, "small-clinic"); strings.Contains(string(tree[paths.FirewallFile].Content), "allow_ports") {
+		t.Error("without allow_ports, the table has no extra rule")
+	}
+	for in, want := range map[string]string{
+		`node "exporter"; drop`: "node exporter drop",
+		" a.b_c-d 9 ":           "a.b_c-d 9",
+		"übung\n\\":             "bung",
+		"":                      "",
+	} {
+		if got := NFTComment(in); got != want {
+			t.Errorf("NFTComment(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

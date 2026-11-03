@@ -1736,6 +1736,12 @@ MagicDNS name must end in `.ts.net`. A control server that gives no certificate 
 `rollback_reason`). The console sends the confirmation from Security > Firewall, so the request itself shows that the
 console works through the new rules. Detail: `docs/console-server.md` section 13.
 
+Contract 0.8.1 (S64): `security.firewall.allow_ports` (config, up to 32 entries `{port, proto, iface, comment}`) adds
+extra ports to the table, for example an exporter of the host. A change is a config write with `apply=true`, as each
+other key (plan action `reload-firewall`). A port that care-pi already accepts gets `422 invalid-config` with the message
+"… is already allowed by care-pi". `FirewallState.allow_ports` (schema `FirewallAllowPort`, `proto` with its default)
+lists them. CLI: `care-pi firewall allow add|remove|list`.
+
 ### 17.3 A new root CA
 
 `POST /tls/local-ca/rotate` (reauthentication; no longer `x-phase: 7`) starts the job `tls-local-ca-rotate` (apply lock;
@@ -1783,3 +1789,10 @@ All changes are additive.
   `telemetry.interval_s` (section 17.5).
 - The config keys `security.waf.enabled`, `security.waf.mode`, `security.waf.paranoia` (section 17.6).
 - `GET /doctor`, the schemas `DoctorReport`, `DoctorCheck`, `DoctorStatus` (section 17.7).
+
+### 17.10 Changes of contract 0.8.1
+
+All changes are additive.
+
+- The config key `security.firewall.allow_ports` (S64, section 17.2).
+- `FirewallState.allow_ports` and the schema `FirewallAllowPort` (section 17.2).

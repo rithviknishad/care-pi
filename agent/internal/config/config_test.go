@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -294,5 +295,57 @@ func TestWithFirewallPolicy(t *testing.T) {
 	c, err = Parse(data, "default")
 	if err != nil || c.Security.Firewall.Policy != "accept" || !c.Security.SSH.Allow {
 		t.Fatalf("defaults: %+v %v", c.Security, err)
+	}
+}
+
+// S64: security.firewall.allow_ports.
+func TestAllowPorts(t *testing.T) {
+	base := "version: 1\nsecurity:\n  firewall:\n    policy: drop\n    allow_ports:\n"
+	ok, err := Parse([]byte(base+`      - {port: 9100, proto: tcp, iface: tailscale0, comment: "node exporter"}
+      - {port: 9100, iface: eth0}
+      - {port: 9256}
+      - {port: 5353, proto: tcp}
+      - {port: 22, iface: tailscale0}
+`+"  ssh: {allow: false}\n"), "ok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ap := ok.Security.Firewall.AllowPorts
+	if len(ap) != 5 || ap[0].Iface != "tailscale0" || ap[0].Comment != "node exporter" || ap[2].Protocol() != "tcp" {
+		t.Fatalf("allow_ports: %+v", ap)
+	}
+	cases := map[string]string{
+		"      - {port: 443}\n":                                                "443/tcp is already allowed by care-pi (Care and the console)",
+		"      - {port: 8443, iface: eth0}\n":                                  "8443/tcp is already allowed by care-pi",
+		"      - {port: 5353, proto: udp}\n":                                   "5353/udp is already allowed by care-pi (mDNS)",
+		"      - {port: 22}\n":                                                 "22/tcp is already allowed by care-pi (security.ssh.allow)",
+		"      - {port: 9100}\n      - {port: 9100, proto: tcp}\n":             "9100/tcp on each interface occurs more than once",
+		"      - {port: 0}\n":                                                  "/security/firewall/allow_ports/0/port",
+		"      - {port: 65536}\n":                                              "/security/firewall/allow_ports/0/port",
+		"      - {port: 9100, proto: sctp}\n":                                  "/security/firewall/allow_ports/0/proto",
+		"      - {port: 9100, iface: \"eth0\\\"; drop\"}\n":                    "/security/firewall/allow_ports/0/iface",
+		"      - {port: 9100, comment: \"" + strings.Repeat("x", 61) + "\"}\n": "/security/firewall/allow_ports/0/comment",
+		"      - {port: 9100, extra: 1}\n":                                     "/security/firewall/allow_ports/0",
+	}
+	for in, want := range cases {
+		_, err := Parse([]byte(base+in), "case")
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: want %q, got %v", in, want, err)
+		}
+	}
+	ts := "version: 1\ntls:\n  tailscale: {enabled: true, hostname: care.tail1234.ts.net}\nsecurity:\n  firewall:\n    allow_ports:\n      - {port: 41641, proto: udp}\n"
+	if _, err := Parse([]byte(ts), "ts"); err == nil || !strings.Contains(err.Error(), "41641/udp is already allowed by care-pi (the Tailscale mode)") {
+		t.Errorf("41641/udp in the Tailscale mode: %v", err)
+	}
+	if _, err := Parse([]byte(strings.Replace(ts, "enabled: true, hostname: care.tail1234.ts.net", "enabled: false", 1)), "no ts"); err != nil {
+		t.Errorf("41641/udp without the Tailscale mode: %v", err)
+	}
+	var many strings.Builder
+	many.WriteString(base)
+	for i := range MaxAllowPorts + 1 {
+		fmt.Fprintf(&many, "      - {port: %d}\n", 10000+i)
+	}
+	if _, err := Parse([]byte(many.String()), "many"); err == nil || !strings.Contains(err.Error(), "/security/firewall/allow_ports") {
+		t.Errorf("%d entries: %v", MaxAllowPorts+1, err)
 	}
 }

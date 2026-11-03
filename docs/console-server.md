@@ -515,6 +515,7 @@ port. Without the unit (`install.sh --no-firewall`, ufw, or firewalld), the drop
 | 5353/udp (mDNS) | accept | accept |
 | 41641/udp (tailscaled) | accept in the Tailscale mode | the same |
 | 53 (tcp, udp) on `podman*` (aardvark-dns of a podman network) | accept | accept |
+| `security.firewall.allow_ports` (S64), one rule each | accept | accept |
 | other input | accept | drop |
 
 The forward and output chains are not in the table. The pod publishes 80, 443, and 8443 with DNAT (netavark), so these
@@ -522,6 +523,25 @@ packets pass the forward hook, not the input hook. A check in Docker (`debian:tr
 of the golden case `hardened`, policy `drop`) showed: a container reaches the internet (DNS and HTTPS), a published port
 answers a client on another host (HTTP 200), a port of the host outside the allow-list times out, and
 `nft 'chain inet care-pi input { policy accept ; }'` opens it again at once. NTP replies are `established`.
+
+**Extra ports (S64).** `security.firewall.allow_ports` lists the other services of the host that the policy `drop` must
+keep open, for example a node_exporter: up to 32 entries `{port, proto, iface, comment}` (`docs/config.md`). Each entry
+is one rule after the rules of care-pi: `iifname "<iface>" <proto> dport <port> accept comment "<comment>"` (without
+`iifname` when `iface` is not set). The comment keeps only `[A-Za-z0-9 ._-]`. The validation refuses a port that the
+table already accepts ("already allowed by care-pi") and a second entry with the same port, protocol, and interface.
+The policy `accept` has the rules too; they change nothing then. The boot file of a trial (policy `accept`, step 0
+below) has them too.
+
+**The tailnet (S64).** The table has no rule that accepts all input on `tailscale0`. tailscaled itself works with the
+policy `drop` (checked on lumine, tailscaled 1.104.4, with new connections from a peer): its peer API (a TCP port that
+tailscaled selects at each start, on lumine `100.67.15.72:49126`) answers, because tailscaled serves the connections of
+the peers to it in its own network stack, so they never get to the input hook (`ss` shows no kernel socket for them);
+MagicDNS (`100.100.100.100`) and `tailscale status` work (the replies are `established`), and 41641/udp is open in the
+Tailscale mode. Only the other services of the host that listen on the Tailscale address (on lumine, the exporters on
+9100 and 9256) time out. Add each one to `allow_ports` with `iface: tailscale0`. A rule for all of `tailscale0` (the
+advice of Tailscale for ufw: `ufw allow in on tailscale0`) was rejected: with the default policy of a tailnet (each
+device reaches each device), it opens each service of the host to each device of the tailnet, so the policy `drop`
+would be `accept` on the tailnet.
 
 **Config.** `security.firewall.policy: accept|drop` (default `accept`, so an existing host does not change) and
 `security.ssh.allow` (default `true`). `install.sh --firewall-drop` writes `drop` for a new install (it asks first when
@@ -553,8 +573,10 @@ The agent does not start the timer when the unit is not active (the table is not
 window (for example a new Tailscale rule) loads the pending table again and keeps the timer. A later load of a
 confirmed `drop` table loads `care-pi.nft` and starts no timer. A switch back to `accept` stops a running timer.
 
-**CLI.** `care-pi firewall status [--json]`, `policy accept|drop`, `allow-ssh true|false` (each writes `config.yaml` and
-applies, as `care-pi config set … --apply`), `confirm`, `rollback`, and `boot-check` (hidden; the drop-in runs it).
+**CLI.** `care-pi firewall status [--json]`, `policy accept|drop`, `allow-ssh true|false`, `allow add PORT[/PROTO]
+[--iface IF] [--comment TEXT]`, `allow remove PORT[/PROTO] [--iface IF]` (each writes `config.yaml` and applies, as
+`care-pi config set … --apply`), `allow list [--json]`, `confirm`, `rollback`, and `boot-check` (hidden; the drop-in
+runs it). The console has the extra ports in Security > Firewall, in the same change as the policy.
 
 ## 14. Phase 7: the privileged helper (`04` §2)
 

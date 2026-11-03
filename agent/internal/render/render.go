@@ -260,7 +260,7 @@ func renderFirewall(t *template.Template, m *Model, tree Tree) error {
 		if err := put(paths.FirewallPendingFile, m); err != nil {
 			return err
 		}
-		boot.Firewall = FirewallModel{Policy: "accept", SSH: m.Firewall.SSH, Waits: true}
+		boot.Firewall = FirewallModel{Policy: "accept", SSH: m.Firewall.SSH, Waits: true, AllowPorts: m.Firewall.AllowPorts}
 	}
 	return put(paths.FirewallFile, &boot)
 }

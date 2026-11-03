@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/firewall"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/problem"
@@ -29,6 +30,16 @@ type FirewallState struct {
 	RolledBackAt *time.Time `json:"rolled_back_at"`
 	// RollbackReason is timeout or manual.
 	RollbackReason *string `json:"rollback_reason"`
+	// AllowPorts is security.firewall.allow_ports (S64), with the default proto.
+	AllowPorts []FirewallAllowPort `json:"allow_ports"`
+}
+
+// FirewallAllowPort is one entry of security.firewall.allow_ports (schema FirewallAllowPort).
+type FirewallAllowPort struct {
+	Port    int     `json:"port"`
+	Proto   string  `json:"proto"`
+	Iface   *string `json:"iface"`
+	Comment *string `json:"comment"`
 }
 
 // Firewall returns the firewall state.
@@ -41,11 +52,97 @@ func (s *Service) Firewall(ctx context.Context) (*FirewallState, error) {
 	st := firewall.Read(s.Paths)
 	out := &FirewallState{Policy: fw.Policy, LivePolicy: strPtr(st.Policy), SSHAllowed: fw.SSH,
 		UnitActive: firewall.UnitActive(ctx, s.Host), ConfirmedAt: st.ConfirmedAt, RolledBackAt: st.RolledBackAt,
-		RollbackReason: strPtr(st.RollbackReason)}
+		RollbackReason: strPtr(st.RollbackReason), AllowPorts: []FirewallAllowPort{}}
+	for _, a := range cfg.Security.Firewall.AllowPorts {
+		out.AllowPorts = append(out.AllowPorts, FirewallAllowPort{Port: a.Port, Proto: a.Protocol(), Iface: strPtr(a.Iface), Comment: strPtr(a.Comment)})
+	}
 	if st.PendingUntil != nil {
 		out.PendingUntil = st.PendingUntil
 	}
 	return out, nil
+}
+
+// allowPortsOf returns the entries of security.firewall.allow_ports of a config document (view file).
+func allowPortsOf(doc map[string]any) []any {
+	l, _ := section(section(doc, "security"), "firewall")["allow_ports"].([]any)
+	return l
+}
+
+func setAllowPorts(doc map[string]any, l []any) {
+	fw := section(section(doc, "security"), "firewall")
+	if len(l) == 0 {
+		delete(fw, "allow_ports")
+		return
+	}
+	fw["allow_ports"] = l
+}
+
+// allowPortKey returns the port, the proto (tcp when the key is not set), and the iface of an entry of a document.
+func allowPortKey(v any) (int, string, string) {
+	m, _ := v.(map[string]any)
+	port := 0
+	switch n := m["port"].(type) {
+	case int:
+		port = n
+	case int64:
+		port = int(n)
+	case uint64:
+		port = int(n)
+	case float64:
+		port = int(n)
+	}
+	proto, _ := m["proto"].(string)
+	if proto == "" {
+		proto = "tcp"
+	}
+	iface, _ := m["iface"].(string)
+	return port, proto, iface
+}
+
+// AddAllowPort adds a to security.firewall.allow_ports of a config document (care-pi firewall allow add). An entry
+// with the same port, proto, and iface stays; it gets the comment of a when a has one. AddAllowPort reports whether
+// the document changed. The validation of the config checks the entry.
+func AddAllowPort(doc map[string]any, a config.AllowPort) bool {
+	l := allowPortsOf(doc)
+	for _, v := range l {
+		if port, proto, iface := allowPortKey(v); port == a.Port && proto == a.Protocol() && iface == a.Iface {
+			m, _ := v.(map[string]any)
+			if a.Comment == "" || m["comment"] == a.Comment {
+				return false
+			}
+			m["comment"] = a.Comment
+			return true
+		}
+	}
+	e := map[string]any{"port": a.Port, "proto": a.Protocol()}
+	if a.Iface != "" {
+		e["iface"] = a.Iface
+	}
+	if a.Comment != "" {
+		e["comment"] = a.Comment
+	}
+	setAllowPorts(doc, append(l, e))
+	return true
+}
+
+// RemoveAllowPort removes the entries of security.firewall.allow_ports with port and proto from a config document
+// (care-pi firewall allow remove). A non-empty iface removes only the entry of that interface. It returns the number
+// of removed entries.
+func RemoveAllowPort(doc map[string]any, port int, proto, iface string) int {
+	var keep []any
+	n := 0
+	for _, v := range allowPortsOf(doc) {
+		p, pr, i := allowPortKey(v)
+		if p == port && pr == proto && (iface == "" || i == iface) {
+			n++
+			continue
+		}
+		keep = append(keep, v)
+	}
+	if n > 0 {
+		setAllowPorts(doc, keep)
+	}
+	return n
 }
 
 // FirewallConfirm stops the rollback timer of the policy drop (POST /security/firewall/confirm, care-pi firewall confirm).

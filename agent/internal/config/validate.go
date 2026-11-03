@@ -61,6 +61,47 @@ func (c *Config) check() []Detail {
 		}
 		dests[d.ID] = true
 	}
+	out = append(out, c.checkAllowPorts()...)
+	return out
+}
+
+// builtinPort returns why the table of care-pi already accepts proto to port on each interface, or "".
+// docs/console-server.md section 13 has the table.
+func (c *Config) builtinPort(port int, proto string) string {
+	switch {
+	case proto == "tcp" && (port == 80 || port == 443 || port == 8443):
+		return "Care and the console"
+	case proto == "udp" && port == 5353:
+		return "mDNS"
+	case proto == "tcp" && port == 22 && c.Security.SSH.Allow:
+		return "security.ssh.allow"
+	case proto == "udp" && port == 41641 && c.TLS.Tailscale.Enabled:
+		return "the Tailscale mode"
+	}
+	return ""
+}
+
+// checkAllowPorts refuses an entry of security.firewall.allow_ports that care-pi already accepts, and a duplicate.
+func (c *Config) checkAllowPorts() []Detail {
+	var out []Detail
+	seen := map[string]bool{}
+	for i, a := range c.Security.Firewall.AllowPorts {
+		proto := a.Protocol()
+		if why := c.builtinPort(a.Port, proto); why != "" {
+			out = append(out, Detail{Pointer: fmt.Sprintf("/security/firewall/allow_ports/%d/port", i),
+				Message: fmt.Sprintf("%d/%s is already allowed by care-pi (%s); remove this entry", a.Port, proto, why), Keyword: "not"})
+		}
+		key := fmt.Sprintf("%d/%s/%s", a.Port, proto, a.Iface)
+		if seen[key] {
+			on := "each interface"
+			if a.Iface != "" {
+				on = a.Iface
+			}
+			out = append(out, Detail{Pointer: fmt.Sprintf("/security/firewall/allow_ports/%d", i),
+				Message: fmt.Sprintf("%d/%s on %s occurs more than once", a.Port, proto, on), Keyword: "uniqueItems"})
+		}
+		seen[key] = true
+	}
 	return out
 }
 

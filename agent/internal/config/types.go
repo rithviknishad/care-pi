@@ -42,6 +42,31 @@ type Firewall struct {
 	// Policy is "accept" (the default, S42) or "drop" (the allow-list only). A switch to drop starts the rollback
 	// timer: without "care-pi firewall confirm" within 90 s, the policy goes back to accept.
 	Policy string `yaml:"policy" json:"policy"`
+	// AllowPorts are the extra ports that the table accepts after the rules of care-pi (S64), for example a
+	// node_exporter of the host. They matter only with the policy drop.
+	AllowPorts []AllowPort `yaml:"allow_ports,omitempty" json:"allow_ports,omitempty"`
+}
+
+// MaxAllowPorts is the maximum number of entries in security.firewall.allow_ports.
+const MaxAllowPorts = 32
+
+// AllowPort is one entry of security.firewall.allow_ports: the table accepts Proto to Port on Iface.
+type AllowPort struct {
+	Port int `yaml:"port" json:"port"`
+	// Proto is tcp (the default when empty) or udp.
+	Proto string `yaml:"proto,omitempty" json:"proto,omitempty"`
+	// Iface is the input interface (for example eth0, wlan0, tailscale0). Empty: each interface.
+	Iface string `yaml:"iface,omitempty" json:"iface,omitempty"`
+	// Comment goes into the rule as an nft comment, with only the characters [A-Za-z0-9 ._-].
+	Comment string `yaml:"comment,omitempty" json:"comment,omitempty"`
+}
+
+// Protocol returns Proto, or tcp when it is empty.
+func (a AllowPort) Protocol() string {
+	if a.Proto == "" {
+		return "tcp"
+	}
+	return a.Proto
 }
 
 // SSHSecurity is the SSH rule of the firewall.

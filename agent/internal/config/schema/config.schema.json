@@ -408,6 +408,37 @@
             "policy": {
               "description": "The input policy of the table inet care-pi. accept (default, S42) or drop (only the allow-list). A switch to drop starts a 90 s rollback timer: care-pi firewall confirm keeps it.",
               "enum": ["accept", "drop"]
+            },
+            "allow_ports": {
+              "description": "S64. Extra ports that the table accepts after the rules of care-pi, for example an exporter of the host. They matter only with the policy drop. A port that care-pi already accepts (80, 443, 8443/tcp, 5353/udp; 22/tcp with security.ssh.allow; 41641/udp in the Tailscale mode) is refused.",
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["port"],
+                "properties": {
+                  "port": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535
+                  },
+                  "proto": {
+                    "description": "Default tcp.",
+                    "enum": ["tcp", "udp"]
+                  },
+                  "iface": {
+                    "description": "The input interface, for example eth0, wlan0, or tailscale0. Not set: each interface.",
+                    "type": "string",
+                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,14}$"
+                  },
+                  "comment": {
+                    "description": "The comment of the rule. The table keeps only the characters A-Z, a-z, 0-9, space, '.', '_', and '-'.",
+                    "type": "string",
+                    "maxLength": 60
+                  }
+                }
+              }
             }
           }
         },

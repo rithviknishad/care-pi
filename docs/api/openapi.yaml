@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: care-pi agent API
-  version: 0.8.0
+  version: 0.8.1
   summary: The HTTP API between the care-pi agent and the console.
   description: |
     This document is the contract between the care-pi agent (`care-pi serve`) and the console.
@@ -692,6 +692,8 @@ paths:
         of the policy `drop`. Change the policy with `PATCH /config` (`security.firewall.policy`, `apply=true`): a switch
         to `drop` starts a timer of 90 s; `POST /security/firewall/confirm` stops it. Without the confirmation, the agent
         sets the policy to `accept` again (`docs/console-server.md` section 13).
+        Contract 0.8.1 (S64): `allow_ports`, the extra ports of `security.firewall.allow_ports`. Change them with
+        `PUT /config` or `PATCH /config` and `apply=true`.
       x-phase: 7
       x-cli: care-pi firewall status --json
       x-problems: [not-authenticated, not-implemented-in-this-version]
@@ -5724,7 +5726,7 @@ components:
       type: object
       additionalProperties: false
       description: The firewall table `inet care-pi` (Phase 7, `docs/console-server.md` section 13).
-      required: [policy, live_policy, ssh_allowed, unit_active, pending_until, confirmed_at, rolled_back_at, rollback_reason]
+      required: [policy, live_policy, ssh_allowed, unit_active, pending_until, confirmed_at, rolled_back_at, rollback_reason, allow_ports]
       properties:
         policy:
           type: string
@@ -5758,6 +5760,14 @@ components:
           type: [string, 'null']
           enum: [timeout, manual, null]
           description: '`timeout`: nobody confirmed within 90 s. `manual`: `care-pi firewall rollback`.'
+        allow_ports:
+          type: array
+          maxItems: 32
+          description: |
+            Contract 0.8.1 (S64). `security.firewall.allow_ports` of `config.yaml`: the extra ports that the table accepts
+            after the rules of care-pi. Empty when the key is not set.
+          items:
+            $ref: '#/components/schemas/FirewallAllowPort'
       examples:
         - policy: drop
           live_policy: drop
@@ -5767,6 +5777,33 @@ components:
           confirmed_at: null
           rolled_back_at: null
           rollback_reason: null
+          allow_ports:
+            - {port: 9100, proto: tcp, iface: tailscale0, comment: node exporter}
+    FirewallAllowPort:
+      type: object
+      additionalProperties: false
+      description: |
+        Contract 0.8.1 (S64). One entry of `security.firewall.allow_ports`: the table accepts `proto` to `port` on
+        `iface` (`config.schema.json` has the rules).
+      required: [port, proto, iface, comment]
+      properties:
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        proto:
+          type: string
+          enum: [tcp, udp]
+          description: '`tcp` when the key is not set.'
+        iface:
+          type: [string, 'null']
+          description: 'The input interface, for example `eth0`, `wlan0`, or `tailscale0`. `null`: each interface.'
+        comment:
+          type: [string, 'null']
+          maxLength: 60
+          description: The comment of the entry as `config.yaml` has it. The nft rule keeps only `[A-Za-z0-9 ._-]`.
+      examples:
+        - {port: 9256, proto: tcp, iface: tailscale0, comment: process exporter}
     SshSettings:
       x-phase: 7
       type: object

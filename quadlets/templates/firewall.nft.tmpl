@@ -41,5 +41,11 @@ table inet care-pi {
 {{- end}}
     # DNS of aardvark-dns for the containers on a podman network.
     iifname "podman*" meta l4proto { tcp, udp } th dport 53 accept
+{{- if .Firewall.AllowPorts}}
+    # security.firewall.allow_ports (S64): the other services of the host, also on tailscale0.
+{{- range .Firewall.AllowPorts}}
+    {{if .Iface}}iifname "{{.Iface}}" {{end}}{{.Proto}} dport {{.Port}} accept{{if .Comment}} comment "{{.Comment}}"{{end}}
+{{- end}}
+{{- end}}
   }
 }

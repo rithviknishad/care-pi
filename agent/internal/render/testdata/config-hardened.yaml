@@ -1,4 +1,5 @@
-# Phase 7: the hardening options together (the default-drop firewall without SSH, a Headscale control server).
+# Phase 7: the hardening options together (the default-drop firewall without SSH but with extra ports (S64), a
+# Headscale control server).
 version: 1
 identity:
   display_name: Sunrise Clinic
@@ -28,6 +29,12 @@ telemetry:
 uploads:
   max_body_mb: 200
 security:
-  firewall: {policy: drop}
+  firewall:
+    policy: drop
+    allow_ports:
+      - {port: 9100, proto: tcp, iface: eth0, comment: "node exporter (avocado)"}
+      - {port: 9256, iface: tailscale0, comment: process exporter}
+      - {port: 51820, proto: udp}
+      - {port: 22, iface: wlan0}
   ssh: {allow: false}
   waf: {enabled: true, mode: block, paranoia: 2}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,5 +75,23 @@ func TestUnitName(t *testing.T) {
 	}
 	if _, err := unitName("sshd"); err == nil {
 		t.Error("want an error for sshd")
+	}
+}
+
+// S64: care-pi firewall allow add|remove PORT[/PROTO].
+func TestParsePortProto(t *testing.T) {
+	for in, want := range map[string]string{"9100": "9100/tcp", "9100/tcp": "9100/tcp", "51820/udp": "51820/udp", "65535": "65535/tcp"} {
+		port, proto, err := parsePortProto(in)
+		if err != nil || fmt.Sprintf("%d/%s", port, proto) != want {
+			t.Errorf("%s: %d/%s %v", in, port, proto, err)
+		}
+	}
+	for _, in := range []string{"", "0", "65536", "x", "9100/sctp", "9100/", "-1/tcp", "9100/tcp/x"} {
+		if _, _, err := parsePortProto(in); exitcode.Code(err) != exitcode.BadInput {
+			t.Errorf("%q: want exit code 2, got %v", in, err)
+		}
+	}
+	if _, err := execute(t, "firewall", "allow", "add", "70000"); exitcode.Code(err) != exitcode.BadInput {
+		t.Fatalf("want exit code 2, got %v", err)
 	}
 }

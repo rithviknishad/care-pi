@@ -244,6 +244,14 @@ The table of the agent (`/etc/care-pi/rendered/firewall/care-pi.nft`, Phase 7, `
 after a change. With the Tailscale mode off, the rule goes. (Phase 6 used the drop-in `50-care-pi-tailscale.conf`; the
 next apply deletes it.)
 
+With the policy `drop`, tailscaled keeps working (S64, checked on lumine): its peer API (a TCP port on the Tailscale
+addresses that changes at each start) does not pass the input hook, because tailscaled serves those connections in its
+own network stack; MagicDNS and `tailscale status` work. The pod publishes Care on the Tailscale address with DNAT, so
+Care does not need a rule either. Another service of the host on the tailnet (on lumine, the exporters on 9100 and 9256
+that another node scrapes) needs an entry in `security.firewall.allow_ports` with `iface: tailscale0`
+(`docs/config.md`). The table has no rule for all of `tailscale0`: with the default policy of a tailnet, it would open
+each service of the host to each device of the tailnet (`docs/console-server.md` section 13).
+
 ### 4.3 Turn it on and off
 
 Console: Settings > Connectivity > Tailscale. CLI: `care-pi tls tailscale enable [--auth-key-stdin] [--control-url URL]`.
@@ -440,7 +448,7 @@ The Wi-Fi settings of the Raspberry Pi Imager are NetworkManager profiles too (f
 | `/var/lib/care-pi/state/wifi.json` | agent | The last state of the Wi-Fi job. |
 | `/var/lib/care-pi/state/pod-live.json` | agent | The published addresses of the pod that runs. |
 | `/etc/systemd/system/care-dns-update.{timer,service}` | apply | The address updates (public mode only). |
-| `/etc/systemd/system/care-pi-firewall.service.d/50-care-pi.conf`, `/etc/care-pi/rendered/firewall/care-pi.nft` | apply | The table of the agent (Phase 7); UDP 41641 in the Tailscale mode. |
+| `/etc/systemd/system/care-pi-firewall.service.d/50-care-pi.conf`, `/etc/care-pi/rendered/firewall/care-pi.nft` | apply | The table of the agent (Phase 7); UDP 41641 in the Tailscale mode; `security.firewall.allow_ports` (S64). |
 | `/etc/sysctl.d/50-care-pi.conf` | installer and apply | `net.ipv4.ip_nonlocal_bind = 1` (section 4.2). |
 
 ## 9. Troubleshooting

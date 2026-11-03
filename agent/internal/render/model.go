@@ -272,6 +272,29 @@ type FirewallModel struct {
 	// Waits is true in the boot file while the policy drop of config.yaml waits for its confirmation: the file
 	// then has the policy accept.
 	Waits bool
+	// AllowPorts is security.firewall.allow_ports (S64), one rule each, after the rules of care-pi.
+	AllowPorts []AllowPortRule
+}
+
+// AllowPortRule is one rule of security.firewall.allow_ports. Iface is "" for each interface; Comment has only the
+// characters [A-Za-z0-9 ._-] (NFTComment), or is "".
+type AllowPortRule struct {
+	Port    int
+	Proto   string
+	Iface   string
+	Comment string
+}
+
+// NFTComment keeps only the characters A-Z, a-z, 0-9, space, '.', '_', and '-' of s, so that the comment of an nft
+// rule needs no escape. It trims the spaces at the ends.
+func NFTComment(s string) string {
+	b := make([]rune, 0, len(s))
+	for _, r := range s {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == ' ' || r == '.' || r == '_' || r == '-' {
+			b = append(b, r)
+		}
+	}
+	return strings.TrimSpace(string(b))
 }
 
 // ACMEDNSSecret is the podman secret with secrets/acme_dns.json (the acmedns module of Caddy reads it as a file).
@@ -757,6 +780,9 @@ func FirewallOf(cfg *config.Config) FirewallModel {
 	f := FirewallModel{Policy: cfg.Security.Firewall.Policy, SSH: cfg.Security.SSH.Allow}
 	if f.Policy == "" {
 		f.Policy = config.DefaultFirewallPolicy
+	}
+	for _, a := range cfg.Security.Firewall.AllowPorts {
+		f.AllowPorts = append(f.AllowPorts, AllowPortRule{Port: a.Port, Proto: a.Protocol(), Iface: a.Iface, Comment: NFTComment(a.Comment)})
 	}
 	return f
 }
