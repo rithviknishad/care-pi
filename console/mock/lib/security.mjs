@@ -53,6 +53,36 @@ export function onApply(state, before, after) {
   if (policyOf(before) !== next || s.live === null) s.live = next;
 }
 
+// S64: the check of security.firewall.allow_ports of the agent (agent/internal/config/validate.go): a port that
+// care-pi already accepts gets 422 invalid-config. The JSON Schema rules stay with the agent.
+export function allowPortsProblem(file) {
+  const ssh = file.security?.ssh?.allow ?? true;
+  const ts = Boolean(file.tls?.tailscale?.enabled);
+  const errors = [];
+  (file.security?.firewall?.allow_ports ?? []).forEach((a, i) => {
+    const proto = a.proto ?? "tcp";
+    let why = null;
+    if (proto === "tcp" && [80, 443, 8443].includes(a.port)) why = "Care and the console";
+    else if (proto === "udp" && a.port === 5353) why = "mDNS";
+    else if (proto === "tcp" && a.port === 22 && ssh) why = "security.ssh.allow";
+    else if (proto === "udp" && a.port === 41641 && ts) why = "the Tailscale mode";
+    if (why)
+      errors.push({
+        pointer: `/security/firewall/allow_ports/${i}/port`,
+        message: `${a.port}/${proto} is already allowed by care-pi (${why}); remove this entry`,
+        code: "not",
+      });
+  });
+  if (!errors.length) return null;
+  return new Problem(
+    "invalid-config",
+    `${errors.length} value(s) do not match the JSON Schema or the rules of config.yaml.`,
+    {
+      errors,
+    },
+  );
+}
+
 function view(state) {
   tick(state);
   const s = sec(state);
@@ -65,6 +95,12 @@ function view(state) {
     confirmed_at: s.confirmedAt,
     rolled_back_at: s.rolledBackAt,
     rollback_reason: s.reason,
+    allow_ports: (state.file.security?.firewall?.allow_ports ?? []).map((a) => ({
+      port: a.port,
+      proto: a.proto ?? "tcp",
+      iface: a.iface ?? null,
+      comment: a.comment ?? null,
+    })),
   };
 }
 

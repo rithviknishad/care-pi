@@ -1,6 +1,6 @@
 // Status, network, host check, config, apply, FE, Care, and power routes of the mock.
 
-import { onApply } from "./security.mjs";
+import { allowPortsProblem, onApply } from "./security.mjs";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -433,6 +433,8 @@ function configWrite(ctx, nextFile) {
       errors: [{ pointer: "/version", message: "must be 1", code: "const" }],
     });
   }
+  const badPorts = allowPortsProblem(nextFile);
+  if (badPorts) throw badPorts;
   const badBackups = Array.isArray(nextFile.backups?.destinations)
     ? validateDestinations(nextFile.backups.destinations)
     : null;
