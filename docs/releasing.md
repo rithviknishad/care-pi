@@ -39,6 +39,12 @@ skip the backups, and the agent compares it with `min_agent_version` of a lock (
      release of any kind (a bundle).
 4. Check the release: `curl -fsSL https://github.com/rithviknishad/care-pi/releases/latest/download/SHA256SUMS`.
 
+A patch release (for example `v0.1.1`) has the same steps. The notes of the workflow list the commits; the summary of
+the release (the fixes and the decisions) is in `plans/09-handoff.md` (`v0.1.1`: §8s). To put the summary at the top of
+the notes, run `gh release edit vX.Y.Z --notes-file <file>` with the summary and the generated notes after the workflow.
+A device on an older agent gets the new version with the installer: `install.sh --version vX.Y.Z` (the binary, and a
+restart of the agent and the helper).
+
 The installer downloads `releases/download/<tag>/` with `--version <tag>`, else `releases/latest/download/`
 (`docs/install.md`, "Agent download"). Every other workflow makes its releases with `--latest=false`, so "latest" is
 always an agent release. `installer/test-download.sh` (a step of `ci.yml`) checks that the URLs and the file names of

@@ -2113,3 +2113,22 @@ release with the fixes; then `install.sh --version v0.1.1` puts lumine on a rele
 The Phase 1 fresh-flash test (`curl | sh` on a new Pi OS: ghcr pulls, the reboot-required cgroup path, the host name
 `care` and a collision), the Phase 5 image with Imager on a Pi 5 and a Pi 4 (no internet, S52 clock), Wi-Fi and the cable
 pull, a real phone on mobile data, F7, and DR to a second Pi.
+
+## Wave 11 — S64 on lumine, 2026-11-03 — **PASS; lumine runs the dev build `v0.1.1-dev` with the policy `drop` confirmed**
+
+The owner's decision on finding 1 of the final acceptance: a config knob for extra ports, `9100,9256/tcp` on
+`tailscale0` for lumine, back to `drop`. The code is S64 (`437570c` agent and contract 0.8.1, `7c51065` console). Raw
+output: `local/wave11/`.
+
+| Step | Result | Time |
+|---|---|---|
+| The peer API before the fix (`00-before-drop`, `01-peerapi-drop`; agent `v0.1.0-fix.10`, 2 drop trials without a confirmation) | **Finding 1 was partly wrong.** tailscaled 1.104.4 listens for its peer API on `100.67.15.72%tailscale0:49126` and `[fd7a:115c:a1e0::9f38:f49]%tailscale0:35009` (TCP; the port changes at each start). Under `drop`, new connections from the Mac (`curl` without keep-alive, `tailscale ping --peerapi`) get `200`: tailscaled serves the peer API connections in its own network stack (`ss` on lumine shows no kernel socket for them), so they never get to the input hook. MagicDNS (`getent hosts avocado.orthrus-bass.ts.net` through `100.100.100.100`) and `tailscale status` work. Only the exporters 9100 and 9256 time out (curl exit 28). Each trial went back to `accept` by the timer (`rollback_reason: timeout`) | rollback after 90 s |
+| The decision | No built-in rule for all of `tailscale0` (S64): the reason for it (the peer API) does not hold, and with the default allow-all policy of a tailnet the rule would make `drop` an `accept` on the tailnet. The exporters get `allow_ports` entries | — |
+| Deploy (`11-deploy`) | `make build-linux VERSION=v0.1.1-dev` (`7c51065`), the installer of `HEAD` with `--binary … --helper --skip-bootstrap`: the agent and the helper restarted (08:35:36), `care-pi version` `v0.1.1-dev`, `apply --dry-run` "no changes", no failed unit | — |
+| The entries (`12-allow`) | `care-pi firewall allow add 9100/tcp --iface tailscale0 --comment "node exporter"`, then `9256 …`: each a plan with `reload-firewall` only (impact `none`). A second `add` of 9100 changes nothing; `add 443` exits 2 with "443/tcp is already allowed by care-pi (Care and the console)". The table has `iifname "tailscale0" tcp dport 9100 accept comment "node exporter"` and the same for 9256 | — |
+| `drop` and the confirmation (`13-drop`; session B open the whole time, `13-session-b.log`) | Under the trial, from the Mac over the tailnet: a new SSH session, the 3 names `200`, the console `200`, `http://100.67.15.72:9100/metrics` and `:9256` `200`, the peer API `200`, port 8080 (not listed) times out. `care-pi firewall confirm` from a new SSH session: `care-pi.nft` has `policy drop`, no pending file, no rollback timer. Session B kept its connection and showed `policy drop` past the rollback time | drop → confirm 6 s |
+| An edit under the confirmed `drop` (`16-confirmed-edit`) | `allow add 9999 --iface tailscale0`: the apply reloads `care-pi.nft` (`policy drop` and the new rule), no pending file, no rollback timer; `allow remove 9999` takes it out; a second `remove` exits 2 ("9999/tcp on each interface is not in security.firewall.allow_ports") | — |
+| The interface of the entries (`14-lan-avocado`) | From the Mac on the LAN (`en0`): `192.168.165.91:9100` and `:9256` time out (the entries are for `tailscale0` only), Care on the LAN `200`. `avocado` (`100.123.72.40`) has established scrape connections to 9100 and 9256 | — |
+
+End state: policy `drop` confirmed (2026-11-03 03:06:24 UTC), `allow_ports` 9100 and 9256 on `tailscale0`,
+`systemctl --failed` empty, no `helper: denied` line. `local/LUMINE.md` has the details.

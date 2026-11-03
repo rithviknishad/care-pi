@@ -172,6 +172,9 @@ installer of `v0.1.0`, `agent-too-old`, `update --os --now` with a real full upg
 lock 2026.11.2, the Phase 7 exit test, S61–S63, the Phase 6 regression, and the cleanup: PASS with 9 fixes (on `main`;
 lumine runs the dev build `v0.1.0-fix.10` until a tag `v0.1.1`). The owner decides the findings of `08` (the policy
 `drop` and the other services of the host, the page for a full cycle, `os.held_packages`, the Caddy cap).
+**Wave 11 (2026-11-03):** S64 decides the first finding (`security.firewall.allow_ports`; tailscaled works under `drop`).
+lumine runs `v0.1.1-dev` with `drop` confirmed and the exporters open on `tailscale0`; `v0.1.1` (`09-handoff.md` §8s) is
+ready to tag.
 
 The history below is the status after each wave.
 

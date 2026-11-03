@@ -1017,3 +1017,70 @@ telemetry off, 3 names (the public name with its production certificate, `lumine
 the ts.net name), 2 destinations, `systemctl --failed` empty. `local/LUMINE.md` has the details.
 
 Next: the owner decides the findings of `08` and tags `v0.1.1`; the hardware tests (§8k, "Remaining").
+
+### 8s. v0.1.1
+
+`v0.1.1` is `v0.1.0` with the 9 fixes of the final acceptance (§8r) and S64 (wave 11, 2026-11-03). The contract is
+`docs/api/openapi.yaml` 0.8.1 (additive). No config change is necessary. The orchestrator tags `v0.1.1` after the
+commits of wave 11 and installs lumine again from the release.
+
+Release notes:
+
+**Fixes from the final acceptance on lumine**
+
+1. Updates: `GET /updates` gives `blocked_by` (`agent-too-old`, with the detail) for a newer lock that the agent cannot
+   install, and `care-pi update status` prints it (`12ace01`).
+2. `care-pi update --os` waits for its reboot, also with `--reboot-if-required` (`fef512b`).
+3. Tailscale mode: the drop-in `tailscaled.service.d/50-care-pi.conf` (`RuntimeDirectoryPreserve=yes`) keeps the
+   Tailscale name up when tailscaled restarts, for example after an apt upgrade (`1bbf445`).
+4. The restore drill stops and removes its container in the namespace of the host, so the next drill does not fail on
+   the name (`af129f2`, `83d1951`).
+5. Console: the install steps of the root CA show their texts; the download button follows the file (`6b104ee`).
+6. Telemetry: `care-node-exporter` listens on `127.0.0.1:19100`, so a node_exporter of the host on 9100 does not
+   stop it (`f277b77`).
+7. Telemetry off resets the failed state of its units (`71c5c0e`).
+8. The installer restarts the running helper after a new agent binary (`8fda826`).
+9. The timers of a removed backup destination stop before their files go (`49ca4de`).
+
+Docs: the uninstaller removes the tailscaled drop-in; a removed destination stops its timers (`d103536`).
+
+**New: extra firewall ports (S64)**
+
+- `security.firewall.allow_ports`: up to 32 entries `{port, proto, iface, comment}` that the table `inet care-pi`
+  accepts after its own rules, for example a node_exporter of the host. A port that care-pi already accepts is refused
+  ("already allowed by care-pi"). CLI `care-pi firewall allow add PORT[/PROTO] [--iface IF] [--comment C]`,
+  `allow remove`, `allow list`; console Security > Firewall; `FirewallState.allow_ports` in `GET /security/firewall`.
+- The policy `drop` does not close tailscaled: its peer API, MagicDNS, and `tailscale status` work (measured). A
+  service of the host on the tailnet needs an entry with `--iface tailscale0`.
+
+**Upgrade**: `curl -fsSL https://github.com/rithviknishad/care-pi/releases/download/v0.1.1/install.sh | sudo sh -s --
+--version v0.1.1 --yes` (add `--helper` when the helper mode is on). A host with the policy `drop` keeps its table; add
+its other services with `care-pi firewall allow add`, then nothing needs a new confirmation (only a switch to `drop`
+starts the timer).
+
+**Wave 11** (`08-spike-log.md`, "Wave 11 — S64 on lumine"; raw output `local/wave11/`):
+
+| Item | Commit |
+|---|---|
+| S64 agent: config, schema, validation, render, CLI, contract 0.8.1, docs, decision | `437570c` |
+| S64 console: the extra ports in Security > Firewall, mock, Vitest, Playwright journey | `7c51065` |
+| The record: `08`, this section, the roadmap, `docs/releasing.md` | the commit after `7c51065` |
+
+Decisions of wave 11 (owner informed; override in `00` if wrong):
+
+- **No built-in `iifname "tailscale0" accept`.** The brief proposed it for the peer API of tailscaled. On lumine the
+  peer API answers new connections under `drop` (tailscaled serves them in its own network stack), so the finding of
+  §8r was wrong on that point. The rule would open each service of the host to each device of a tailnet with the
+  default policy. The entries 9100 and 9256 on `tailscale0` are therefore necessary on lumine, not redundant.
+- Port 22/tcp and 41641/udp are "already allowed" only while their rule is in the table (`security.ssh.allow: true`;
+  the Tailscale mode). With SSH off, an entry such as `{port: 22, iface: tailscale0}` opens SSH on one interface.
+- The console edits the list in the same change as the policy and SSH (one preview, one apply), so a switch to `drop`
+  with the extra ports is one trial.
+- `remove PORT[/PROTO]` without `--iface` removes each entry of that port and protocol.
+- Two drop trials with the old agent (`v0.1.0-fix.10`, no confirmation, back to `accept` by the timer after 90 s each)
+  measured the finding before the fix; the exporters were closed for 90 s each time.
+
+End state of lumine: the dev build `v0.1.1-dev` (`7c51065`, with the helper), the policy `drop` confirmed, the entries
+9100 and 9256 on `tailscale0`; the rest as in §8r.
+
+Next: the tag `v0.1.1`, the install of lumine from the release; then the hardware tests (§8k, "Remaining").
