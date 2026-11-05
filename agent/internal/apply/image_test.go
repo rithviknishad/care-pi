@@ -7,6 +7,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/host"
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
+	"github.com/rithviknishad/care-pi/agent/internal/plan"
 	"github.com/rithviknishad/care-pi/agent/internal/render"
 	"github.com/rithviknishad/care-pi/agent/internal/setup"
 	"github.com/rithviknishad/care-pi/agent/internal/solution"
@@ -56,5 +57,40 @@ func TestSetupModeTakesCaddyFromTheSolutionLock(t *testing.T) {
 	}
 	if got := lk.Images["caddy"]; got.Ref != render.ImageCaddy || got.Digest != updatetest.Digest("caddy") {
 		t.Errorf("caddy %+v, want the digest of the solution lock", got)
+	}
+}
+
+// TestSetupFinishIsNotACutover: the finish of the setup starts Care for the first time. The lock of setup mode
+// has only Caddy, and care.target runs (Caddy and the console), but no database exists yet: the plan must not
+// take the cutover, whose checkpoint backs up care-db (the first image boot on a Pi 4, 2026-11-05).
+func TestSetupFinishIsNotACutover(t *testing.T) {
+	e := newEnv(t, smallClinic)
+	store := &setup.Store{Paths: e.p}
+	if _, err := store.Update(func(r *setup.Record) error { r.ApplyPhase = setup.PhaseBootstrap; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	e.targetState("inactive")
+	if _, err := e.run(false); err != nil {
+		t.Fatalf("setup mode: %v\n%s", err, e.out.String())
+	}
+	if lk, err := lock.Load(e.p); err != nil || lk.Images["care"].Pull() != "" {
+		t.Fatalf("the lock of setup mode has a care image (%v): %+v", err, lk)
+	}
+
+	if _, err := store.Update(func(r *setup.Record) error { r.ApplyPhase = setup.PhaseFull; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	e.reset()
+	e.targetState("active")
+	e.secretsPresent()
+	res, err := e.run(false)
+	if err != nil {
+		t.Fatalf("setup finish: %v\n%s", err, e.out.String())
+	}
+	if res.Plan.Has(plan.Cutover) {
+		t.Fatalf("the setup finish took the cutover: %+v", res.Plan.Actions)
+	}
+	if !res.Plan.Has(plan.FullCycle) {
+		t.Errorf("the setup finish must cycle the stack: %+v", res.Plan.Actions)
 	}
 }

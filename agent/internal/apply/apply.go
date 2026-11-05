@@ -598,7 +598,9 @@ func secretUnits() map[string][]string {
 // careChanged reports whether the care image or the set of backend plugs that are on changes
 // between two locks: then migrations can run, and a running stack gets the cutover (section 7.5).
 func careChanged(a, b *lock.Lock) bool {
-	if a == nil || b == nil {
+	// The lock of setup mode has no care image: Care never ran and no database exists, so the first
+	// start is not a cutover (its checkpoint needs care-db).
+	if a == nil || b == nil || a.Images["care"].Pull() == "" {
 		return false
 	}
 	if a.Images["care"].Pull() != b.Images["care"].Pull() {
