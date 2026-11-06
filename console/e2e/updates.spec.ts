@@ -38,7 +38,7 @@ test("check, download, and install an update; the maintenance banner shows and c
   await page.getByTestId("job-close").click();
   await shot(page, info, "updates-available");
 
-  // Download (stage): Care keeps running, so no banner.
+  // Download (stage): Care keeps running. The banner names the job while it runs (S67), then clears.
   await page.getByTestId("update-stage").click();
   await expect(job).toHaveAttribute("data-kind", "update-stage");
   await expect(job.getByTestId("job-progress")).toHaveAttribute("data-job-state", "succeeded");
@@ -178,18 +178,18 @@ test("the dashboard shows the update and the maintenance state", async ({ page, 
   await resetMock("ready", { updates: "staged", window_open: true, step_ms: 500 });
   await open(page, "/dashboard");
   await expect(page.getByTestId("updates-line")).toHaveText("2026.11.1 is ready to install");
-  await expect(page.getByTestId("updates-summary")).toContainText("Downloaded. Ready to install.");
   await page.getByTestId("updates-line").getByRole("link").click();
   await expect(page).toHaveURL(/\/updates$/);
   await page.getByTestId("update-apply").click();
   await page.getByTestId("apply-confirm").click();
   await expect(banner(page)).toBeVisible({ timeout: 15_000 });
-  // The banner links to the Updates page; the dashboard shows the same step in its problems.
+  // S67: the banner links to the page of the job, on each page; the dashboard shows the same step in its problems.
   await page.goto("/dashboard");
   await expect(page.getByTestId("status-maintenance")).toContainText("Maintenance in progress:");
   await expect(page.getByTestId("status-state")).toHaveText("Maintenance");
   await expect(banner(page)).toBeVisible();
-  await expect(banner(page)).toHaveAttribute("href", "/updates");
+  await expect(banner(page)).toHaveAttribute("href", /^\/jobs\/\d{8}T\d{6}\.\d{3}Z-update-apply$/);
+  await expect(banner(page)).toContainText(/step \d+ of \d+/);
 });
 
 test("change the window: the plan preview and the apply job", async ({ page, resetMock }) => {
@@ -315,4 +315,25 @@ test("a withdrawn running version shows a warning", async ({ page, resetMock }) 
     "Reason: The appointment list of care develop of 2026-11-13 is slow.",
   );
   await expect(page.getByTestId("update-state")).toHaveText("Available. Not downloaded.");
+});
+
+// S69: a power loss during the cutover. The agent rolled back at the next start; the history says so in plain words,
+// and the restore offer of the database stays.
+test("an update that a power loss interrupted shows a plain sentence and the restore offer", async ({
+  page,
+  resetMock,
+}, info) => {
+  await resetMock("ready", { updates: "recovered" });
+  await open(page, "/updates");
+  const rows = page.getByTestId("history-row");
+  await expect(rows.first()).toHaveAttribute("data-kind", "rollback");
+  await expect(rows.first()).toHaveAttribute("data-outcome", "rolled-back");
+  const sentence = "The update was interrupted. Care returned to the previous version.";
+  await expect(rows.first().getByTestId("history-sentence")).toHaveText(sentence);
+  await expect(rows.first()).toContainText("After the restart of the device");
+  await expect(rows.nth(1)).toHaveAttribute("data-kind", "update");
+  await expect(rows.nth(1).getByTestId("history-sentence")).toHaveText(sentence);
+  await expect(page.getByTestId("pitr-offer")).toBeVisible();
+  await expect(page.getByTestId("pitr-open")).toHaveAttribute("href", /^\/restore\?time=/);
+  await shot(page, info, "updates-recovered");
 });

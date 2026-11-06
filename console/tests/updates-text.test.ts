@@ -7,6 +7,7 @@ import {
   historyVersions,
   offerKey,
   outcomeBadge,
+  outcomeSentence,
   pitrOfferOfJob,
   previousText,
   restoreLink,
@@ -154,5 +155,30 @@ describe("the texts of the plugs", () => {
     );
     expect(planEffect({ path: "cutover", estimated_downtime_s: 120 })).toContain("Care stops for about 2 min.");
     expect(planEffect({ path: "cutover", estimated_downtime_s: null })).toContain("about 1 min");
+  });
+});
+
+describe("the plain sentence of an update that did not finish (S69)", () => {
+  const entry = { kind: "update" as const, outcome: "rolled-back" as const, reason: "window Sun 02:00", problem: null };
+  it("names an interruption: a recovery, or an interrupted job", () => {
+    expect(outcomeSentence({ ...entry, kind: "rollback", reason: "recovery 20261122T020300.000Z-update-apply" })).toBe(
+      "The update was interrupted. Care returned to the previous version.",
+    );
+    expect(
+      outcomeSentence({
+        ...entry,
+        problem: {
+          type: "https://care-pi.rithviknishad.dev/problems/internal",
+          title: "Internal error",
+          status: 500,
+          detail: "interrupted: no process holds the apply lock",
+          instance: "/api/v1/jobs/20261122T020300.000Z-update-apply",
+        },
+      }),
+    ).toBe("The update was interrupted. Care returned to the previous version.");
+  });
+  it("says that a failed update went back, and nothing for a success", () => {
+    expect(outcomeSentence(entry)).toBe("The update did not finish. Care returned to the previous version.");
+    expect(outcomeSentence({ ...entry, outcome: "succeeded" })).toBeNull();
   });
 });
