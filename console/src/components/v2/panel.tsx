@@ -15,6 +15,8 @@ export interface PanelProps {
   as?: "h2" | "h3";
   className?: string;
   testId?: string;
+  /** The anchor of the panel (a link to #id scrolls to it). */
+  id?: string;
 }
 
 // The v2 card: radius 12, a soft shadow, and a hint of the primary colour. Use it for each group of a page.
@@ -28,9 +30,11 @@ export function Panel({
   as: H = "h2",
   className,
   testId,
+  id,
 }: PanelProps) {
   return (
     <section
+      id={id}
       data-testid={testId}
       className={cn(
         "flex min-w-0 flex-col gap-4 rounded-card border p-4 sm:p-6",

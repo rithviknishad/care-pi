@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { useMaintenance, useNetwork } from "@/api/queries";
+import { useMaintenance, useNetwork, useStatus } from "@/api/queries";
 import type { Session, SetupStateName } from "@/api/types";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AppShell as Shell } from "@/components/v2/app-shell";
@@ -8,6 +8,7 @@ import { StatusChip } from "@/components/v2/status-chip";
 import type { Tone } from "@/components/v2/tone";
 import { strings } from "@/lib/strings";
 import { ClockBanner } from "./clock-banner";
+import { bannerJob } from "./maintenance";
 import { MaintenanceBanner } from "./maintenance-banner";
 import { navItems } from "./nav";
 import { ThemeToggle } from "./theme-toggle";
@@ -26,7 +27,12 @@ const STATE_TONE: Record<SetupStateName, Tone> = {
 export function AppShell({ session, children }: { session: Session; children: ReactNode }) {
   const network = useNetwork(true);
   const maintenance = useMaintenance(true);
-  const active = Boolean(maintenance.data?.maintenance?.active);
+  // S68: the header of each support copy names the agent version (GET /status).
+  const status = useStatus(false);
+  const agent = status.data?.agent;
+  const version = agent ? `${agent.version} (${agent.commit.slice(0, 7)})` : null;
+  // S67: the banner shows while a job runs or the maintenance page shows, on each page and each device.
+  const active = bannerJob(maintenance.data) !== null;
   // S52: the banner "Clock not trusted" has the same slot; the maintenance banner wins it.
   const clock = Boolean(maintenance.data?.clock && !maintenance.data.clock.trusted && !active);
   // The name that avahi announces now (it can differ from the configured name on a collision).
@@ -37,11 +43,12 @@ export function AppShell({ session, children }: { session: Session; children: Re
       : undefined;
   const state = session.setup_state;
   return (
-    <CopyHeaderProvider value={{ device: name ?? window.location.hostname, version: null }}>
+    <CopyHeaderProvider value={{ device: name ?? window.location.hostname, version }}>
       <Shell
         nav={navItems(state)}
         navMode={state === "ready" ? "full" : "minimal"}
         deviceName={name}
+        railFooter={<span data-testid="rail-agent-version">{agent ? `care-pi ${agent.version}` : "\u00a0"}</span>}
         status={
           <StatusChip tone={STATE_TONE[state] ?? "neutral"} live={state === "applying"} width={10} testId="setup-state">
             {strings.setupState[state] ?? state}

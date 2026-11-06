@@ -5,7 +5,15 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Problem, sendJson } from "./http.mjs";
-import { APPLY_STEPS, FE_BUILD_STEPS, runningHostJob, startJob, summary } from "./jobs.mjs";
+import {
+  APPLY_STEPS,
+  FE_BUILD_STEPS,
+  publicProgress,
+  publicSummary,
+  runningHostJob,
+  startJob,
+  summary,
+} from "./jobs.mjs";
 import { backupsOverview } from "./backups-logic.mjs";
 import { validateDestinations } from "./restore-api.mjs";
 import {
@@ -494,15 +502,9 @@ export const systemRoutes = [
         console_port: 8443,
         clock: clockView(state),
         care_healthy: state.setup.state === "ready",
-        job: running
-          ? {
-              kind: running.kind,
-              step: step?.name ?? null,
-              step_index: step?.index ?? null,
-              step_count: running.steps.length,
-              started_at: running.started_at,
-            }
-          : null,
+        job: running ? { ...publicProgress(running), step: step?.name ?? null, step_index: step?.index ?? null } : null,
+        jobs_recent: state.jobOrder.slice(0, 5).map((id) => publicSummary(state.jobs.get(id).job)),
+        setup_job_id: state.setup.state === "applying" ? (state.setup.jobId ?? null) : null,
         time: now(),
         maintenance,
         firstboot_error: state.setup.state === "ready" ? null : (state.firstbootError ?? null),
@@ -572,8 +574,7 @@ export const systemRoutes = [
             pg_shared_buffers_mb: p.pg_shared_buffers_mb,
             memory: presetMemory(name),
             recommended: name === rec,
-            warning:
-              name === "busy-counter" && lowRam ? "busy-counter needs 4 GiB RAM or more; this host has 2 GiB" : null,
+            warning: name === "busy-counter" && lowRam ? "busy-counter-low-ram" : null,
           })),
           {
             name: "custom",

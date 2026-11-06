@@ -49,13 +49,18 @@ export function MetricBar({
         <span className="min-w-0 truncate type-small text-ink-muted">{label}</span>
         {loading ? <Skeleton className="h-4 w-28" /> : <span className="shrink-0 type-data text-ink">{text}</span>}
       </div>
+      {/* A meter needs a value and a limit; without them the text of the label line says it all. */}
       <div
-        role="meter"
-        aria-label={label}
-        aria-valuemin={0}
-        aria-valuemax={cap ?? undefined}
-        aria-valuenow={known && cap ? used : undefined}
-        aria-valuetext={text}
+        {...(known && cap
+          ? {
+              role: "meter",
+              "aria-label": label,
+              "aria-valuemin": 0,
+              "aria-valuemax": cap,
+              "aria-valuenow": used,
+              "aria-valuetext": text,
+            }
+          : { "aria-hidden": true })}
         className="relative h-2 overflow-hidden rounded-full bg-primary-track"
       >
         <div

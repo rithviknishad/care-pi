@@ -29,7 +29,27 @@ export function buildCopyText(body: string, header?: CopyHeader | null, title?: 
 }
 
 // Writes the text to the clipboard. Without the Clipboard API (an http:// page), it uses a hidden text area.
-export async function writeClipboard(text: string): Promise<boolean> {
+// A promise (a text that the console reads from the agent at the click, for example GET /jobs/{id}/export) goes
+// into a ClipboardItem first: Safari keeps the user activation only for a write that starts in the click.
+export async function writeClipboard(value: string | Promise<string>): Promise<boolean> {
+  if (typeof value !== "string") {
+    const pending = value;
+    try {
+      if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
+        const blob = pending.then((t) => new Blob([t], { type: "text/plain" }));
+        await navigator.clipboard.write([new ClipboardItem({ "text/plain": blob })]);
+        return true;
+      }
+    } catch {
+      // Fall back to the text after it comes.
+    }
+    try {
+      value = await pending;
+    } catch {
+      return false;
+    }
+  }
+  const text = value;
   try {
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text);

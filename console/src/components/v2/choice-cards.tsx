@@ -17,6 +17,7 @@ export interface Choice {
   disabled?: boolean;
   /** A line of data under the fit (for example "2 GB memory"). Geist Mono. */
   meta?: ReactNode;
+  testId?: string;
 }
 
 export interface ChoiceCardsProps {
@@ -59,6 +60,7 @@ export function ChoiceCards({
             <label
               key={c.value}
               data-value={c.value}
+              data-testid={c.testId}
               className={cn(
                 "group relative flex min-h-24 cursor-pointer gap-4 rounded-card border border-line bg-surface-card p-4 shadow-soft outline-none",
                 "motion-ok:transition-[background-color,box-shadow,border-color] motion-ok:duration-(--duration-fast)",

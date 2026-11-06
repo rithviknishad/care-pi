@@ -27,6 +27,15 @@ export interface StepItem {
   log?: string | (() => string);
   /** The internal name (the tooltip of the row, for support). */
   raw?: string;
+  /** The title is the raw name of a step that the console does not know: Geist Mono. */
+  titleMono?: boolean;
+  /** Test hooks of the row and of its title. */
+  testId?: string;
+  titleTestId?: string;
+  /** More data-* attributes of the row (for example data-action). */
+  data?: Record<string, string | undefined>;
+  /** A bar of known progress (0 to 1) at the bottom edge of a running row, in place of the indeterminate bar. */
+  progress?: number | null;
 }
 
 export interface StepListProps {
@@ -131,6 +140,11 @@ function StepRow({ step, now, logs, last }: { step: StepItem; now: number; logs:
       ? fmt(v2Strings.steps.usually, { time: aboutMinutes(step.expectedSeconds) })
       : null);
   const logText = open && step.log ? (typeof step.log === "function" ? step.log() : step.log) : "";
+  const dataAttrs = Object.fromEntries(
+    Object.entries(step.data ?? {})
+      .filter(([, v]) => v !== undefined)
+      .map(([k, v]) => [`data-${k}`, v]),
+  );
   // The second line is reserved when the step can have one (a usual duration or a detail), in each state.
   const twoLines = Boolean(step.expectedSeconds) || step.detail !== undefined;
 
@@ -138,7 +152,9 @@ function StepRow({ step, now, logs, last }: { step: StepItem; now: number; logs:
     <li
       className="relative grid min-h-14 grid-cols-[1.5rem_minmax(0,1fr)_auto] content-start gap-x-3 py-3"
       data-state={step.state}
+      data-testid={step.testId}
       title={step.raw}
+      {...dataAttrs}
     >
       {last ? null : (
         <span
@@ -156,6 +172,7 @@ function StepRow({ step, now, logs, last }: { step: StepItem; now: number; logs:
         <p
           className={cn(
             "line-clamp-2 type-body",
+            step.titleMono && "break-all",
             step.state === "running" && "font-semibold text-ink",
             step.state === "pending" && "text-ink-soft",
             step.state === "failed" && "font-semibold text-danger-fg",
@@ -163,7 +180,16 @@ function StepRow({ step, now, logs, last }: { step: StepItem; now: number; logs:
           )}
         >
           <span className="sr-only">{STATE_TEXT[step.state]}: </span>
-          {step.title}
+          {step.titleMono ? (
+            <code
+              className="type-data"
+              data-testid={step.titleTestId ? `${step.titleTestId.replace(/-title$/, "")}-raw` : undefined}
+            >
+              {step.title}
+            </code>
+          ) : (
+            <span data-testid={step.titleTestId}>{step.title}</span>
+          )}
         </p>
         {twoLines ? (
           <p
@@ -208,9 +234,17 @@ function StepRow({ step, now, logs, last }: { step: StepItem; now: number; logs:
       {step.state === "running" ? (
         <span
           aria-hidden="true"
+          data-testid={step.progress == null ? "job-step-indeterminate" : undefined}
           className="absolute inset-x-0 bottom-0 h-0.5 overflow-hidden rounded-full bg-primary-track"
         >
-          <span className="block h-full w-1/3 rounded-full bg-primary-solid motion-reduce:w-full motion-reduce:opacity-40 motion-ok:animate-v2-slide" />
+          {step.progress == null ? (
+            <span className="block h-full w-1/3 rounded-full bg-primary-solid motion-reduce:w-full motion-reduce:opacity-40 motion-ok:animate-v2-slide" />
+          ) : (
+            <span
+              className="block h-full origin-left rounded-full bg-primary-solid motion-ok:transition-transform motion-ok:duration-(--duration-slow)"
+              style={{ transform: `scaleX(${Math.min(1, Math.max(0, step.progress))})` }}
+            />
+          )}
         </span>
       ) : null}
     </li>

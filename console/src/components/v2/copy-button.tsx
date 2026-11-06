@@ -8,10 +8,13 @@ import { useCopyHeader } from "./copy-context";
 import { v2Strings } from "./strings";
 
 export interface CopyButtonProps {
-  /** The text to copy. A function is called at the click (for a long log). */
-  text: string | (() => string);
+  /** The text to copy. A function is called at the click (for a long log). A promise: the console reads the text
+   *  at the click (the plain-text exports of the agent, which have their own support header). */
+  text: string | (() => string | Promise<string>);
   /** A report copy (S68) adds the header: device, agent version, time, page. Use it for logs, jobs, problems. */
   report?: boolean;
+  /** The text is for support (an export of the agent with its own header): the toast says so. */
+  support?: boolean;
   /** The first line of the body of a report copy, for example the title of the problem. */
   title?: string;
   label?: string;
@@ -27,6 +30,7 @@ export interface CopyButtonProps {
 export function CopyButton({
   text,
   report = false,
+  support = false,
   title,
   label = v2Strings.copy,
   iconOnly = false,
@@ -45,13 +49,13 @@ export function CopyButton({
 
   const onClick = async () => {
     const body = typeof text === "function" ? text() : text;
-    const value = report
-      ? buildCopyText(body, { ...header, page: header?.page ?? window.location.pathname }, title)
-      : body;
+    const withHeader = (b: string) =>
+      report ? buildCopyText(b, { ...header, page: header?.page ?? window.location.pathname }, title) : b;
+    const value = typeof body === "string" ? withHeader(body) : body.then(withHeader);
     if (await writeClipboard(value)) {
       setCopied(true);
-      toast.success(v2Strings.copied, report ? { description: v2Strings.copiedToast } : undefined);
-      onCopied?.(value);
+      toast.success(v2Strings.copied, report || support ? { description: v2Strings.copiedToast } : undefined);
+      onCopied?.(await value);
     } else {
       toast.error(v2Strings.copyFailed);
     }

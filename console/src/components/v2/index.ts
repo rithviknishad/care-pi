@@ -21,7 +21,7 @@ export { MonoBlock, type MonoBlockProps } from "./mono-block";
 export { Panel, WhatNext, type PanelProps } from "./panel";
 export { ProblemCard, type ProblemCardProps } from "./problem-card";
 export { ProgressRing, type ProgressRingProps } from "./progress-ring";
-export { retentionSummary, retentionZones, type RetentionPolicy, type RetentionZone } from "./retention";
+export { everyText, retentionSummary, retentionZones, type RetentionPolicy, type RetentionZone } from "./retention";
 export { Stage, type StageProps, type StageStep } from "./stage";
 export { StatCard, type StatCardProps } from "./stat-card";
 export { StatusChip, type StatusChipProps } from "./status-chip";

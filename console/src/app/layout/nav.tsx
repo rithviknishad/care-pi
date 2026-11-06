@@ -2,6 +2,7 @@ import {
   DatabaseBackupIcon,
   FileBadgeIcon,
   HistoryIcon,
+  ListChecksIcon,
   LayoutDashboardIcon,
   LifeBuoyIcon,
   LockIcon,
@@ -23,6 +24,7 @@ export function navItems(state: SetupStateName): ShellNavItem[] {
       { to: "/setup", label: strings.nav.setup, icon: WandSparklesIcon, primary: true },
       { to: "/certificate", label: strings.nav.certificate, icon: FileBadgeIcon, primary: true },
       { to: "/logs", label: strings.nav.logs, icon: ScrollTextIcon, primary: true },
+      { to: "/jobs", label: strings.nav.jobs, icon: ListChecksIcon },
       { to: "/security", label: strings.nav.security, icon: LockIcon },
       { to: "/support", label: strings.nav.support, icon: LifeBuoyIcon, primary: true },
     ];
@@ -32,6 +34,7 @@ export function navItems(state: SetupStateName): ShellNavItem[] {
     { to: "/backups", label: strings.nav.backups, icon: DatabaseBackupIcon, primary: true },
     { to: "/restore", label: strings.nav.restore, icon: HistoryIcon },
     { to: "/settings", label: strings.nav.settings, icon: SlidersHorizontalIcon, primary: true },
+    { to: "/jobs", label: strings.nav.jobs, icon: ListChecksIcon },
     { to: "/logs", label: strings.nav.logs, icon: ScrollTextIcon },
     { to: "/certificate", label: strings.nav.certificate, icon: FileBadgeIcon },
     { to: "/security", label: strings.nav.security, icon: LockIcon },
