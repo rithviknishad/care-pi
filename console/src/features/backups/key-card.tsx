@@ -5,23 +5,26 @@ import { api, call } from "@/api/client";
 import { useSshKey } from "@/api/queries";
 import type { BackupsOverview, Job, RecoveryKey, RecoveryKeyStatus } from "@/api/types";
 import { CopyButton } from "@/components/app/copy-button";
-import { DataList, DataRow } from "@/components/app/page";
 import { ProblemAlert } from "@/components/app/problem-alert";
 import { isReauthCancelled, useReauth } from "@/components/app/reauth-context";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { KeyValueList } from "@/components/v2/key-value-list";
+import { Panel } from "@/components/v2/panel";
+import { StatusChip } from "@/components/v2/status-chip";
+import type { Tone } from "@/components/v2/tone";
 import { formatDateTime } from "@/lib/format";
 import { strings } from "@/lib/strings";
 import { KeySheet, RecoveryKeyCeremony } from "./recovery-key-ceremony";
 import { useInvalidateBackups, useShowKey } from "./use-backups";
 
 const p = strings.backupsPage;
+
+const KEY_TONE: Partial<Record<string, Tone>> = { confirmed: "ok", unconfirmed: "warn" };
 
 function BigDialog({
   open,
@@ -156,108 +159,96 @@ export function RecoveryKeyCard({
     setOverride(null);
   };
   const state = status?.state;
-  const badgeVariant = state === "confirmed" ? "success" : state === "unconfirmed" ? "warning" : "destructive";
   const hasSftp = Boolean(overview?.destinations.some((d) => d.type === "sftp"));
 
   return (
-    <Card size="sm" id="recovery-key" data-testid="key-card">
-      <CardHeader>
-        <CardTitle>
-          <h2>{p.keyTitle}</h2>
-        </CardTitle>
-        <CardDescription>{strings.keyCeremony.intro}</CardDescription>
-        <CardAction className="flex w-32 justify-end">
+    <Panel
+      id="recovery-key"
+      testId="key-card"
+      title={p.keyTitle}
+      description={strings.keyCeremony.intro}
+      className="scroll-mt-24"
+      action={
+        <span className="flex w-32 justify-end">
           {status ? (
-            <Badge variant={badgeVariant} data-testid="key-state">
+            <StatusChip tone={KEY_TONE[status.state] ?? "danger"} testId="key-state">
               {p.keyStates[status.state] ?? status.state}
-            </Badge>
+            </StatusChip>
           ) : (
-            <Skeleton className="h-6 w-24" />
+            <Skeleton className="h-7 w-24 rounded-full" />
           )}
-        </CardAction>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <DataList>
-          <DataRow label={p.keyId} loading={!status} value={status?.key_id ?? p.none} />
-          <DataRow label={p.keyMade} loading={!status} value={formatDateTime(status?.created_at)} />
-          <DataRow
-            label={strings.backupsPage.keyStates.confirmed}
-            loading={!status}
-            value={formatDateTime(status?.confirmed_at)}
-          />
-        </DataList>
-        {status?.state === "unconfirmed" ? (
-          <Alert variant="warning">
-            <AlertDescription>{strings.keyCeremony.reminder}</AlertDescription>
-          </Alert>
-        ) : null}
-        {status?.local_repository === "legacy" ? (
-          <Alert variant="info">
-            <AlertDescription>{p.rekeyIntro}</AlertDescription>
-          </Alert>
-        ) : null}
-        <div className="flex flex-wrap gap-2">
-          {!status ? (
-            // The buttons of a confirmed key, invisible: the same size before the data (docs/console-ui.md 5).
-            <div className="invisible flex flex-wrap gap-2" aria-hidden="true">
-              <Button type="button" size="sm" tabIndex={-1}>
-                <EyeIcon data-icon="inline-start" />
-                {p.show}
-              </Button>
-              <Button type="button" size="sm" variant="outline" tabIndex={-1}>
-                <RefreshCwIcon data-icon="inline-start" />
-                {p.rotate}
-              </Button>
-            </div>
-          ) : state === "confirmed" ? (
-            <>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => show.mutate()}
-                disabled={show.isPending}
-                data-testid="key-show"
-              >
-                {show.isPending ? <Spinner data-icon="inline-start" /> : <EyeIcon data-icon="inline-start" />}
-                {p.show}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setDialog("rotate")}
-                data-testid="key-rotate"
-              >
-                <RefreshCwIcon data-icon="inline-start" />
-                {p.rotate}
-              </Button>
-            </>
-          ) : (
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => setDialog("ceremony")}
-              disabled={!status}
-              data-testid="key-open-ceremony"
-            >
-              <KeyRoundIcon data-icon="inline-start" />
-              {state === "unconfirmed" ? strings.banners.actions["recovery-key-unconfirmed"] : p.make}
+        </span>
+      }
+      footer={
+        !status ? (
+          // The buttons of a confirmed key, invisible: the same size before the data (docs/console-ui.md 5).
+          <div className="invisible contents" aria-hidden="true">
+            <Button type="button" tabIndex={-1}>
+              <EyeIcon data-icon="inline-start" />
+              {p.show}
             </Button>
-          )}
-          {status?.local_repository === "legacy" && state === "confirmed" ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => setDialog("rekey")}
-              data-testid="key-rekey"
-            >
-              {p.rekey}
+            <Button type="button" variant="outline" tabIndex={-1}>
+              <RefreshCwIcon data-icon="inline-start" />
+              {p.rotate}
             </Button>
-          ) : null}
-        </div>
-        {show.error && !isReauthCancelled(show.error) ? <ProblemAlert error={show.error} /> : null}
-      </CardContent>
+          </div>
+        ) : (
+          <>
+            {state === "confirmed" ? (
+              <>
+                <Button type="button" onClick={() => show.mutate()} disabled={show.isPending} data-testid="key-show">
+                  {show.isPending ? <Spinner data-icon="inline-start" /> : <EyeIcon data-icon="inline-start" />}
+                  {p.show}
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setDialog("rotate")} data-testid="key-rotate">
+                  <RefreshCwIcon data-icon="inline-start" />
+                  {p.rotate}
+                </Button>
+              </>
+            ) : (
+              <Button type="button" onClick={() => setDialog("ceremony")} data-testid="key-open-ceremony">
+                <KeyRoundIcon data-icon="inline-start" />
+                {state === "unconfirmed" ? strings.banners.actions["recovery-key-unconfirmed"] : p.make}
+              </Button>
+            )}
+            {status.local_repository === "legacy" && state === "confirmed" ? (
+              <Button type="button" variant="outline" onClick={() => setDialog("rekey")} data-testid="key-rekey">
+                {p.rekey}
+              </Button>
+            ) : null}
+          </>
+        )
+      }
+    >
+      <KeyValueList
+        loading={!status}
+        items={[
+          {
+            id: "key-id",
+            label: p.keyId,
+            mono: true,
+            value: status?.key_id ?? p.none,
+            copy: status?.key_id ?? undefined,
+          },
+          { id: "made", label: p.keyMade, value: formatDateTime(status?.created_at) },
+          {
+            id: "confirmed",
+            label: strings.backupsPage.keyStates.confirmed,
+            value: formatDateTime(status?.confirmed_at),
+          },
+        ]}
+      />
+      {status?.state === "unconfirmed" ? (
+        <Alert variant="warning">
+          <AlertDescription>{strings.keyCeremony.reminder}</AlertDescription>
+        </Alert>
+      ) : null}
+      {status?.local_repository === "legacy" ? (
+        <Alert variant="info">
+          <AlertDescription>{p.rekeyIntro}</AlertDescription>
+        </Alert>
+      ) : null}
+      {show.error && !isReauthCancelled(show.error) ? <ProblemAlert error={show.error} /> : null}
 
       <BigDialog open={shownKey !== null} onClose={() => setShownKey(null)} title={p.keyTitle} testId="key-dialog">
         {shownKey ? <KeySheet recoveryKey={shownKey} clinic={clinic} /> : null}
@@ -302,6 +293,6 @@ export function RecoveryKeyCard({
           </div>
         </div>
       </BigDialog>
-    </Card>
+    </Panel>
   );
 }

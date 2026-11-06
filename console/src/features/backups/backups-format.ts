@@ -19,6 +19,38 @@ export function effectiveRetention(r: DestinationRetention | undefined | null): 
   return { ...RETENTION_DEFAULTS, ...(r ?? {}) };
 }
 
+// S66, item 2: the operator picks a frequency and a "how far back" preset, not the 4 numbers.
+export const FREQUENCY_CHOICES = [5, 15, 30, 60];
+
+export type RetentionPresetName = "standard" | "longer" | "custom";
+
+// Standard: each copy for 2 days, then 1 a day for 2 weeks, 1 a week for 2 months, 1 a month for 6 months.
+// Longer: each copy for 1 week, then 1 a day for 30 days, 1 a week for 6 months, 1 a month for 2 years.
+export const RETENTION_PRESETS: Record<Exclude<RetentionPresetName, "custom">, Required<DestinationRetention>> = {
+  standard: { keep_within_days: 2, keep_daily: 14, keep_weekly: 8, keep_monthly: 6 },
+  longer: { keep_within_days: 7, keep_daily: 30, keep_weekly: 24, keep_monthly: 24 },
+};
+
+// The preset of a retention, or "custom".
+export function retentionPreset(r: DestinationRetention | undefined | null): RetentionPresetName {
+  const e = effectiveRetention(r);
+  for (const [name, p] of Object.entries(RETENTION_PRESETS)) {
+    if ((Object.keys(p) as (keyof DestinationRetention)[]).every((k) => p[k] === e[k]))
+      return name as RetentionPresetName;
+  }
+  return "custom";
+}
+
+// The RPO in minutes for a sentence: "20 minutes", "1 hour 5 minutes" (never seconds; console/design.md, "Copy").
+export function formatRpoMinutes(minutes: number): string {
+  const m = Math.max(1, Math.round(minutes));
+  if (m < 60) return m === 1 ? "1 minute" : `${m} minutes`;
+  const h = Math.floor(m / 60);
+  const rest = m % 60;
+  const hours = h === 1 ? "1 hour" : `${h} hours`;
+  return rest ? `${hours} ${rest === 1 ? "1 minute" : `${rest} minutes`}` : hours;
+}
+
 // "All copies of the last 14 days, then 14 daily, 8 weekly, and 6 monthly copies."
 export function formatRetention(r: DestinationRetention | undefined | null): string {
   const e = effectiveRetention(r);

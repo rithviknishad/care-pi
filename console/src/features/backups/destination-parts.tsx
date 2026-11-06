@@ -1,48 +1,43 @@
 import { useId, useState } from "react";
 import type { DestinationRetention } from "@/api/types";
 import { FormField } from "@/components/app/form-field";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { ChoiceCards } from "@/components/v2/choice-cards";
+import { Explainer } from "@/components/v2/explainer";
 import { fmt, strings } from "@/lib/strings";
-import { cn } from "@/lib/utils";
 import {
-  INTERVAL_CHOICES,
+  FREQUENCY_CHOICES,
   INTERVAL_DEFAULT_MIN,
   RETENTION_DEFAULTS,
+  RETENTION_PRESETS,
   effectiveRetention,
-  formatRetention,
-  formatRpo,
+  formatRpoMinutes,
+  retentionPreset,
   rpoMinutes,
+  type RetentionPresetName,
 } from "./backups-format";
 import { CHOICES, type Choice } from "./destination-meta";
 
-// "Where should backups go?" (plans/02 section 7): 3 big choices. A choice opens its form.
+// "Where should the copies go?" (plans/02 section 7): 3 big choices (ChoiceCards). A choice opens its form.
 export function DestinationChoices({ value, onChange }: { value: Choice | null; onChange: (c: Choice) => void }) {
+  const id = useId();
   return (
-    <div role="radiogroup" aria-label={strings.backups.destTitle} className="grid gap-3 sm:grid-cols-3">
-      {CHOICES.map(({ id, icon: Icon }) => {
-        const checked = value === id;
-        return (
-          <button
-            key={id}
-            type="button"
-            role="radio"
-            aria-checked={checked}
-            onClick={() => onChange(id)}
-            className={cn(
-              "flex min-h-28 flex-col items-start gap-2 rounded-lg border p-4 text-left outline-none hover:bg-muted-background focus-visible:outline-2 focus-visible:outline-indigo-500",
-              checked && "border-primary bg-primary-100/60 ring-1 ring-primary dark:bg-primary-400/10",
-            )}
-            data-testid={`dest-choice-${id}`}
-          >
-            <Icon className="size-6 text-primary" aria-hidden="true" />
-            <span className="font-semibold">{strings.backups.choices[id]}</span>
-            <span className="text-xs text-soft-foreground">{strings.backups.choiceHelp[id]}</span>
-          </button>
-        );
-      })}
-    </div>
+    <ChoiceCards
+      name={`${id}-dest`}
+      legend={<span className="sr-only">{strings.backups.destTitle}</span>}
+      value={value}
+      onChange={(v) => onChange(v as Choice)}
+      columns={3}
+      choices={CHOICES.map(({ id: c, icon }) => ({
+        value: c,
+        title: strings.backups.choices[c] ?? c,
+        fit: strings.backups.choiceHelp[c] ?? "",
+        icon,
+        recommended: c === "usb",
+        testId: `dest-choice-${c}`,
+      }))}
+    />
   );
 }
 
@@ -51,15 +46,16 @@ export interface ScheduleValue {
   retention?: DestinationRetention | undefined;
 }
 
-const KEEP_FIELDS: { key: keyof DestinationRetention; label: string; max: number }[] = [
-  { key: "keep_within_days", label: strings.dest.keepWithin, max: 3650 },
-  { key: "keep_daily", label: strings.dest.keepDaily, max: 3650 },
-  { key: "keep_weekly", label: strings.dest.keepWeekly, max: 520 },
-  { key: "keep_monthly", label: strings.dest.keepMonthly, max: 120 },
+const KEEP_FIELDS: { key: keyof DestinationRetention; max: number }[] = [
+  { key: "keep_within_days", max: 3650 },
+  { key: "keep_daily", max: 3650 },
+  { key: "keep_weekly", max: 520 },
+  { key: "keep_monthly", max: 120 },
 ];
 
-// The interval and the retention of a destination, with the defaults of the agent and the RPO that they give.
-// A value that is the default stays out of config.yaml (the agent fills in the defaults).
+// The schedule of a destination (S66, item 2): "How often we save a copy" (a frequency), "How far back you can go"
+// (Standard, Longer, or Custom with the 4 numbers), the RPO in one sentence, and the Explainer that draws the policy
+// and says it in plain words. It updates live. A value that is the default of the agent stays out of config.yaml.
 export function DestinationSchedule({
   value,
   onChange,
@@ -70,49 +66,75 @@ export function DestinationSchedule({
   walTimeoutMin: number | undefined;
 }) {
   const id = useId();
+  const d = strings.dest;
   const interval = value.interval_min ?? INTERVAL_DEFAULT_MIN;
   const retention = effectiveRetention(value.retention);
-  const [open, setOpen] = useState(false);
-  const setKeep = (key: keyof DestinationRetention, raw: string) => {
-    const n = Math.max(0, Math.min(10_000, Math.round(Number(raw) || 0)));
-    const next = { ...retention, [key]: n };
+  const [customOpen, setCustomOpen] = useState(false);
+  const preset: RetentionPresetName = customOpen ? "custom" : retentionPreset(retention);
+  const frequencies = FREQUENCY_CHOICES.includes(interval) ? FREQUENCY_CHOICES : [...FREQUENCY_CHOICES, interval];
+  const setRetention = (next: Required<DestinationRetention>) => {
     const same = KEEP_FIELDS.every((f) => next[f.key] === RETENTION_DEFAULTS[f.key]);
     onChange({ ...value, retention: same ? undefined : next });
   };
+  const setKeep = (key: keyof DestinationRetention, raw: string) => {
+    const n = Math.max(0, Math.min(10_000, Math.round(Number(raw) || 0)));
+    setRetention({ ...retention, [key]: n });
+  };
   return (
-    <div className="flex flex-col gap-2" data-testid="dest-schedule">
-      <FormField id={`${id}-interval`} label={strings.dest.interval} help={strings.dest.intervalHelp}>
-        <NativeSelect
-          id={`${id}-interval`}
-          value={String(interval)}
-          onChange={(e) => {
-            const n = Number(e.target.value);
+    <div className="flex min-w-0 flex-col gap-6" data-testid="dest-schedule">
+      <fieldset className="flex min-w-0 flex-col gap-2">
+        <legend className="mb-1 type-h3 text-ink">{d.interval}</legend>
+        <p className="-mt-1 type-small text-ink-muted">{d.intervalHelp}</p>
+        <ToggleGroup
+          variant="outline"
+          value={[String(interval)]}
+          onValueChange={(v) => {
+            const n = Number(v[0]);
+            if (!n) return;
             onChange({ ...value, interval_min: n === INTERVAL_DEFAULT_MIN ? undefined : n });
           }}
-          className="max-w-48"
+          aria-label={d.interval}
+          className="flex w-full flex-wrap justify-start"
+          data-testid="dest-interval"
         >
-          {INTERVAL_CHOICES.map((m) => (
-            <NativeSelectOption key={m} value={String(m)}>
-              {strings.dest.intervals[m] ?? `${m} min`}
-            </NativeSelectOption>
+          {frequencies.map((m) => (
+            <ToggleGroupItem key={m} value={String(m)} className="min-w-0 flex-1 sm:flex-none">
+              {d.intervals[m] ?? `${m} min`}
+            </ToggleGroupItem>
           ))}
-        </NativeSelect>
-      </FormField>
-      <p className="text-sm" data-testid="dest-rpo">
-        {fmt(strings.dest.rpo, { rpo: formatRpo(rpoMinutes(interval, walTimeoutMin)) })}
-      </p>
-      <div className="text-sm">
-        <span className="text-soft-foreground">{strings.dest.retention}: </span>
-        <span>{formatRetention(retention)}</span>
-      </div>
-      <Collapsible open={open} onOpenChange={setOpen}>
-        <CollapsibleTrigger className="text-sm text-blue-700 underline underline-offset-4 dark:text-blue-400">
-          {strings.dest.retentionEdit}
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <div className="mt-2 grid gap-x-4 sm:grid-cols-2">
+        </ToggleGroup>
+        <p className="min-h-6 type-body font-medium text-ink" data-testid="dest-rpo" aria-live="polite">
+          {fmt(d.rpoSentence, { minutes: formatRpoMinutes(rpoMinutes(interval, walTimeoutMin)) })}
+        </p>
+      </fieldset>
+      <div className="flex min-w-0 flex-col gap-3">
+        <ChoiceCards
+          name={`${id}-keep`}
+          legend={d.howFar}
+          description={d.howFarHelp}
+          value={preset}
+          columns={3}
+          onChange={(v) => {
+            if (v === "custom") {
+              setCustomOpen(true);
+              return;
+            }
+            setCustomOpen(false);
+            const next = RETENTION_PRESETS[v as Exclude<RetentionPresetName, "custom">];
+            if (next) setRetention(next);
+          }}
+          choices={(["standard", "longer", "custom"] as const).map((p) => ({
+            value: p,
+            title: d.retentionPresets[p] ?? p,
+            fit: d.retentionFit[p] ?? "",
+            recommended: p === "standard",
+            testId: `dest-keep-${p}`,
+          }))}
+        />
+        {preset === "custom" ? (
+          <div className="grid gap-x-4 sm:grid-cols-2" data-testid="dest-keep-custom">
             {KEEP_FIELDS.map((f) => (
-              <FormField key={f.key} id={`${id}-${f.key}`} label={f.label}>
+              <FormField key={f.key} id={`${id}-${f.key}`} label={d.keepFor[f.key] ?? f.key}>
                 <Input
                   id={`${id}-${f.key}`}
                   type="number"
@@ -121,13 +143,14 @@ export function DestinationSchedule({
                   max={f.max}
                   value={String(retention[f.key])}
                   onChange={(e) => setKeep(f.key, e.target.value)}
-                  className="max-w-32"
+                  className="max-w-32 type-data"
                 />
               </FormField>
             ))}
           </div>
-        </CollapsibleContent>
-      </Collapsible>
+        ) : null}
+      </div>
+      <Explainer policy={{ interval_min: interval, ...retention }} testId="dest-explainer" />
     </div>
   );
 }

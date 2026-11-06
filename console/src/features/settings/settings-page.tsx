@@ -5,7 +5,10 @@ import { useSearchParams } from "react-router";
 import { api, call } from "@/api/client";
 import { qk, useConfig, useConfigSchema, useFe, usePresets } from "@/api/queries";
 import type { Config, Job, PowerAction, SizeStep } from "@/api/types";
-import { DataList, DataRow, PageHeader } from "@/components/app/page";
+import { PageHeader } from "@/components/app/page";
+import { KeyValueList } from "@/components/v2/key-value-list";
+import { Panel, WhatNext } from "@/components/v2/panel";
+import { ProblemCard } from "@/components/v2/problem-card";
 import { ProblemAlert } from "@/components/app/problem-alert";
 import { isReauthCancelled, useReauth } from "@/components/app/reauth-context";
 import {
@@ -18,12 +21,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { FormField } from "@/components/app/form-field";
 import { Input } from "@/components/ui/input";
 import { describedBy } from "@/lib/form";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -48,8 +49,8 @@ type Tab = (typeof TABS)[number];
 
 function WithEffective({ render }: { render: (config: Config, etag: string) => React.ReactNode }) {
   const effective = useConfig("effective");
-  if (effective.isError) return <ProblemAlert error={effective.error} />;
-  if (!effective.data) return <Skeleton className="h-64" />;
+  if (effective.isError) return <ProblemAlert error={effective.error} onRetry={() => void effective.refetch()} />;
+  if (!effective.data) return <Skeleton className="h-64 rounded-card" />;
   return <>{render(effective.data.config, effective.data.etag)}</>;
 }
 
@@ -66,11 +67,7 @@ function IdentityTab({ config }: { config: Config }) {
       valid={Object.keys(errors).length === 0}
     >
       <IdentityForm value={value} onChange={setValue} editableHostname errors={errors} />
-      {hostChanged ? (
-        <Alert variant="warning" className="mt-4">
-          <AlertDescription>{st.hostnameChange}</AlertDescription>
-        </Alert>
-      ) : null}
+      {hostChanged ? <ProblemCard tone="warn" title={st.hostnameChange} className="mt-4" /> : null}
     </ConfigChange>
   );
 }
@@ -146,10 +143,18 @@ function SolutionTab({ config }: { config: Config }) {
       valid={!errors.care && !errors.fe}
     >
       <div className="flex flex-col gap-2">
-        <p className="text-sm text-soft-foreground">{st.solutionIntro}</p>
-        <DataList>
-          <DataRow label={st.track} value={config.solution?.track ?? "stable"} testId="solution-track" />
-        </DataList>
+        <p className="max-w-prose type-small text-ink-muted">{st.solutionIntro}</p>
+        <KeyValueList
+          items={[
+            {
+              id: "track",
+              label: st.track,
+              value: config.solution?.track ?? "stable",
+              mono: true,
+              testId: "solution-track",
+            },
+          ]}
+        />
         <FormField id="custom-care-ref" label={st.careRef} help={st.careRefHelp} error={errors.care}>
           <Input
             id="custom-care-ref"
@@ -189,28 +194,30 @@ function FeTab() {
   return (
     <div className="flex flex-col gap-4">
       {fe.isError ? <ProblemAlert error={fe.error} /> : null}
-      <DataList>
-        <DataRow label={st.provider} loading={!f} value={f?.provider} />
-        <DataRow label={st.current} loading={!f} value={f?.current ?? "—"} />
-        <DataRow label={strings.dashboard.careFeSha} loading={!f} value={f?.care_fe_sha?.slice(0, 12) ?? "—"} />
-        <DataRow
-          label={st.lastBuild}
-          loading={!f}
-          value={
-            f?.last_build
+      <KeyValueList
+        loading={!f}
+        items={[
+          { id: "provider", label: st.provider, value: f?.provider, mono: true },
+          { id: "current", label: st.current, value: f?.current ?? "—", mono: true },
+          { id: "sha", label: strings.dashboard.careFeSha, value: f?.care_fe_sha?.slice(0, 12) ?? "—", mono: true },
+          {
+            id: "last",
+            label: st.lastBuild,
+            value: f?.last_build
               ? `${f.last_build.provider} ${formatDateTime(f.last_build.built_at)} (${f.last_build.duration ?? "—"})`
-              : "—"
-          }
-        />
-        <DataRow
-          label={st.builds}
-          loading={!f}
-          value={
-            f ? f.builds.map((b) => `${b.id}${b.current ? " *" : ""} ${formatBytes(b.bytes)}`).join(", ") || "—" : ""
-          }
-        />
-      </DataList>
-      <p className="text-xs text-soft-foreground">{st.rebuildHelp}</p>
+              : "—",
+          },
+          {
+            id: "builds",
+            label: st.builds,
+            mono: true,
+            value: f
+              ? f.builds.map((b) => `${b.id}${b.current ? " *" : ""} ${formatBytes(b.bytes)}`).join(", ") || "—"
+              : "",
+          },
+        ]}
+      />
+      <WhatNext>{st.rebuildHelp}</WhatNext>
       {build.error ? <ProblemAlert error={build.error} /> : null}
       {job ? (
         <JobProgress jobId={job.id} initial={job} onDone={() => void qc.invalidateQueries({ queryKey: qk.fe })}>
@@ -256,8 +263,8 @@ function PowerButton({
     onSuccess: onAccepted,
   });
   return (
-    <div className="flex flex-col gap-2 rounded-lg border p-4">
-      <p className="text-sm">{help}</p>
+    <div className="flex flex-col gap-3 rounded-card border border-line-soft bg-surface-tint p-4">
+      <p className="type-body text-ink">{help}</p>
       <AlertDialog open={open} onOpenChange={setOpen}>
         <Button
           type="button"
@@ -297,11 +304,9 @@ function PowerTab() {
   return (
     <div className="flex flex-col gap-4">
       {accepted ? (
-        <Alert variant="info">
-          <AlertDescription>
-            {fmt(st.powerAccepted, { action: accepted.action, time: formatTime(accepted.at) })}
-          </AlertDescription>
-        </Alert>
+        <p role="status" className="rounded-card border border-info-border bg-info-bg p-4 type-body text-info-fg">
+          {fmt(st.powerAccepted, { action: accepted.action, time: formatTime(accepted.at) })}
+        </p>
       ) : null}
       <PowerButton
         action="reboot"
@@ -337,8 +342,8 @@ export default function SettingsPage() {
   const raw = params.get("tab");
   const tab: Tab = (TABS as readonly string[]).includes(raw ?? "") ? (raw as Tab) : "identity";
   return (
-    <div className="flex flex-col gap-4">
-      <PageHeader title={st.title} />
+    <div className="flex flex-col gap-6">
+      <PageHeader title={st.title} description={st.intro} />
       <Tabs value={tab} onValueChange={(v) => setParams({ tab: String(v) }, { replace: true })}>
         <div className="-mx-1 overflow-x-auto px-1 pb-1">
           <TabsList aria-label={st.title}>
@@ -349,36 +354,30 @@ export default function SettingsPage() {
             ))}
           </TabsList>
         </div>
-        <Card>
-          <CardContent>
-            <TabsContent value="identity">
-              {tab === "identity" ? (
-                <WithEffective render={(c, etag) => <IdentityTab key={etag} config={c} />} />
-              ) : null}
-            </TabsContent>
-            <TabsContent value="connectivity">
-              {tab === "connectivity" ? (
-                <WithEffective render={(c) => <ConnectivityTab hostname={c.identity?.hostname ?? "care"} />} />
-              ) : null}
-            </TabsContent>
-            <TabsContent value="size">
-              {tab === "size" ? <WithEffective render={(c, etag) => <SizeTab key={etag} config={c} />} /> : null}
-            </TabsContent>
-            <TabsContent value="env">
-              {tab === "env" ? <WithEffective render={(c, etag) => <EnvTab key={etag} config={c} />} /> : null}
-            </TabsContent>
-            <TabsContent value="backups">
-              {tab === "backups" ? <WithEffective render={(c, etag) => <BackupsTab key={etag} config={c} />} /> : null}
-            </TabsContent>
-            <TabsContent value="fe">{tab === "fe" ? <FeTab /> : null}</TabsContent>
-            <TabsContent value="solution">
-              {tab === "solution" ? (
-                <WithEffective render={(c, etag) => <SolutionTab key={etag} config={c} />} />
-              ) : null}
-            </TabsContent>
-            <TabsContent value="power">{tab === "power" ? <PowerTab /> : null}</TabsContent>
-          </CardContent>
-        </Card>
+        <Panel title={TAB_LABELS[tab]} description={st.tabHelp[tab]} className="mt-4" testId={`settings-${tab}`}>
+          <TabsContent value="identity">
+            {tab === "identity" ? <WithEffective render={(c, etag) => <IdentityTab key={etag} config={c} />} /> : null}
+          </TabsContent>
+          <TabsContent value="connectivity">
+            {tab === "connectivity" ? (
+              <WithEffective render={(c) => <ConnectivityTab hostname={c.identity?.hostname ?? "care"} />} />
+            ) : null}
+          </TabsContent>
+          <TabsContent value="size">
+            {tab === "size" ? <WithEffective render={(c, etag) => <SizeTab key={etag} config={c} />} /> : null}
+          </TabsContent>
+          <TabsContent value="env">
+            {tab === "env" ? <WithEffective render={(c, etag) => <EnvTab key={etag} config={c} />} /> : null}
+          </TabsContent>
+          <TabsContent value="backups">
+            {tab === "backups" ? <WithEffective render={(c, etag) => <BackupsTab key={etag} config={c} />} /> : null}
+          </TabsContent>
+          <TabsContent value="fe">{tab === "fe" ? <FeTab /> : null}</TabsContent>
+          <TabsContent value="solution">
+            {tab === "solution" ? <WithEffective render={(c, etag) => <SolutionTab key={etag} config={c} />} /> : null}
+          </TabsContent>
+          <TabsContent value="power">{tab === "power" ? <PowerTab /> : null}</TabsContent>
+        </Panel>
       </Tabs>
     </div>
   );

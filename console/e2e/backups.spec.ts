@@ -19,8 +19,10 @@ test("the Backups page shows the state, and Back up now runs a job", async ({ pa
   await expect(cards.nth(1)).toHaveAttribute("data-id", "b2");
   await expect(page.getByTestId("destination-state").first()).toHaveText("OK");
   await expect(page.getByTestId("key-state")).toHaveText("Confirmed");
-  await expect(page.getByTestId("rpo")).toContainText("On this device: up to 5 min.");
-  await expect(page.getByTestId("rpo")).toContainText("If this device breaks: up to 20 min.");
+  await expect(page.getByTestId("rpo")).toContainText("If the device breaks, you lose at most 20 minutes of work.");
+  await expect(page.getByTestId("rpo")).toContainText("the backup on this device loses at most 5 minutes of work.");
+  // S66, item 2: the explainer draws the policy of the first destination and says it in one sentence.
+  await expect(page.getByTestId("schedule-explainer-summary")).toContainText("we save a copy. You can go back");
   await expect(page.getByTestId("schedule-card")).toContainText("Each Sunday at 01:00");
   await expect(page.getByTestId("drill-last")).toContainText("Passed");
   await expect(page.getByTestId("ssh-card")).toContainText("restrict ssh-ed25519");
@@ -86,14 +88,14 @@ test("without a destination: add an S3 bucket, make it, and apply", async ({ pag
   await dialog.getByTestId("dest-choice-s3").click();
   await dialog.getByLabel("Endpoint").fill("https://s3.eu-central-003.backblazeb2.com");
   await dialog.getByLabel("Region").fill("eu-central-003");
-  await dialog.getByLabel("Bucket").fill("new-clinic-bucket");
+  await dialog.getByLabel("Bucket", { exact: true }).fill("new-clinic-bucket");
   await dialog.getByLabel("Access key id").fill("AKIAEXAMPLE0001");
   await dialog.getByLabel("Secret access key").fill("a secret access key");
   await dialog.getByTestId("dest-test").click();
   await expect(dialog.getByTestId("create-bucket")).toContainText("The bucket new-clinic-bucket does not exist.");
   await dialog.getByTestId("create-bucket-button").click();
   await expect(dialog.getByTestId("dest-test-result")).toHaveAttribute("data-next", "none");
-  await expect(dialog.getByTestId("dest-rpo")).toContainText("Data loss at most 20 min");
+  await expect(dialog.getByTestId("dest-rpo")).toContainText("you lose at most 20 minutes of work");
   await shot(page, info, "backups-add-s3");
   await dialog.getByTestId("dest-add").click();
   await expect(dialog.getByTestId("plan-preview")).toContainText("restic init");
@@ -165,7 +167,7 @@ test("the Backups page does not move when the data arrives", async ({ page, rese
   await expect(page.getByTestId("destination-skeleton")).toHaveCount(2);
   await expect(page.getByTestId("backup-health-skeleton")).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
-  const cards = page.locator("main [data-slot=card]");
+  const cards = page.locator("main section, main [data-slot=card]");
   const before = await boxes(cards);
   const row = await boxes(page.getByTestId("backup-health-skeleton"));
   await shot(page, info, "backups-skeleton");
@@ -189,9 +191,16 @@ test("Settings > Backups changes the schedule with a plan preview", async ({ pag
   await page.getByTestId("schedule-edit").click();
   await expect(page).toHaveURL(/\/settings\?tab=backups$/);
   const form = page.getByTestId("backups-settings");
-  await expect(page.getByTestId("settings-rpo")).toContainText("5 min on this device, 20 min if this device breaks");
+  await expect(page.getByTestId("settings-rpo")).toContainText(
+    "If the device breaks, you lose at most 20 minutes of work. On this device: at most 5 minutes.",
+  );
+  // S66, item 2: each place has "How often we save a copy" and "How far back you can go", with the explainer.
+  const usb = page.locator('[data-testid=settings-dest-schedule][data-id="usb"]');
+  await expect(usb.getByTestId("dest-explainer-summary")).toContainText("we save a copy");
   await form.getByLabel("Archive the database changes each (min)", { exact: true }).fill("2");
-  await expect(page.getByTestId("settings-rpo")).toContainText("2 min on this device, 17 min if this device breaks");
+  await expect(page.getByTestId("settings-rpo")).toContainText(
+    "you lose at most 17 minutes of work. On this device: at most 2 minutes.",
+  );
   await form.getByLabel("Full backup", { exact: true }).fill("Sat 23:00");
   await page.getByTestId("config-preview").click();
   await expect(page.getByTestId("plan-preview")).toContainText("backup timer");
@@ -200,7 +209,7 @@ test("Settings > Backups changes the schedule with a plan preview", async ({ pag
   expect(requests.some((u) => u.includes("/api/v1/config?dry_run=true"))).toBeTruthy();
   await page.goto("/backups");
   await expect(page.getByTestId("schedule-card")).toContainText("Each Saturday at 23:00");
-  await expect(page.getByTestId("rpo")).toContainText("On this device: up to 2 min.");
+  await expect(page.getByTestId("rpo")).toContainText("the backup on this device loses at most 2 minutes of work.");
 });
 
 // The rotation (docs/api/README.md section 13.4): the new key (pending) and its ceremony, then the job.

@@ -24,7 +24,7 @@ test("undo a mistake: restore to a point in time, then undo the restore", async 
     };
   });
   await panel.getByTestId("pitr-time").fill(target.input);
-  await expect(panel.getByTestId("pitr-warning")).toContainText(`Records after ${target.minute} will be lost.`);
+  await expect(panel.getByTestId("pitr-warning")).toContainText(`You will lose the changes after ${target.minute}.`);
   await expect(panel.getByTestId("pitr-warning")).toContainText("Care stops for about 1 minute.");
   await expect(panel.getByTestId("pitr-files")).toContainText("Nearest file backup:");
   await expect(panel.getByTestId("pitr-files")).toContainText("The files can differ by up to");

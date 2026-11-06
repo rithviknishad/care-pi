@@ -6,7 +6,7 @@ test("change the size with a plan preview and an apply job", async ({ page, rese
   await page.goto("/login?next=%2Fsettings%3Ftab%3Dsize");
   await login(page);
   await expect(page).toHaveURL(/\/settings\?tab=size$/);
-  await page.getByRole("radio", { name: /^solo/ }).click();
+  await page.getByTestId("size-advanced").getByText("Just me").click();
   await page.getByTestId("config-preview").click();
   await expect(page.getByTestId("plan-preview")).toContainText("Some units restart");
   await expect(page.getByTestId("plan-preview")).toContainText("care-api.service");

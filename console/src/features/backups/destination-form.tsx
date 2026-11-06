@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fmt, strings } from "@/lib/strings";
-import { DESTINATION_ID, destinationId } from "./backups-format";
+import { DESTINATION_ID, RETENTION_PRESETS, destinationId } from "./backups-format";
 import type { Choice } from "./destination-meta";
 import { DestinationSchedule, type ScheduleValue } from "./destination-parts";
 import { TestResultView } from "./test-result";
@@ -494,7 +494,8 @@ export function DestinationForm({
 }) {
   const fid = useId();
   const [id, setId] = useState(() => destinationId(DEFAULT_NAMES[choice], existingIds));
-  const [schedule, setSchedule] = useState<ScheduleValue>({});
+  // A new destination starts with the Standard "how far back" preset (S66, item 2).
+  const [schedule, setSchedule] = useState<ScheduleValue>({ retention: RETENTION_PRESETS.standard });
   const [ready, setReady] = useState<Ready>(null);
   const idError = !DESTINATION_ID.test(id) ? t.nameInvalid : existingIds.includes(id) ? t.nameUsed : null;
   const type = choice === "usb" ? "posix" : choice;
@@ -510,7 +511,11 @@ export function DestinationForm({
     onAdd(destination, ready.credentials);
   };
   return (
-    <section className="flex flex-col gap-4 rounded-lg border p-4" data-testid="dest-form" data-choice={choice}>
+    <section
+      className="flex min-w-0 flex-col gap-4 rounded-card border border-line bg-surface-card p-4 shadow-soft sm:p-5"
+      data-testid="dest-form"
+      data-choice={choice}
+    >
       <FormField id={`${fid}-id`} label={t.name} help={t.nameHelp} error={idError}>
         <Input
           id={`${fid}-id`}
@@ -518,7 +523,7 @@ export function DestinationForm({
           onChange={(e) => setId(e.target.value.toLowerCase().trim())}
           autoCapitalize="none"
           spellCheck={false}
-          className="max-w-xs font-mono"
+          className="max-w-xs type-data"
           aria-invalid={idError ? true : undefined}
         />
       </FormField>
@@ -526,7 +531,7 @@ export function DestinationForm({
       {choice === "sftp" ? <SftpFields id={id} onReady={setReady} /> : null}
       {choice === "s3" ? <S3Fields id={id} onReady={setReady} /> : null}
       <DestinationSchedule value={schedule} onChange={setSchedule} walTimeoutMin={walTimeoutMin} />
-      <div className="flex flex-wrap gap-2 border-t pt-4">
+      <div className="flex flex-wrap gap-2 border-t border-line-soft pt-4">
         {onCancel ? (
           <Button type="button" variant="outline" onClick={onCancel}>
             {t.cancel}
