@@ -19,6 +19,8 @@ small{color:#7b8794}
 .meta{color:#52606d;margin:0}
 .bar{height:.5rem;background:#e4e7eb;border-radius:4px;overflow:hidden;margin:.8rem 0 .2rem}
 .bar>div{height:100%;width:0;background:#2563eb;transition:width .4s}
+.bar.busy>div{width:30%;animation:busy 1.6s ease-in-out infinite}
+@keyframes busy{from{margin-left:-30%}to{margin-left:100%}}
 .steps{list-style:none;padding:0;margin:.6rem 0}
 .steps li{display:flex;gap:.5rem;align-items:baseline;padding:.3rem .5rem;border-radius:6px;line-height:1.4}
 .steps .mark{flex:none;width:1rem;text-align:center}
@@ -34,7 +36,7 @@ button{font:inherit;padding:.4rem .9rem;border:1px solid #cbd2d9;border-radius:6
 button:hover{background:#f4f6f8}
 pre{white-space:pre-wrap;font-size:.8rem;background:#f4f6f8;padding:.6rem;border-radius:6px}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-@media (prefers-reduced-motion:reduce){.bar>div{transition:none}}
+@media (prefers-reduced-motion:reduce){.bar>div{transition:none}.bar.busy>div{animation:none;width:100%;opacity:.4}}
 @media (max-width:36rem){main{margin:1rem .75rem;padding:1.4rem}}
 </style>
 <title>CARE: clock check</title>

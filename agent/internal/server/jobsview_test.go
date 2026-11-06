@@ -178,6 +178,10 @@ func TestPublicSetupStepNames(t *testing.T) {
 	if admin == nil || admin.Name != "create-care-superuser" || admin.Detail == nil || *admin.Detail != user {
 		t.Fatalf("the private step of the Care user: %+v", admin)
 	}
+	// The planned step count of the setup (the apply actions and the 3 steps after them) is exact.
+	if j.PlannedSteps != len(j.Steps) {
+		t.Fatalf("setup planned %d steps, ran %d", j.PlannedSteps, len(j.Steps))
+	}
 
 	e.cookie = ""
 	r = e.do("GET", "/_care-pi/jobs/"+id+"/events", nil)
@@ -207,6 +211,40 @@ func TestPublicSetupStepNames(t *testing.T) {
 	if !slices.Contains(names, "create-care-superuser") || !slices.Contains(names, "set-hostname") || !slices.Contains(names, "validate") {
 		t.Fatalf("public step names %v", names)
 	}
+}
+
+// TestPublicStepCount: job.step_count of the public status is the planned step count of a job that knows its plan
+// (an apply), and null for a job without a plan (an FE build), so a page shows "Step N" without a total.
+func TestPublicStepCount(t *testing.T) {
+	e, _ := readyConnEnv(t)
+	id := e.jobOK(e.do("POST", "/api/v1/apply", map[string]any{"reason": "step count"}))
+	j, err := jobs.Load(e.p, id)
+	must(t, err)
+	if n := j.StepCount(); n == nil || *n < 2 || *n != len(j.Steps) || j.PlannedSteps != len(j.Steps) {
+		t.Fatalf("apply: step count %v, planned %d, %d steps", n, j.PlannedSteps, len(j.Steps))
+	}
+
+	at, done := make(chan struct{}), make(chan struct{})
+	fb, err := e.svc.Jobs.Start(t.Context(), jobs.Spec{Kind: jobs.KindFEBuild, Source: jobs.SourceConsole, Lock: true},
+		func(ctx context.Context, rec *jobs.Recorder) (any, error) {
+			rec.StepAction("scale-down: solo", "")(nil)
+			end := rec.StepAction("ensure-fe: build 8d2f0c1a9b7e", "ensure-fe")
+			close(at)
+			<-done
+			end(nil)
+			return nil, nil
+		})
+	must(t, err)
+	<-at
+	e.clock.add(3 * time.Second)
+	r := e.do("GET", "/_care-pi/status", nil)
+	e.want(r, 200, "")
+	job, _ := r.json(t)["job"].(map[string]any)
+	if job == nil || job["id"] != fb.ID || job["step"] != "ensure-fe" || job["step_index"] != float64(1) || job["step_count"] != nil {
+		t.Fatalf("a job without a plan: %s", r.body)
+	}
+	close(done)
+	e.waitJob(fb.ID)
 }
 
 // TestPublicJobEventsLimits: 60 requests each minute for each address, separate from the public status; 4 open
@@ -269,6 +307,7 @@ func TestPublicJobLive(t *testing.T) {
 		}}, func(ctx context.Context, rec *jobs.Recorder) (any, error) {
 		end := rec.StepAction("validate: config.yaml", "validate")
 		end(nil)
+		rec.PlanSteps(2)
 		end = rec.StepAction("ensure-fe: build 8d2f0c1a9b7e", "ensure-fe")
 		close(atFE)
 		<-go1
@@ -294,7 +333,7 @@ func TestPublicJobLive(t *testing.T) {
 	recent := pub["jobs_recent"].([]any)
 	if pub["setup_state"] != "applying" || pub["setup_job_id"] != id || job["id"] != id || job["state"] != "running" ||
 		job["title"] != "Set up the device" || job["kind"] != "setup" || job["step"] != "ensure-fe" ||
-		job["step_index"] != float64(1) || job["step_count"] != float64(2) {
+		job["step_index"] != float64(1) || job["step_count"] != float64(3) {
 		t.Fatalf("public status during the finish: %s", r.body)
 	}
 	if len(recent) != 5 || recent[0].(map[string]any)["id"] != id || recent[0].(map[string]any)["state"] != "running" ||

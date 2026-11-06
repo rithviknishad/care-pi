@@ -184,9 +184,17 @@ type staged struct {
 	result StageResult
 }
 
+// The planned step counts of the update jobs (the public step_count): the stage steps, and the cutover steps from
+// cutover-maintenance-on to maintenance-off.
+const (
+	stagePlanned   = 6
+	cutoverPlanned = 10
+)
+
 // Stage runs the steps fetch-lock, plan, stage-pull, stage-bundles, stage-build, and render.
 // Care stays up. It changes nothing that Care uses.
 func (u *Updater) Stage(ctx context.Context, rec *jobs.Recorder, o StageOptions) (*StageResult, error) {
+	rec.PlanSteps(stagePlanned)
 	st, err := u.stage(ctx, rec, o)
 	if err != nil {
 		return nil, err
@@ -394,6 +402,8 @@ func (u *Updater) Apply(ctx context.Context, rec *jobs.Recorder, o ApplyOptions)
 	if err != nil {
 		return nil, err
 	}
+	// The stage steps, the cutover, and prune-images.
+	rec.PlanSteps(stagePlanned + cutoverPlanned + 1)
 	st, err := u.stage(ctx, rec, o.StageOptions)
 	if err != nil {
 		return nil, err

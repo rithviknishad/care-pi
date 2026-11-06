@@ -2737,8 +2737,8 @@ export interface components {
          *         "state": "running",
          *         "title": "Install an update",
          *         "step": "migrate",
-         *         "step_index": 9,
-         *         "step_count": 15,
+         *         "step_index": 10,
+         *         "step_count": 17,
          *         "started_at": "2026-11-22T02:03:00Z"
          *       },
          *       "jobs_recent": [
@@ -2864,7 +2864,13 @@ export interface components {
             step: string | null;
             /** @description The index of that step. */
             step_index: number | null;
-            /** @description The number of steps that the job knows now. It can grow. */
+            /**
+             * @description The planned number of steps of the job, when the job knows its plan: `apply` and `setup` (the plan
+             *     actions and the fixed steps), `update-stage`, and `update-apply`. It stays the same while the job runs
+             *     (it grows only when the job runs more steps than it planned, for example a rollback). `null` when the
+             *     job has no plan: a page then shows "Step N" without a total and an indeterminate bar. A page never shows
+             *     all the steps complete before the job is done.
+             */
             step_count: number | null;
             /**
              * Format: date-time

@@ -13,7 +13,8 @@ export interface BannerJob {
   id: string | null;
   /** "Maintenance in progress", or the title of the job ("Apply the settings"). */
   title: string;
-  /** "step 3 of 8", or "" before the first step. */
+  /** "step 3 of 8" (the planned step count of the job), "step 3" (a job without a plan: step_count null), or "" before
+   *  the first step. */
   stepOf: string;
   /** The operator text of the step that runs now. */
   step: string;
@@ -34,9 +35,11 @@ export function bannerJob(status: PublicStatus | undefined): BannerJob | null {
     id: job?.id ?? m?.job_id ?? null,
     title: m?.active ? strings.maintenance.noStep : job?.title || jobKindText(job?.kind),
     stepOf:
-      index !== null && index !== undefined && count
-        ? fmt(strings.maintenance.stepOf, { n: index + 1, total: Math.max(count, index + 1) })
-        : "",
+      index === null || index === undefined
+        ? ""
+        : count
+          ? fmt(strings.maintenance.stepOf, { n: index + 1, total: Math.max(count, index + 1) })
+          : fmt(strings.maintenance.step, { n: index + 1 }),
     step: action ? stepActionText(action) : "",
     action,
   };

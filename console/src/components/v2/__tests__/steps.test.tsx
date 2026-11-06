@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
-import { StepList, type StepItem } from "../step-list";
+import { StepList, StepProgress, type StepItem } from "../step-list";
 
 const t0 = 1_700_000_000_000;
 const steps: StepItem[] = [
@@ -53,5 +53,37 @@ describe("StepList", () => {
     expect(container.querySelector(".motion-ok\\:animate-v2-pop")).toBeNull();
     rerender(<StepList steps={[steps[0], { ...steps[1], state: "done", endedAt: Date.now() }, steps[2]]} />);
     expect(container.querySelectorAll(".motion-ok\\:animate-v2-pop")).toHaveLength(1);
+  });
+});
+
+describe("StepProgress", () => {
+  const bar = () => screen.getByRole("progressbar");
+
+  it("shows the step of the planned count and a bar of the steps that ended", () => {
+    render(<StepProgress steps={steps} total={12} succeeded={null} />);
+    expect(screen.getByText("Step 2 of 12")).toBeInTheDocument();
+    expect(bar()).toHaveAttribute("data-state", "determinate");
+    expect(bar()).toHaveAttribute("aria-valuenow", "8");
+  });
+
+  it("without a planned count shows Step N and an indeterminate bar", () => {
+    render(<StepProgress steps={steps} total={null} succeeded={null} />);
+    expect(screen.getByText("Step 2")).toBeInTheDocument();
+    expect(screen.queryByText(/of/)).toBeNull();
+    expect(bar()).toHaveAttribute("data-state", "indeterminate");
+    expect(bar()).not.toHaveAttribute("aria-valuenow");
+  });
+
+  it("is never full before the job is done, and never shows a step after the total", () => {
+    const ended = steps.map((s) => ({ ...s, state: "done" as const }));
+    const { rerender } = render(<StepProgress steps={ended} total={3} succeeded={null} />);
+    expect(bar()).toHaveAttribute("aria-valuenow", "99");
+    rerender(<StepProgress steps={ended} total={3} succeeded />);
+    expect(bar()).toHaveAttribute("aria-valuenow", "100");
+    // A job that runs more steps than it planned (a rollback): the total grows with them.
+    rerender(
+      <StepProgress steps={[...ended, { id: "d", title: "Roll back", state: "running" }]} total={3} succeeded={null} />,
+    );
+    expect(screen.getByText("Step 4 of 4")).toBeInTheDocument();
   });
 });

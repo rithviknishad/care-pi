@@ -19,6 +19,8 @@ small{color:#7b8794}
 .meta{color:#52606d;margin:0}
 .bar{height:.5rem;background:#e4e7eb;border-radius:4px;overflow:hidden;margin:.8rem 0 .2rem}
 .bar>div{height:100%;width:0;background:#2563eb;transition:width .4s}
+.bar.busy>div{width:30%;animation:busy 1.6s ease-in-out infinite}
+@keyframes busy{from{margin-left:-30%}to{margin-left:100%}}
 .steps{list-style:none;padding:0;margin:.6rem 0}
 .steps li{display:flex;gap:.5rem;align-items:baseline;padding:.3rem .5rem;border-radius:6px;line-height:1.4}
 .steps .mark{flex:none;width:1rem;text-align:center}
@@ -34,7 +36,7 @@ button{font:inherit;padding:.4rem .9rem;border:1px solid #cbd2d9;border-radius:6
 button:hover{background:#f4f6f8}
 pre{white-space:pre-wrap;font-size:.8rem;background:#f4f6f8;padding:.6rem;border-radius:6px}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
-@media (prefers-reduced-motion:reduce){.bar>div{transition:none}}
+@media (prefers-reduced-motion:reduce){.bar>div{transition:none}.bar.busy>div{animation:none;width:100%;opacity:.4}}
 @media (max-width:36rem){main{margin:1rem .75rem;padding:1.4rem}}
 </style>
 <title>CARE: setup is not complete</title>
@@ -237,20 +239,24 @@ var carePiJob = (function () {
     var start = job.started_at ? Date.parse(job.started_at) : 0;
     var end = job.finished_at ? Date.parse(job.finished_at) : now();
     $("job-elapsed").textContent = start ? (ended ? "in " : "for ") + dur(end - start) : "";
-    var total = Math.max(list.length, job.step_count || 0), done = 0, i;
+    // job.step_count is the planned step count, or null for a job without a plan: then "Step N" and an
+    // indeterminate bar. The bar is full only when the job is done.
+    var total = job.step_count ? Math.max(job.step_count, list.length) : 0, done = 0, i;
     for (i = 0; i < list.length; i++) {
       if (list[i] && list[i].state !== "running" && list[i].state !== "pending") { done++; }
     }
-    if (job.state === "succeeded") { done = total; }
-    var pct = total ? Math.round(100 * done / total) : 0;
-    $("job-bar").style.width = pct + "%";
-    $("job-progress").setAttribute("aria-valuenow", String(pct));
+    if (job.state === "succeeded" && total) { done = total; }
+    var pct = job.state === "succeeded" ? 100 : total ? Math.min(99, Math.round(100 * done / total)) : 0;
+    var bar = $("job-progress"), busy = !total && !ended;
+    bar.className = busy ? "bar busy" : "bar";
+    $("job-bar").style.width = busy ? "" : pct + "%";
+    if (busy) { bar.removeAttribute("aria-valuenow"); } else { bar.setAttribute("aria-valuenow", String(pct)); }
     var cur = current();
     if (!cur && !list.length && job.step && !ended) {
       cur = {index: job.step_index || 0, name: job.step, action: actionOf(job.step)};
     }
-    $("job-count").textContent = !total ? "" : cur ? "Step " + (cur.index + 1) + " of " + total + (list.length ? "" : ": " + stepText(cur))
-      : done + " of " + total + " steps complete";
+    $("job-count").textContent = cur ? "Step " + (cur.index + 1) + (total ? " of " + total : "") + (list.length ? "" : ": " + stepText(cur))
+      : !done ? "" : total ? done + " of " + total + " steps complete" : done + " steps complete";
     var ol = $("job-steps");
     for (i = 0; i < list.length; i++) {
       var s = list[i] || {index: i, name: "", state: "pending"};

@@ -190,6 +190,12 @@ test("the dashboard shows the update and the maintenance state", async ({ page, 
   await expect(banner(page)).toBeVisible();
   await expect(banner(page)).toHaveAttribute("href", /^\/jobs\/\d{8}T\d{6}\.\d{3}Z-update-apply$/);
   await expect(banner(page)).toContainText(/step \d+ of \d+/);
+  // The total is the planned step count of the job (the staged update: 10 cutover steps and prune-images), not the
+  // count of the steps that started, so the banner never says "step N of N" before the end.
+  const [, n, total] = /step (\d+) of (\d+)/.exec((await banner(page).textContent()) ?? "") ?? [];
+  expect(Number(total)).toBeGreaterThan(1);
+  expect(Number(n)).toBeLessThanOrEqual(Number(total));
+  expect(Number(total)).toBe(11);
 });
 
 test("change the window: the plan preview and the apply job", async ({ page, resetMock }) => {

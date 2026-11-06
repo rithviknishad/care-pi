@@ -215,6 +215,12 @@ func TestStatusPagesJob(t *testing.T) {
 			`<button type="button" id="copy">Copy status</button>`,
 			`"https://" + location.hostname + ":" + port + "/jobs/" + encodeURIComponent(job.id)`,
 			`id="job-progress" class="bar" role="progressbar"`,
+			// step_count is the planned count, or null: "Step N" and an indeterminate bar. Never 100 % before done.
+			`var total = job.step_count ? Math.max(job.step_count, list.length) : 0`,
+			`Math.min(99, Math.round(100 * done / total))`,
+			`bar.className = busy ? "bar busy" : "bar";`,
+			`"Step " + (cur.index + 1) + (total ? " of " + total : "")`,
+			`.bar.busy>div{width:30%;animation:busy`,
 			`var port = 8443;`,
 			`"update-apply":"Install an update"`,
 			`"setup":"When the setup is complete, this page opens CARE.`,

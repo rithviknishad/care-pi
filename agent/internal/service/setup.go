@@ -559,8 +559,9 @@ func (s *Service) runSetup(ctx context.Context, rec *jobs.Recorder, admin setup.
 	if err := s.setHostname(ctx, rec, cfg.Identity.Hostname); err != nil {
 		return nil, err
 	}
+	// The planned steps: the apply actions, then wait-healthy, create-care-superuser, and backup-full.
 	o := s.applyOptions(apply.Options{Reason: "setup finish", Out: rec.Writer(), Journal: rec, LockHeld: true,
-		Phase: setup.PhaseFull, NoFirstBackup: true})
+		Phase: setup.PhaseFull, NoFirstBackup: true, Planned: func(n int) { rec.PlanSteps(n + 3) }})
 	if _, err := apply.Run(ctx, o); err != nil {
 		return nil, applyProblem(err)
 	}

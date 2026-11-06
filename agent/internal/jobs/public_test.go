@@ -223,3 +223,37 @@ func TestStateGroups(t *testing.T) {
 	}
 	running.Finish(nil, nil)
 }
+
+// TestPlanSteps: a job without a plan has no step count (null); PlanSteps records the steps that started and the
+// remaining ones, the count stays while the planned steps run, and it counts a step after the plan (a rollback).
+func TestPlanSteps(t *testing.T) {
+	p := paths.New(t.TempDir())
+	rec := newRec(t, p, KindBackupRun, time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC))
+	rec.Step("snapshot: usb (db)")(nil)
+	if n := rec.Job().StepCount(); n != nil {
+		t.Fatalf("a job without a plan has the step count %d", *n)
+	}
+
+	rec = newRec(t, p, KindApply, time.Date(2026, 11, 6, 10, 0, 1, 0, time.UTC))
+	rec.Step("resolve-lock: image digests and git refs")(nil)
+	rec.PlanSteps(3)
+	for i, name := range []string{"write-files: 2 file(s)", "daemon-reload", "restart: care-api.service"} {
+		end := rec.Step(name)
+		j, err := Load(p, rec.ID())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n := j.StepCount(); n == nil || *n != 4 || len(j.Steps) != i+2 {
+			t.Fatalf("step %d of the plan: count %v, %d steps", i, n, len(j.Steps))
+		}
+		end(nil)
+	}
+	rec.Step("rollback: to care 2026.11.0")(nil)
+	j := rec.Finish(nil, nil)
+	if n := j.StepCount(); n == nil || *n != 5 {
+		t.Fatalf("a step after the plan: count %v", n)
+	}
+	if raw, _ := json.Marshal(j); strings.Contains(string(raw), "planned") {
+		t.Fatalf("the API form of the job has the plan: %s", raw)
+	}
+}

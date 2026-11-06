@@ -25,7 +25,14 @@ export { everyText, retentionSummary, retentionZones, type RetentionPolicy, type
 export { Stage, type StageProps, type StageStep } from "./stage";
 export { StatCard, type StatCardProps } from "./stat-card";
 export { StatusChip, type StatusChipProps } from "./status-chip";
-export { StepList, type StepItem, type StepListProps, type StepState } from "./step-list";
+export {
+  StepList,
+  StepProgress,
+  type StepItem,
+  type StepListProps,
+  type StepProgressProps,
+  type StepState,
+} from "./step-list";
 export { v2Strings } from "./strings";
 export { ThemeToggle } from "./theme-toggle";
 export { Timeline, type TimelineItem } from "./timeline";

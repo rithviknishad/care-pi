@@ -60,6 +60,10 @@ const PROBLEM_STATUS = {
   "tailscale-login-required": 409,
 };
 
+// The planned step count of each job (PublicJobProgress.step_count): the scripted steps, then the recovery steps after
+// a failure. The mock knows the plan of each scripted job.
+const PLANNED = new WeakMap();
+
 export function jobId(kind) {
   const d = new Date();
   const p = (n, w = 2) => String(n).padStart(w, "0");
@@ -116,6 +120,7 @@ export function startJob(state, spec) {
     last_event_id: 0,
   };
   const entry = { job, events: [], listeners: new Set(), holdsLock: spec.holdsLock ?? true, cancelled: false };
+  PLANNED.set(job, spec.steps.length);
   state.jobs.set(id, entry);
   state.jobOrder.unshift(id);
 
@@ -202,6 +207,7 @@ export function startJob(state, spec) {
             if (spec.recovery) {
               failedAt = action;
               steps.splice(index + 1, steps.length, ...spec.recovery(action));
+              PLANNED.set(job, steps.length);
               index++;
               setTimeout(runStep, 10);
               return;
@@ -345,7 +351,7 @@ export function publicProgress(job) {
     title: KIND_TITLES[job.kind] ?? job.kind,
     step: step ? publicStepName(step) : null,
     step_index: step?.index ?? null,
-    step_count: job.steps.length || null,
+    step_count: PLANNED.has(job) ? Math.max(PLANNED.get(job), job.steps.length) : null,
     started_at: job.started_at,
   };
 }

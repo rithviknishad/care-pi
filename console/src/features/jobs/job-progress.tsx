@@ -12,7 +12,7 @@ import { clock } from "@/components/v2/duration";
 import { MonoBlock } from "@/components/v2/mono-block";
 import { ProblemCard } from "@/components/v2/problem-card";
 import { StatusChip } from "@/components/v2/status-chip";
-import { StepList } from "@/components/v2/step-list";
+import { StepList, StepProgress } from "@/components/v2/step-list";
 import { useNow } from "@/components/v2/use-now";
 import { fmt, problemText, strings } from "@/lib/strings";
 import { slugOf } from "@/api/problem";
@@ -35,6 +35,9 @@ interface JobProgressProps {
   public?: boolean;
   /** The rows to reserve before the steps come (the step count of the job, when the page knows it). */
   reserve?: number;
+  /** Show "Step N of M" and a bar above the steps: the planned step count of the job (job.step_count of the public
+   *  status), or null for a job without a plan ("Step N" and an indeterminate bar). undefined: no such line. */
+  stepCount?: number | null;
   /** Show "Stop the job" when the job can stop (the Jobs page). */
   cancel?: boolean;
   className?: string;
@@ -57,6 +60,7 @@ function JobProgressView({
   children,
   public: isPublic = false,
   reserve,
+  stepCount,
   cancel = false,
   className,
 }: JobProgressProps) {
@@ -153,6 +157,14 @@ function JobProgressView({
         </div>
       </div>
       {intro ? <p className="max-w-prose type-body text-ink-muted">{intro}</p> : null}
+      {stepCount === undefined ? null : (
+        <StepProgress
+          steps={items}
+          total={stepCount}
+          succeeded={view.done ? jobState === "succeeded" : null}
+          testId="job-step-progress"
+        />
+      )}
       <StepList
         steps={items}
         reserve={reserve ?? (view.steps.length === 0 && !problem ? 3 : 0)}

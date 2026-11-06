@@ -1,4 +1,5 @@
 import { ArrowLeftIcon, ChevronDownIcon, LogInIcon } from "lucide-react";
+import { useState } from "react";
 import { Link, useParams } from "react-router";
 import { isProblem, useJob, usePublicStatus, useSession } from "@/api/queries";
 import type { JobKind } from "@/api/types";
@@ -118,6 +119,10 @@ function publicTitle(kind: string | undefined) {
 export function PublicJobView({ id }: { id: string }) {
   const pub = usePublicStatus(true);
   const kind = (jobKindFromId(id) ?? pub.data?.job?.kind) as JobKind | undefined;
+  // The planned step count of this job (null: the job has no plan). It stays after the job leaves the public status.
+  const live = pub.data?.job?.id === id ? (pub.data.job.step_count ?? null) : null;
+  const [planned, setPlanned] = useState<number | null>(null);
+  if (live !== null && live !== planned) setPlanned(live);
   const { title, text } = publicTitle(kind);
   const next = `/login?next=${encodeURIComponent(`/jobs/${id}`)}`;
   return (
@@ -134,7 +139,7 @@ export function PublicJobView({ id }: { id: string }) {
         }
       >
         <div data-testid="public-job">
-          <JobProgress jobId={id} public reserve={pub.data?.job?.step_count ?? 4} />
+          <JobProgress jobId={id} public reserve={planned ?? 4} stepCount={planned} />
         </div>
         <div className="flex flex-col gap-2">
           <Button asChild size="lg" className="w-full">

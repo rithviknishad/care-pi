@@ -50,6 +50,61 @@ export interface StepListProps {
 
 const STATE_TEXT: Record<StepState, string> = v2Strings.steps;
 
+export interface StepProgressProps {
+  steps: StepItem[];
+  /** The planned step count of the job, or null when the job has no plan (the public step_count). */
+  total: number | null;
+  /** The job ended: true when it succeeded (a full bar), false when it failed or stopped. null: it runs. */
+  succeeded: boolean | null;
+  className?: string;
+  testId?: string;
+}
+
+// The progress of a job above its StepList (S67): "Step 3 of 12" and a bar of the steps that ended, of the planned
+// count. Without a planned count: "Step 3" and an indeterminate bar. The bar is full only when the job succeeded.
+// Fixed height: the line is reserved before the first step.
+export function StepProgress({ steps, total, succeeded, className, testId }: StepProgressProps) {
+  let running = -1;
+  steps.forEach((s, i) => {
+    if (s.state === "running") running = i;
+  });
+  const ended = steps.filter((s) => s.state !== "running" && s.state !== "pending").length;
+  const planned = total ? Math.max(total, steps.length) : null;
+  const text =
+    running < 0
+      ? ""
+      : planned
+        ? fmt(v2Strings.steps.stepOf, { n: running + 1, total: planned })
+        : fmt(v2Strings.steps.step, { n: running + 1 });
+  const fraction = succeeded === true ? 1 : planned ? Math.min(succeeded === null ? 0.99 : 1, ended / planned) : null;
+  const busy = fraction === null && succeeded === null;
+  return (
+    <div className={cn("flex min-w-0 flex-col gap-2", className)} data-testid={testId}>
+      <p className="min-h-5 type-small text-ink-muted" data-testid={testId ? `${testId}-text` : undefined}>
+        {text}
+      </p>
+      <div
+        role="progressbar"
+        aria-label={text || v2Strings.steps.progress}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={busy ? undefined : Math.round(100 * (fraction ?? 0))}
+        data-state={busy ? "indeterminate" : "determinate"}
+        className="relative h-1.5 overflow-hidden rounded-full bg-primary-track"
+      >
+        {busy ? (
+          <span className="block h-full w-1/3 rounded-full bg-primary-solid motion-reduce:w-full motion-reduce:opacity-40 motion-ok:animate-v2-slide" />
+        ) : (
+          <span
+            className="block h-full origin-left rounded-full bg-primary-solid motion-ok:transition-transform motion-ok:duration-(--duration-slow)"
+            style={{ transform: `scaleX(${fraction ?? 0})` }}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 // The steps of a job. Append only: a new step goes to the end, a row never moves (layout rule 5).
 // A row that can have a second line (the detail, or "Usually about …" while it runs) reserves it in each state,
 // so a change of state does not change its height. The running row has an indeterminate bar at its bottom edge (absolute: no height).

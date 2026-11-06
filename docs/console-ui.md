@@ -627,7 +627,8 @@ for an external bundle "The browser loads the bundle from <url>. It is not pinne
 `maintenance` of `GET /_care-pi/status` (the member that the maintenance page of Caddy reads) or `job` of the same read
 (S67, contract 0.9.0: each job that holds the apply lock, from any tab, device, timer, or the CLI): "Maintenance in progress
 · step X of Y · <operator text of the step> · Open", a link to `/jobs/<id>` (to the Updates page when the status has no job
-id). The banner reads the public status each 15 s, each 3 s while a job runs, so it shows on each open page of each device. From 640 px it is in a slot of the top bar between the
+id). Y is `job.step_count`, the planned step count of the job; a job without a plan (`step_count: null`) shows "step X"
+without a total. The banner reads the public status each 15 s, each 3 s while a job runs, so it shows on each open page of each device. From 640 px it is in a slot of the top bar between the
 state and the buttons; the slot is always there. Below 640 px it takes the place of the device name and of the state badge,
 on 2 lines ("Maintenance in progress" and the step). The top bar keeps its height (v2: 56 px, 64 px from 1024 px; the
 banner slot is 40 px high, `--banner-height`). The dashboard shows the same
@@ -781,8 +782,9 @@ Safari keeps the user gesture).
 - The banner (section 11.6) links to the job on each page of each device.
 - Setup `applying`: `setup_job_id` of `GET /_care-pi/status`. With a session, the wizard goes to `/setup/progress` (not a
   stale step). Without a session (a second device), `/` goes to `/jobs/<setup_job_id>`: a Focus page "Care is being set up"
-  (or "updated") with the step list of the public stream `GET /_care-pi/jobs/{id}/events` (steps only, no log) and a link to
-  log in. On port 443 the maintenance page of Caddy covers the same case.
+  (or "updated") with "Step X of Y" and a bar above the step list of the public stream `GET /_care-pi/jobs/{id}/events`
+  (steps only, no log), and a link to log in. Y is `job.step_count` of the public status; without it (`null`, a job
+  without a plan) the page shows "Step X" and an indeterminate bar. The bar is full only when the job succeeded. On port 443 the maintenance page of Caddy covers the same case.
 
 ### 13.4 The size step: preset cards (S65)
 

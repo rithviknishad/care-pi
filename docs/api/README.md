@@ -481,6 +481,9 @@ job that holds the apply lock (`job`: `id`, `kind`, `state`, `title`, `step`, `s
 names the finish job of the setup while `setup_state` is `applying` (`setup_job_id`). The maintenance page and the
 setup page of Caddy, and the console on a device without a session, follow that job with
 `GET /_care-pi/jobs/{job_id}/events`. The path is the same on port 443 and port 8443; it is not below `/api/v1`.
+`step_count` is the planned step count of a job that knows its plan: `apply` and `setup` (the plan actions and the
+fixed steps), `update-stage`, and `update-apply`. It stays the same while the job runs. Another job has
+`step_count: null`, and a page shows "Step N" without a total.
 
 The privacy boundary. The public stream is read-only and has no session, so it gives only what the maintenance page
 shows:

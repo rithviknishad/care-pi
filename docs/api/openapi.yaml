@@ -5158,7 +5158,7 @@ components:
             source: ntp
             trusted: true
           care_healthy: false
-          job: {id: 20261122T020300.000Z-update-apply, kind: update-apply, state: running, title: Install an update, step: migrate, step_index: 9, step_count: 15, started_at: '2026-11-22T02:03:00Z'}
+          job: {id: 20261122T020300.000Z-update-apply, kind: update-apply, state: running, title: Install an update, step: migrate, step_index: 10, step_count: 17, started_at: '2026-11-22T02:03:00Z'}
           jobs_recent:
             - {id: 20261122T020300.000Z-update-apply, kind: update-apply, state: running, started_at: '2026-11-22T02:03:00Z', finished_at: null}
             - {id: 20261122T020000.000Z-backup-run, kind: backup-run, state: succeeded, started_at: '2026-11-22T02:00:00Z', finished_at: '2026-11-22T02:01:12Z'}
@@ -5195,7 +5195,12 @@ components:
         step_count:
           type: [integer, 'null']
           minimum: 0
-          description: The number of steps that the job knows now. It can grow.
+          description: |
+            The planned number of steps of the job, when the job knows its plan: `apply` and `setup` (the plan
+            actions and the fixed steps), `update-stage`, and `update-apply`. It stays the same while the job runs
+            (it grows only when the job runs more steps than it planned, for example a rollback). `null` when the
+            job has no plan: a page then shows "Step N" without a total and an indeterminate bar. A page never shows
+            all the steps complete before the job is done.
         started_at:
           type: string
           format: date-time

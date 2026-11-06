@@ -602,8 +602,7 @@ func (s *Service) PublicStatus(ctx context.Context) *PublicStatus {
 	}
 	if j := jobs.Latest(s.Paths, func(j *jobs.Job) bool { return j.State == jobs.StateRunning && jobs.LockKinds[j.Kind] }); j != nil {
 		jp := &PublicJobProgress{ID: j.ID, Kind: j.Kind, State: j.State, Title: render.JobTitle(j.Kind), StartedAt: j.CreatedAt}
-		n := len(j.Steps)
-		jp.StepCount = &n
+		jp.StepCount = j.StepCount()
 		for i := len(j.Steps) - 1; i >= 0; i-- {
 			if j.Steps[i].State == jobs.StepRunning {
 				name, idx := jobs.PublicStepName(j.Steps[i]), i

@@ -183,6 +183,8 @@ type fileDoc struct {
 	Problem     *problem.Problem `json:"problem,omitempty"`
 	Output      json.RawMessage  `json:"output,omitempty"`
 	LastEventID int              `json:"last_event_id,omitempty"`
+	// PlannedSteps is the planned step count of a job that knows its plan (PlanSteps), else 0.
+	PlannedSteps int `json:"planned_steps,omitempty"`
 }
 
 type fileStep struct {
@@ -221,6 +223,19 @@ type Job struct {
 	Error       *problem.Problem `json:"error"`
 	Result      json.RawMessage  `json:"result"`
 	LastEventID int              `json:"last_event_id"`
+	// PlannedSteps is the planned step count (PlanSteps), 0 without a plan. The public status gives it as
+	// job.step_count; the API form of the job does not have it.
+	PlannedSteps int `json:"-"`
+}
+
+// StepCount returns the planned step count of the job (PublicJobProgress.step_count), or nil when the job has no
+// plan. A job that runs more steps than it planned counts each step that started.
+func (j *Job) StepCount() *int {
+	if j.PlannedSteps <= 0 {
+		return nil
+	}
+	n := max(j.PlannedSteps, len(j.Steps))
+	return &n
 }
 
 // Done reports whether the job ended.
@@ -428,6 +443,19 @@ func (r *Recorder) StepAction(name, action string) func(error) {
 // Step starts a step. The action key comes from the name. The returned function ends it.
 func (r *Recorder) Step(name string) func(error) { return r.StepAction(name, ActionOf(name)) }
 
+// PlanSteps records the planned step count of the job: the steps that started, and remaining more. A job that
+// knows its plan (apply, setup, update-stage, update-apply) calls it once, so the count stays the same while the job
+// runs. Without it, the public step_count is null.
+func (r *Recorder) PlanSteps(remaining int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return
+	}
+	r.doc.PlannedSteps = len(r.doc.Steps) + max(0, remaining)
+	r.save()
+}
+
 func (r *Recorder) endStep(i int, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -625,7 +653,8 @@ func (r *Recorder) Finish(err error, result any) *Job {
 
 // toJob maps a journal to the API form. dead tells that no process runs the job any more.
 func toJob(id string, d fileDoc, dead bool) Job {
-	j := Job{ID: id, Kind: d.Kind, Source: d.Source, CreatedAt: d.Started, Steps: []Step{}, LastEventID: d.LastEventID}
+	j := Job{ID: id, Kind: d.Kind, Source: d.Source, CreatedAt: d.Started, Steps: []Step{}, LastEventID: d.LastEventID,
+		PlannedSteps: d.PlannedSteps}
 	if j.Source == "" {
 		j.Source = SourceCLI
 	}

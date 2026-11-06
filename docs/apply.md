@@ -410,7 +410,9 @@ opens the public job stream `GET /_care-pi/jobs/<job.id>/events` (`docs/api/READ
 no log lines. The page shows:
 
 - the title of the job (`job.title`), its state, and the time since its start (the clock of the device, from `time`);
-- a progress bar: the steps that ended, of `job.step_count` (the count can grow while the job runs);
+- "Step X of Y" and a progress bar: the steps that ended, of `job.step_count`, the planned step count of the job. With
+  `step_count: null` (a job without a plan), "Step X" and an indeterminate bar. The bar is full only when the job
+  succeeded;
 - the steps, in order, as they come (append-only): the sentence of the step (the same sentence as the console,
   `render.MaintenanceSteps`), the step name as a tooltip, and the time of the step. The step that runs has a
   highlight and `aria-current="step"`;

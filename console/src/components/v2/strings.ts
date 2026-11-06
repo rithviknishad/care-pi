@@ -49,6 +49,10 @@ export const v2Strings = {
     usually: "Usually about {time}",
     showLog: "Show the log",
     hideLog: "Hide the log",
+    // The progress line of a job: with the planned step count, or without it (a job without a plan).
+    stepOf: "Step {n} of {total}",
+    step: "Step {n}",
+    progress: "Progress of the job",
   },
   metric: {
     usedOf: "{used} of {cap}",

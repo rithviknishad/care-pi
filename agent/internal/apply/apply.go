@@ -85,6 +85,9 @@ type Options struct {
 	// DNSAddress sends a new LAN address to the DNS service (Phase 6, public mode; plan action update-dns).
 	// nil skips the action. The service and the CLI set it.
 	DNSAddress func(ctx context.Context, ipv4 string) error
+	// Planned gets the number of plan actions before the first one runs (not in a dry run). A job that knows its
+	// other steps records its planned step count with it (jobs.Recorder.PlanSteps). nil: the job has no plan.
+	Planned func(actions int)
 }
 
 // Journal records the steps of a run.
@@ -242,6 +245,9 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 	if p.Has(plan.EnsureFE) {
 		res.FEExists = fe.Exists(o.Paths, pr.Model.FEBuildID)
 	}
+	if o.Planned != nil && !o.DryRun {
+		o.Planned(len(p.Actions))
+	}
 
 	printSummary(o.Out, pr)
 	if pr.Phase == setup.PhaseBootstrap {
@@ -298,6 +304,7 @@ func Run(ctx context.Context, o Options) (*Result, error) {
 		} else {
 			journal = rec
 			res.JobID = rec.ID()
+			rec.PlanSteps(len(p.Actions))
 		}
 	}
 	ex.journal = journal

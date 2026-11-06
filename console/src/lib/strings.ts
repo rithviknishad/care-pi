@@ -1801,8 +1801,10 @@ export const strings = {
     banner: "Maintenance in progress: {step}",
     noStep: "Maintenance in progress",
     open: "Open the Updates page",
-    // S67: the banner of each page names the job that runs, with its step, and links to the job page.
+    // S67: the banner of each page names the job that runs, with its step, and links to the job page. A job without
+    // a plan (step_count null) has no total.
     stepOf: "step {n} of {total}",
+    step: "step {n}",
     openJob: "Open",
   },
   updates: {
