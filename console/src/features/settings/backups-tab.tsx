@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { Destination } from "@/api/types";
-import { formatRpoMinutes } from "@/features/backups/backups-format";
+import { INTERVAL_DEFAULT_MIN, formatRpoMinutes } from "@/features/backups/backups-format";
 import { DestinationSchedule, type ScheduleValue } from "@/features/backups/destination-parts";
 import { TYPE_ICONS } from "@/features/backups/destination-meta";
 import { fmt, strings } from "@/lib/strings";
@@ -79,9 +79,12 @@ export function BackupsTab({ config }: { config: Config }) {
   const [schedules, setSchedules] = useState<Record<string, ScheduleValue>>(() =>
     Object.fromEntries(destinations.map((d) => [d.id, { interval_min: d.interval_min, retention: d.retention }])),
   );
-  const minInterval = destinations.length
-    ? Math.min(...destinations.map((d) => schedules[d.id]?.interval_min ?? d.interval_min ?? 15))
-    : null;
+  // A schedule without interval_min has the default of the agent, not the value of config.yaml before the change.
+  const intervalOf = (d: Destination) => {
+    const sv = schedules[d.id];
+    return (sv ? sv.interval_min : d.interval_min) ?? INTERVAL_DEFAULT_MIN;
+  };
+  const minInterval = destinations.length ? Math.min(...destinations.map(intervalOf)) : null;
   const wal = intIn(v.wal, 1, 60);
   const num = (k: keyof typeof RANGES, label: string, help?: string) => (
     <FormField id={`${id}-${k}`} label={label} help={help} error={errors[k]}>
