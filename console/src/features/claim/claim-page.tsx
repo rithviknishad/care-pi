@@ -11,14 +11,17 @@ import { describedBy, validateNewPassword } from "@/lib/form";
 import { ProblemAlert } from "@/components/app/problem-alert";
 import { useRetryWait } from "@/hooks/use-retry-wait";
 import { RecoveryCodesPanel } from "@/components/app/recovery-codes";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { FocusCard } from "@/components/v2/focus";
+import { WhatNext } from "@/components/v2/panel";
+import { ProblemCard } from "@/components/v2/problem-card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { formatClaimCode, looksLikeClaimCode } from "@/lib/codes";
 import { strings } from "@/lib/strings";
+import { LINK_TONE } from "@/components/app/link-tone";
+import { cn } from "@/lib/utils";
 
 export default function ClaimPage() {
   const id = useId();
@@ -50,20 +53,14 @@ export default function ClaimPage() {
 
   if (codes) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle>
-            <h1>{strings.codes.title}</h1>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <RecoveryCodesPanel
-            codes={codes.codes}
-            generatedAt={codes.at}
-            onContinue={() => navigate("/setup/recovery-codes", { replace: true })}
-          />
-        </CardContent>
-      </Card>
+      <FocusCard illustration="shield-certificate" title={strings.codes.title} footer={strings.claim.codesFooter}>
+        <RecoveryCodesPanel
+          codes={codes.codes}
+          generatedAt={codes.at}
+          onContinue={() => navigate("/setup/recovery-codes", { replace: true })}
+          next={strings.claim.codesNext}
+        />
+      </FocusCard>
     );
   }
 
@@ -72,32 +69,31 @@ export default function ClaimPage() {
 
   if (pub.isPending) {
     return (
-      <Card aria-busy="true">
-        <CardHeader>
-          <Skeleton className="h-6 w-48" />
-          <Skeleton className="h-10 w-full" />
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
+      <FocusCard illustration="pi-box" title={strings.claim.title} description={strings.claim.intro}>
+        <div className="flex flex-col gap-4" aria-busy="true">
           <Skeleton className="h-16" />
           <Skeleton className="h-16" />
           <Skeleton className="h-16" />
-        </CardContent>
-      </Card>
+        </div>
+      </FocusCard>
     );
   }
-  if (pub.isError) return <ProblemAlert error={pub.error} />;
+  if (pub.isError) {
+    return (
+      <FocusCard illustration="pi-box" title={strings.claim.title}>
+        <ProblemAlert error={pub.error} onRetry={() => void pub.refetch()} />
+      </FocusCard>
+    );
+  }
 
   const methods = pub.data.claim_methods;
   if (pub.data.setup_state !== "unclaimed" || methods.length === 0) {
     return (
-      <Alert>
-        <AlertDescription className="flex flex-col items-start gap-3">
-          <p>{strings.claim.noMethods}</p>
-          <Button asChild variant="outline">
-            <Link to="/login">{strings.claim.goLogin}</Link>
-          </Button>
-        </AlertDescription>
-      </Alert>
+      <FocusCard illustration="pi-box" title={strings.claim.title} description={strings.claim.noMethods}>
+        <Button asChild size="lg" className="w-full">
+          <Link to="/login">{strings.claim.goLogin}</Link>
+        </Button>
+      </FocusCard>
     );
   }
 
@@ -140,90 +136,85 @@ export default function ClaimPage() {
   const firstbootError = pub.data.firstboot_error;
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <h1 className="text-xl">{strings.claim.title}</h1>
-        </CardTitle>
-        <CardDescription>{strings.claim.intro}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {firstbootError ? (
-          <Alert variant="warning" className="mb-4">
-            <AlertTitle>{strings.claim.firstbootTitle}</AlertTitle>
-            <AlertDescription>{firstbootError}</AlertDescription>
-          </Alert>
-        ) : null}
-        <form onSubmit={submit} className="flex flex-col gap-2" noValidate>
-          {current === "claim-code" ? (
-            <FormField
+    <FocusCard
+      illustration="pi-box"
+      title={strings.claim.title}
+      description={strings.claim.intro}
+      footer={strings.claim.footer}
+    >
+      {firstbootError ? (
+        <ProblemCard tone="warn" title={strings.claim.firstbootTitle} description={firstbootError} />
+      ) : null}
+      <form onSubmit={submit} className="flex flex-col gap-2" noValidate>
+        {current === "claim-code" ? (
+          <FormField
+            id={`${id}-secret`}
+            label={strings.claim.codeLabel}
+            help={strings.claim.codeHelp}
+            error={secretWrong}
+          >
+            <Input
               id={`${id}-secret`}
-              label={strings.claim.codeLabel}
-              help={strings.claim.codeHelp}
-              error={secretWrong}
-            >
-              <Input
-                id={`${id}-secret`}
-                name="claim-code"
-                value={secret}
-                onChange={(e) => setSecret(formatClaimCode(e.target.value))}
-                placeholder="XXXX-XXXX-XXXX"
-                autoComplete="one-time-code"
-                autoCapitalize="characters"
-                spellCheck={false}
-                className="tracking-widest uppercase"
-                autoFocus={autoSwitched}
-                aria-invalid={secretWrong ? true : undefined}
-                aria-describedby={describedBy(`${id}-secret`, true, secretWrong)}
-              />
-            </FormField>
-          ) : (
-            <FormField
+              name="claim-code"
+              value={secret}
+              onChange={(e) => setSecret(formatClaimCode(e.target.value))}
+              placeholder="XXXX-XXXX-XXXX"
+              autoComplete="one-time-code"
+              autoCapitalize="characters"
+              spellCheck={false}
+              className="type-data tracking-widest uppercase"
+              autoFocus={autoSwitched}
+              aria-invalid={secretWrong ? true : undefined}
+              aria-describedby={describedBy(`${id}-secret`, true, secretWrong)}
+            />
+          </FormField>
+        ) : (
+          <FormField
+            id={`${id}-secret`}
+            label={strings.claim.osPasswordLabel}
+            help={strings.claim.osPasswordHelp}
+            error={secretWrong}
+          >
+            <PasswordInput
               id={`${id}-secret`}
-              label={strings.claim.osPasswordLabel}
-              help={strings.claim.osPasswordHelp}
-              error={secretWrong}
-            >
-              <PasswordInput
-                id={`${id}-secret`}
-                name="os-password"
-                value={secret}
-                onChange={(e) => onOsPassword(e.target.value)}
-                autoComplete="off"
-                aria-invalid={secretWrong ? true : undefined}
-                aria-describedby={describedBy(`${id}-secret`, true, secretWrong)}
-              />
-            </FormField>
-          )}
-          {other ? (
-            <Button
-              type="button"
-              variant="link"
-              className="-mt-3 mb-2 h-auto self-start p-0"
-              onClick={() => {
-                setMethod(other);
-                setAutoSwitched(false);
-                setSecret("");
-                claim.reset();
-              }}
-            >
-              {other === "claim-code" ? strings.claim.useCode : strings.claim.useOsPassword}
-            </Button>
-          ) : null}
-          <NewPasswordFields
-            password={password}
-            confirm={confirm}
-            onPassword={setPassword}
-            onConfirm={setConfirm}
-            errors={{ password: pwErrors.password ?? weak, confirm: pwErrors.confirm }}
-          />
-          {showAlert ? <ProblemAlert error={claim.error} className="mb-2" /> : null}
-          <Button type="submit" disabled={claim.isPending || wait > 0}>
-            {claim.isPending ? <Spinner data-icon="inline-start" /> : null}
-            {strings.claim.submit}
+              name="os-password"
+              value={secret}
+              onChange={(e) => onOsPassword(e.target.value)}
+              autoComplete="off"
+              aria-invalid={secretWrong ? true : undefined}
+              aria-describedby={describedBy(`${id}-secret`, true, secretWrong)}
+            />
+          </FormField>
+        )}
+        {other ? (
+          <Button
+            type="button"
+            variant="link"
+            className={cn("-mt-3 mb-2 h-auto self-start p-0 px-0", LINK_TONE)}
+            onClick={() => {
+              setMethod(other);
+              setAutoSwitched(false);
+              setSecret("");
+              claim.reset();
+            }}
+          >
+            {other === "claim-code" ? strings.claim.useCode : strings.claim.useOsPassword}
           </Button>
-        </form>
-      </CardContent>
-    </Card>
+        ) : null}
+        <NewPasswordFields
+          password={password}
+          confirm={confirm}
+          onPassword={setPassword}
+          onConfirm={setConfirm}
+          errors={{ password: pwErrors.password ?? weak, confirm: pwErrors.confirm }}
+        />
+        {showAlert ? <ProblemAlert error={claim.error} className="mb-2" /> : null}
+        <Button type="submit" size="lg" className="w-full" disabled={claim.isPending || wait > 0}>
+          {claim.isPending ? <Spinner data-icon="inline-start" /> : null}
+          {strings.claim.submit}
+        </Button>
+        <WhatNext className="mt-1">{strings.claim.next}</WhatNext>
+      </form>
+    </FocusCard>
   );
 }

@@ -9,13 +9,15 @@ import { FormField, PasswordInput } from "@/components/app/form-field";
 import { ProblemAlert } from "@/components/app/problem-alert";
 import { useRetryWait } from "@/hooks/use-retry-wait";
 import { TotpInput } from "@/components/app/totp-input";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { FocusCard } from "@/components/v2/focus";
+import { publicJobId } from "@/app/public-job";
 import { Spinner } from "@/components/ui/spinner";
 import { clearDrHandoff, readDrHandoff } from "@/features/setup/dr-handoff";
 import { homeFor } from "@/features/setup/wizard";
 import { fmt, strings } from "@/lib/strings";
+import { LINK_TONE } from "@/components/app/link-tone";
+import { cn } from "@/lib/utils";
 
 export default function LoginPage() {
   const id = useId();
@@ -51,6 +53,8 @@ export default function LoginPage() {
   if (session.data) return <Navigate to={next ?? homeFor(session.data.setup_state, true)} replace />;
   if (pub.data?.setup_state === "unclaimed" || problem?.is("not-claimed")) return <Navigate to="/claim" replace />;
 
+  // S67: a job runs (the setup finish, an update): the progress is one tap away.
+  const busy = publicJobId(pub.data);
   const wrong = problem?.is("bad-credentials") ? (needTotp ? strings.login.badTotp : strings.login.badPassword) : null;
   const showAlert = problem && !problem.is("bad-credentials", "totp-required");
 
@@ -61,58 +65,74 @@ export default function LoginPage() {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <h1 className="text-xl">{strings.login.title}</h1>
-        </CardTitle>
-        <CardDescription>{strings.login.intro}</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {restored ? (
-          <Alert variant="success" data-testid="dr-restored">
-            <AlertDescription className="flex flex-col gap-1">
-              <p>{fmt(strings.dr.restored, { name: restored.name || pub.data?.display_name || "" })}</p>
-              {restored.consoleUrl && new URL(restored.consoleUrl).host !== window.location.host ? (
-                <p>
-                  <a href={restored.consoleUrl} className="underline underline-offset-4">
-                    {fmt(strings.dr.restoredMoved, { url: restored.consoleUrl })}
-                  </a>
-                </p>
-              ) : null}
-            </AlertDescription>
-          </Alert>
-        ) : null}
-        <form onSubmit={submit} className="flex flex-col gap-2" noValidate>
-          <FormField id={`${id}-pw`} label={strings.password.label} error={!needTotp ? wrong : null}>
-            <PasswordInput
-              id={`${id}-pw`}
-              name="password"
-              autoComplete="current-password"
-              autoFocus
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              aria-invalid={wrong && !needTotp ? true : undefined}
-            />
-          </FormField>
-          {needTotp ? (
-            <FormField id={`${id}-totp`} label={strings.login.totpLabel} help={strings.login.totpHelp} error={wrong}>
-              <TotpInput id={`${id}-totp`} value={totp} onChange={setTotp} invalid={Boolean(wrong)} autoFocus />
-            </FormField>
-          ) : null}
-          {showAlert ? <ProblemAlert error={login.error} className="mb-2" /> : null}
-          <Button type="submit" disabled={login.isPending || wait > 0 || (needTotp && totp.length !== 6)}>
-            {login.isPending ? <Spinner data-icon="inline-start" /> : null}
-            {strings.login.submit}
+    <FocusCard
+      illustration="pi-box"
+      title={strings.login.title}
+      description={strings.login.intro}
+      footer={
+        <div className="flex flex-col items-start gap-1">
+          <Button asChild variant="link" className={cn("h-auto px-0", LINK_TONE)}>
+            <Link to={next ? `/recover?next=${encodeURIComponent(next)}` : "/recover"}>
+              {strings.login.useRecovery}
+            </Link>
           </Button>
-        </form>
-      </CardContent>
-      <CardFooter className="flex flex-col items-start gap-2">
-        <Button asChild variant="link" className="px-0">
-          <Link to={next ? `/recover?next=${encodeURIComponent(next)}` : "/recover"}>{strings.login.useRecovery}</Link>
+          <p className="type-small text-ink-soft">{strings.login.resetHint}</p>
+        </div>
+      }
+    >
+      {restored ? (
+        <div
+          className="flex flex-col gap-1 rounded-card border border-ok-border bg-ok-bg p-4 type-body text-ok-fg"
+          data-testid="dr-restored"
+        >
+          <p>{fmt(strings.dr.restored, { name: restored.name || pub.data?.display_name || "" })}</p>
+          {restored.consoleUrl && new URL(restored.consoleUrl).host !== window.location.host ? (
+            <p>
+              <a href={restored.consoleUrl} className="underline underline-offset-4">
+                {fmt(strings.dr.restoredMoved, { url: restored.consoleUrl })}
+              </a>
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {busy ? (
+        <Link
+          to={`/jobs/${encodeURIComponent(busy)}`}
+          className="flex items-center gap-3 rounded-card border border-warn-border bg-warn-bg p-4 type-body text-warn-fg outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          data-testid="login-busy"
+        >
+          <Spinner className="size-4 shrink-0" />
+          <span className="min-w-0 flex-1">{strings.login.busy}</span>
+        </Link>
+      ) : null}
+      <form onSubmit={submit} className="flex flex-col gap-2" noValidate>
+        <FormField id={`${id}-pw`} label={strings.password.label} error={!needTotp ? wrong : null}>
+          <PasswordInput
+            id={`${id}-pw`}
+            name="password"
+            autoComplete="current-password"
+            autoFocus
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            aria-invalid={wrong && !needTotp ? true : undefined}
+          />
+        </FormField>
+        {needTotp ? (
+          <FormField id={`${id}-totp`} label={strings.login.totpLabel} help={strings.login.totpHelp} error={wrong}>
+            <TotpInput id={`${id}-totp`} value={totp} onChange={setTotp} invalid={Boolean(wrong)} autoFocus />
+          </FormField>
+        ) : null}
+        {showAlert ? <ProblemAlert error={login.error} className="mb-2" /> : null}
+        <Button
+          type="submit"
+          size="lg"
+          className="w-full"
+          disabled={login.isPending || wait > 0 || (needTotp && totp.length !== 6)}
+        >
+          {login.isPending ? <Spinner data-icon="inline-start" /> : null}
+          {strings.login.submit}
         </Button>
-        <p className="text-xs text-soft-foreground">{strings.login.resetHint}</p>
-      </CardFooter>
-    </Card>
+      </form>
+    </FocusCard>
   );
 }
