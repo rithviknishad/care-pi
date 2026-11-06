@@ -1,5 +1,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ExternalLinkIcon, GlobeIcon, NetworkIcon, RadarIcon, ShieldQuestionIcon, WifiIcon } from "lucide-react";
+import {
+  ExternalLinkIcon,
+  GlobeIcon,
+  NetworkIcon,
+  RadarIcon,
+  ShieldQuestionIcon,
+  WifiIcon,
+  BookmarkIcon,
+} from "lucide-react";
 import { useState } from "react";
 import { api, call } from "@/api/client";
 import { qk, useNetwork, useTls, useWifiScan } from "@/api/queries";
@@ -69,12 +77,19 @@ function CardFrame({
   children: React.ReactNode;
 }) {
   return (
-    <section className="flex flex-col gap-4 rounded-lg border p-4" data-testid={testId} aria-label={title}>
-      <header className="flex min-h-7 flex-wrap items-center gap-2">
-        <span className="text-soft-foreground" aria-hidden="true">
+    <section
+      className="flex min-w-0 flex-col gap-4 rounded-card border border-line bg-surface-card p-4 shadow-soft sm:p-5"
+      data-testid={testId}
+      aria-label={title}
+    >
+      <header className="flex min-h-8 flex-wrap items-center gap-3">
+        <span
+          className="grid size-10 shrink-0 place-items-center rounded-lg bg-surface-tint-strong text-primary-solid"
+          aria-hidden="true"
+        >
           {icon}
         </span>
-        <h3 className="font-semibold">{title}</h3>
+        <h3 className="flex-1 type-h3 text-ink">{title}</h3>
         {badge}
       </header>
       {children}
@@ -209,9 +224,19 @@ function PublicCard({
       badge={<OnOff on={pub.enabled} />}
       testId="public-card"
     >
-      <p className="text-sm text-soft-foreground">{cs.publicIntro}</p>
+      <p className="max-w-prose type-small text-ink-muted">{cs.publicIntro}</p>
       {pub.enabled && host ? (
         <>
+          <div className="flex flex-col gap-2 rounded-card border border-line-soft bg-surface-tint p-4">
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 truncate font-mono text-xl font-semibold text-ink">https://{host}/</span>
+              <CopyButton value={`https://${host}/`} />
+            </span>
+            <p className="flex items-start gap-2 type-body text-ink" data-testid="public-bookmark">
+              <BookmarkIcon className="mt-1 size-4 shrink-0 text-primary-solid" aria-hidden="true" />
+              {fmt(cs.bookmark, { url: `https://${host}/` })}
+            </p>
+          </div>
           <DataList>
             <DataRow
               label={cs.name}
@@ -267,10 +292,9 @@ function PublicCard({
               <AlertDescription>{fmt(cs.dnsError, { error: pub.dns.last_error })}</AlertDescription>
             </Alert>
           ) : null}
-          <ul className="flex list-disc flex-col gap-1 pl-4 text-sm">
-            <li data-testid="public-bookmark">{fmt(cs.bookmark, { url: `https://${host}/` })}</li>
+          <ul className="flex list-disc flex-col gap-1 pl-4 type-small text-ink-muted">
             {pub.primary ? <li>{cs.primary}</li> : null}
-            <li className="text-soft-foreground">{cs.hsts}</li>
+            <li>{cs.hsts}</li>
           </ul>
           {pub.health_url ? <RebindingCheck url={pub.health_url} /> : null}
           <ConfirmButton

@@ -146,6 +146,8 @@ test("the certificate page shows the name limits and the one-time warning of a n
   await warning.getByTestId("ca-changed-dismiss").click();
   await expect(warning).toBeHidden();
   await page.reload();
+  // The name limits are in "Check the fingerprint (for experts)".
+  await page.getByText("Check the fingerprint (for experts)").click();
   await expect(page.getByTestId("ca-constraints")).toBeVisible();
   await expect(page.getByTestId("ca-changed")).toBeHidden();
 });

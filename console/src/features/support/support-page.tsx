@@ -1,22 +1,26 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { DownloadIcon, PackageIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, DownloadIcon, PackageIcon } from "lucide-react";
+import { Link } from "react-router";
 import { useId, useState } from "react";
 import { api, call } from "@/api/client";
 import { qk, useJobs, useStatus } from "@/api/queries";
 import type { Job, SupportBundleResult } from "@/api/types";
-import { DataList, DataRow, PageHeader } from "@/components/app/page";
+import { PageHeader } from "@/components/app/page";
+import { CopyButton } from "@/components/v2/copy-button";
+import { KeyValueList } from "@/components/v2/key-value-list";
+import { MonoBlock } from "@/components/v2/mono-block";
+import { Panel, WhatNext } from "@/components/v2/panel";
+import { Timeline } from "@/components/v2/timeline";
+import { JOB_STATE_TONE } from "@/features/jobs/job-steps";
 import { ProblemAlert } from "@/components/app/problem-alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { JobProgress } from "@/features/jobs/job-progress";
 import { formatBytes, formatDateTime, shortSha } from "@/lib/format";
-import { strings } from "@/lib/strings";
+import { fmt, jobKindText, strings } from "@/lib/strings";
 import { DoctorCard } from "./doctor-card";
 
 const sp = strings.support;
@@ -42,76 +46,101 @@ function BundleCard() {
   });
   const bundle = bundleOf(done);
   return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle>
-          <h2>{sp.create}</h2>
-        </CardTitle>
-        <CardDescription>{sp.intro}</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-end gap-4">
-          <div className="flex flex-col gap-1">
-            <Label htmlFor={`${id}-lines`}>{sp.lines}</Label>
-            <NativeSelect id={`${id}-lines`} value={String(lines)} onChange={(e) => setLines(Number(e.target.value))}>
-              {[100, 1000, 5000, 10000].map((n) => (
-                <NativeSelectOption key={n} value={String(n)}>
-                  {n}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </div>
-          <div className="flex flex-col gap-1">
-            <Label htmlFor={`${id}-hours`}>{sp.hours}</Label>
-            <NativeSelect id={`${id}-hours`} value={String(hours)} onChange={(e) => setHours(Number(e.target.value))}>
-              {[1, 24, 72, 168, 720].map((n) => (
-                <NativeSelectOption key={n} value={String(n)}>
-                  {n}
-                </NativeSelectOption>
-              ))}
-            </NativeSelect>
-          </div>
-          <Button
-            type="button"
-            onClick={() => create.mutate()}
-            disabled={create.isPending || (job !== null && done === null)}
-            data-testid="bundle-create"
-          >
-            {create.isPending ? <Spinner data-icon="inline-start" /> : <PackageIcon data-icon="inline-start" />}
-            {sp.create}
-          </Button>
+    <Panel title={sp.create} description={sp.intro} testId="bundle-card">
+      <div className="flex flex-wrap items-end gap-4">
+        <div className="flex flex-col gap-1">
+          <Label htmlFor={`${id}-lines`}>{sp.lines}</Label>
+          <NativeSelect id={`${id}-lines`} value={String(lines)} onChange={(e) => setLines(Number(e.target.value))}>
+            {[100, 1000, 5000, 10000].map((n) => (
+              <NativeSelectOption key={n} value={String(n)}>
+                {n}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
         </div>
-        {create.error ? <ProblemAlert error={create.error} /> : null}
-        {job ? (
-          <JobProgress
-            key={job.id}
-            jobId={job.id}
-            initial={job}
-            onDone={(j) => {
-              setDone(j);
-              void qc.invalidateQueries({ queryKey: qk.jobs });
-            }}
-          >
-            {bundle ? (
-              <div className="flex flex-col gap-3 rounded-lg border p-4" data-testid="bundle-ready">
-                <p className="text-sm">{sp.ready}</p>
-                <DataList>
-                  <DataRow label={sp.size} value={formatBytes(bundle.size_bytes)} />
-                  <DataRow label={sp.sha} value={shortSha(bundle.sha256, 16)} title={bundle.sha256} />
-                  <DataRow label={sp.expires} value={formatDateTime(bundle.expires_at)} />
-                </DataList>
-                <Button asChild className="self-start">
+        <div className="flex flex-col gap-1">
+          <Label htmlFor={`${id}-hours`}>{sp.hours}</Label>
+          <NativeSelect id={`${id}-hours`} value={String(hours)} onChange={(e) => setHours(Number(e.target.value))}>
+            {[1, 24, 72, 168, 720].map((n) => (
+              <NativeSelectOption key={n} value={String(n)}>
+                {n}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </div>
+        <Button
+          type="button"
+          size="lg"
+          onClick={() => create.mutate()}
+          disabled={create.isPending || (job !== null && done === null)}
+          data-testid="bundle-create"
+        >
+          {create.isPending ? <Spinner data-icon="inline-start" /> : <PackageIcon data-icon="inline-start" />}
+          {sp.create}
+        </Button>
+      </div>
+      {create.error ? <ProblemAlert error={create.error} /> : null}
+      {job ? (
+        <JobProgress
+          key={job.id}
+          jobId={job.id}
+          initial={job}
+          onDone={(j) => {
+            setDone(j);
+            void qc.invalidateQueries({ queryKey: qk.jobs });
+          }}
+        >
+          {bundle ? (
+            <div
+              className="flex flex-col gap-3 rounded-card border border-ok-border bg-ok-bg p-4 sm:p-5"
+              data-testid="bundle-ready"
+            >
+              <p className="type-body font-medium text-ok-fg">{sp.ready}</p>
+              <KeyValueList
+                items={[
+                  { id: "file", label: sp.file, value: bundle.filename, mono: true, copy: bundle.filename },
+                  { id: "size", label: sp.size, value: formatBytes(bundle.size_bytes), mono: true },
+                  { id: "expires", label: sp.expires, value: formatDateTime(bundle.expires_at), mono: true },
+                ]}
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button asChild>
                   <a href={bundle.download_path} download={bundle.filename}>
                     <DownloadIcon data-icon="inline-start" />
                     {sp.download}
                   </a>
                 </Button>
+                <CopyButton
+                  text={fmt(sp.message, {
+                    file: bundle.filename,
+                    size: formatBytes(bundle.size_bytes),
+                    sha: bundle.sha256,
+                    until: formatDateTime(bundle.expires_at),
+                  })}
+                  report
+                  title={sp.messageTitle}
+                  label={sp.copyMessage}
+                />
               </div>
-            ) : null}
-          </JobProgress>
-        ) : null}
-      </CardContent>
-    </Card>
+              <WhatNext>{sp.sendNext}</WhatNext>
+            </div>
+          ) : null}
+        </JobProgress>
+      ) : null}
+      <details className="group rounded-card border border-line-soft">
+        <summary className="flex h-11 cursor-pointer list-none items-center gap-2 px-4 type-small font-medium text-ink-muted outline-none select-none hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
+          <ChevronDownIcon
+            aria-hidden="true"
+            className="size-4 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+          />
+          {sp.cliTitle}
+        </summary>
+        <div className="flex flex-col gap-2 px-4 pb-4">
+          <p className="type-small text-ink-muted">{sp.cliText}</p>
+          <MonoBlock text="sudo care-pi support-bundle" mode="pre" testId="bundle-cli" />
+        </div>
+      </details>
+    </Panel>
   );
 }
 
@@ -119,98 +148,81 @@ function AgentCard() {
   const status = useStatus(false);
   const a = status.data?.agent;
   return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle>
-          <h2>{sp.agent}</h2>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        {status.isError ? <ProblemAlert error={status.error} /> : null}
-        <DataList>
-          <DataRow label={sp.version} loading={!a} value={a?.version} testId="agent-version" />
-          <DataRow label={sp.commit} loading={!a} value={shortSha(a?.commit)} title={a?.commit} />
-          <DataRow label={sp.built} loading={!a} value={formatDateTime(a?.date)} />
-          <DataRow
-            label={sp.devBuild}
-            loading={!a}
-            value={a ? (a.dev_build ? strings.common.yes : strings.common.no) : ""}
-          />
-          <DataRow label={sp.started} loading={!a} value={formatDateTime(a?.started_at)} />
-        </DataList>
-      </CardContent>
-    </Card>
+    <Panel title={sp.agent} testId="agent-card">
+      {status.isError ? <ProblemAlert error={status.error} onRetry={() => void status.refetch()} /> : null}
+      <KeyValueList
+        loading={!a}
+        items={[
+          {
+            id: "version",
+            label: sp.version,
+            value: a?.version,
+            mono: true,
+            copy: a?.version,
+            testId: "agent-version",
+          },
+          { id: "commit", label: sp.commit, value: shortSha(a?.commit), mono: true, title: a?.commit, copy: a?.commit },
+          { id: "built", label: sp.built, value: formatDateTime(a?.date), mono: true },
+          { id: "dev", label: sp.devBuild, value: a ? (a.dev_build ? strings.common.yes : strings.common.no) : "" },
+          { id: "started", label: sp.started, value: formatDateTime(a?.started_at), mono: true },
+        ]}
+      />
+    </Panel>
   );
 }
 
 function JobsCard() {
   const jobs = useJobs();
+  const items = jobs.data?.items ?? [];
   return (
-    <Card size="sm">
-      <CardHeader>
-        <CardTitle>
-          <h2>{sp.jobs}</h2>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        {jobs.isError ? <ProblemAlert error={jobs.error} /> : null}
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>{sp.kind}</TableHead>
-              <TableHead>{sp.state}</TableHead>
-              <TableHead>{sp.source}</TableHead>
-              <TableHead>{sp.started}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {jobs.data ? (
-              jobs.data.items.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={4} className="text-soft-foreground">
-                    {sp.noJobs}
-                  </TableCell>
-                </TableRow>
-              ) : (
-                jobs.data.items.map((j) => (
-                  <TableRow key={j.id} className="h-11" title={j.id}>
-                    <TableCell>{j.kind}</TableCell>
-                    <TableCell>
-                      <Badge
-                        size="sm"
-                        variant={j.state === "succeeded" ? "success" : j.state === "failed" ? "destructive" : "info"}
-                      >
-                        {strings.progress.states[j.state] ?? j.state}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{j.source}</TableCell>
-                    <TableCell>{formatDateTime(j.started_at ?? j.created_at)}</TableCell>
-                  </TableRow>
-                ))
-              )
-            ) : (
-              [0, 1, 2].map((i) => (
-                <TableRow key={i} className="h-11">
-                  <TableCell colSpan={4}>
-                    <Skeleton className="h-4" />
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </CardContent>
-    </Card>
+    <Panel
+      title={sp.jobs}
+      action={
+        <Link
+          to="/jobs"
+          className="flex items-center gap-1 type-small font-medium text-primary-ink underline-offset-4 hover:underline"
+        >
+          {strings.dashboard.allJobs}
+          <ChevronRightIcon className="size-4" aria-hidden="true" />
+        </Link>
+      }
+    >
+      {jobs.isError ? <ProblemAlert error={jobs.error} onRetry={() => void jobs.refetch()} /> : null}
+      {!jobs.data ? (
+        <div className="flex flex-col gap-3" aria-hidden="true">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-10" />
+          ))}
+        </div>
+      ) : items.length === 0 ? (
+        <p className="type-body text-ink-muted">{sp.noJobs}</p>
+      ) : (
+        <Timeline
+          items={items.slice(0, 6).map((j) => ({
+            id: j.id,
+            time: formatDateTime(j.started_at ?? j.created_at).slice(5, 16),
+            datetime: j.started_at ?? j.created_at,
+            tone: JOB_STATE_TONE[j.state] ?? "neutral",
+            title: (
+              <Link to={`/jobs/${encodeURIComponent(j.id)}`} className="underline-offset-4 hover:underline">
+                {jobKindText(j.kind)}
+              </Link>
+            ),
+            description: `${strings.progress.states[j.state] ?? j.state} · ${strings.jobsPage.from[j.source] ?? j.source}`,
+          }))}
+        />
+      )}
+    </Panel>
   );
 }
 
 export default function SupportPage() {
   return (
-    <div className="flex flex-col gap-4">
-      <PageHeader title={sp.title} />
+    <div className="flex flex-col gap-6">
+      <PageHeader title={sp.title} description={sp.pageIntro} />
       <DoctorCard />
       <BundleCard />
-      <div className="grid gap-4 xl:grid-cols-2">
+      <div className="grid gap-6 xl:grid-cols-2">
         <AgentCard />
         <JobsCard />
       </div>
