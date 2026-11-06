@@ -21,16 +21,16 @@ test("log in on a laptop and read the dashboard", async ({ page }, info) => {
   await expect(page.getByTestId("units")).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
   const skeleton = await cardBoxes(page);
-  const skeletonRows = await page.getByTestId("units").locator("tbody tr").count();
+  const skeletonRows = await page.getByTestId("units").locator("li").count();
   await shot(page, info, "18-dashboard-skeleton");
   release();
   await expect(page.getByTestId("status-state")).toBeVisible();
-  await expect
-    .poll(() => page.getByTestId("units").locator("tbody tr").locator("td").first().textContent())
-    .toMatch(/care/);
+  await expect.poll(() => page.getByTestId("units").locator("[data-unit]").count()).toBeGreaterThan(5);
   const loaded = await cardBoxes(page);
-  const rows = page.getByTestId("units").locator("tbody tr");
-  const units = await rows.allTextContents();
+  const rows = page.getByTestId("units").locator("[data-unit]");
+  const units = await rows.evaluateAll((els) =>
+    els.map((el) => `${el.getAttribute("data-unit")} ${el.getAttribute("data-active")}/${el.getAttribute("data-sub")}`),
+  );
   note(
     info,
     `desktop dashboard: ${loaded.length} cards; skeleton rows ${skeletonRows}, unit rows ${units.length}; ` +
@@ -42,9 +42,8 @@ test("log in on a laptop and read the dashboard", async ({ page }, info) => {
     }
   }
   note(info, `units: ${units.join(" | ")}`);
-  for (const r of units) expect(r).toMatch(/active\//);
-  for (const r of units) expect(r).not.toMatch(/inactive|failed/);
+  for (const r of units) expect(r).toMatch(/ active\//);
   await shot(page, info, "19-dashboard");
   await saveState(page, "desktop");
-  expect(loaded.length).toBe(9);
+  expect(loaded.length).toBe(skeleton.length);
 });

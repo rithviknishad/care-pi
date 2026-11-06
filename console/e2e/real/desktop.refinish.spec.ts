@@ -20,10 +20,10 @@ test("finish the setup again after a failed setup job", async ({ page }, info) =
   await page.getByLabel("Type the password again").fill(env.carePassword);
   await page.getByTestId("step-submit").click();
 
-  await expect(page.getByTestId("step-title")).toHaveText("Review");
+  await expect(page.getByTestId("step-title")).toHaveText("Check your choices");
   await shot(page, info, "17-refinish-review");
   const finishAt = Date.now();
-  await page.getByRole("button", { name: "Start the setup" }).click();
+  await page.getByRole("button", { name: "Install Care" }).click();
   note(info, `finish (again) clicked at ${new Date(finishAt).toISOString()}`);
   await followSetupJob(page, info, finishAt, "-2");
   await checkHandoffAndDashboard(page, info);

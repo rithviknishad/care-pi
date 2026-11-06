@@ -11,9 +11,11 @@ test("the desktop session stays valid", async ({ page }, info) => {
   await page.goto("/dashboard");
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByTestId("status-state")).toBeVisible();
-  const rows = page.getByTestId("units").locator("tbody tr");
+  const rows = page.getByTestId("units").locator("[data-unit]");
   await expect.poll(() => rows.count()).toBeGreaterThan(5);
-  const units = await rows.allTextContents();
+  const units = await rows.evaluateAll((els) =>
+    els.map((el) => `${el.getAttribute("data-unit")} ${el.getAttribute("data-active")}/${el.getAttribute("data-sub")}`),
+  );
   note(info, `resume: state ${await page.getByTestId("status-state").textContent()}; units: ${units.join(" | ")}`);
   await shot(page, info, "20-resume-dashboard");
 });

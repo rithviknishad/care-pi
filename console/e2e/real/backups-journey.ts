@@ -154,7 +154,7 @@ export async function addDestination(page: Page, info: TestInfo, scope: Locator,
 
 // backupsWizardStep is the step backups of the setup journey: the key and BACKUP_DEST, or the skip of a dev build.
 export async function backupsWizardStep(page: Page, info: TestInfo): Promise<void> {
-  await expect(page.getByTestId("step-title")).toHaveText("Backups");
+  await expect(page.getByTestId("step-title")).toHaveText("Keep a copy of your data");
   if (!backupEnv.dest) {
     await expect(page.getByText("This is a dev build. You can skip this step.")).toBeVisible();
     await shot(page, info, "10-backups");

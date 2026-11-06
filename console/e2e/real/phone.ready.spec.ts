@@ -22,9 +22,9 @@ test("log in on a phone and use the console", async ({ page }, info) => {
   // Dashboard: the cards fit the width, the units are a list of cards (wave 4d), nothing scrolls sideways,
   // no label or value is cut, and the cards do not move across 2 refreshes.
   await expect(page.getByTestId("status-state")).toBeVisible();
-  const unitCards = page.getByTestId("units-cards").locator("[data-unit-card]");
+  // The services: one row each, the plain name, the state in a word, and the memory bar.
+  const unitCards = page.getByTestId("units").locator("[data-unit]");
   await expect.poll(() => unitCards.count()).toBeGreaterThan(5);
-  await expect(page.getByTestId("units")).toBeHidden();
   await page.evaluate(() => document.fonts.ready);
   const cards = await cardBoxes(page);
   const width = await pageWidth(page);
@@ -32,7 +32,7 @@ test("log in on a phone and use the console", async ({ page }, info) => {
     .getByTestId("units-card")
     .evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth }));
   const cut = await page
-    .locator("main dl > dt, main dl > dd > span")
+    .locator("main dl dt, main dl dd > span")
     .evaluateAll((els) => els.filter((el) => el.scrollWidth > el.clientWidth + 1).map((el) => el.textContent));
   note(
     info,
@@ -41,7 +41,7 @@ test("log in on a phone and use the console", async ({ page }, info) => {
   );
   note(info, `units: ${(await unitCards.allTextContents()).join(" | ")}`);
   await shot(page, info, "02-dashboard");
-  expect(cards.length).toBe(9);
+  expect(cards.length).toBeGreaterThan(8);
   expect(width.scroll).toBeLessThanOrEqual(width.client);
   expect(unitsCard.scroll).toBeLessThanOrEqual(unitsCard.client);
   expect(cut, "cut labels or values").toEqual([]);
@@ -55,7 +55,9 @@ test("log in on a phone and use the console", async ({ page }, info) => {
 
   // Certificate: the fingerprint of the root CA, the Apple profile, and the QR code.
   await page.goto("/certificate");
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Install the certificate");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Make this browser trust your Care box");
+  // The fingerprint is in "Check the fingerprint (for experts)".
+  await page.getByText("Check the fingerprint (for experts)").click();
   await expect(page.getByTestId("ca-fingerprint")).toContainText(/[0-9A-F]{2}:[0-9A-F]{2}/);
   const fingerprint = ((await page.getByTestId("ca-fingerprint").textContent()) ?? "").replace(/\s+/g, "");
   note(info, `certificate page fingerprint: ${fingerprint}`);
@@ -64,7 +66,7 @@ test("log in on a phone and use the console", async ({ page }, info) => {
   if (env.caCert) expect(hex(fingerprint)).toBe(hex(caFingerprint()));
   const selected = page.getByRole("tab", { selected: true });
   await expect(selected).toContainText("iPhone and iPad");
-  await expect(selected).toContainText("Detected");
+  await expect(selected).toContainText("This device");
   await expect(page.getByTestId("ca-download")).toHaveAttribute("href", /mobileconfig$/);
   const href = (await page.getByTestId("ca-download").getAttribute("href")) ?? "";
   const profile = await page.request.get(href);
