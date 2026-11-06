@@ -1,47 +1,69 @@
-import { AlertTriangleIcon, InfoIcon } from "lucide-react";
+import { InfoIcon } from "lucide-react";
 import { useId } from "react";
 import { useNetwork } from "@/api/queries";
 import { FormField } from "@/components/app/form-field";
 import { describedBy } from "@/lib/form";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
+import { CopyButton } from "@/components/v2/copy-button";
+import { InlineSkeleton } from "@/components/v2/inline-skeleton";
+import { ProblemCard } from "@/components/v2/problem-card";
 import { fmt, strings } from "@/lib/strings";
 import { HOSTNAME_RE } from "@/lib/schema";
 import type { IdentityValue } from "./identity-logic";
 
-// The name that this device announces now, the IP addresses, and the notes on a collision and a name change.
+// The address of this device, big (S66): staff type it in the browser. The IP addresses, a collision, and a name
+// change are under it.
 function NetworkPanel({ hostname }: { hostname: string }) {
   const network = useNetwork();
   const n = network.data;
   const i = strings.identity;
   const changes = n && HOSTNAME_RE.test(hostname) && hostname !== n.hostname;
+  const name = n ? (n.mdns.advertised ?? n.mdns.configured) : null;
   return (
-    <section className="flex flex-col gap-2 rounded-lg border bg-soft-background p-4 text-sm" aria-live="polite">
-      <h3 className="font-semibold">{i.address}</h3>
-      <p className="flex min-h-6 items-center" data-testid="advertised-name">
-        {n ? fmt(i.advertised, { name: n.mdns.advertised ?? n.mdns.configured }) : <Skeleton className="h-4 w-64" />}
+    <section
+      className="flex flex-col gap-3 rounded-card border border-line-soft bg-surface-tint p-4 sm:p-5"
+      aria-live="polite"
+    >
+      <h3 className="type-small font-medium text-ink-muted">{i.addressTitle}</h3>
+      <p className="flex min-h-10 min-w-0 items-center gap-2" data-testid="advertised-name">
+        {name ? (
+          <>
+            <span className="min-w-0 truncate font-mono text-2xl leading-10 font-semibold tracking-tight text-ink">
+              https://{name}
+            </span>
+            <span className="sr-only">{fmt(i.advertised, { name })}</span>
+            <CopyButton text={`https://${name}`} iconOnly size="xs" variant="ghost" />
+          </>
+        ) : (
+          <InlineSkeleton className="h-7 w-64" />
+        )}
       </p>
-      <p className="flex min-h-6 flex-wrap items-center gap-x-2">
-        <span className="text-soft-foreground">{i.ips}:</span>
-        {n ? n.addresses.join(", ") : <Skeleton className="h-4 w-32" />}
+      <p className="type-small text-ink-muted">{i.addressHelp}</p>
+      <p className="flex min-h-6 flex-wrap items-center gap-x-2 type-small" data-testid="network-ips">
+        <span className="text-ink-soft">{i.ips}:</span>
+        {n ? (
+          <span className="type-data text-ink">{n.addresses.join(", ")}</span>
+        ) : (
+          <InlineSkeleton className="h-4 w-32" />
+        )}
       </p>
       {n?.mdns.collision ? (
-        <Alert variant="warning">
-          <AlertTriangleIcon />
-          <AlertDescription>
-            {fmt(i.collision, { configured: n.mdns.configured, advertised: n.mdns.advertised ?? n.mdns.configured })}
-          </AlertDescription>
-        </Alert>
+        <ProblemCard
+          tone="warn"
+          title={fmt(i.collision, {
+            configured: n.mdns.configured,
+            advertised: n.mdns.advertised ?? n.mdns.configured,
+          })}
+        />
       ) : null}
       {changes ? (
-        <Alert variant="info">
-          <InfoIcon />
-          <AlertDescription>{fmt(i.urlChanges, { name: `${hostname}.local` })}</AlertDescription>
-        </Alert>
+        <p className="flex items-start gap-2 rounded-input border border-info-border bg-info-bg p-3 type-small text-info-fg">
+          <InfoIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          {fmt(i.urlChanges, { name: `${hostname}.local` })}
+        </p>
       ) : null}
       {n?.dhcp_hint ? (
-        <p className="text-xs text-soft-foreground">
+        <p className="type-small text-ink-soft">
           {fmt(i.dhcp, { address: n.dhcp_hint.address, mac: n.dhcp_hint.mac })}
         </p>
       ) : null}
@@ -91,11 +113,11 @@ export function IdentityForm({
               aria-describedby={describedBy(`${id}-host`, true, errors.hostname)}
               className="max-w-xs"
             />
-            <span className="text-soft-foreground">.local</span>
+            <span className="type-data text-ink-soft">.local</span>
           </div>
         </FormField>
       ) : (
-        <p className="text-xs text-soft-foreground">{i.easyHostname}</p>
+        <p className="type-small text-ink-soft">{i.easyHostname}</p>
       )}
       <NetworkPanel hostname={value.hostname} />
     </div>

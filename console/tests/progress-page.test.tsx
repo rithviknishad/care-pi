@@ -13,7 +13,11 @@ const progress = vi.hoisted(() => ({ onDone: null as ((job: Job) => void) | null
 
 vi.mock("@/api/queries", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/queries")>();
-  return { ...actual, useSetup: () => ({ isPending: false, data: setup.data }) };
+  return {
+    ...actual,
+    useSetup: () => ({ isPending: false, data: setup.data }),
+    useJob: () => ({ isPending: false, data: undefined, error: null }),
+  };
 });
 
 const api = vi.hoisted(() => ({ finish: vi.fn() }));
@@ -139,11 +143,13 @@ describe("failed setup", () => {
     expect(screen.getByTestId("setup-failed-log")).toHaveTextContent("Show the log of care-db");
     expect(screen.getByRole("button", { name: "Copy details" })).toBeInTheDocument();
     expect(screen.queryByText(/fix the problem/i)).toBeNull();
-    // The raw error is in the collapsed technical details.
-    expect(screen.queryByTestId("setup-failed-technical")).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Technical details" }));
-    expect(screen.getByTestId("setup-failed-technical")).toHaveTextContent("Step: ensure-stanza");
-    expect(screen.getByTestId("setup-failed-technical")).toHaveTextContent("problems/internal 500 Internal error");
+    // The raw error is in the collapsed technical details of the problem card.
+    const details = screen.getByText("Technical details").closest("details");
+    expect(details).not.toHaveAttribute("open");
+    await userEvent.click(screen.getByText("Technical details"));
+    expect(details).toHaveAttribute("open");
+    expect(details).toHaveTextContent("Step: ensure-stanza");
+    expect(details).toHaveTextContent("problems/internal 500 Internal error");
 
     // Retry runs POST /setup/finish again and follows the new job.
     api.finish.mockResolvedValueOnce({ id: "20261030T171000.000Z-setup", kind: "setup", state: "running" });

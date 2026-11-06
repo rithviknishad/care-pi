@@ -6,7 +6,7 @@ test("setup: the recovery key ceremony and an SFTP destination with TOFU", async
   await resetMock("setup", { dev_build: false });
   await page.goto("/login?next=%2Fsetup%2Fbackups");
   await login(page);
-  await expect(page.getByTestId("step-title")).toHaveText("Backups");
+  await expect(page.getByTestId("step-title")).toHaveText("Keep a copy of your data");
   // A release build cannot skip the step.
   await expect(page.getByRole("button", { name: "Skip this step" })).toHaveCount(0);
   await expect(page.getByTestId("step-submit")).toBeDisabled();
@@ -68,9 +68,20 @@ test("setup: the recovery key ceremony and an SFTP destination with TOFU", async
   await form.getByTestId("dest-test-again").click();
   await expect(form.getByTestId("dest-test-result")).toHaveAttribute("data-next", "none");
   await expect(form.getByTestId("host-key-trusted")).toContainText("ecdsa-sha2-nistp256");
-  await expect(form.getByTestId("dest-rpo")).toContainText("20 min");
-  await form.getByLabel("Copy each").selectOption("30");
-  await expect(form.getByTestId("dest-rpo")).toContainText("35 min");
+  // S66, item 2: the frequency, "how far back", the RPO sentence, and the explainer of the policy.
+  await expect(form.getByTestId("dest-rpo")).toHaveText("If the device breaks, you lose at most 20 minutes of work.");
+  await expect(form.getByRole("radio", { name: /Standard/ })).toBeChecked();
+  await expect(form.getByTestId("dest-explainer-summary")).toContainText(
+    "Every 15 minutes we save a copy. You can go back to any moment in the last 2 days",
+  );
+  await form.getByTestId("dest-interval").getByRole("button", { name: "Every 30 minutes" }).click();
+  await expect(form.getByTestId("dest-rpo")).toContainText("35 minutes");
+  await expect(form.getByTestId("dest-explainer-summary")).toContainText("Every 30 minutes we save a copy.");
+  await form.getByTestId("dest-keep-longer").click();
+  await expect(form.getByTestId("dest-explainer-summary")).toContainText("to any month in the last 2 years");
+  await form.getByTestId("dest-keep-custom").first().click();
+  await form.getByLabel("1 copy each month, for (months)").fill("12");
+  await expect(form.getByTestId("dest-explainer-summary")).toContainText("to any month in the last year");
   await form.getByTestId("dest-add").click();
 
   await expect(page.getByTestId("dest-row")).toHaveCount(1);
@@ -79,7 +90,7 @@ test("setup: the recovery key ceremony and an SFTP destination with TOFU", async
   if (isMobile(page)) await noSideScroll(page);
   await shot(page, info, "wizard-backups-done");
   await page.getByTestId("step-submit").click();
-  await expect(page.getByTestId("step-title")).toHaveText("Care administrator");
+  await expect(page.getByTestId("step-title")).toHaveText("Make the Care administrator");
 
   // The review shows the backups; the step is done.
   await page.goto("/setup/review");
@@ -134,5 +145,5 @@ test("setup: a USB disk needs the label typed again before the erase", async ({ 
   await page.getByTestId("dest-add").click();
   await expect(page.getByTestId("dest-row")).toContainText("care-usb1");
   await page.getByTestId("step-submit").click();
-  await expect(page.getByTestId("step-title")).toHaveText("Care administrator");
+  await expect(page.getByTestId("step-title")).toHaveText("Make the Care administrator");
 });

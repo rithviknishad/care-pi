@@ -9,9 +9,9 @@ import { strings } from "@/lib/strings";
 import { RESERVED_BACKEND, RESERVED_FRONTEND } from "../env-defaults";
 import { EnvForm } from "../env-form";
 import { modelFromStep, stepFromModel, validateEnv, type EnvModel } from "../env-logic";
-import { StepActions, StepIntro, type StepProps } from "../step-frame";
+import { StepActions, type StepProps } from "../step-frame";
 
-export function EnvStep({ setup, onDone, onBack }: StepProps) {
+export function EnvStep({ setup, onDone, onBack, next }: StepProps) {
   const schema = useConfigSchema();
   const [model, setModel] = useState<EnvModel>(() => modelFromStep(setup.draft.env));
   const [touched, setTouched] = useState(false);
@@ -38,11 +38,11 @@ export function EnvStep({ setup, onDone, onBack }: StepProps) {
         if (Object.keys(validateEnv(model, reserved)).length === 0) save.mutate();
       }}
     >
-      <StepIntro>{strings.env.intro}</StepIntro>
       <EnvForm model={model} onChange={setModel} errors={errors} />
       {save.error ? <ProblemAlert error={save.error} /> : null}
       {skip.error ? <ProblemAlert error={skip.error} /> : null}
       <StepActions
+        next={next}
         onBack={onBack}
         busy={save.isPending || skip.isPending}
         extra={

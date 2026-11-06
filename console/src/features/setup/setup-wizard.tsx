@@ -1,19 +1,16 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArchiveRestoreIcon, CheckIcon, CircleDotIcon, CircleIcon, MinusIcon } from "lucide-react";
-import { useState } from "react";
+import { ArchiveRestoreIcon } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router";
 import { api, call } from "@/api/client";
-import { storeSetup, useSetup } from "@/api/queries";
+import { qk, storeSetup, useMaintenance, useSetup } from "@/api/queries";
 import type { SetupState } from "@/api/types";
-import { PageHeader } from "@/components/app/page";
 import { ProblemAlert } from "@/components/app/problem-alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { fmt, strings } from "@/lib/strings";
-import { cn } from "@/lib/utils";
+import { Panel } from "@/components/v2/panel";
+import { strings } from "@/lib/strings";
 import { BackupsStep } from "./steps/backups-step";
 import { CareAdminStep } from "./steps/care-admin-step";
 import { EnvStep } from "./steps/env-step";
@@ -24,6 +21,7 @@ import { ReviewStep } from "./steps/review-step";
 import { SizeStep } from "./steps/size-step";
 import { TlsStep } from "./steps/tls-step";
 import type { StepProps } from "./step-frame";
+import { WizardStage } from "./wizard-stage";
 import {
   isWizardPage,
   loadMode,
@@ -37,73 +35,12 @@ import {
   type WizardPage,
 } from "./wizard";
 
-const TITLES: Record<WizardPage, string> = {
-  "recovery-codes": strings.recoveryStep.title,
-  hardware: strings.hardware.title,
-  identity: strings.identity.title,
-  tls: strings.tls.title,
-  size: strings.size.title,
-  env: strings.env.title,
-  backups: strings.backups.title,
-  "care-admin": strings.careAdmin.title,
-  review: strings.review.title,
-};
-
-function pageStatus(setup: SetupState, page: WizardPage): string {
-  if (page === "review") return setup.can_finish ? "current" : "pending";
-  return setup.steps.find((s) => s.id === page)?.status ?? "pending";
-}
-
-function StatusIcon({ status }: { status: string }) {
-  if (status === "done") return <CheckIcon className="size-4 text-green-600 dark:text-green-400" aria-hidden="true" />;
-  if (status === "skipped") return <MinusIcon className="size-4 text-soft-foreground" aria-hidden="true" />;
-  if (status === "current") return <CircleDotIcon className="size-4 text-primary" aria-hidden="true" />;
-  return <CircleIcon className="size-4 text-soft-foreground" aria-hidden="true" />;
-}
-
-function Stepper({ setup, mode, page }: { setup: SetupState; mode: SetupMode; page: WizardPage }) {
-  const pages = wizardPages(mode);
-  const index = pages.indexOf(page);
-  return (
-    <>
-      <div className="flex flex-col gap-2 lg:hidden">
-        <p className="text-sm text-soft-foreground">
-          {fmt(strings.setup.stepOf, { n: index + 1, total: pages.length })}
-        </p>
-        <Progress value={((index + 1) / pages.length) * 100} aria-label={strings.setup.title} />
-      </div>
-      <nav aria-label={strings.setup.title} className="hidden lg:block">
-        <ol className="flex flex-col gap-0.5">
-          {pages.map((p) => {
-            const status = pageStatus(setup, p);
-            return (
-              <li key={p}>
-                <Link
-                  to={`/setup/${p}`}
-                  aria-current={p === page ? "step" : undefined}
-                  className={cn(
-                    "flex h-10 items-center gap-3 rounded-md px-3 text-sm",
-                    p === page
-                      ? "bg-muted-background font-semibold"
-                      : "text-muted-foreground hover:bg-muted-background",
-                  )}
-                >
-                  <StatusIcon status={status} />
-                  <span className="flex-1 truncate">{p === "review" ? TITLES.review : strings.setup.steps[p]}</span>
-                  <span className="sr-only">{strings.setup.statuses[status] ?? status}</span>
-                </Link>
-              </li>
-            );
-          })}
-        </ol>
-      </nav>
-    </>
-  );
-}
+const w = strings.wizard;
 
 function ModeToggle({ mode, onMode }: { mode: SetupMode; onMode: (m: SetupMode) => void }) {
   return (
-    <div className="flex flex-col items-end gap-1">
+    <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+      <span className="hidden type-small text-ink-soft sm:inline">{w.modeHelp}</span>
       <ToggleGroup
         variant="outline"
         size="sm"
@@ -112,7 +49,7 @@ function ModeToggle({ mode, onMode }: { mode: SetupMode; onMode: (m: SetupMode) 
           const next = v[0];
           if (next === "easy" || next === "advanced") onMode(next);
         }}
-        aria-label={strings.setup.modeLabel}
+        aria-label={w.mode}
       >
         <ToggleGroupItem value="easy">{strings.setup.easy}</ToggleGroupItem>
         <ToggleGroupItem value="advanced">{strings.setup.advanced}</ToggleGroupItem>
@@ -123,17 +60,17 @@ function ModeToggle({ mode, onMode }: { mode: SetupMode; onMode: (m: SetupMode) 
 
 function WizardSkeleton() {
   return (
-    <div aria-busy="true">
-      <Skeleton className="mb-6 h-8 w-40" />
-      <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
-        <Skeleton className="hidden h-80 lg:block" />
-        <Skeleton className="h-96" />
+    <div aria-busy="true" className="flex flex-col gap-4">
+      <Skeleton className="ml-auto h-8 w-44" />
+      <div className="grid gap-6 lg:grid-cols-[var(--stage-rail-width)_minmax(0,1fr)] lg:gap-8">
+        <Skeleton className="h-32 rounded-stage lg:h-[34rem]" />
+        <Skeleton className="h-[28rem] rounded-stage" />
       </div>
     </div>
   );
 }
 
-const STEPS: Record<Exclude<WizardPage, "review">, (p: StepProps) => React.ReactNode> = {
+const STEPS: Record<Exclude<WizardPage, "review">, (p: StepProps) => ReactNode> = {
   "recovery-codes": (p) => <RecoveryCodesStep {...p} />,
   hardware: (p) => <HardwareStep {...p} />,
   identity: (p) => <IdentityStep {...p} />,
@@ -144,20 +81,31 @@ const STEPS: Record<Exclude<WizardPage, "review">, (p: StepProps) => React.React
   "care-admin": (p) => <CareAdminStep {...p} />,
 };
 
+function nextText(page: WizardPage, mode: SetupMode): string {
+  if (page === "size" && mode === "advanced") return w.next.sizeAdvanced ?? "";
+  return w.next[page] ?? "";
+}
+
 export default function SetupWizard() {
   const { page } = useParams();
   const qc = useQueryClient();
   const navigate = useNavigate();
   const setup = useSetup();
+  // S67: another device can start the finish. The public status names it; then this page shows the progress.
+  const pub = useMaintenance(true);
+  const applying = pub.data?.setup_state === "applying";
   const [mode, setModeState] = useState<SetupMode>(loadMode);
   const skipEnv = useMutation({
     mutationFn: () => call(api.POST("/setup/steps/{step}/skip", { params: { path: { step: "env" } } })),
   });
+  useEffect(() => {
+    if (applying) void qc.invalidateQueries({ queryKey: qk.setup });
+  }, [applying, qc]);
 
   if (setup.isPending) return <WizardSkeleton />;
-  if (setup.isError) return <ProblemAlert error={setup.error} />;
+  if (setup.isError) return <ProblemAlert error={setup.error} onRetry={() => void setup.refetch()} />;
   const s = setup.data;
-  if (s.state === "applying") {
+  if (s.state === "applying" || applying) {
     const dr = s.restore.job_id !== null && s.restore.job_id === s.job_id;
     return <Navigate to={dr ? "/setup/restore" : "/setup/progress"} replace />;
   }
@@ -186,59 +134,41 @@ export default function SetupWizard() {
   };
   const prev = previousPage(mode, page);
   const onBack = prev ? () => navigate(`/setup/${prev}`) : null;
-  const props: StepProps = { setup: s, mode, onDone: (u) => void onDone(u), onBack };
+  const props: StepProps = { setup: s, mode, onDone: (u) => void onDone(u), onBack, next: nextText(page, mode) };
 
   return (
-    <div>
-      <PageHeader
-        title={strings.setup.title}
-        description={mode === "easy" ? strings.setup.easyHelp : strings.setup.advancedHelp}
-        actions={<ModeToggle mode={mode} onMode={setMode} />}
-      />
-      <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
-        <Stepper setup={s} mode={mode} page={page} />
-        {/* The hardware step keeps its buttons in view (sticky), so its card must not clip. */}
-        <Card className={cn("min-w-0", page === "hardware" && "overflow-visible")}>
-          <CardHeader>
-            <CardTitle>
-              <h2 className="text-lg" data-testid="step-title">
-                {TITLES[page]}
-              </h2>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {page === "review" ? (
-              <ReviewStep {...props} onEdit={(p) => navigate(`/setup/${p}`)} />
-            ) : (
-              // The key resets the form state when the operator opens another step.
-              <div key={page}>{STEPS[page](props)}</div>
-            )}
-          </CardContent>
-        </Card>
-        {page === wizardPages(mode)[0] && s.restore.available ? <RestoreEntry /> : null}
-      </div>
-    </div>
+    <WizardStage mode={mode} page={page} toolbar={<ModeToggle mode={mode} onMode={setMode} />}>
+      {page === "review" ? (
+        <ReviewStep {...props} onEdit={(p) => navigate(`/setup/${p}`)} />
+      ) : (
+        // The key resets the form state when the operator opens another step.
+        <div key={page} className="flex flex-col gap-6">
+          {STEPS[page](props)}
+        </div>
+      )}
+      {page === wizardPages(mode)[0] && s.restore.available ? <RestoreEntry /> : null}
+    </WizardStage>
   );
 }
 
 // The entry of the branch "Restore from backup" (docs/api/README.md section 13.9.3), on the first page of the wizard.
 function RestoreEntry() {
   return (
-    <Card size="sm" className="lg:col-start-2" data-testid="restore-entry">
-      <CardHeader>
-        <CardTitle>
-          <h2>{strings.dr.entryTitle}</h2>
-        </CardTitle>
-        <CardDescription>{strings.dr.entryText}</CardDescription>
-      </CardHeader>
-      <CardContent>
+    <Panel
+      variant="tint"
+      as="h3"
+      title={strings.dr.entryTitle}
+      description={strings.dr.entryText}
+      testId="restore-entry"
+    >
+      <div>
         <Button asChild variant="outline">
           <Link to="/setup/restore" data-testid="restore-entry-link">
             <ArchiveRestoreIcon data-icon="inline-start" />
             {strings.dr.entry}
           </Link>
         </Button>
-      </CardContent>
-    </Card>
+      </div>
+    </Panel>
   );
 }
