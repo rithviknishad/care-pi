@@ -1,17 +1,26 @@
 import { useMutation } from "@tanstack/react-query";
-import { AlertTriangleIcon, FileStackIcon, HistoryIcon, MonitorSmartphoneIcon, Undo2Icon } from "lucide-react";
+import {
+  AlertTriangleIcon,
+  CheckIcon,
+  FileStackIcon,
+  HistoryIcon,
+  MonitorSmartphoneIcon,
+  Undo2Icon,
+} from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import { api, call } from "@/api/client";
 import { ProblemError } from "@/api/problem";
 import { useRestorePoints } from "@/api/queries";
 import type { Job, RestoreFilesResult, RestorePitrResult, RestorePoints } from "@/api/types";
-import { CopyButton } from "@/components/app/copy-button";
+import { ChoiceCards } from "@/components/v2/choice-cards";
+import { CopyButton } from "@/components/v2/copy-button";
+import { EmptyState } from "@/components/v2/empty-state";
+import { Panel } from "@/components/v2/panel";
 import { FormField } from "@/components/app/form-field";
 import { PageHeader } from "@/components/app/page";
 import { ProblemAlert } from "@/components/app/problem-alert";
 import { isReauthCancelled, useReauth } from "@/components/app/reauth-context";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -22,8 +31,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Empty, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
@@ -35,7 +42,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { JobProgress } from "@/features/jobs/job-progress";
 import { formatBytes, formatDateTime, formatDuration } from "@/lib/format";
 import { fmt, strings } from "@/lib/strings";
-import { cn } from "@/lib/utils";
 import {
   clamp,
   formatMinute,
@@ -63,6 +69,24 @@ function useNow(intervalMs = 30_000): number {
     return () => clearInterval(t);
   }, [intervalMs]);
   return now;
+}
+
+function OkCard({ title, children, testId }: { title: string; children: React.ReactNode; testId?: string }) {
+  return (
+    <section
+      className="flex gap-3 rounded-card border border-ok-border bg-ok-bg p-4 sm:p-5"
+      data-testid={testId}
+      role="status"
+    >
+      <span className="grid size-7 shrink-0 place-items-center rounded-full bg-ok-solid text-white dark:text-black/80 motion-ok:animate-v2-pop">
+        <CheckIcon className="size-4" strokeWidth={3} aria-hidden="true" />
+      </span>
+      <div className="flex min-w-0 flex-col gap-1 type-body text-ink">
+        <h3 className="type-h3 text-ok-fg">{title}</h3>
+        {children}
+      </div>
+    </section>
+  );
 }
 
 function ConfirmDialog({
@@ -110,7 +134,7 @@ function RestoreJob({ job, result }: { job: Job; result: (done: Job) => React.Re
   const [done, setDone] = useState<Job | null>(null);
   return (
     <section className="flex flex-col gap-3" data-testid="restore-job">
-      <h3 className="font-semibold">{r.progressTitle}</h3>
+      <h3 className="type-h3 text-ink">{r.progressTitle}</h3>
       <JobProgress
         jobId={job.id}
         initial={job}
@@ -143,17 +167,25 @@ function UndoCard({ points, onJob }: { points: RestorePoints; onJob: (job: Job) 
   if (!undo) return null;
   const at = formatMinute(undo.checkpoint.undo_point);
   return (
-    <Alert variant="info" data-testid="undo-card">
-      <Undo2Icon aria-hidden="true" />
-      <AlertTitle>{r.undoTitle}</AlertTitle>
-      <AlertDescription className="flex flex-col items-start gap-2">
-        <p>{fmt(r.undoText, { at, undo: at, until: formatMinute(new Date(undo.until).toISOString()) })}</p>
-        <Button type="button" variant="outline" size="sm" onClick={() => setConfirm(true)} data-testid="undo-start">
-          {start.isPending ? <Spinner data-icon="inline-start" /> : <Undo2Icon data-icon="inline-start" />}
-          {r.undo}
-        </Button>
+    <div data-testid="undo-card">
+      <Panel
+        variant="tint"
+        title={
+          <span className="flex items-center gap-2">
+            <Undo2Icon className="size-5 text-primary-solid" aria-hidden="true" />
+            {r.undoTitle}
+          </span>
+        }
+        description={fmt(r.undoText, { at, undo: at, until: formatMinute(new Date(undo.until).toISOString()) })}
+      >
+        <div>
+          <Button type="button" variant="outline" onClick={() => setConfirm(true)} data-testid="undo-start">
+            {start.isPending ? <Spinner data-icon="inline-start" /> : <Undo2Icon data-icon="inline-start" />}
+            {r.undo}
+          </Button>
+        </div>
         {start.error && !isReauthCancelled(start.error) ? <ProblemAlert error={start.error} /> : null}
-      </AlertDescription>
+      </Panel>
       <ConfirmDialog
         open={confirm}
         onOpenChange={setConfirm}
@@ -161,7 +193,7 @@ function UndoCard({ points, onJob }: { points: RestorePoints; onJob: (job: Job) 
         text={fmt(r.undoConfirmText, { undo: at })}
         onConfirm={() => start.mutate(undo.checkpoint.label)}
       />
-    </Alert>
+    </div>
   );
 }
 
@@ -189,15 +221,7 @@ function PitrPanel({ points, offered }: { points: RestorePoints; offered: number
   });
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const nearest = useMemo(() => nearestSnapshot(points.file_snapshots, time, "files"), [points.file_snapshots, time]);
-  if (!pitr) {
-    return (
-      <Empty className="min-h-40 rounded-lg border border-dashed">
-        <EmptyHeader>
-          <EmptyDescription>{r.noBackup}</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    );
-  }
+  if (!pitr) return <EmptyState illustration="backup-vault" title={r.noBackupTitle} description={r.noBackup} />;
   if (job) {
     return (
       <RestoreJob
@@ -206,10 +230,9 @@ function PitrPanel({ points, offered }: { points: RestorePoints; offered: number
           const result = done.result as RestorePitrResult | null;
           if (done.state !== "succeeded" || result?.kind !== "restore-pitr") return null;
           return (
-            <Alert variant="success" data-testid="restore-result">
-              <AlertTitle>{fmt(r.succeeded, { time: formatDateTime(result.restored_to) })}</AlertTitle>
-              <AlertDescription>{fmt(r.downtimeWas, { time: formatDuration(result.downtime_s) })}</AlertDescription>
-            </Alert>
+            <OkCard testId="restore-result" title={fmt(r.succeeded, { time: formatDateTime(result.restored_to) })}>
+              {fmt(r.downtimeWas, { time: formatDuration(result.downtime_s) })}
+            </OkCard>
           );
         }}
       />
@@ -224,14 +247,22 @@ function PitrPanel({ points, offered }: { points: RestorePoints; offered: number
   };
   return (
     <div className="flex flex-col gap-4" data-testid="pitr-panel">
-      <div className="grid gap-1 text-sm sm:grid-cols-2">
+      <div className="flex flex-col gap-1 rounded-card border border-line-soft bg-surface-tint p-4">
+        <p className="type-small text-ink-soft">{r.time}</p>
+        <p className="type-data text-2xl leading-9 font-semibold text-ink" data-testid="pitr-chosen" aria-live="polite">
+          {timeText}
+        </p>
+      </div>
+      <div className="grid gap-1 type-small sm:grid-cols-2">
         <p>
-          <span className="text-soft-foreground">{r.earliest}: </span>
-          <span data-testid="pitr-from">{formatDateTime(pitr.from)}</span>
+          <span className="text-ink-soft">{r.earliest}: </span>
+          <span className="type-data text-ink" data-testid="pitr-from">
+            {formatDateTime(pitr.from)}
+          </span>
         </p>
         <p className="sm:text-right">
-          <span className="text-soft-foreground">{r.latest}: </span>
-          <span>{r.now}</span>
+          <span className="text-ink-soft">{r.latest}: </span>
+          <span className="text-ink">{r.now}</span>
         </p>
       </div>
       <Slider
@@ -262,7 +293,7 @@ function PitrPanel({ points, offered }: { points: RestorePoints; offered: number
               const t = fromLocalInput(e.target.value);
               if (t !== null) setTime(t);
             }}
-            className="max-w-64 font-mono"
+            className="max-w-64 type-data"
             aria-invalid={inside ? undefined : true}
             data-testid="pitr-time"
           />
@@ -280,15 +311,18 @@ function PitrPanel({ points, offered }: { points: RestorePoints; offered: number
           : r.noFiles}{" "}
         {r.filesStay}
       </p>
-      <Alert variant="destructive" data-testid="pitr-warning">
-        <AlertTriangleIcon aria-hidden="true" />
-        <AlertTitle>{fmt(r.loss, { time: timeText })}</AlertTitle>
-        <AlertDescription className="flex flex-col gap-1">
+      <section
+        className="flex gap-3 rounded-card border border-warn-border bg-warn-bg p-4 sm:p-5"
+        data-testid="pitr-warning"
+        aria-live="polite"
+      >
+        <AlertTriangleIcon className="mt-0.5 size-6 shrink-0 text-warn-solid" aria-hidden="true" />
+        <div className="flex min-w-0 flex-col gap-1 type-body text-ink">
+          <h3 className="type-h3 text-warn-fg">{fmt(r.loss, { time: timeText })}</h3>
           <p>{r.downtime}</p>
-          <p>{fmt(r.expected, { restore: "8 s", recovery: "5 s", start: "44 s" })}</p>
           <p>{r.undoNote}</p>
-        </AlertDescription>
-      </Alert>
+        </div>
+      </section>
       {start.error && !isReauthCancelled(start.error) ? <ProblemAlert error={start.error} /> : null}
       <div>
         <Button
@@ -350,13 +384,7 @@ function FilesPanel({ points }: { points: RestorePoints }) {
     onSuccess: setJob,
   });
   if (snapshots.length === 0) {
-    return (
-      <Empty className="min-h-40 rounded-lg border border-dashed">
-        <EmptyHeader>
-          <EmptyDescription>{r.files.noSnapshot}</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    );
+    return <EmptyState illustration="backup-vault" title={r.files.noSnapshotTitle} description={r.files.noSnapshot} />;
   }
   if (job) {
     return (
@@ -366,22 +394,22 @@ function FilesPanel({ points }: { points: RestorePoints }) {
           const result = done.result as RestoreFilesResult | null;
           if (done.state !== "succeeded" || result?.kind !== "restore-files") return null;
           return (
-            <Alert variant="success" data-testid="restore-result">
-              <AlertTitle>{fmt(r.files.result, { files: result.files, bytes: formatBytes(result.bytes) })}</AlertTitle>
-              <AlertDescription className="flex flex-col gap-2">
-                {result.target === "side-dir" ? (
-                  <div className="flex items-center gap-2">
-                    <code className="min-w-0 flex-1 text-xs break-all" data-testid="restore-path">
-                      {fmt(r.files.resultPath, { path: result.path })}
-                    </code>
-                    <CopyButton value={result.path} />
-                  </div>
-                ) : (
-                  <p>{r.files.resultInPlace}</p>
-                )}
-                {result.verified ? <p>{r.files.verified}</p> : null}
-              </AlertDescription>
-            </Alert>
+            <OkCard
+              testId="restore-result"
+              title={fmt(r.files.result, { files: result.files, bytes: formatBytes(result.bytes) })}
+            >
+              {result.target === "side-dir" ? (
+                <div className="flex items-center gap-2">
+                  <code className="min-w-0 flex-1 type-data break-all" data-testid="restore-path">
+                    {fmt(r.files.resultPath, { path: result.path })}
+                  </code>
+                  <CopyButton text={result.path} iconOnly variant="ghost" />
+                </div>
+              ) : (
+                <p>{r.files.resultInPlace}</p>
+              )}
+              {result.verified ? <p>{r.files.verified}</p> : null}
+            </OkCard>
           );
         }}
       />
@@ -435,7 +463,7 @@ function FilesPanel({ points }: { points: RestorePoints }) {
           value={pathsText}
           onChange={(e) => setPathsText(e.target.value)}
           rows={3}
-          className="font-mono"
+          className="type-data"
           spellCheck={false}
         />
       </FormField>
@@ -475,71 +503,64 @@ export default function RestorePage() {
     raw === "pitr" || raw === "files" || raw === "device" ? raw : offered !== null ? "pitr" : null;
   const [undoJob, setUndoJob] = useState<Job | null>(null);
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-6">
       <PageHeader title={r.title} description={r.intro} />
       {offered !== null && offerParam ? (
-        <Alert variant="info" data-testid="restore-offered" data-time={offerParam}>
-          <HistoryIcon aria-hidden="true" />
-          <AlertDescription className="flex flex-col items-start gap-2">
+        <section
+          className="flex items-start gap-3 rounded-card border border-info-border bg-info-bg p-4 type-body text-info-fg"
+          data-testid="restore-offered"
+          data-time={offerParam}
+        >
+          <HistoryIcon className="mt-0.5 size-5 shrink-0" aria-hidden="true" />
+          <div className="flex flex-col items-start gap-2">
             <p>{fmt(r.offered, { time: formatDateTime(offerParam), utc: isoSeconds(offered).replace("T", " ") })}</p>
             <Button asChild variant="outline" size="sm">
               <Link to="/updates">{r.back}</Link>
             </Button>
-          </AlertDescription>
-        </Alert>
+          </div>
+        </section>
       ) : null}
-      <div role="radiogroup" aria-label={r.title} className="grid gap-3 md:grid-cols-3">
-        {KINDS.map(({ id, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            role="radio"
-            aria-checked={kind === id}
-            onClick={() => setParams(offerParam ? { kind: id, time: offerParam } : { kind: id }, { replace: true })}
-            className={cn(
-              "flex min-h-32 flex-col items-start gap-2 rounded-xl border bg-card p-4 text-left outline-none hover:bg-muted-background focus-visible:outline-2 focus-visible:outline-indigo-500",
-              kind === id && "border-primary ring-1 ring-primary",
-            )}
-            data-testid={`restore-kind-${id}`}
-          >
-            <Icon className="size-6 text-primary" aria-hidden="true" />
-            <span className="font-semibold">{r.kinds[id]}</span>
-            <span className="text-xs text-soft-foreground">{r.kindHelp[id]}</span>
-          </button>
-        ))}
-      </div>
+      <ChoiceCards
+        name="restore-kind"
+        legend={<span className="sr-only">{r.title}</span>}
+        value={kind}
+        columns={3}
+        onChange={(id) => setParams(offerParam ? { kind: id, time: offerParam } : { kind: id }, { replace: true })}
+        choices={KINDS.map(({ id, icon }) => ({
+          value: id,
+          title: r.kinds[id] ?? id,
+          fit: r.kindHelp[id] ?? "",
+          icon,
+          testId: `restore-kind-${id}`,
+        }))}
+      />
       {points.isError ? <ProblemAlert error={points.error} /> : null}
       {!points.data ? (
         <Skeleton className="h-72" />
       ) : (
         <>
           {undoJob ? (
-            <Card>
-              <CardContent>
-                <RestoreJob job={undoJob} result={() => null} />
-              </CardContent>
-            </Card>
+            <Panel>
+              <RestoreJob job={undoJob} result={() => null} />
+            </Panel>
           ) : (
             <UndoCard points={points.data} onJob={setUndoJob} />
           )}
           {kind ? (
-            <Card data-testid="restore-panel" data-kind={kind}>
-              <CardHeader>
-                <CardTitle>
-                  <h2>{r.kinds[kind]}</h2>
-                </CardTitle>
-                <CardDescription>{r.kindHelp[kind]}</CardDescription>
-              </CardHeader>
-              <CardContent>
+            <div data-testid="restore-panel" data-kind={kind}>
+              <Panel title={r.kinds[kind]} description={r.kindHelp[kind]}>
                 {kind === "pitr" ? <PitrPanel key={offered ?? "now"} points={points.data} offered={offered} /> : null}
                 {kind === "files" ? <FilesPanel points={points.data} /> : null}
                 {kind === "device" ? (
-                  <Alert variant="info" data-testid="restore-device">
-                    <AlertDescription>{r.deviceReady}</AlertDescription>
-                  </Alert>
+                  <p
+                    className="rounded-card border border-info-border bg-info-bg p-4 type-body text-info-fg"
+                    data-testid="restore-device"
+                  >
+                    {r.deviceReady}
+                  </p>
                 ) : null}
-              </CardContent>
-            </Card>
+              </Panel>
+            </div>
           ) : null}
         </>
       )}

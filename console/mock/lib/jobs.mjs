@@ -60,6 +60,10 @@ const PROBLEM_STATUS = {
   "tailscale-login-required": 409,
 };
 
+// The planned step count of each job (PublicJobProgress.step_count): the scripted steps, then the recovery steps after
+// a failure. The mock knows the plan of each scripted job.
+const PLANNED = new WeakMap();
+
 export function jobId(kind) {
   const d = new Date();
   const p = (n, w = 2) => String(n).padStart(w, "0");
@@ -116,6 +120,7 @@ export function startJob(state, spec) {
     last_event_id: 0,
   };
   const entry = { job, events: [], listeners: new Set(), holdsLock: spec.holdsLock ?? true, cancelled: false };
+  PLANNED.set(job, spec.steps.length);
   state.jobs.set(id, entry);
   state.jobOrder.unshift(id);
 
@@ -202,6 +207,7 @@ export function startJob(state, spec) {
             if (spec.recovery) {
               failedAt = action;
               steps.splice(index + 1, steps.length, ...spec.recovery(action));
+              PLANNED.set(job, steps.length);
               index++;
               setTimeout(runStep, 10);
               return;
@@ -263,7 +269,7 @@ export const SETUP_STEPS = [
   ["ensure-fe", "ensure-fe", { progress: "percent", stream: "stdout" }],
   ["write-lock", "write-lock"],
   ["wait-healthy", "wait-healthy: care-api.service"],
-  ["create-care-superuser", "create-care-superuser: admin"],
+  ["create-care-superuser", "create-care-superuser", { detail: "admin" }],
 ];
 
 export const APPLY_STEPS = [
@@ -286,3 +292,143 @@ export const SUPPORT_STEPS = [
   ["redact", "redact: secrets"],
   ["archive", "archive: tar.gz"],
 ];
+
+// Contract 0.9.0 (S67, S68): the public job stream, the groups of GET /jobs?state=, the log tail, and the exports.
+
+// The title of a kind for a person (PublicJobProgress.title): the texts of strings.jobs.kinds of the console.
+export const KIND_TITLES = {
+  apply: "Apply the settings",
+  setup: "Set up the device",
+  "fe-build": "Build the Care web app",
+  "fe-prune": "Delete the old builds of the web app",
+  "support-bundle": "Make a support bundle",
+  "backup-run": "Back up",
+  "backup-verify": "Verify the backups",
+  "restore-pitr": "Restore the database to a point in time",
+  "restore-files": "Restore files",
+  "restore-dr": "Restore the device from a backup",
+  "disk-prepare": "Prepare a backup disk",
+  "recovery-key-rotate": "Change the recovery key",
+  "restore-drill": "Test restore",
+  "update-check": "Check for updates",
+  "update-stage": "Download an update",
+  "update-apply": "Install an update",
+  "update-rollback": "Go back to the previous version",
+  "os-update": "Install the OS updates",
+  "plug-change": "Change a plug",
+  "tls-public-enrol": "Change the public name",
+  "tls-tailscale-enrol": "Change Tailscale",
+  "network-wifi": "Change the Wi-Fi",
+  "tls-local-ca-rotate": "Make a new root certificate",
+};
+
+const ACTIVE = new Set(["queued", "running"]);
+
+// The groups of GET /jobs?state=: active (queued, running) and recent (the jobs that ended).
+export function stateFilter(filter) {
+  if (!filter) return () => true;
+  if (filter === "active") return (j) => ACTIVE.has(j.state);
+  if (filter === "recent") return (j) => !ACTIVE.has(j.state);
+  return (j) => j.state === filter;
+}
+
+export function publicSummary(job) {
+  return {
+    id: job.id,
+    kind: job.kind,
+    state: job.state,
+    started_at: job.started_at,
+    finished_at: job.finished_at,
+  };
+}
+
+export function publicProgress(job) {
+  const step = job.steps.findLast((s) => s.state === "running") ?? job.steps.at(-1) ?? null;
+  return {
+    id: job.id,
+    kind: job.kind,
+    state: job.state,
+    title: KIND_TITLES[job.kind] ?? job.kind,
+    step: step ? publicStepName(step) : null,
+    step_index: step?.index ?? null,
+    step_count: PLANNED.has(job) ? Math.max(PLANNED.get(job), job.steps.length) : null,
+    started_at: job.started_at,
+  };
+}
+
+function publicProblem(p) {
+  return p ? { type: p.type, title: p.title, status: p.status } : null;
+}
+
+// The public name of a step: its action key, else the first word before ":" (the argument can name the Care user).
+export function publicStepName(step) {
+  return step.action || (step.name ?? "").split(":")[0].trim().split(/\s+/)[0] || "";
+}
+
+function publicStep(step) {
+  return { ...step, name: publicStepName(step), detail: null };
+}
+
+// The event of the public stream (docs/api/README.md section 6.3), or null: no log, no progress, no detail.
+export function publicEvent(ev) {
+  switch (ev.event) {
+    case "step":
+      return { ...ev, data: publicStep(ev.data) };
+    case "error":
+      return { ...ev, data: publicProblem(ev.data) };
+    case "done": {
+      const j = ev.data;
+      return {
+        ...ev,
+        data: {
+          id: j.id,
+          kind: j.kind,
+          state: j.state,
+          created_at: j.created_at,
+          started_at: j.started_at,
+          finished_at: j.finished_at,
+          steps: j.steps.map(publicStep),
+          error: publicProblem(j.error),
+          last_event_id: j.last_event_id,
+        },
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+// The last 200 log lines of the job (Job.log_tail), oldest first.
+export function logTail(entry) {
+  const logs = entry.events.filter((e) => e.event === "log").map((e) => e.data);
+  return { lines: logs.slice(-200), total: logs.length };
+}
+
+export function supportHeader(state, what) {
+  return [
+    `CARE support text: ${what}`,
+    `Device: ${state.file.identity.display_name} (${state.file.identity.hostname ?? "care"}.local)`,
+    `Agent: ${state.u?.agentVersion ?? "v0.4.1"}, commit 1f2e3d4, built 2026-10-30`,
+    `Lock: ${state.u?.installed?.lock?.version ?? "2026.11.0"} (solution care, track stable, source lock)`,
+    `Time: ${now()}`,
+  ].join("\n");
+}
+
+// GET /jobs/{id}/export: the job, each step with its times, each log line, each problem.
+export function jobExport(state, entry) {
+  const j = entry.job;
+  const lines = [supportHeader(state, `job ${j.id}`), ""];
+  lines.push(`Job: ${j.id} (${j.kind}, ${j.state}, source ${j.source})`);
+  lines.push(`Started: ${j.started_at ?? "-"}  Finished: ${j.finished_at ?? "-"}`, "", "Steps:");
+  for (const s of j.steps) {
+    lines.push(`  ${s.index + 1}. ${s.name} [${s.state}] ${s.started_at ?? "-"} - ${s.finished_at ?? "-"}`);
+    if (s.detail) lines.push(`     ${s.detail}`);
+  }
+  lines.push("", "Log:");
+  for (const e of entry.events) {
+    if (e.event === "log") lines.push(`  ${e.data.time} [${e.data.step_index}] ${e.data.line}`);
+    if (e.event === "error") lines.push(`  problem: ${e.data.title} ${e.data.detail ?? ""}`.trimEnd());
+  }
+  if (j.error) lines.push("", `Problem: ${j.error.title} (${j.error.type}, ${j.error.status})`, j.error.detail ?? "");
+  return `${lines.join("\n")}\n`;
+}

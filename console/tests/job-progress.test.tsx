@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { JobStep } from "@/api/types";
@@ -44,12 +45,18 @@ describe("job progress", () => {
         },
       ],
     };
-    render(<JobProgress jobId="20261030T172431.405Z-setup" />);
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <JobProgress jobId="20261030T172431.405Z-setup" />
+      </QueryClientProvider>,
+    );
     const rows = screen.getAllByTestId("job-step");
     expect(within(rows[0]!).getByTestId("job-step-title")).toHaveTextContent("Check the device");
     expect(rows[0]).toHaveAttribute("title", "host-check: required checks");
     expect(within(rows[1]!).getByTestId("job-step-title")).toHaveTextContent("Download the container images");
-    expect(rows[1]).toHaveTextContent("caddy:2, care@sha256:77fe743e51a6");
+    // A list of images is a count; the names are in the tooltip of the row.
+    expect(rows[1]).toHaveTextContent("2 images");
+    expect(rows[1]).toHaveAttribute("title", expect.stringContaining("caddy:2"));
     // An unknown key: the raw name in a code element.
     expect(within(rows[2]!).getByTestId("job-step-raw")).toHaveTextContent("scale-down: solo");
     expect(within(rows[2]!).getByTestId("job-step-raw").tagName).toBe("CODE");
@@ -58,8 +65,7 @@ describe("job progress", () => {
       "Resolve the versions of the images (about 30 s)",
     );
     expect(rows[3]).toHaveTextContent("resolve ghcr.io/ohcnetwork/care:latest … 77fe743e51a6");
-    const bar = within(rows[3]!).getByTestId("job-step-indeterminate");
-    expect(bar).toHaveAttribute("data-indeterminate");
+    expect(within(rows[3]!).getByTestId("job-step-indeterminate")).toBeInTheDocument();
     expect(screen.queryByText(/^ensure-dirs|^pull-images:|^host-check:/)).toBeNull();
   });
 });

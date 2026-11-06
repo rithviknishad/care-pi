@@ -1,3 +1,4 @@
+import { nearestPreset } from "@/features/setup/size-logic";
 import { describe, expect, it } from "vitest";
 import type { SetupState, SetupStepId } from "@/api/types";
 import {
@@ -6,13 +7,10 @@ import {
   isWizardPage,
   needsEnvSkip,
   nextPage,
-  presetFromAnswers,
   previousPage,
   resumePage,
   wizardPages,
 } from "@/features/setup/wizard";
-
-const GIB = 1024 ** 3;
 
 function setup(
   statuses: Partial<Record<SetupStepId, "done" | "current" | "pending" | "skipped">>,
@@ -52,14 +50,27 @@ function setup(
   };
 }
 
-describe("presets from plain-language answers", () => {
-  it("maps the larger answer to a preset", () => {
-    expect(presetFromAnswers({ staff: 0, peak: 0 }, 4 * GIB)).toEqual({ preset: "solo", capped: false });
-    expect(presetFromAnswers({ staff: 0, peak: 1 }, 4 * GIB)).toEqual({ preset: "small-clinic", capped: false });
-    expect(presetFromAnswers({ staff: 2, peak: 1 }, 4 * GIB)).toEqual({ preset: "busy-counter", capped: false });
+describe("the nearest preset of the advanced size step (S65)", () => {
+  const presets = [
+    { name: "solo" as const, gunicorn_workers: 1, celery_concurrency: 1, pg_shared_buffers_mb: 128 },
+    { name: "small-clinic" as const, gunicorn_workers: 2, celery_concurrency: 1, pg_shared_buffers_mb: 256 },
+    { name: "busy-counter" as const, gunicorn_workers: 4, celery_concurrency: 2, pg_shared_buffers_mb: 512 },
+  ];
+  it("names the preset with the same values", () => {
+    expect(nearestPreset({ gunicorn_workers: 2, celery_concurrency: 1, pg_shared_buffers_mb: 256 }, presets)).toBe(
+      "small-clinic",
+    );
   });
-  it("hides busy-counter on less than 3 GiB of RAM", () => {
-    expect(presetFromAnswers({ staff: 2, peak: 2 }, 2 * GIB)).toEqual({ preset: "small-clinic", capped: true });
+  it("names the nearest preset, or none between the presets", () => {
+    expect(nearestPreset({ gunicorn_workers: 3, celery_concurrency: 2, pg_shared_buffers_mb: 512 }, presets)).toBe(
+      "busy-counter",
+    );
+    expect(nearestPreset({ gunicorn_workers: 8, celery_concurrency: 4, pg_shared_buffers_mb: 2048 }, presets)).toBe(
+      null,
+    );
+    expect(
+      nearestPreset({ gunicorn_workers: Number.NaN, celery_concurrency: 1, pg_shared_buffers_mb: 128 }, presets),
+    ).toBe(null);
   });
 });
 

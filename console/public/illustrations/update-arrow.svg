@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 160" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><style>.illo-i{stroke:var(--illo-ink,#22413a)}.illo-p{stroke:var(--illo-primary,#059669)}.illo-f{fill:var(--illo-fill,#d7f4e7)}.illo-w{fill:var(--illo-paper,#fcfefd)}.illo-d{fill:var(--illo-primary,#059669)}.illo-k{fill:var(--illo-ink,#22413a)}</style>
+<ellipse class="illo-f" cx="100" cy="142" rx="56" ry="6"/>
+<circle class="illo-i" cx="100" cy="76" r="48" opacity=".22" stroke-width="6"/>
+<path class="illo-p" d="M100 28a48 48 0 1 1-48 48" stroke-width="6"/>
+<circle class="illo-d" cx="52" cy="76" r="6"/>
+<circle class="illo-f" cx="100" cy="76" r="33"/>
+<path class="illo-p" d="M100 96V58M86 72l14-14 14 14" stroke-width="4.5"/>
+<path class="illo-i" d="M86 104h28"/>
+<path class="illo-p" d="M164 24v10M159 29h10"/>
+<circle class="illo-d" cx="34" cy="34" r="3"/>
+<circle class="illo-d" cx="172" cy="120" r="2"/>
+</svg>

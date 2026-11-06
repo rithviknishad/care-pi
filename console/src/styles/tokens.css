@@ -1,0 +1,348 @@
+/*
+ * care-pi console v2 design tokens (decision S66). console/design.md explains each token.
+ *
+ * careui (careui.css) stays the base: this file tunes its semantic tokens (surfaces, text, borders, radii)
+ * and adds the v2 tokens (tint, gradient, semantic colours, elevation, layout sizes).
+ * Light is :root, dark is .dark (the class that public/theme.js and next-themes set on <html>).
+ * The .high-contrast and colour-blind themes of careui.css have a higher specificity, so they still win.
+ * Each mix is in oklab, not oklch: a mix in oklch turns the hue (7 % red on a green-tinted card gives green).
+ */
+
+:root {
+  /* ── Surfaces: green-tinted paper, never pure white or grey ───────────────── */
+  --surface-page: oklch(0.982 0.007 166);
+  --surface-card: color-mix(in oklab, var(--primary-500) 2%, white);
+  --surface-tint: color-mix(in oklab, var(--primary-500) 5%, var(--surface-card));
+  --surface-tint-strong: color-mix(in oklab, var(--primary-500) 10%, var(--surface-card));
+  --surface-sunken: oklch(0.966 0.009 166);
+
+  /* ── Text ─────────────────────────────────────────────────────────────────── */
+  /* Deep green, not black. careui draws some text as ink at 60 % (an inactive tab): 0.195 keeps that at 4.5:1. */
+  --ink: oklch(0.195 0.02 170);
+  --ink-muted: oklch(0.4 0.02 168);
+  --ink-soft: oklch(0.47 0.018 168);
+  --ink-placeholder: oklch(0.56 0.015 168);
+
+  /* ── Lines ────────────────────────────────────────────────────────────────── */
+  --line-soft: oklch(0.94 0.009 166);
+  --line: oklch(0.905 0.012 166);
+  --line-strong: oklch(0.86 0.014 166);
+  --line-stronger: oklch(0.72 0.016 168);
+  /* Input borders have 3:1 or more on a card (WCAG 1.4.11). */
+  --line-input: oklch(0.62 0.018 168);
+
+  /* ── Primary (careui emerald) in use ──────────────────────────────────────── */
+  --primary-ink: var(--primary-800);
+  --primary-solid: var(--primary-600);
+  --primary-track: color-mix(in oklab, var(--primary-500) 16%, var(--surface-card));
+  --nav-active-bg: color-mix(in oklab, var(--primary-500) 13%, var(--surface-page));
+  --nav-active-fg: var(--primary-900);
+
+  /* ── Semantic colours: fg = text, bg = surface, border, solid = icon/dot/bar ─ */
+  --ok-fg: var(--color-green-800);
+  --ok-bg: color-mix(in oklab, var(--color-green-500) 9%, var(--surface-card));
+  --ok-border: color-mix(in oklab, var(--color-green-600) 32%, var(--surface-card));
+  --ok-solid: var(--color-green-600);
+
+  --warn-fg: var(--color-amber-900);
+  --warn-bg: color-mix(in oklab, var(--color-amber-400) 14%, var(--surface-card));
+  --warn-border: color-mix(in oklab, var(--color-amber-600) 38%, var(--surface-card));
+  --warn-solid: var(--color-amber-600);
+
+  --danger-fg: var(--color-red-800);
+  --danger-bg: color-mix(in oklab, var(--color-red-500) 7%, var(--surface-card));
+  --danger-border: color-mix(in oklab, var(--color-red-600) 32%, var(--surface-card));
+  --danger-solid: var(--color-red-600);
+
+  --info-fg: var(--color-sky-900);
+  --info-bg: color-mix(in oklab, var(--color-sky-500) 9%, var(--surface-card));
+  --info-border: color-mix(in oklab, var(--color-sky-600) 32%, var(--surface-card));
+  --info-solid: var(--color-sky-600);
+
+  --neutral-fg: var(--ink-muted);
+  --neutral-bg: color-mix(in oklab, var(--ink) 5%, var(--surface-card));
+  --neutral-border: var(--line-strong);
+  --neutral-solid: oklch(0.56 0.015 168);
+
+  /* ── Gradient: hero, landing, stage headers, the setup rail. Never behind body text without a scrim. ── */
+  --gradient-hero:
+    radial-gradient(120% 140% at 100% 0%, oklch(1 0 0 / 0.2) 0%, oklch(1 0 0 / 0) 46%),
+    linear-gradient(135deg, var(--primary-500) 0%, var(--primary-700) 100%);
+  /* The scrim under the text of a hero (left to right); --gradient-scrim-full covers a whole band (phones). */
+  --gradient-scrim: linear-gradient(
+    90deg,
+    color-mix(in oklab, var(--primary-950) 60%, transparent) 0%,
+    color-mix(in oklab, var(--primary-950) 44%, transparent) 62%,
+    color-mix(in oklab, var(--primary-950) 0%, transparent) 100%
+  );
+  --gradient-scrim-full: color-mix(in oklab, var(--primary-950) 50%, transparent);
+  --gradient-rail: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--primary-500) 9%, var(--surface-card)) 0%,
+    color-mix(in oklab, var(--primary-500) 3%, var(--surface-card)) 100%
+  );
+  --on-gradient: oklch(1 0 0);
+  --on-gradient-muted: oklch(1 0 0 / 0.9);
+
+  /* ── Illustrations: 2-colour line art (public/illustrations) ──────────────── */
+  --illo-primary: var(--primary-600);
+  --illo-ink: oklch(0.33 0.03 170);
+  --illo-fill: color-mix(in oklab, var(--primary-400) 22%, var(--surface-card));
+  --illo-paper: var(--surface-card);
+
+  /* ── Elevation: 1 soft shadow and the tint. No heavy shadows. ─────────────── */
+  --shadow-soft: 0 1px 2px oklch(0.3 0.05 170 / 0.06), 0 6px 20px -8px oklch(0.3 0.05 170 / 0.14);
+  --shadow-lift: 0 2px 4px oklch(0.3 0.05 170 / 0.06), 0 16px 40px -16px oklch(0.3 0.05 170 / 0.22);
+
+  /* ── Motion ───────────────────────────────────────────────────────────────── */
+  --duration-fast: 150ms;
+  --duration-base: 250ms;
+  --duration-slow: 400ms;
+
+  /* ── Layout sizes (fixed, so nothing moves) ───────────────────────────────── */
+  --topbar-height: 3.5rem;
+  --bottombar-height: 4rem;
+  --banner-height: 2.5rem;
+  --rail-width: 15.5rem;
+  --stage-rail-width: 20rem;
+  --page-gutter: 1rem;
+
+  /* ── careui semantic tokens, tuned (S66: tuned, not replaced) ─────────────── */
+  --background: var(--surface-page);
+  --soft-background: var(--surface-sunken);
+  --muted-background: oklch(0.96 0.009 166);
+  --strong-background: oklch(0.91 0.014 166);
+  --muted: oklch(0.96 0.009 166);
+
+  --foreground: var(--ink);
+  --muted-foreground: var(--ink-muted);
+  --soft-foreground: var(--ink-soft);
+  --placeholder-foreground: var(--ink-placeholder);
+
+  --card: var(--surface-card);
+  --card-foreground: var(--ink);
+  --popover: var(--surface-card);
+  --popover-foreground: var(--ink);
+
+  --secondary: var(--surface-tint);
+  --secondary-foreground: var(--ink);
+  --accent: var(--surface-tint-strong);
+  --accent-foreground: var(--ink);
+
+  --soft-border: var(--line-soft);
+  --border: var(--line);
+  --strong-border: var(--line-strong);
+  --stronger-border: var(--line-stronger);
+  --input: var(--line-input);
+
+  --sidebar: var(--surface-page);
+  --sidebar-foreground: var(--ink);
+  --sidebar-accent: var(--nav-active-bg);
+  --sidebar-accent-foreground: var(--nav-active-fg);
+  --sidebar-border: var(--line);
+}
+
+@media (min-width: 640px) {
+  :root {
+    --page-gutter: 1.5rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --topbar-height: 4rem;
+    --page-gutter: 2rem;
+  }
+}
+
+/* Dark: deep green-tinted neutrals, not pure black. */
+.dark {
+  --surface-page: oklch(0.17 0.013 170);
+  --surface-card: oklch(0.212 0.016 168);
+  --surface-tint: color-mix(in oklab, var(--primary-400) 7%, var(--surface-card));
+  --surface-tint-strong: color-mix(in oklab, var(--primary-400) 14%, var(--surface-card));
+  --surface-sunken: oklch(0.155 0.012 170);
+
+  --ink: oklch(0.965 0.007 166);
+  --ink-muted: oklch(0.86 0.012 166);
+  --ink-soft: oklch(0.77 0.014 166);
+  --ink-placeholder: oklch(0.62 0.014 166);
+
+  --line-soft: oklch(0.255 0.016 168);
+  --line: oklch(0.3 0.018 168);
+  --line-strong: oklch(0.36 0.02 168);
+  --line-stronger: oklch(0.46 0.02 168);
+  --line-input: oklch(0.55 0.02 168);
+
+  --primary-ink: var(--primary-300);
+  --primary-solid: var(--primary-400);
+  --primary-track: color-mix(in oklab, var(--primary-400) 18%, var(--surface-card));
+  --nav-active-bg: color-mix(in oklab, var(--primary-400) 15%, var(--surface-page));
+  --nav-active-fg: var(--primary-200);
+
+  --ok-fg: var(--color-green-300);
+  --ok-bg: color-mix(in oklab, var(--color-green-500) 13%, var(--surface-card));
+  --ok-border: color-mix(in oklab, var(--color-green-400) 34%, var(--surface-card));
+  --ok-solid: var(--color-green-400);
+
+  --warn-fg: var(--color-amber-200);
+  --warn-bg: color-mix(in oklab, var(--color-amber-400) 12%, var(--surface-card));
+  --warn-border: color-mix(in oklab, var(--color-amber-400) 36%, var(--surface-card));
+  --warn-solid: var(--color-amber-400);
+
+  --danger-fg: var(--color-red-200);
+  --danger-bg: color-mix(in oklab, var(--color-red-500) 14%, var(--surface-card));
+  --danger-border: color-mix(in oklab, var(--color-red-400) 38%, var(--surface-card));
+  --danger-solid: var(--color-red-400);
+
+  --info-fg: var(--color-sky-200);
+  --info-bg: color-mix(in oklab, var(--color-sky-500) 13%, var(--surface-card));
+  --info-border: color-mix(in oklab, var(--color-sky-400) 36%, var(--surface-card));
+  --info-solid: var(--color-sky-400);
+
+  --neutral-fg: var(--ink-muted);
+  --neutral-bg: color-mix(in oklab, var(--ink) 7%, var(--surface-card));
+  --neutral-border: var(--line-strong);
+  --neutral-solid: oklch(0.68 0.014 166);
+
+  --gradient-hero:
+    radial-gradient(120% 140% at 100% 0%, oklch(1 0 0 / 0.1) 0%, oklch(1 0 0 / 0) 46%),
+    linear-gradient(135deg, var(--primary-600) 0%, var(--primary-900) 100%);
+  --gradient-rail: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--primary-400) 10%, var(--surface-card)) 0%,
+    color-mix(in oklab, var(--primary-400) 3%, var(--surface-card)) 100%
+  );
+
+  --illo-primary: var(--primary-400);
+  --illo-ink: oklch(0.86 0.014 166);
+  --illo-fill: color-mix(in oklab, var(--primary-400) 18%, var(--surface-card));
+  --illo-paper: var(--surface-card);
+
+  --shadow-soft: 0 1px 2px oklch(0 0 0 / 0.3), 0 8px 24px -10px oklch(0 0 0 / 0.5);
+  --shadow-lift: 0 2px 6px oklch(0 0 0 / 0.35), 0 20px 48px -16px oklch(0 0 0 / 0.6);
+
+  --background: var(--surface-page);
+  --soft-background: var(--surface-sunken);
+  --muted-background: oklch(0.255 0.016 168);
+  --strong-background: oklch(0.31 0.018 168);
+  --muted: oklch(0.255 0.016 168);
+
+  --foreground: var(--ink);
+  --muted-foreground: var(--ink-muted);
+  --soft-foreground: var(--ink-soft);
+  --placeholder-foreground: var(--ink-placeholder);
+
+  --card: var(--surface-card);
+  --card-foreground: var(--ink);
+  --popover: oklch(0.235 0.017 168);
+  --popover-foreground: var(--ink);
+
+  --secondary: var(--surface-tint);
+  --secondary-foreground: var(--ink);
+  --accent: var(--surface-tint-strong);
+  --accent-foreground: var(--ink);
+
+  --soft-border: var(--line-soft);
+  --border: var(--line);
+  --strong-border: var(--line-strong);
+  --stronger-border: var(--line-stronger);
+  --input: var(--line-input);
+
+  --sidebar: var(--surface-page);
+  --sidebar-foreground: var(--ink);
+  --sidebar-accent: var(--nav-active-bg);
+  --sidebar-accent-foreground: var(--nav-active-fg);
+  --sidebar-border: var(--line);
+}
+
+/* On a gradient: white text, and the illustrations change to white line art. */
+@utility on-gradient {
+  color: var(--on-gradient);
+  --illo-primary: oklch(1 0 0);
+  --illo-ink: oklch(1 0 0 / 0.92);
+  --illo-fill: oklch(1 0 0 / 0.16);
+  --illo-paper: color-mix(in oklab, var(--primary-700) 70%, var(--primary-500));
+}
+
+@utility bg-gradient-hero {
+  background-color: var(--primary-700);
+  background-image: var(--gradient-hero);
+}
+
+@utility bg-gradient-rail {
+  background-color: var(--surface-card);
+  background-image: var(--gradient-rail);
+}
+
+@utility bg-scrim {
+  background-image: var(--gradient-scrim);
+}
+
+@utility bg-scrim-full {
+  background-color: var(--gradient-scrim-full);
+}
+
+/* Tailwind mapping: bg-surface-tint, text-ok-fg, border-danger-border, shadow-soft, rounded-card, and others. */
+@theme inline {
+  --color-surface-page: var(--surface-page);
+  --color-surface-card: var(--surface-card);
+  --color-surface-tint: var(--surface-tint);
+  --color-surface-tint-strong: var(--surface-tint-strong);
+  --color-surface-sunken: var(--surface-sunken);
+
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-soft: var(--ink-soft);
+
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-line-strong: var(--line-strong);
+
+  --color-primary-ink: var(--primary-ink);
+  --color-primary-solid: var(--primary-solid);
+  --color-primary-track: var(--primary-track);
+  --color-nav-active-bg: var(--nav-active-bg);
+  --color-nav-active-fg: var(--nav-active-fg);
+
+  --color-ok-fg: var(--ok-fg);
+  --color-ok-bg: var(--ok-bg);
+  --color-ok-border: var(--ok-border);
+  --color-ok-solid: var(--ok-solid);
+  --color-warn-fg: var(--warn-fg);
+  --color-warn-bg: var(--warn-bg);
+  --color-warn-border: var(--warn-border);
+  --color-warn-solid: var(--warn-solid);
+  --color-danger-fg: var(--danger-fg);
+  --color-danger-bg: var(--danger-bg);
+  --color-danger-border: var(--danger-border);
+  --color-danger-solid: var(--danger-solid);
+  --color-info-fg: var(--info-fg);
+  --color-info-bg: var(--info-bg);
+  --color-info-border: var(--info-border);
+  --color-info-solid: var(--info-solid);
+  --color-neutral-fg: var(--neutral-fg);
+  --color-neutral-bg: var(--neutral-bg);
+  --color-neutral-border: var(--neutral-border);
+  --color-neutral-solid: var(--neutral-solid);
+
+  --color-on-gradient: var(--on-gradient);
+  --color-on-gradient-muted: var(--on-gradient-muted);
+
+  --shadow-soft: var(--shadow-soft);
+  --shadow-lift: var(--shadow-lift);
+
+  /* Radii: inputs 8, cards 12, stage panels 16 (careui --radius stays 10 px). */
+  --radius-xl: 0.75rem;
+  --radius-2xl: 1rem;
+  --radius-input: 0.5rem;
+  --radius-card: 0.75rem;
+  --radius-stage: 1rem;
+
+  --spacing-topbar: var(--topbar-height);
+  --spacing-bottombar: var(--bottombar-height);
+  --spacing-banner: var(--banner-height);
+  --spacing-rail: var(--rail-width);
+  --spacing-stage-rail: var(--stage-rail-width);
+  --spacing-gutter: var(--page-gutter);
+}

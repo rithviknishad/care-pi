@@ -5,14 +5,18 @@ test("the certificate page is public and gives the root CA for each OS", async (
   await resetMock("unclaimed");
   await page.goto("/certificate");
   await expect(page).toHaveURL(/\/certificate$/);
-  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Install the certificate");
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Make this browser trust your Care box");
+  await expect(page.getByText("This is normal and safe.")).toBeVisible();
+  // The fingerprint is only in "Check the fingerprint (for experts)".
+  await expect(page.getByTestId("ca-fingerprint")).toBeHidden();
+  await page.getByText("Check the fingerprint (for experts)").click();
   await expect(page.getByTestId("ca-fingerprint")).toContainText("3F:1D:6C:0E:5A:2B:9E:4D");
 
   // The page selects the OS of this device from the user agent.
   const userAgent = await page.evaluate(() => navigator.userAgent);
   const expected = /iPhone/.test(userAgent) ? "iPhone and iPad" : /Android/.test(userAgent) ? "Android" : "Windows";
   const selected = page.getByRole("tab", { selected: true });
-  await expect(selected).toContainText("Detected");
+  await expect(selected).toContainText("This device");
   await expect(selected).toContainText(expected);
   await expect(page.getByTestId("ca-steps").locator("li").first()).toBeVisible();
   await expect(page.getByRole("img", { name: /QR code/ })).toBeVisible();
@@ -23,10 +27,12 @@ test("the certificate page is public and gives the root CA for each OS", async (
   const pem = await page.request.get("/api/v1/tls/root-ca?format=pem");
   expect(await pem.text()).toContain("-----BEGIN CERTIFICATE-----");
 
-  // Android: 4 steps and the DER file.
+  // Android: 3 steps (the fingerprint step is in the disclosure for experts), the step that people miss, and the
+  // DER file.
   await page.getByRole("tab", { name: "Android" }).click();
   await expect(page).toHaveURL(/\/certificate\?os=android$/);
-  await expect(page.getByTestId("ca-steps").locator("li")).toHaveCount(4);
+  await expect(page.getByTestId("ca-steps").locator("li")).toHaveCount(3);
+  await expect(page.getByTestId("ca-steps")).toContainText("Many people miss this step");
   const der = page.getByTestId("ca-download");
   await expect(der).toHaveAttribute("href", "/api/v1/tls/root-ca?format=der");
   const derResponse = await page.request.get((await der.getAttribute("href")) ?? "");

@@ -230,6 +230,10 @@ func TestUpdateCheckStageApplyRollback(t *testing.T) {
 	if *sr.Version != "2026.11.1" || !reflect.DeepEqual(actions(rec), cutoverSteps[:6]) || len(sr.Downloaded) == 0 {
 		t.Fatalf("stage %+v steps %v", sr, actions(rec))
 	}
+	// The planned step count (the public step_count) is the count of the steps that ran.
+	if n := rec.Job().StepCount(); n == nil || *n != 6 {
+		t.Fatalf("stage step count %v", n)
+	}
 	for _, c := range e.fake.Calls {
 		if strings.HasPrefix(c, "systemctl stop") || strings.HasPrefix(c, "systemctl start") || strings.HasPrefix(c, "systemctl restart") {
 			t.Fatalf("staging ran %q", c)
@@ -251,6 +255,9 @@ func TestUpdateCheckStageApplyRollback(t *testing.T) {
 	}
 	if !reflect.DeepEqual(actions(rec), cutoverSteps) {
 		t.Fatalf("apply steps %v", actions(rec))
+	}
+	if n := rec.Job().StepCount(); n == nil || *n != len(cutoverSteps) || rec.Job().PlannedSteps != len(cutoverSteps) {
+		t.Fatalf("apply step count %v, planned %d", n, rec.Job().PlannedSteps)
 	}
 	l := e.running()
 	if l.Solution.Version != "2026.11.1" || l.History.Previous == "" || *ar.FromVersion != "2026.11.0" || ar.Checkpoint == nil || ar.FromLock == "" {

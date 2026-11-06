@@ -559,8 +559,9 @@ func (s *Service) runSetup(ctx context.Context, rec *jobs.Recorder, admin setup.
 	if err := s.setHostname(ctx, rec, cfg.Identity.Hostname); err != nil {
 		return nil, err
 	}
+	// The planned steps: the apply actions, then wait-healthy, create-care-superuser, and backup-full.
 	o := s.applyOptions(apply.Options{Reason: "setup finish", Out: rec.Writer(), Journal: rec, LockHeld: true,
-		Phase: setup.PhaseFull, NoFirstBackup: true})
+		Phase: setup.PhaseFull, NoFirstBackup: true, Planned: func(n int) { rec.PlanSteps(n + 3) }})
 	if _, err := apply.Run(ctx, o); err != nil {
 		return nil, applyProblem(err)
 	}
@@ -570,11 +571,13 @@ func (s *Service) runSetup(ctx context.Context, rec *jobs.Recorder, admin setup.
 	if err != nil {
 		return nil, err
 	}
-	end = rec.StepAction("create-care-superuser: "+admin.Username, "create-care-superuser")
+	// The user name goes to the detail, not to the name: the public job stream gives the names (section 6.3).
+	end = rec.StepAction("create-care-superuser", "create-care-superuser")
+	rec.SetDetail(admin.Username)
 	_, err = s.createSuperuser(ctx, admin.Username, admin.Email, password)
 	if problem.Is(err, problem.CareUserExists) {
 		rec.Logf("the Care user %s exists; the setup keeps it", admin.Username)
-		rec.SetDetail("the user exists")
+		rec.SetDetail("the user " + admin.Username + " exists")
 		err = nil
 	}
 	end(err)

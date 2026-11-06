@@ -1,38 +1,73 @@
-import { PencilIcon, PlayIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react";
+import { ChevronDownIcon, PencilIcon, PlayIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react";
+import { useEffect } from "react";
 import { Link } from "react-router";
-import type { BackupsOverview, DestinationState, LocalBackupState } from "@/api/types";
-import { CopyButton } from "@/components/app/copy-button";
-import { DataList, DataRow } from "@/components/app/page";
-import { Badge } from "@/components/ui/badge";
+import type { BackupsOverview, DestinationRetention, DestinationState, LocalBackupState } from "@/api/types";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatBytes, formatDateTime, formatDuration, formatRelative } from "@/lib/format";
+import { InlineSkeleton } from "@/components/v2/inline-skeleton";
+import { Explainer } from "@/components/v2/explainer";
+import { KeyValueList } from "@/components/v2/key-value-list";
+import { MonoBlock } from "@/components/v2/mono-block";
+import { Panel } from "@/components/v2/panel";
+import { everyText, retentionSummary, retentionZones, type RetentionPolicy } from "@/components/v2/retention";
+import { StatusChip } from "@/components/v2/status-chip";
+import type { Tone } from "@/components/v2/tone";
+import { formatAgo, formatBytes, formatDateTime, formatDuration } from "@/lib/format";
 import { fmt, strings } from "@/lib/strings";
 import {
+  INTERVAL_DEFAULT_MIN,
   calendarText,
+  effectiveRetention,
+  retentionDefaults,
   formatLocalRetention,
   formatMinute,
-  formatMinutes,
-  formatRetention,
-  formatRpo,
+  formatRpoMinutes,
   intervalText,
 } from "./backups-format";
 import { TYPE_ICONS, destinationPlace } from "./destination-meta";
-import { destinationBadge, localBadge } from "./health";
+import { destinationBadge, localBadge, type BadgeVariant } from "./health";
 
 const p = strings.backupsPage;
 
-// "5 min ago (2026-10-30 10:45)". Below 640 px only "5 min ago": the value must not wrap (docs/console-ui.md 5.1).
-// now is generated_at of GET /backups: the ages use the clock of the device, not the clock of the browser.
+const TONE: Record<BadgeVariant, Tone> = {
+  success: "ok",
+  warning: "warn",
+  destructive: "danger",
+  info: "info",
+  neutral: "neutral",
+};
+
+// "12 minutes ago". now is generated_at of GET /backups: the ages use the clock of the device. The title has the time.
 function when(iso: string | null | undefined, now: number): React.ReactNode {
   if (!iso) return p.never;
-  return (
-    <>
-      {formatRelative(iso, now)}
-      <span className="hidden sm:inline"> ({formatMinute(iso)})</span>
-    </>
-  );
+  return <span title={formatMinute(iso)}>{formatAgo(iso, now)}</span>;
+}
+
+// "in 12 minutes" for the next copy.
+function inMinutes(iso: string, now: number): string {
+  const min = Math.max(0, Math.round((Date.parse(iso) - now) / 60_000));
+  return min < 1 ? p.soon : fmt(p.inMinutes, { time: formatRpoMinutes(min) });
+}
+
+// "Every 15 minutes · back to 6 months": the policy of a destination in one short line (the explainer has the rest).
+function shortPolicy(policy: RetentionPolicy): string {
+  const oldest = retentionZones(policy).at(-1);
+  return oldest
+    ? `${everyText(policy.interval_min)} · ${fmt(p.backTo, { span: oldest.length })}`
+    : everyText(policy.interval_min);
+}
+
+// The policy of the explainer of the last visit: the invisible explainer of the loading state has the same height.
+const POLICY_KEY = "care-pi.backups.policy";
+
+function rememberedPolicy(): RetentionPolicy {
+  try {
+    const v = JSON.parse(localStorage.getItem(POLICY_KEY) ?? "null") as RetentionPolicy | null;
+    if (v && typeof v.interval_min === "number") return v;
+  } catch {
+    // Private mode: the default policy.
+  }
+  return { interval_min: INTERVAL_DEFAULT_MIN, ...effectiveRetention(null) };
 }
 
 // The restore window without the year (it is about 2 weeks), so it fits one line. The title has the full times.
@@ -56,65 +91,59 @@ export function LocalCard({
   const loading = !local;
   const badge = local ? localBadge(local.state) : null;
   return (
-    <Card size="sm" data-testid="local-card">
-      <CardHeader>
-        <CardTitle>
-          <h2>{p.local}</h2>
-        </CardTitle>
-        <CardDescription>{p.localIntro}</CardDescription>
-        <CardAction className="flex w-32 justify-end">
+    <Panel
+      title={p.local}
+      description={p.localIntro}
+      testId="local-card"
+      action={
+        <span className="flex w-32 justify-end">
           {badge ? (
-            <Badge variant={badge.variant} data-testid="local-state">
+            <StatusChip tone={TONE[badge.variant]} testId="local-state">
               {badge.text}
-            </Badge>
+            </StatusChip>
           ) : (
-            <Skeleton className="h-6 w-16" />
+            <Skeleton className="h-7 w-20 rounded-full" />
           )}
-        </CardAction>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <DataList>
-          <DataRow
-            label={p.window}
-            loading={loading}
-            testId="local-window"
-            title={local?.window_from && local.window_to ? `${local.window_from} – ${local.window_to}` : undefined}
-            value={local?.window_from && local.window_to ? windowText(local.window_from, local.window_to) : p.none}
-          />
-          <DataRow label={p.lastFull} loading={loading} value={when(local?.last_full_at, now)} />
-          <DataRow label={p.lastIncr} loading={loading} value={when(local?.last_incr_at, now)} />
-          <DataRow
-            label={p.lastWal}
-            loading={loading}
-            value={when(local?.last_wal_archived_at, now)}
-            testId="local-wal"
-          />
-          <DataRow label={p.size} loading={loading} value={formatBytes(local?.size_bytes)} />
-          <DataRow label={p.free} loading={loading} value={formatBytes(local?.free_bytes)} />
-          <DataRow label={p.key} loading={loading} value={local ? (p.keys[local.key] ?? local.key) : ""} />
-        </DataList>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => onBackup("incr")}
-            disabled={loading || busy}
-            data-testid="local-backup"
-          >
+        </span>
+      }
+      footer={
+        <>
+          <Button type="button" onClick={() => onBackup("incr")} disabled={loading || busy} data-testid="local-backup">
             <PlayIcon data-icon="inline-start" />
             {p.backupNow}
           </Button>
-          <Button type="button" size="sm" variant="outline" onClick={() => onBackup("full")} disabled={loading || busy}>
+          <Button type="button" variant="outline" onClick={() => onBackup("full")} disabled={loading || busy}>
             {p.fullNow}
           </Button>
-        </div>
-      </CardContent>
-    </Card>
+        </>
+      }
+    >
+      <KeyValueList
+        loading={loading}
+        items={[
+          {
+            id: "window",
+            label: p.window,
+            mono: true,
+            testId: "local-window",
+            title: local?.window_from && local.window_to ? `${local.window_from} – ${local.window_to}` : undefined,
+            value: local?.window_from && local.window_to ? windowText(local.window_from, local.window_to) : p.none,
+          },
+          { id: "full", label: p.lastFull, value: when(local?.last_full_at, now) },
+          { id: "incr", label: p.lastIncr, value: when(local?.last_incr_at, now) },
+          { id: "wal", label: p.lastWal, value: when(local?.last_wal_archived_at, now), testId: "local-wal" },
+          { id: "size", label: p.size, mono: true, value: formatBytes(local?.size_bytes) },
+          { id: "free", label: p.free, mono: true, value: formatBytes(local?.free_bytes) },
+          { id: "key", label: p.key, value: local ? (p.keys[local.key] ?? local.key) : "" },
+        ]}
+      />
+    </Panel>
   );
 }
 
-// One destination (plans/02 section 7): the type icon, the state, the last copies, the size, the free space, and
-// the actions. Each card has the same rows and a reserved line for the last error, so a refresh does not move it.
+// One destination (plans/02 section 7, S66): the type, the plain state, the place, the last and the next copy, the
+// schedule in one sentence, and the actions. Each card has the same rows and a reserved line for the last error, so
+// a refresh does not move it.
 export function DestinationCard({
   d,
   now,
@@ -123,6 +152,7 @@ export function DestinationCard({
   onEdit,
   onRemove,
   busy,
+  defaults,
 }: {
   d: DestinationState;
   now: number;
@@ -131,58 +161,77 @@ export function DestinationCard({
   onEdit: () => void;
   onRemove: () => void;
   busy: boolean;
+  /** The retention of a destination without its own numbers (retentionDefaults of GET /backups retention). */
+  defaults?: Required<DestinationRetention>;
 }) {
   const Icon = TYPE_ICONS[d.type] ?? ShieldCheckIcon;
   const badge = destinationBadge(d.state);
+  const policy = {
+    interval_min: d.destination.interval_min ?? INTERVAL_DEFAULT_MIN,
+    ...effectiveRetention(d.destination.retention, defaults),
+  };
   return (
-    <Card size="sm" id={`destination-${d.id}`} data-testid="destination-card" data-id={d.id} data-state={d.state}>
-      <CardHeader>
-        <CardTitle className="flex h-6 min-w-0 items-center gap-2">
-          <Icon className="size-5 shrink-0 text-primary" aria-hidden="true" />
-          <h3 className="max-w-[60%] shrink-0 truncate">{d.id}</h3>
-          <span className="truncate text-sm font-normal text-soft-foreground">{strings.dest.types[d.type]}</span>
-        </CardTitle>
-        <CardDescription className="h-5 truncate" title={d.location}>
-          {destinationPlace(d.destination)}
-        </CardDescription>
-        <CardAction className="flex w-28 justify-end">
-          <Badge variant={badge.variant} data-testid="destination-state">
-            {badge.text}
-          </Badge>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        <DataList>
-          <DataRow label={p.lastDb} value={when(d.last_db_snapshot_at, now)} testId="destination-last-db" />
-          <DataRow label={p.lastFiles} value={when(d.last_files_snapshot_at, now)} />
-          <DataRow label={p.size} value={formatBytes(d.size_bytes)} />
-          <DataRow label={p.free} value={formatBytes(d.free_bytes)} />
-          <DataRow
-            label={p.next}
-            value={
-              d.next_db_run_at
-                ? `${formatRelative(d.next_db_run_at, now)} · ${intervalText(d.destination.interval_min)}`
-                : p.paused
-            }
-          />
-          <DataRow label={p.rpo} value={formatRpo(d.rpo_minutes)} />
-        </DataList>
-        <p
-          className="line-clamp-2 min-h-8 text-xs break-words text-destructive"
-          title={d.last_error ?? undefined}
-          data-testid="destination-error"
-        >
-          {d.last_error ? `${p.lastError}: ${d.last_error}` : "\u00a0"}
-        </p>
-        <DestinationActions
-          onRun={onRun}
-          onVerify={onVerify}
-          onEdit={onEdit}
-          onRemove={onRemove}
-          disabled={busy || d.running}
-        />
-      </CardContent>
-    </Card>
+    <section
+      id={`destination-${d.id}`}
+      data-testid="destination-card"
+      data-id={d.id}
+      data-state={d.state}
+      className="flex min-w-0 flex-col gap-4 rounded-card border border-line bg-surface-card p-4 shadow-soft sm:p-6"
+    >
+      <header className="flex min-w-0 items-start gap-3">
+        <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-surface-tint-strong text-primary-solid">
+          <Icon className="size-5" aria-hidden="true" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate type-h3 text-ink">
+            {strings.dest.types[d.type]} <span className="type-data font-normal text-ink-soft">· {d.id}</span>
+          </h3>
+          <p className="h-5 truncate type-data text-ink-soft" title={d.location}>
+            {destinationPlace(d.destination)}
+          </p>
+        </div>
+        <StatusChip tone={TONE[badge.variant]} width={9} testId="destination-state">
+          {badge.text}
+        </StatusChip>
+      </header>
+      <p className="line-clamp-2 min-h-10 type-small text-ink-muted" title={retentionSummary(policy)}>
+        {shortPolicy(policy)}
+      </p>
+      <KeyValueList
+        items={[
+          { id: "db", label: p.lastDb, value: when(d.last_db_snapshot_at, now), testId: "destination-last-db" },
+          { id: "files", label: p.lastFiles, value: when(d.last_files_snapshot_at, now) },
+          {
+            id: "next",
+            label: p.next,
+            value: d.next_db_run_at
+              ? `${inMinutes(d.next_db_run_at, now)} · ${intervalText(d.destination.interval_min)}`
+              : p.paused,
+          },
+          {
+            id: "rpo",
+            label: p.rpo,
+            value: d.rpo_minutes ? formatRpoMinutes(d.rpo_minutes) : "—",
+          },
+          { id: "size", label: p.size, mono: true, value: formatBytes(d.size_bytes) },
+          { id: "free", label: p.free, mono: true, value: formatBytes(d.free_bytes) },
+        ]}
+      />
+      <p
+        className="line-clamp-2 min-h-10 type-small break-words text-danger-fg"
+        title={d.last_error ?? undefined}
+        data-testid="destination-error"
+      >
+        {d.last_error ? `${p.lastError}: ${d.last_error}` : "\u00a0"}
+      </p>
+      <DestinationActions
+        onRun={onRun}
+        onVerify={onVerify}
+        onEdit={onEdit}
+        onRemove={onRemove}
+        disabled={busy || d.running}
+      />
+    </section>
   );
 }
 
@@ -205,7 +254,11 @@ function DestinationActions({
   const ph = placeholder ? { tabIndex: -1 } : {};
   return (
     <div
-      className={placeholder ? "invisible flex flex-wrap gap-2" : "flex flex-wrap gap-2"}
+      className={
+        placeholder
+          ? "invisible flex flex-wrap gap-2 border-t border-line-soft pt-4"
+          : "flex flex-wrap gap-2 border-t border-line-soft pt-4"
+      }
       aria-hidden={placeholder || undefined}
     >
       <Button
@@ -237,6 +290,7 @@ function DestinationActions({
         type="button"
         size="sm"
         variant="ghost"
+        className="no-underline"
         onClick={onRemove}
         data-testid={placeholder ? undefined : "destination-remove"}
         {...ph}
@@ -248,113 +302,129 @@ function DestinationActions({
   );
 }
 
-// The skeleton of a destination card: the same header, rows, error line, and buttons.
+// The skeleton of a destination card: the same header, sentence, rows, error line, and buttons.
 export function DestinationCardSkeleton() {
   return (
-    <Card size="sm" data-testid="destination-skeleton">
-      <CardHeader>
-        <CardTitle className="flex h-6 items-center">
-          <Skeleton className="h-5 w-32" />
-        </CardTitle>
-        <CardDescription className="flex h-5 items-center">
-          <Skeleton className="h-4 w-48" />
-        </CardDescription>
-        <CardAction className="flex w-28 justify-end">
-          <Skeleton className="h-6 w-16" />
-        </CardAction>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        <DataList>
-          {[p.lastDb, p.lastFiles, p.size, p.free, p.next, p.rpo].map((l) => (
-            <DataRow key={l} label={l} loading value="" />
-          ))}
-        </DataList>
-        <p className="min-h-8" />
-        <DestinationActions disabled placeholder />
-      </CardContent>
-    </Card>
+    <section
+      data-testid="destination-skeleton"
+      aria-busy="true"
+      className="flex min-w-0 flex-col gap-4 rounded-card border border-line bg-surface-card p-4 shadow-soft sm:p-6"
+    >
+      <header className="flex min-w-0 items-start gap-3">
+        <Skeleton className="size-11 shrink-0 rounded-lg" />
+        <div className="min-w-0 flex-1">
+          <h3 className="type-h3">
+            <InlineSkeleton className="h-5 w-40 align-middle" />
+          </h3>
+          <p className="h-5">
+            <InlineSkeleton className="h-4 w-48 align-middle" />
+          </p>
+        </div>
+        <Skeleton className="h-7 w-24 rounded-full" />
+      </header>
+      <Skeleton className="h-10" />
+      <KeyValueList
+        loading
+        items={[p.lastDb, p.lastFiles, p.next, p.rpo, p.size, p.free].map((l) => ({ id: l, label: l }))}
+      />
+      <p className="min-h-10" />
+      <DestinationActions disabled placeholder />
+    </section>
   );
 }
 
-// The schedule, the retention, and the RPO (plans/02 section 7, docs/api/README.md section 13.7).
-// rows: the number of schedule rows of the skeleton (4 local timers, 1 for each destination, and 1 for the files).
+// How we keep your copies (S66, item 2): the Explainer of the first destination, the RPO in one sentence, and the
+// timers of the device in "Each time" (plans/02 section 7, docs/api/README.md section 13.7).
+// rows: the number of timer rows of the skeleton.
 export function ScheduleCard({ overview, rows }: { overview: BackupsOverview | undefined; rows: number }) {
   const loading = !overview;
   const rpo = overview?.rpo;
   const firstDest = overview?.destinations[0];
+  const policy = {
+    interval_min: firstDest?.destination.interval_min ?? INTERVAL_DEFAULT_MIN,
+    ...effectiveRetention(firstDest?.destination.retention, retentionDefaults(overview?.retention)),
+  };
   const scheduleLabel = (kind: string, destination: string | null) =>
     fmt(p.schedules[kind] ?? kind, { destination: destination ?? "" });
+  useEffect(() => {
+    if (!firstDest) return;
+    try {
+      localStorage.setItem(POLICY_KEY, JSON.stringify(policy));
+    } catch {
+      // Private mode.
+    }
+  });
   return (
-    <Card size="sm" data-testid="schedule-card">
-      <CardHeader>
-        <CardTitle>
-          <h2>{p.schedule}</h2>
-        </CardTitle>
-        <CardDescription>{p.scheduleHelp}</CardDescription>
-        <CardAction className="flex justify-end">
-          <Button asChild variant="outline" size="sm">
-            <Link to="/settings?tab=backups" data-testid="schedule-edit">
-              {p.change}
-            </Link>
-          </Button>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <DataList>
-          {loading
-            ? Array.from({ length: rows }, (_, i) => (
-                <DataRow key={i} label={<Skeleton className="inline-block h-3 w-24 align-middle" />} loading value="" />
-              ))
-            : overview.schedule
-                .filter((e) => e.kind !== "snapshot-files" || e.destination_id === firstDest?.id)
-                .map((e) => (
-                  <DataRow
-                    key={e.id}
-                    label={scheduleLabel(e.kind, e.destination_id)}
-                    value={
-                      <span className={e.enabled ? "" : "text-soft-foreground"}>
-                        {e.interval_min ? intervalText(e.interval_min) : calendarText(e.calendar)}
-                        {e.enabled ? "" : ` (${p.paused})`}
-                      </span>
-                    }
-                  />
-                ))}
-        </DataList>
-        <section className="relative flex flex-col gap-1 text-sm" aria-busy={loading} data-testid="retention">
-          <p className={loading ? "invisible" : ""}>
-            <span className="text-soft-foreground">{p.localRetention}: </span>
-            {formatLocalRetention(overview?.retention.db_full ?? 2)}
+    <Panel
+      title={p.schedule}
+      description={p.scheduleHelp}
+      testId="schedule-card"
+      action={
+        <Button asChild variant="outline" size="sm">
+          <Link to="/settings?tab=backups" data-testid="schedule-edit">
+            {p.change}
+          </Link>
+        </Button>
+      }
+    >
+      <section
+        className="flex flex-col gap-1 rounded-card border border-line-soft bg-surface-tint p-4"
+        data-testid="rpo"
+        aria-busy={!rpo}
+      >
+        <p className="line-clamp-2 min-h-12 type-body font-medium text-ink">
+          {!rpo
+            ? "\u00a0"
+            : rpo.offsite_minutes && firstDest
+              ? fmt(strings.dest.rpoSentence, { minutes: formatRpoMinutes(rpo.offsite_minutes) })
+              : p.rpoNoOffsite}
+        </p>
+        <p className="line-clamp-3 min-h-15 type-small text-ink-muted sm:min-h-10">
+          {rpo ? fmt(p.rpoLocalShort, { minutes: formatRpoMinutes(rpo.local_minutes ?? 5) }) : "\u00a0"}
+        </p>
+      </section>
+      {loading ? (
+        // The explainer of the last visit, invisible: the card has its final height before the data comes.
+        <div className="invisible" aria-hidden="true">
+          <Explainer policy={rememberedPolicy()} title={fmt(p.explainerTitle, { name: "usb" })} />
+        </div>
+      ) : firstDest ? (
+        <Explainer policy={policy} testId="schedule-explainer" title={fmt(p.explainerTitle, { name: firstDest.id })} />
+      ) : null}
+      <details className="group rounded-card border border-line-soft" data-testid="retention">
+        <summary className="flex h-11 cursor-pointer list-none items-center gap-2 px-4 type-small font-medium text-ink-muted outline-none select-none hover:text-ink focus-visible:ring-3 focus-visible:ring-ring/50 [&::-webkit-details-marker]:hidden">
+          <ChevronDownIcon
+            aria-hidden="true"
+            className="size-4 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+          />
+          {p.timers}
+        </summary>
+        <div className="flex flex-col gap-3 px-4 pb-4">
+          <KeyValueList
+            loading={loading}
+            items={
+              loading
+                ? Array.from({ length: rows }, (_, i) => ({ id: String(i), label: "\u00a0" }))
+                : overview.schedule
+                    .filter((e) => e.kind !== "snapshot-files" || e.destination_id === firstDest?.id)
+                    .map((e) => ({
+                      id: e.id,
+                      label: scheduleLabel(e.kind, e.destination_id),
+                      value: (
+                        <span className={e.enabled ? "" : "text-ink-soft"}>
+                          {e.interval_min ? intervalText(e.interval_min) : calendarText(e.calendar)}
+                          {e.enabled ? "" : ` (${p.paused})`}
+                        </span>
+                      ),
+                    }))
+            }
+          />
+          <p className="type-small text-ink-muted">
+            {p.localRetention}: {formatLocalRetention(overview?.retention.db_full ?? 2)}
           </p>
-          <p className={loading ? "invisible" : ""}>
-            <span className="text-soft-foreground">{p.destRetention}: </span>
-            {formatRetention(firstDest?.destination.retention)}
-          </p>
-          {loading ? <Skeleton className="absolute inset-0" /> : null}
-        </section>
-        <section className="flex flex-col gap-1 rounded-lg border bg-soft-background p-3 text-sm" data-testid="rpo">
-          <h3 className="font-semibold">{p.rpoTitle}</h3>
-          {/* Before the data, the same text with the defaults keeps the height (monospace: the same wrap). */}
-          <div className="relative flex flex-col gap-1" aria-busy={!rpo}>
-            <p className={rpo ? "" : "invisible"}>
-              {fmt(p.rpoLocal, {
-                local: formatMinutes(rpo?.local_minutes ?? 5),
-                timeout: formatMinutes(rpo?.wal_archive_timeout_min ?? 5),
-              })}
-            </p>
-            <p className={rpo ? "" : "invisible"}>
-              {!rpo || (rpo.offsite_minutes && firstDest)
-                ? fmt(p.rpoOffsite, {
-                    offsite: formatMinutes(rpo?.offsite_minutes ?? 20),
-                    interval: formatMinutes((rpo?.offsite_minutes ?? 20) - (rpo?.wal_archive_timeout_min ?? 5)),
-                    timeout: formatMinutes(rpo?.wal_archive_timeout_min ?? 5),
-                  })
-                : p.rpoNoOffsite}
-            </p>
-            {rpo ? null : <Skeleton className="absolute inset-0" />}
-          </div>
-        </section>
-      </CardContent>
-    </Card>
+        </div>
+      </details>
+    </Panel>
   );
 }
 
@@ -380,29 +450,12 @@ export function VerifyCard({
     ? `${p.outcomes[d.last.outcome] ?? d.last.outcome}${d.last.duration_s !== null ? ` (${formatDuration(d.last.duration_s)})` : ""} · ${formatMinute(d.last.finished_at)}`
     : p.never;
   return (
-    <Card size="sm" data-testid="verify-card">
-      <CardHeader>
-        <CardTitle>
-          <h2>{p.verifyTitle}</h2>
-        </CardTitle>
-        <CardDescription>{p.drillHelp}</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <DataList>
-          <DataRow label={p.lastVerify} loading={loading} value={verifyText} testId="verify-last" />
-          <DataRow
-            label={p.nextVerify}
-            loading={loading}
-            value={v?.next_run_at ? formatDateTime(v.next_run_at) : p.paused}
-          />
-          <DataRow label={p.lastDrill} loading={loading} value={drillText} testId="drill-last" />
-          <DataRow
-            label={p.nextDrill}
-            loading={loading}
-            value={d?.enabled ? (d.next_run_at ? formatDateTime(d.next_run_at) : p.paused) : p.drillOff}
-          />
-        </DataList>
-        <div className="flex flex-wrap gap-2">
+    <Panel
+      title={p.verifyTitle}
+      description={p.drillHelp}
+      testId="verify-card"
+      footer={
+        <>
           <Button type="button" size="sm" variant="outline" onClick={onVerify} disabled={loading || busy}>
             {p.verifyNow}
           </Button>
@@ -416,9 +469,23 @@ export function VerifyCard({
           >
             {p.drill}
           </Button>
-        </div>
-      </CardContent>
-    </Card>
+        </>
+      }
+    >
+      <KeyValueList
+        loading={loading}
+        items={[
+          { id: "verify", label: p.lastVerify, value: verifyText, testId: "verify-last" },
+          { id: "next-verify", label: p.nextVerify, value: v?.next_run_at ? formatDateTime(v.next_run_at) : p.paused },
+          { id: "drill", label: p.lastDrill, value: drillText, testId: "drill-last" },
+          {
+            id: "next-drill",
+            label: p.nextDrill,
+            value: d?.enabled ? (d.next_run_at ? formatDateTime(d.next_run_at) : p.paused) : p.drillOff,
+          },
+        ]}
+      />
+    </Panel>
   );
 }
 
@@ -426,29 +493,18 @@ export function VerifyCard({
 export function SshKeyCard({ overview }: { overview: BackupsOverview | undefined }) {
   const key = overview?.ssh_key ?? null;
   return (
-    <Card size="sm" data-testid="ssh-card">
-      <CardHeader>
-        <CardTitle>
-          <h2>{p.sshTitle}</h2>
-        </CardTitle>
-        <CardDescription>{p.sshHelp}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <div className="flex min-h-14 items-start gap-2">
-          {!overview ? (
-            <Skeleton className="h-14 flex-1" />
-          ) : key ? (
-            <>
-              <code className="line-clamp-3 min-w-0 flex-1 text-xs break-all" title={key.authorized_keys_line}>
-                {key.authorized_keys_line}
-              </code>
-              <CopyButton value={key.authorized_keys_line} label={strings.dest.sftp.publicKey} />
-            </>
-          ) : (
-            <p className="text-sm text-soft-foreground">{p.none}</p>
-          )}
-        </div>
-      </CardContent>
-    </Card>
+    <Panel title={p.sshTitle} description={p.sshHelp} testId="ssh-card">
+      {!overview || key ? (
+        <MonoBlock
+          text={key?.authorized_keys_line ?? ""}
+          label={strings.dest.sftp.publicKey}
+          lines={3}
+          copy={Boolean(key)}
+          testId="ssh-key"
+        />
+      ) : (
+        <p className="type-body text-ink-muted">{p.none}</p>
+      )}
+    </Panel>
   );
 }

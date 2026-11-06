@@ -27,3 +27,20 @@ test("follow the logs of a unit", async ({ page, resetMock }) => {
   await page.getByTestId("log-resume").click();
   await expect.poll(() => lines.count()).toBeGreaterThan(paused);
 });
+
+// S68: the services are chips; "Copy the log" copies the plain text of the agent (GET /logs/{unit}/export).
+test("pick a service with a chip and copy its log for support", async ({ page, resetMock, browserName }) => {
+  await resetMock("ready");
+  await page.goto("/login?next=%2Flogs%3Funit%3Dapi");
+  await login(page);
+  await expect(page.getByTestId("log-line")).toHaveCount(200);
+  await page.getByTestId("log-unit-db").click();
+  await expect(page).toHaveURL(/\/logs\?unit=db$/);
+  await expect(page.getByTestId("log-unit-db")).toHaveAttribute("aria-pressed", "true");
+  test.skip(browserName !== "chromium", "The clipboard is read in Chromium only.");
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.getByRole("button", { name: "Copy the log" }).click();
+  await expect(page.getByRole("button", { name: "Copied" })).toBeVisible();
+  const text = await page.evaluate(() => navigator.clipboard.readText());
+  expect(text).toMatch(/^CARE support text: log care-db\.service\nDevice: /);
+});

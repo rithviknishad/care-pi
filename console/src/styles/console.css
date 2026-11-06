@@ -3,12 +3,7 @@
  * docs/console-ui.md explains each rule.
  */
 
-/* Monospace first: Geist Mono is the body font (owner decision). The font files are in the build. */
-@theme inline {
-  --font-sans:
-    "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
-    monospace;
-}
+/* The fonts are in typography.css (v2, S66): Geist for the text, Geist Mono for data. */
 
 @layer base {
   /* The scroll bar does not move the layout when a page becomes taller than the window. */

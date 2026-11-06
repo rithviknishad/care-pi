@@ -24,6 +24,7 @@ export const qk = {
   tls: ["tls"] as const,
   wifiScan: ["network", "wifi-scan"] as const,
   jobs: ["jobs"] as const,
+  jobList: (filter: "active" | "recent") => ["jobs", filter] as const,
   job: (id: string) => ["job", id] as const,
   instructions: (os: ClientOs) => ["tls-instructions", os] as const,
   backups: ["backups"] as const,
@@ -212,6 +213,28 @@ export function useJobs() {
   return useQuery({
     queryKey: qk.jobs,
     queryFn: () => call(api.GET("/jobs", { params: { query: { limit: 10 } } })),
+  });
+}
+
+// S67: the Jobs page. Active: the jobs that run (each 3 s); recent: the jobs that ended (each 15 s).
+export function useJobList(filter: "active" | "recent", limit = 20) {
+  return useQuery({
+    queryKey: qk.jobList(filter),
+    queryFn: () => call(api.GET("/jobs", { params: { query: { state: filter, limit } } })),
+    refetchInterval: filter === "active" ? 3_000 : 15_000,
+    refetchIntervalInBackground: false,
+  });
+}
+
+// GET /jobs/{id} with log_tail: after a reload, the job page shows the steps and the tail, then follows the
+// stream after last_event_id (docs/api/README.md section 6.4).
+export function useJob(id: string | null | undefined) {
+  return useQuery({
+    queryKey: qk.job(id ?? ""),
+    queryFn: () => call(api.GET("/jobs/{job_id}", { params: { path: { job_id: id ?? "" } } })),
+    enabled: Boolean(id),
+    staleTime: Infinity,
+    gcTime: 0,
   });
 }
 

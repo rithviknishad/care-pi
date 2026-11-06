@@ -72,23 +72,83 @@ func (s *Server) openStream(c *reqCtx) (*stream, func(), error) {
 		}
 		s.mu.Unlock()
 	}
-	h := c.w.Header()
-	h.Set("Content-Type", "text/event-stream")
-	h.Set("Cache-Control", "no-store")
-	h.Set("X-Accel-Buffering", "no")
-	c.w.WriteHeader(http.StatusOK)
-	st := &stream{w: c.w, rc: http.NewResponseController(c.w)}
-	st.mu.Lock()
-	_, err := c.w.Write([]byte("retry: 3000\n\n"))
-	if err == nil {
-		err = st.rc.Flush()
-	}
-	st.mu.Unlock()
+	st, err := startStream(c.w)
 	if err != nil {
 		release()
 		return nil, nil, err
 	}
 	return st, release, nil
+}
+
+// openPublicStream takes a public stream slot of the client address and starts the SSE response (S67). The public
+// streams have their own slots, so a client without a session cannot take the slots of the console.
+func (s *Server) openPublicStream(c *reqCtx) (*stream, func(), error) {
+	addr := c.client.Addr
+	perAddr := s.o.MaxAddressStreams
+	if c.client.Shared {
+		perAddr = s.o.MaxPublicStreams
+	}
+	s.mu.Lock()
+	if s.pubStreams >= s.o.MaxPublicStreams || s.byAddr[addr] >= perAddr {
+		s.mu.Unlock()
+		return nil, nil, problem.Limited(problem.RateLimited, 5, fmt.Sprintf("The limit is %d open public job streams for each address and %d in total.",
+			s.o.MaxAddressStreams, s.o.MaxPublicStreams))
+	}
+	s.pubStreams++
+	s.byAddr[addr]++
+	s.mu.Unlock()
+	release := func() {
+		s.mu.Lock()
+		s.pubStreams--
+		if s.byAddr[addr]--; s.byAddr[addr] <= 0 {
+			delete(s.byAddr, addr)
+		}
+		s.mu.Unlock()
+	}
+	st, err := startStream(c.w)
+	if err != nil {
+		release()
+		return nil, nil, err
+	}
+	return st, release, nil
+}
+
+// startStream writes the headers of an SSE response and the retry line.
+func startStream(w http.ResponseWriter) (*stream, error) {
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-store")
+	h.Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	st := &stream{w: w, rc: http.NewResponseController(w)}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if _, err := w.Write([]byte("retry: 3000\n\n")); err != nil {
+		return nil, err
+	}
+	if err := st.rc.Flush(); err != nil {
+		return nil, err
+	}
+	return st, nil
+}
+
+// afterOf reads the event id to resume after: Last-Event-ID wins over the parameter after.
+func afterOf(c *reqCtx) (int, error) {
+	after := 0
+	if v, ok := c.query("after"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return 0, problem.InvalidParam("after", "use an integer of 0 or more")
+		}
+		after = n
+	}
+	if v := c.r.Header.Get("Last-Event-ID"); v != "" {
+		if !lastEventRE.MatchString(v) {
+			return 0, problem.InvalidParam("Last-Event-ID", "use the integer id of an event")
+		}
+		after, _ = strconv.Atoi(v)
+	}
+	return after, nil
 }
 
 // jobEvents serves GET /jobs/{job_id}/events as SSE or as one JSON page.
@@ -102,19 +162,9 @@ func (s *Server) jobEvents(c *reqCtx) error {
 	if err != nil {
 		return err
 	}
-	after := 0
-	if v, ok := c.query("after"); ok {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			return problem.InvalidParam("after", "use an integer of 0 or more")
-		}
-		after = n
-	}
-	if v := c.r.Header.Get("Last-Event-ID"); v != "" {
-		if !lastEventRE.MatchString(v) {
-			return problem.InvalidParam("Last-Event-ID", "use the integer id of an event")
-		}
-		after, _ = strconv.Atoi(v)
+	after, err := afterOf(c)
+	if err != nil {
+		return err
 	}
 	if !wantsSSE(c.r) {
 		evs, err := jobs.Events(p, id, after, jobs.MaxPageItems)
@@ -195,25 +245,148 @@ func (s *Server) jobEvents(c *reqCtx) error {
 	}
 }
 
-// logs serves GET /logs/{unit} as one JSON page or, with follow=true, as SSE.
-func (s *Server) logs(c *reqCtx) error {
+// publicJobEvents serves GET /_care-pi/jobs/{job_id}/events (S67): the public form of the job events for the status
+// pages of Caddy and a device without a session. It sends step events without the detail, error events with the
+// type and the title, and done with the public job. It never sends a log or progress event, the result, or the
+// reason (docs/api/README.md section 6.3). The ids are the ids of the job events, so they can have gaps.
+func (s *Server) publicJobEvents(c *reqCtx) error {
+	id := c.param("job_id")
+	p := s.svc.Paths
+	if _, err := jobs.Peek(p, id); errors.Is(err, jobs.ErrNotFound) {
+		return jobNotFound(id)
+	} else if err != nil {
+		return err
+	}
+	after, err := afterOf(c)
+	if err != nil {
+		return err
+	}
+	cur := jobs.NewCursor(p, id, after)
+	if !wantsSSE(c.r) {
+		evs, err := cur.Next(jobs.MaxPageItems)
+		if err != nil {
+			return err
+		}
+		out := []jobs.Event{}
+		done := false
+		for _, e := range evs {
+			if pe, ok := jobs.PublicEvent(e); ok {
+				out = append(out, pe)
+				done = done || e.Event == "done"
+			}
+		}
+		if !done && len(evs) < jobs.MaxPageItems {
+			if j, err := jobs.Peek(p, id); err == nil {
+				if d, ok := cur.Done(j, after); ok {
+					pe, _ := jobs.PublicEvent(d)
+					out = append(out, pe)
+					cur.Last, done = d.ID, true
+				}
+			}
+		}
+		s.json(c.w, http.StatusOK, map[string]any{"job_id": id, "events": out, "last_event_id": cur.Last, "done": done})
+		return nil
+	}
+
+	st, release, err := s.openPublicStream(c)
+	if err != nil {
+		return err
+	}
+	defer release()
+	ctx := c.r.Context()
+	beat := time.NewTicker(s.o.Heartbeat)
+	defer beat.Stop()
+	for {
+		wake := s.svc.Jobs.Wake(id)
+		evs, err := cur.Next(jobs.MaxPageItems)
+		if err != nil {
+			return nil
+		}
+		for _, e := range evs {
+			pe, ok := jobs.PublicEvent(e)
+			if !ok {
+				continue
+			}
+			if err := st.write(strconv.Itoa(pe.ID), pe.Event, pe.Data); err != nil || pe.Event == "done" {
+				return nil
+			}
+		}
+		if len(evs) == 0 {
+			if j, err := jobs.Peek(p, id); err == nil && j.Done() {
+				if d, ok := cur.Done(j, after); ok {
+					pe, _ := jobs.PublicEvent(d)
+					_ = st.write(strconv.Itoa(pe.ID), pe.Event, pe.Data)
+				}
+				return nil
+			}
+		}
+		if len(evs) == jobs.MaxPageItems {
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-s.shutdown:
+			return nil
+		case <-wake:
+			// The log events of a busy job wake the stream; one read takes each event of the gap.
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-s.shutdown:
+				return nil
+			case <-time.After(s.o.PublicGap):
+			}
+		case <-time.After(s.o.Poll):
+		case <-beat.C:
+			if err := st.heartbeat(s.a.Now()); err != nil {
+				return nil
+			}
+		}
+	}
+}
+
+// logQuery reads the parameters n, since, and after of GET /logs/{unit} and GET /logs/{unit}/export.
+func logQuery(c *reqCtx) (service.LogQuery, error) {
 	q := service.LogQuery{N: 100}
 	if v, ok := c.query("n"); ok {
 		n, err := strconv.Atoi(v)
 		if err != nil {
-			return problem.InvalidParam("n", "use a number from 1 to 5000")
+			return q, problem.InvalidParam("n", "use a number from 1 to 5000")
 		}
 		q.N = n
 	}
 	if v, ok := c.query("since"); ok {
 		t, err := time.Parse(time.RFC3339, v)
 		if err != nil {
-			return problem.InvalidParam("since", "use an RFC 3339 time, for example 2026-10-30T10:15:00Z")
+			return q, problem.InvalidParam("since", "use an RFC 3339 time, for example 2026-10-30T10:15:00Z")
 		}
 		q.Since = &t
 	}
 	if v, ok := c.query("after"); ok {
 		q.After = v
+	}
+	return q, nil
+}
+
+// exportLogs serves GET /logs/{unit}/export: one page of the journal as plain text for support (S68).
+func (s *Server) exportLogs(c *reqCtx) error {
+	q, err := logQuery(c)
+	if err != nil {
+		return err
+	}
+	text, err := s.svc.LogsText(c.r.Context(), c.param("unit"), q)
+	if err != nil {
+		return err
+	}
+	return s.text(c, text)
+}
+
+// logs serves GET /logs/{unit} as one JSON page or, with follow=true, as SSE.
+func (s *Server) logs(c *reqCtx) error {
+	q, err := logQuery(c)
+	if err != nil {
+		return err
 	}
 	follow, err := c.boolQuery("follow")
 	if err != nil {

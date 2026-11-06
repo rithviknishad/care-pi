@@ -61,6 +61,13 @@ type Options struct {
 	// MaxStreams and MaxSessionStreams limit the open SSE streams (16 and 4).
 	MaxStreams        int
 	MaxSessionStreams int
+	// MaxPublicStreams and MaxAddressStreams limit the open public job streams (16 in total and 4 for each client
+	// address; the shared address of the Tailscale site has the total). They do not take the slots of the sessions.
+	MaxPublicStreams  int
+	MaxAddressStreams int
+	// PublicGap is the shortest time between two reads of a public job stream (250 ms): the log events of a busy job
+	// wake the stream, and its public form has none of them.
+	PublicGap time.Duration
 	// BodyTimeout overrides the time to read a body (tests).
 	BodyTimeout time.Duration
 }
@@ -74,11 +81,13 @@ type Server struct {
 
 	routes []*route
 
-	mu       sync.Mutex
-	streams  int
-	bySess   map[string]int
-	shutdown chan struct{}
-	once     sync.Once
+	mu         sync.Mutex
+	streams    int
+	bySess     map[string]int
+	pubStreams int
+	byAddr     map[string]int
+	shutdown   chan struct{}
+	once       sync.Once
 }
 
 // New returns a server.
@@ -98,10 +107,20 @@ func New(o Options) *Server {
 	if o.MaxSessionStreams == 0 {
 		o.MaxSessionStreams = 4
 	}
+	if o.MaxPublicStreams == 0 {
+		o.MaxPublicStreams = 16
+	}
+	if o.MaxAddressStreams == 0 {
+		o.MaxAddressStreams = 4
+	}
+	if o.PublicGap == 0 {
+		o.PublicGap = 250 * time.Millisecond
+	}
 	if o.BodyTimeout == 0 {
 		o.BodyTimeout = BodyTimeout
 	}
-	s := &Server{o: o, svc: o.Service, a: o.Service.Auth, log: o.Log, bySess: map[string]int{}, shutdown: make(chan struct{})}
+	s := &Server{o: o, svc: o.Service, a: o.Service.Auth, log: o.Log, bySess: map[string]int{}, byAddr: map[string]int{},
+		shutdown: make(chan struct{})}
 	s.routes = s.table()
 	return s
 }
@@ -148,9 +167,10 @@ type route struct {
 	method string
 	path   string
 	segs   []string
-	// public routes need no session. publicRead routes have the public read limit.
+	// public routes need no session. publicRead routes have the public read limit of their bucket.
 	public     bool
 	publicRead bool
+	bucket     string
 	// both routes are also below /_care-pi/. rootOnly routes are only there.
 	both     bool
 	rootOnly bool
@@ -434,8 +454,12 @@ func (s *Server) chain(c *reqCtx, rt *route) error {
 		if c.client.Shared {
 			limit = auth.PublicPerMinuteShared
 		}
-		if ok, wait := s.a.Limits.Allow("public:"+c.client.Addr, limit); !ok {
-			return problem.Limited(problem.RateLimited, int(wait.Seconds())+1, fmt.Sprintf("The limit is %d public requests each minute for this address.", limit))
+		what := "public requests"
+		if rt.bucket == bucketPublicJob {
+			what = "requests of public job events"
+		}
+		if ok, wait := s.a.Limits.Allow(rt.bucket+":"+c.client.Addr, limit); !ok {
+			return problem.Limited(problem.RateLimited, int(wait.Seconds())+1, fmt.Sprintf("The limit is %d %s each minute for this address.", limit, what))
 		}
 	}
 	if !rt.public {

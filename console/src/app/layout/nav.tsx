@@ -2,6 +2,7 @@ import {
   DatabaseBackupIcon,
   FileBadgeIcon,
   HistoryIcon,
+  ListChecksIcon,
   LayoutDashboardIcon,
   LifeBuoyIcon,
   LockIcon,
@@ -10,69 +11,35 @@ import {
   ScrollTextIcon,
   SlidersHorizontalIcon,
   WandSparklesIcon,
-  type LucideIcon,
 } from "lucide-react";
-import { NavLink } from "react-router";
 import type { SetupStateName } from "@/api/types";
+import type { ShellNavItem } from "@/components/v2/app-shell";
 import { strings } from "@/lib/strings";
-import { cn } from "@/lib/utils";
 
-interface NavItem {
-  to: string;
-  label: string;
-  icon: LucideIcon;
-  later?: boolean;
-}
-
-function navItems(state: SetupStateName): NavItem[] {
+// The navigation of the shell. "primary" items are in the bottom bar of a phone (4 at most); the others are in
+// "More". Before the state is ready the shell is minimal (the wizard has the left column): a Menu button opens these.
+export function navItems(state: SetupStateName): ShellNavItem[] {
   if (state !== "ready") {
     return [
-      { to: "/setup", label: strings.nav.setup, icon: WandSparklesIcon },
-      { to: "/certificate", label: strings.nav.certificate, icon: FileBadgeIcon },
-      { to: "/logs", label: strings.nav.logs, icon: ScrollTextIcon },
+      { to: "/setup", label: strings.nav.setup, icon: WandSparklesIcon, primary: true },
+      { to: "/certificate", label: strings.nav.certificate, icon: FileBadgeIcon, primary: true },
+      { to: "/logs", label: strings.nav.logs, icon: ScrollTextIcon, primary: true },
+      { to: "/jobs", label: strings.nav.jobs, icon: ListChecksIcon },
       { to: "/security", label: strings.nav.security, icon: LockIcon },
-      { to: "/support", label: strings.nav.support, icon: LifeBuoyIcon },
+      { to: "/support", label: strings.nav.support, icon: LifeBuoyIcon, primary: true },
     ];
   }
   return [
-    { to: "/dashboard", label: strings.nav.dashboard, icon: LayoutDashboardIcon },
-    { to: "/backups", label: strings.nav.backups, icon: DatabaseBackupIcon },
+    { to: "/dashboard", label: strings.nav.dashboard, icon: LayoutDashboardIcon, primary: true },
+    { to: "/backups", label: strings.nav.backups, icon: DatabaseBackupIcon, primary: true },
     { to: "/restore", label: strings.nav.restore, icon: HistoryIcon },
-    { to: "/settings", label: strings.nav.settings, icon: SlidersHorizontalIcon },
+    { to: "/settings", label: strings.nav.settings, icon: SlidersHorizontalIcon, primary: true },
+    { to: "/jobs", label: strings.nav.jobs, icon: ListChecksIcon },
     { to: "/logs", label: strings.nav.logs, icon: ScrollTextIcon },
     { to: "/certificate", label: strings.nav.certificate, icon: FileBadgeIcon },
     { to: "/security", label: strings.nav.security, icon: LockIcon },
     { to: "/support", label: strings.nav.support, icon: LifeBuoyIcon },
-    { to: "/updates", label: strings.nav.updates, icon: RefreshCwIcon },
+    { to: "/updates", label: strings.nav.updates, icon: RefreshCwIcon, primary: true },
     { to: "/plugs", label: strings.nav.plugs, icon: PuzzleIcon },
   ];
-}
-
-export function NavList({ state, onNavigate }: { state: SetupStateName; onNavigate?: () => void }) {
-  return (
-    <nav aria-label={strings.nav.main}>
-      <ul className="flex flex-col gap-0.5">
-        {navItems(state).map((item) => (
-          <li key={item.to}>
-            <NavLink
-              to={item.to}
-              onClick={onNavigate}
-              className={({ isActive }) =>
-                cn(
-                  "flex h-11 items-center gap-3 rounded-md px-3 text-sm outline-none focus-visible:outline-2 focus-visible:outline-indigo-500 lg:h-9",
-                  isActive
-                    ? "bg-primary-100 font-semibold text-primary-900 dark:bg-primary-400/15 dark:text-primary-300"
-                    : "text-muted-foreground hover:bg-muted-background hover:text-foreground",
-                  item.later && "text-soft-foreground",
-                )
-              }
-            >
-              <item.icon className="size-4 shrink-0" aria-hidden="true" />
-              <span className="truncate">{item.label}</span>
-            </NavLink>
-          </li>
-        ))}
-      </ul>
-    </nav>
-  );
 }

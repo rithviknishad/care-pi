@@ -11,12 +11,15 @@ import { describedBy, validateNewPassword } from "@/lib/form";
 import { ProblemAlert } from "@/components/app/problem-alert";
 import { useRetryWait } from "@/hooks/use-retry-wait";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { FocusCard } from "@/components/v2/focus";
+import { WhatNext } from "@/components/v2/panel";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { homeFor } from "@/features/setup/wizard";
 import { formatRecoveryCode, isCompleteRecoveryCode } from "@/lib/codes";
 import { fmt, strings } from "@/lib/strings";
+import { LINK_TONE } from "@/components/app/link-tone";
+import { cn } from "@/lib/utils";
 
 export default function RecoverPage() {
   const id = useId();
@@ -64,54 +67,56 @@ export default function RecoverPage() {
   };
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>
-          <h1 className="text-xl">{strings.recover.title}</h1>
-        </CardTitle>
-        <CardDescription>{strings.recover.intro}</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={submit} className="flex flex-col gap-2" noValidate>
-          <FormField
-            id={`${id}-code`}
-            label={strings.recover.codeLabel}
-            help={strings.recover.codeHelp}
-            error={codeError}
-          >
-            <Input
-              id={`${id}-code`}
-              name="recovery-code"
-              value={code}
-              onChange={(e) => setCode(formatRecoveryCode(e.target.value))}
-              placeholder="XXXXX-XXXXX"
-              autoComplete="one-time-code"
-              autoCapitalize="characters"
-              spellCheck={false}
-              className="tracking-widest uppercase"
-              aria-invalid={codeError ? true : undefined}
-              aria-describedby={describedBy(`${id}-code`, true, codeError)}
-            />
-          </FormField>
-          <NewPasswordFields
-            password={password}
-            confirm={confirm}
-            onPassword={setPassword}
-            onConfirm={setConfirm}
-            errors={{ password: pwErrors.password ?? weak, confirm: pwErrors.confirm }}
-          />
-          {showAlert ? <ProblemAlert error={recover.error} className="mb-2" /> : null}
-          <Button type="submit" disabled={recover.isPending || wait > 0 || !isCompleteRecoveryCode(code)}>
-            {recover.isPending ? <Spinner data-icon="inline-start" /> : null}
-            {strings.recover.submit}
-          </Button>
-        </form>
-      </CardContent>
-      <CardFooter>
-        <Button asChild variant="link" className="px-0">
+    <FocusCard
+      illustration="shield-certificate"
+      title={strings.recover.title}
+      description={strings.recover.intro}
+      footer={
+        <Button asChild variant="link" className={cn("h-auto px-0", LINK_TONE)}>
           <Link to="/login">{strings.recover.backToLogin}</Link>
         </Button>
-      </CardFooter>
-    </Card>
+      }
+    >
+      <form onSubmit={submit} className="flex flex-col gap-2" noValidate>
+        <FormField
+          id={`${id}-code`}
+          label={strings.recover.codeLabel}
+          help={strings.recover.codeHelp}
+          error={codeError}
+        >
+          <Input
+            id={`${id}-code`}
+            name="recovery-code"
+            value={code}
+            onChange={(e) => setCode(formatRecoveryCode(e.target.value))}
+            placeholder="XXXXX-XXXXX"
+            autoComplete="one-time-code"
+            autoCapitalize="characters"
+            spellCheck={false}
+            className="type-data tracking-widest uppercase"
+            aria-invalid={codeError ? true : undefined}
+            aria-describedby={describedBy(`${id}-code`, true, codeError)}
+          />
+        </FormField>
+        <NewPasswordFields
+          password={password}
+          confirm={confirm}
+          onPassword={setPassword}
+          onConfirm={setConfirm}
+          errors={{ password: pwErrors.password ?? weak, confirm: pwErrors.confirm }}
+        />
+        {showAlert ? <ProblemAlert error={recover.error} className="mb-2" /> : null}
+        <Button
+          type="submit"
+          size="lg"
+          className="w-full"
+          disabled={recover.isPending || wait > 0 || !isCompleteRecoveryCode(code)}
+        >
+          {recover.isPending ? <Spinner data-icon="inline-start" /> : null}
+          {strings.recover.submit}
+        </Button>
+        <WhatNext className="mt-1">{strings.recover.next}</WhatNext>
+      </form>
+    </FocusCard>
   );
 }

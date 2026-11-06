@@ -10,11 +10,11 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { CARE_USERNAME_RE } from "@/lib/schema";
 import { strings } from "@/lib/strings";
-import { StepActions, StepIntro, type StepProps } from "../step-frame";
+import { StepActions, type StepProps } from "../step-frame";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function CareAdminStep({ setup, onDone, onBack }: StepProps) {
+export function CareAdminStep({ setup, onDone, onBack, next }: StepProps) {
   const id = useId();
   const draft = setup.draft.care_admin;
   const step = setup.steps.find((s) => s.id === "care-admin");
@@ -55,7 +55,6 @@ export function CareAdminStep({ setup, onDone, onBack }: StepProps) {
         if (Object.values(local).every((v) => !v)) save.mutate();
       }}
     >
-      <StepIntro>{strings.careAdmin.intro}</StepIntro>
       {passwordNeeded ? (
         <Alert variant="warning" className="my-2">
           <InfoIcon />
@@ -106,7 +105,7 @@ export function CareAdminStep({ setup, onDone, onBack }: StepProps) {
         help={strings.careAdmin.passwordHelp}
       />
       {showAlert ? <ProblemAlert error={save.error} /> : null}
-      <StepActions onBack={onBack} busy={save.isPending} />
+      <StepActions next={next} onBack={onBack} busy={save.isPending} />
     </form>
   );
 }

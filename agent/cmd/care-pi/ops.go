@@ -33,7 +33,7 @@ var opsFlags struct {
 
 var jobsCmd = &cobra.Command{
 	Use:   "jobs",
-	Short: "List, show, follow, and cancel the jobs of the agent and of the CLI",
+	Short: "List, show, follow, export, and cancel the jobs of the agent and of the CLI",
 }
 
 var jobsListCmd = &cobra.Command{
@@ -114,6 +114,23 @@ var jobsFollowCmd = &cobra.Command{
 			return err
 		}
 		return jobError(j)
+	},
+}
+
+var jobsExportCmd = &cobra.Command{
+	Use:   "export JOB_ID",
+	Short: "Print the job as plain text for support: the device, the steps, the log, and the problem, without secrets",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if _, err := loadJob(args[0]); err != nil {
+			return err
+		}
+		text, err := newService(cmd).JobTranscript(cmd.Context(), args[0])
+		if err != nil {
+			return cliError(err)
+		}
+		_, err = fmt.Fprint(cmd.OutOrStdout(), text)
+		return err
 	},
 }
 
@@ -303,10 +320,10 @@ func init() {
 	jl := jobsListCmd.Flags()
 	jl.BoolVar(&opsFlags.json, "json", false, "print JSON")
 	jl.StringVar(&opsFlags.kind, "kind", "", "only jobs of this kind")
-	jl.StringVar(&opsFlags.state, "state", "", "only jobs in this state")
+	jl.StringVar(&opsFlags.state, "state", "", "only jobs in this state, or active (queued, running) or recent (ended)")
 	jl.IntVar(&opsFlags.limit, "limit", 20, "the largest number of jobs")
 	jobsShowCmd.Flags().BoolVar(&opsFlags.json, "json", false, "print JSON")
-	jobsCmd.AddCommand(jobsListCmd, jobsShowCmd, jobsFollowCmd, jobsCancelCmd)
+	jobsCmd.AddCommand(jobsListCmd, jobsShowCmd, jobsFollowCmd, jobsExportCmd, jobsCancelCmd)
 
 	supportCmd.Flags().StringVar(&opsFlags.out, "out", "", "copy the bundle to this file")
 	supportCmd.Flags().IntVar(&opsFlags.lines, "lines", 1000, "the last lines of each journal")

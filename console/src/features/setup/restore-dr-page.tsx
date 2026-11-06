@@ -37,6 +37,8 @@ import { formatBytes } from "@/lib/format";
 import { KEY_WORDS, checkKeyText, checksumOk } from "@/lib/recovery-key";
 import { fmt, strings } from "@/lib/strings";
 import { readDrHandoff, saveDrHandoff } from "./dr-handoff";
+import { LINK_TONE } from "@/components/app/link-tone";
+import { cn } from "@/lib/utils";
 
 const d = strings.dr;
 const t = strings.dest;
@@ -507,7 +509,7 @@ export default function RestoreDrPage() {
             </>
           )}
           <div className="border-t pt-4">
-            <Button asChild variant="link" className="px-0">
+            <Button asChild variant="link" className={cn("px-0", LINK_TONE)}>
               <Link to="/setup">{d.backToSetup}</Link>
             </Button>
           </div>

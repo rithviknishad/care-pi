@@ -33,6 +33,7 @@ const solutionSchemaDir = "../../solutions/schema/"
 // publicOperations are the operations without a session (docs/api/README.md, "Authentication").
 var publicOperations = []string{
 	"GET /_care-pi/status",
+	"GET /_care-pi/jobs/{job_id}/events",
 	"GET /health",
 	"POST /session/claim",
 	"POST /session/login",
@@ -275,7 +276,7 @@ func TestSeparateOrigin(t *testing.T) {
 			}
 		}
 		switch {
-		case path == "/_care-pi/status":
+		case strings.HasPrefix(path, "/_care-pi/"):
 			if !slices.Equal(urls, []string{"https://{host}:{port}"}) {
 				t.Errorf("%s: servers %v, want the root of both ports", key, urls)
 			}

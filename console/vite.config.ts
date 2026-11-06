@@ -2,7 +2,7 @@
 import path from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
-import { defineConfig, type ProxyOptions } from "vite";
+import { defineConfig, type Plugin, type ProxyOptions } from "vite";
 
 // The API that the dev server and the preview server send /api and /_care-pi to.
 // Default: the stateful mock (npm run mock). For the Go dev server, set
@@ -22,9 +22,25 @@ const proxy: ProxyOptions = {
   },
 };
 
+// /__v2: the gallery of the v2 design system (console/design.md). The dev server only (apply: "serve"), outside
+// the router of the app: the build does not include it.
+function v2Gallery(): Plugin {
+  return {
+    name: "care-pi-v2-gallery",
+    apply: "serve",
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        const match = req.url?.match(/^\/__v2\/?(\?.*)?$/);
+        if (match) req.url = `/src/components/v2/__examples__/index.html${match[1] ?? ""}`;
+        next();
+      });
+    },
+  };
+}
+
 export default defineConfig({
   base: "/",
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), v2Gallery()],
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "./src"),
@@ -62,7 +78,7 @@ export default defineConfig({
     environment: "jsdom",
     globals: true,
     setupFiles: ["tests/setup.ts"],
-    include: ["tests/**/*.test.{ts,tsx}"],
+    include: ["tests/**/*.test.{ts,tsx}", "src/**/__tests__/*.test.{ts,tsx}"],
     css: false,
   },
 });

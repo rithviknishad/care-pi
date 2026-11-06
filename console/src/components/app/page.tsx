@@ -14,8 +14,8 @@ export function PageHeader({
   return (
     <div className="mb-6 flex flex-wrap items-start gap-3">
       <div className="min-w-0 flex-1">
-        <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-        {description ? <p className="mt-1 max-w-prose text-sm text-soft-foreground">{description}</p> : null}
+        <h1 className="type-h1 text-ink">{title}</h1>
+        {description ? <p className="mt-1 max-w-prose type-small text-ink-muted">{description}</p> : null}
       </div>
       {actions ? <div className="flex shrink-0 flex-wrap gap-2">{actions}</div> : null}
     </div>

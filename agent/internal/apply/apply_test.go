@@ -293,6 +293,14 @@ func TestFirstApply(t *testing.T) {
 	if !strings.Contains(string(j), `"result": "ok"`) || !strings.Contains(string(j), `"reason": "test"`) {
 		t.Fatalf("journal: %s", j)
 	}
+	// The planned step count (the public step_count) is known before the first action and is exact.
+	var doc struct {
+		Steps        []json.RawMessage `json:"steps"`
+		PlannedSteps int               `json:"planned_steps"`
+	}
+	if err := json.Unmarshal(j, &doc); err != nil || doc.PlannedSteps < 2 || doc.PlannedSteps != len(doc.Steps) {
+		t.Fatalf("planned %d of %d steps: %v", doc.PlannedSteps, len(doc.Steps), err)
+	}
 
 	// The second run finds nothing to do and uses no network.
 	e.reset()

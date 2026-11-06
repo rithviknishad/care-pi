@@ -30,6 +30,24 @@ export function emptyJobView(job: Job | null = null): JobView {
   return { steps: [], logs: [], droppedLogs: 0, progress: {}, errors: [], job, lastEventId: 0, done: false };
 }
 
+// The view of a job from GET /jobs/{id} (S67): the steps, the log tail, and the id of the last event. The stream
+// then continues after that id (docs/api/README.md section 6.4), so a reload does not read each event again.
+// A job without log_tail (the answer of the POST that started it) gives the empty view: the stream starts at 0.
+export function seedJobView(job: Job | null = null): JobView {
+  if (!job?.log_tail) return emptyJobView(job);
+  const lines = job.log_tail.lines;
+  return {
+    ...emptyJobView(job),
+    steps: [...(job.steps ?? [])].sort((a, b) => a.index - b.index),
+    // The lines of the tail have no event id: negative ids keep them before each line of the stream.
+    logs: lines.map((l, i) => ({ ...l, id: i - lines.length })),
+    droppedLogs: Math.max(0, job.log_tail.total - lines.length),
+    errors: job.error && job.state !== "failed" ? [job.error] : [],
+    lastEventId: job.last_event_id,
+    done: isFinished(job),
+  };
+}
+
 function upsertStep(steps: JobStep[], step: JobStep): JobStep[] {
   const at = steps.findIndex((s) => s.index === step.index);
   if (at >= 0) {

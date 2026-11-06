@@ -8,26 +8,25 @@
 <p>The device updates or restarts CARE. Your data is safe.</p>
 <p id="step" aria-live="polite">Wait a few minutes. This page opens CARE again when the maintenance is complete.</p>
 <p><small id="since"></small></p>
+{{template "status-job" .}}
 <p><small>This page checks the device every 5 seconds.</small></p>
 </main>
 <script>
+{{template "status-job-script" .}}
 (function () {
-  // The sentence of each step: strings.steps.actions of the console (docs/console-ui.md section 9).
-  var steps = {
-{{- range $k, $v := .MaintenanceSteps}}
-    {{printf "%q" $k}}: {{printf "%q" $v}},
-{{- end}}
-  };
   // A restart of care-api behind this page (S62): the step restart.
   var restart = {{printf "%q" .MaintenanceRestart}};
   function show(m) {
     var step = document.getElementById("step"), since = document.getElementById("since");
     if (m && m.active) {
-      step.textContent = (m.step === "restart" && restart) || (m.step && steps[m.step]) || "Wait a few minutes. This page opens CARE again when the maintenance is complete.";
+      step.textContent = (m.step === "restart" && restart) || (m.step && carePiJob.sentence(m.step)) || "Wait a few minutes. This page opens CARE again when the maintenance is complete.";
       if (m.started_at) {
         var t = new Date(m.started_at);
         since.textContent = "Maintenance since " + t.toLocaleTimeString() + ".";
       }
+    } else if (m) {
+      step.textContent = "The maintenance is complete. This page opens CARE in a few seconds.";
+      since.textContent = "";
     }
   }
   function poll() {
@@ -37,6 +36,7 @@
         if (!s) { return; }
         if (s.site === "care") { window.location.reload(); return; }
         show(s.maintenance);
+        carePiJob.update(s);
       })
       .catch(function () {})
       .then(function () { setTimeout(poll, 5000); });

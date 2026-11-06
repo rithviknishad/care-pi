@@ -1,4 +1,4 @@
-import type { PresetName, SetupState, SetupStepId, SetupStateName } from "@/api/types";
+import type { SetupState, SetupStepId, SetupStateName } from "@/api/types";
 
 export type SetupMode = "easy" | "advanced";
 export type WizardPage = Exclude<SetupStepId, "account"> | "review";
@@ -80,27 +80,8 @@ export function homeFor(state: SetupStateName | null, claimed: boolean): Route {
   return "/setup";
 }
 
-// Plain-language answers -> a preset (S7, P13). 0, 1, 2 are the indexes of the options.
-export interface SizeAnswers {
-  staff: 0 | 1 | 2;
-  peak: 0 | 1 | 2;
-}
-
-const BY_LEVEL: PresetName[] = ["solo", "small-clinic", "busy-counter"];
+// On less than 3 GiB the easy path dims busy-counter (plans/05 section 3, S65); the agent marks it with a warning.
 export const LOW_RAM_BYTES = 3 * 1024 ** 3;
-
-export function presetFromAnswers(answers: SizeAnswers, hostRamBytes: number): { preset: PresetName; capped: boolean } {
-  const level = Math.max(answers.staff, answers.peak);
-  // On less than 3 GiB, the easy path hides busy-counter (plans/05 section 3).
-  if (level === 2 && hostRamBytes < LOW_RAM_BYTES) return { preset: "small-clinic", capped: true };
-  return { preset: BY_LEVEL[level] ?? "small-clinic", capped: false };
-}
-
-export function answersFromPreset(preset: string | undefined): SizeAnswers {
-  if (preset === "solo") return { staff: 0, peak: 0 };
-  if (preset === "busy-counter") return { staff: 2, peak: 2 };
-  return { staff: 1, peak: 1 };
-}
 
 const MODE_KEY = "care-pi.setup-mode";
 
@@ -117,5 +98,26 @@ export function saveMode(mode: SetupMode): void {
     localStorage.setItem(MODE_KEY, mode);
   } catch {
     // Private mode: the choice lasts for this page only.
+  }
+}
+
+// The choice "Keep Care working offline" of the certificate step (S66). Off: the review and the done page remind the
+// operator to add a public name after the install. The setup step itself takes only the local CA.
+const ONLINE_KEY = "care-pi.setup-online";
+
+export function loadOnline(): boolean {
+  try {
+    return localStorage.getItem(ONLINE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function saveOnline(online: boolean): void {
+  try {
+    if (online) localStorage.setItem(ONLINE_KEY, "true");
+    else localStorage.removeItem(ONLINE_KEY);
+  } catch {
+    // Private mode: the reminder does not show.
   }
 }

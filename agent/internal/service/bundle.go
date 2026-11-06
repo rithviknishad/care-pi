@@ -93,33 +93,61 @@ func (s *Service) StartSupportBundle(ctx context.Context, req BundleRequest, sou
 }
 
 type bundleWriter struct {
-	tw      *tar.Writer
-	now     time.Time
-	secrets []string
+	tw  *tar.Writer
+	now time.Time
+	red *Redactor
 }
 
-// credentialREs match the credentials that a log line can carry: a bearer token (the JWT of Care) and the session
-// cookie of the console. Since the review of Phase 7 (M3), the audit log of the WAF has no request headers; this is a
-// second guard for each file of the bundle.
+// credentialREs match the credentials that a log line can carry: a bearer token (the JWT of Care), the session
+// cookie of the console, and a Tailscale auth key. Since the review of Phase 7 (M3), the audit log of the WAF has no
+// request headers; this is a second guard for each file of the bundle and each plain-text export (S68).
 var credentialREs = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`),
 	regexp.MustCompile(`(__Host-care_pi_session=)[^;\s"'\\,]+`),
+	regexp.MustCompile(`(tskey-)[A-Za-z0-9-]+`),
 }
 
-// redactCredentials replaces the value of each bearer token and session cookie with <redacted>.
+// secretAssignment matches a key with a secret name and its value: password=x, "token": "x", X-CSRF-Token: x,
+// DJANGO_SECRET_KEY=x. Each part of the key between "_" or "-" is a word, so csrftoken=x is not a match.
+var secretAssignment = regexp.MustCompile(`(?i)\b((?:[a-z0-9]+[_-])*(?:password|passwd|passphrase|secret|token|auth[_-]?key|api[_-]?key|access[_-]?key|private[_-]?key)(?:[_-][a-z0-9]+)*)("?[ \t]*[:=][ \t]*"?)([^\s"'&;,)}\]]+)`)
+
+// redactCredentials replaces the value of each credential of credentialREs and of each secretAssignment with
+// <redacted>. A value that is true, false, null, an object, or an array stays: it is not a secret, and the JSON
+// files of a bundle stay valid.
 func redactCredentials(text string) string {
 	for _, re := range credentialREs {
 		text = re.ReplaceAllString(text, "${1}<redacted>")
 	}
-	return text
+	return secretAssignment.ReplaceAllStringFunc(text, func(m string) string {
+		sub := secretAssignment.FindStringSubmatch(m)
+		switch v := strings.ToLower(sub[3]); {
+		case v == "true", v == "false", v == "null", strings.HasPrefix(v, "{"), strings.HasPrefix(v, "["), v == "<redacted>":
+			return m
+		}
+		return sub[1] + sub[2] + "<redacted>"
+	})
+}
+
+// Redactor removes the secrets from a text: each secret value of the device (the files of the secrets directory, the
+// S3 keys of the destinations, the values of the recovery keys) and each credential of redactCredentials. The support
+// bundle and the plain-text exports (S68) use it.
+type Redactor struct {
+	secrets []string
+}
+
+// Redactor returns a redactor with the secret values of the device now.
+func (s *Service) Redactor() *Redactor { return &Redactor{secrets: s.secretValues()} }
+
+// Text returns the text without secrets.
+func (r *Redactor) Text(text string) string {
+	for _, v := range r.secrets {
+		text = strings.ReplaceAll(text, v, "<redacted>")
+	}
+	return redactCredentials(text)
 }
 
 func (b *bundleWriter) add(name string, data []byte) error {
-	text := string(data)
-	for _, v := range b.secrets {
-		text = strings.ReplaceAll(text, v, "<redacted>")
-	}
-	text = redactCredentials(text)
+	text := b.red.Text(string(data))
 	hdr := &tar.Header{Name: "care-pi-support/" + name, Mode: 0o600, Size: int64(len(text)), ModTime: b.now}
 	if err := b.tw.WriteHeader(hdr); err != nil {
 		return err
@@ -215,7 +243,7 @@ func (s *Service) BuildSupportBundle(ctx context.Context, rec *jobs.Recorder, re
 	gz := gzip.NewWriter(f)
 	tw := tar.NewWriter(gz)
 	now := s.now()
-	b := &bundleWriter{tw: tw, now: now, secrets: s.secretValues()}
+	b := &bundleWriter{tw: tw, now: now, red: s.Redactor()}
 
 	end := rec.StepAction("collect: status, config, units, journals, jobs", "collect")
 	err = s.collect(ctx, b, rec, req)

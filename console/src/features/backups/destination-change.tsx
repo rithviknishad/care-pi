@@ -28,6 +28,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Plan } from "@/features/settings/config-change";
 import { fmt, strings } from "@/lib/strings";
+import { retentionDefaults } from "./backups-format";
 import { DestinationForm } from "./destination-form";
 import type { Choice } from "./destination-meta";
 import { DestinationChoices, DestinationSchedule, type ScheduleValue } from "./destination-parts";
@@ -247,7 +248,12 @@ export function EditDestinationDialog({
           />
         ) : (
           <div className="flex flex-col gap-4">
-            <DestinationSchedule value={value} onChange={setSchedule} walTimeoutMin={walTimeoutMin} />
+            <DestinationSchedule
+              value={value}
+              onChange={setSchedule}
+              walTimeoutMin={walTimeoutMin}
+              defaults={retentionDefaults(change.file.data?.config.backups?.retention)}
+            />
             {current.type === "s3" ? (
               <fieldset className="grid gap-x-4 sm:grid-cols-2">
                 <legend className="mb-2 text-sm font-semibold">{p.newKeys}</legend>

@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/mail"
@@ -23,7 +24,17 @@ import (
 type opt func(*route)
 
 func public(r *route)     { r.public = true }
-func publicRead(r *route) { r.public, r.publicRead = true, true }
+func publicRead(r *route) { r.public, r.publicRead, r.bucket = true, true, bucketPublic }
+
+// publicJob routes are public reads with their own bucket (S67): the status pages poll the status and follow a job.
+func publicJob(r *route) { r.public, r.publicRead, r.bucket = true, true, bucketPublicJob }
+
+// The buckets of the public read limit (docs/api/README.md section 4).
+const (
+	bucketPublic    = "public"
+	bucketPublicJob = "public-job"
+)
+
 func both(r *route)       { r.both = true }
 func rootOnly(r *route)   { r.rootOnly = true }
 func reauth(r *route)     { r.reauth = true }
@@ -98,12 +109,16 @@ func (s *Server) table() []*route {
 	add(get, "/jobs", s.listJobs)
 	add(get, "/jobs/{job_id}", s.getJob)
 	add(get, "/jobs/{job_id}/events", s.jobEvents)
+	add(get, "/jobs/{job_id}/events", s.publicJobEvents, publicJob, rootOnly)
+	add(get, "/jobs/{job_id}/export", s.exportJob)
 	add(post, "/jobs/{job_id}/cancel", s.cancelJob)
 
 	add(get, "/metrics", s.metrics)
 	add(get, "/doctor", s.doctor)
+	add(get, "/doctor/export", s.exportDoctor)
 	add(get, "/logs", s.logUnits)
 	add(get, "/logs/{unit}", s.logs)
+	add(get, "/logs/{unit}/export", s.exportLogs)
 	add(post, "/support-bundle", s.supportBundle)
 	add(get, "/support-bundle/{bundle_id}", s.downloadBundle)
 
@@ -813,8 +828,10 @@ func (s *Server) plan(c *reqCtx) error {
 // ---- jobs ----
 
 var (
-	jobKinds  = kindSet()
-	jobStates = map[string]bool{"queued": true, "running": true, "succeeded": true, "failed": true, "cancelled": true}
+	jobKinds = kindSet()
+	// jobStates are the values of the filter state: each job state, and the groups active and recent (contract 0.9.0).
+	jobStates = map[string]bool{"queued": true, "running": true, "succeeded": true, "failed": true, "cancelled": true,
+		jobs.StateActive: true, jobs.StateRecent: true}
 )
 
 func (s *Server) listJobs(c *reqCtx) error {
@@ -827,7 +844,7 @@ func (s *Server) listJobs(c *reqCtx) error {
 	}
 	if v, ok := c.query("state"); ok {
 		if !jobStates[v] {
-			return problem.InvalidParam("state", "the state is not a job state")
+			return problem.InvalidParam("state", "use a job state, active, or recent")
 		}
 		f.State = v
 	}
@@ -859,7 +876,7 @@ func jobNotFound(id string) error {
 
 func (s *Server) getJob(c *reqCtx) error {
 	id := c.param("job_id")
-	j, err := jobs.Load(s.svc.Paths, id)
+	j, err := s.svc.JobDetail(id)
 	if errors.Is(err, jobs.ErrNotFound) {
 		return jobNotFound(id)
 	}
@@ -868,6 +885,26 @@ func (s *Server) getJob(c *reqCtx) error {
 	}
 	s.json(c.w, http.StatusOK, j)
 	return nil
+}
+
+// text writes a plain-text export (S68).
+func (s *Server) text(c *reqCtx, body string) error {
+	c.w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	c.w.WriteHeader(http.StatusOK)
+	_, err := io.WriteString(c.w, body)
+	return err
+}
+
+func (s *Server) exportJob(c *reqCtx) error {
+	id := c.param("job_id")
+	text, err := s.svc.JobTranscript(c.r.Context(), id)
+	if errors.Is(err, jobs.ErrNotFound) {
+		return jobNotFound(id)
+	}
+	if err != nil {
+		return err
+	}
+	return s.text(c, text)
 }
 
 func (s *Server) cancelJob(c *reqCtx) error {
@@ -1063,6 +1100,14 @@ func (s *Server) sendFile(c *reqCtx, f *service.RootCAFile) error {
 	h.Set("Content-Length", strconv.Itoa(len(f.Data)))
 	_, err := c.w.Write(f.Data)
 	return err
+}
+
+func (s *Server) exportDoctor(c *reqCtx) error {
+	text, err := s.svc.DoctorText(c.r.Context())
+	if err != nil {
+		return err
+	}
+	return s.text(c, text)
 }
 
 func (s *Server) doctor(c *reqCtx) error {

@@ -1,10 +1,9 @@
 import { DatabaseBackupIcon } from "lucide-react";
 import { Link } from "react-router";
 import type { PitrOffer } from "@/api/types";
-import { DataList, DataRow } from "@/components/app/page";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { KeyValueList } from "@/components/v2/key-value-list";
+import { WhatNext } from "@/components/v2/panel";
 import { fmt, strings } from "@/lib/strings";
 import { restoreLink } from "./update-text";
 import { formatZoned } from "./window";
@@ -28,53 +27,60 @@ export function PitrOfferCard({
 }) {
   const time = formatZoned(offer.target_time, tz, "time");
   return (
-    <Card
-      size="sm"
-      className="ring-amber-400 dark:ring-amber-700"
+    <section
+      className="flex min-w-0 gap-3 rounded-card border border-warn-border bg-warn-bg p-4 sm:gap-4 sm:p-6"
       data-testid="pitr-offer"
       data-target-time={offer.target_time}
+      aria-labelledby="pitr-offer-title"
     >
-      <CardHeader>
-        <CardTitle className="flex items-start gap-2">
-          <DatabaseBackupIcon className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden="true" />
-          <h2>{fmt(u.pitrTitle, { time })}</h2>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3 text-sm">
-        <p>{fmt(u.pitrCode, { version })}</p>
-        {offer.available ? (
-          <p>{fmt(u.pitrLoss, { time })}</p>
-        ) : (
-          <Alert variant="warning">
-            <AlertDescription>
-              {fmt(u.pitrUnavailable, { time, reason: offer.reason ?? strings.problems.unknown })}
-            </AlertDescription>
-          </Alert>
-        )}
-        <DataList>
-          <DataRow label={u.pitrTime} value={formatZoned(offer.target_time, tz)} testId="pitr-time" />
-          {offer.restore_point ? (
-            <DataRow
-              label={u.pitrPoint}
-              value={<code className="font-mono text-xs">{offer.restore_point}</code>}
-              title={offer.restore_point}
-            />
+      <DatabaseBackupIcon className="mt-0.5 size-6 shrink-0 text-warn-solid" aria-hidden="true" />
+      <div className="flex min-w-0 flex-1 flex-col gap-3">
+        <h2 id="pitr-offer-title" className="type-h3 text-warn-fg">
+          {fmt(u.pitrTitle, { time })}
+        </h2>
+        <p className="type-body text-ink">{fmt(u.pitrCode, { version })}</p>
+        <p className="type-body text-ink">
+          {offer.available
+            ? fmt(u.pitrLoss, { time })
+            : fmt(u.pitrUnavailable, { time, reason: offer.reason ?? strings.problems.unknown })}
+        </p>
+        <KeyValueList
+          items={[
+            {
+              id: "time",
+              label: u.pitrTime,
+              value: formatZoned(offer.target_time, tz),
+              mono: true,
+              testId: "pitr-time",
+            },
+            ...(offer.restore_point
+              ? [
+                  {
+                    id: "point",
+                    label: u.pitrPoint,
+                    value: offer.restore_point,
+                    mono: true,
+                    title: offer.restore_point,
+                  },
+                ]
+              : []),
+          ]}
+        />
+        <div className="flex flex-wrap gap-2">
+          {offer.available ? (
+            <Button asChild>
+              <Link to={restoreLink(offer)} data-testid="pitr-open">
+                <DatabaseBackupIcon data-icon="inline-start" />
+                {u.pitrOpen}
+              </Link>
+            </Button>
           ) : null}
-        </DataList>
-      </CardContent>
-      <CardFooter className="flex flex-wrap gap-2">
-        {offer.available ? (
-          <Button asChild>
-            <Link to={restoreLink(offer)} data-testid="pitr-open">
-              <DatabaseBackupIcon data-icon="inline-start" />
-              {u.pitrOpen}
-            </Link>
+          <Button type="button" variant="outline" onClick={onDismiss} data-testid="pitr-dismiss">
+            {u.pitrLater}
           </Button>
-        ) : null}
-        <Button type="button" variant="outline" onClick={onDismiss} data-testid="pitr-dismiss">
-          {u.pitrLater}
-        </Button>
-      </CardFooter>
-    </Card>
+        </div>
+        {offer.available ? <WhatNext>{u.pitrNext}</WhatNext> : null}
+      </div>
+    </section>
   );
 }

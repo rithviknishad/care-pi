@@ -11,6 +11,7 @@ import { homeFor } from "@/features/setup/wizard";
 import { strings } from "@/lib/strings";
 import { AppShell, ShellSkeleton } from "./layout/app-shell";
 import { PublicLayout } from "./layout/public-layout";
+import { publicJobId } from "./public-job";
 import { loginPath } from "./session";
 
 // The routes that need the setup state ready.
@@ -52,6 +53,9 @@ export function HomeRedirect() {
         <ProblemAlert error={pub.error} />
       </PublicLayout>
     );
+  // S67: a device without a session during the setup finish or an update sees the progress, not a stale page.
+  const busy = publicJobId(pub.data);
+  if (busy) return <Navigate to={`/jobs/${encodeURIComponent(busy)}`} replace />;
   return <Navigate to={homeFor(null, pub.data.setup_state !== "unclaimed")} replace />;
 }
 
@@ -91,18 +95,29 @@ export function SessionOptionalShell() {
       </AppShell>
     );
   }
-  return (
-    <PublicLayout wide>
-      <Outlet />
-    </PublicLayout>
-  );
+  return <PublicLayout />;
+}
+
+// The page of a job (S67): with a session it has the full shell; without a session the page brings its own Focus
+// layout (the public progress).
+export function SessionOptionalBare() {
+  const session = useSession();
+  if (session.isPending) return <ShellSkeleton />;
+  if (session.data) {
+    return (
+      <AppShell session={session.data}>
+        <Outlet />
+      </AppShell>
+    );
+  }
+  return <Outlet />;
 }
 
 export function NotFoundPage() {
   return (
     <PublicLayout>
       <div className="flex flex-col items-start gap-4">
-        <h1 className="text-xl font-semibold">{strings.app.notFound}</h1>
+        <h1 className="type-h2 text-ink">{strings.app.notFound}</h1>
         <Button asChild variant="outline">
           <Link to="/">{strings.app.goHome}</Link>
         </Button>
@@ -117,7 +132,7 @@ export function CrashPage() {
   return (
     <PublicLayout>
       <div className="flex flex-col items-start gap-4">
-        <h1 className="text-xl font-semibold">{strings.app.crash}</h1>
+        <h1 className="type-h2 text-ink">{strings.app.crash}</h1>
         <Button type="button" onClick={() => window.location.reload()}>
           {strings.app.reload}
         </Button>

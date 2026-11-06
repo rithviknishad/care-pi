@@ -1,7 +1,9 @@
 import type { ReactNode } from "react";
 import { Card, CardAction, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
 // A card with a heading (h2), an optional action at the right of the heading, a body, and an optional footer.
+// It has the v2 card look (console/design.md): a border, the soft shadow, and the h3 type of a card title.
 export function SectionCard({
   title,
   action,
@@ -18,10 +20,10 @@ export function SectionCard({
   testId?: string;
 }) {
   return (
-    <Card size="sm" className={className} data-testid={testId}>
+    <Card size="sm" className={cn("border border-line shadow-soft ring-0", className)} data-testid={testId}>
       <CardHeader>
         <CardTitle>
-          <h2>{title}</h2>
+          <h2 className="type-h3 text-ink">{title}</h2>
         </CardTitle>
         {action ? <CardAction>{action}</CardAction> : null}
       </CardHeader>

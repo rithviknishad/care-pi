@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { PlusIcon, ShieldIcon, XIcon } from "lucide-react";
+import { PlusIcon, ShieldIcon, XIcon, TimerIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { api, call } from "@/api/client";
 import { qk, useConfig, useFirewall } from "@/api/queries";
@@ -7,10 +7,10 @@ import type { Config, FirewallState } from "@/api/types";
 import { FormField } from "@/components/app/form-field";
 import { DataList, DataRow } from "@/components/app/page";
 import { ProblemAlert } from "@/components/app/problem-alert";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { clock } from "@/components/v2/duration";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Panel } from "@/components/v2/panel";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
@@ -55,14 +55,21 @@ function PendingAlert({ fw }: { fw: FirewallState }) {
     onSuccess: (st) => qc.setQueryData(qk.firewall, st),
   });
   return (
-    <Alert variant="warning" data-testid="firewall-pending">
-      <AlertTitle>{fc.pendingTitle}</AlertTitle>
-      <AlertDescription className="flex flex-col gap-2">
-        <span>{fmt(fc.pending, { seconds: left })}</span>
+    <section
+      className="flex min-w-0 gap-3 rounded-card border border-warn-border bg-warn-bg p-4 sm:p-5"
+      data-testid="firewall-pending"
+      role="alert"
+    >
+      <TimerIcon className="mt-0.5 size-6 shrink-0 text-warn-solid" aria-hidden="true" />
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
+        <h3 className="type-h3 text-warn-fg">{fc.pendingTitle}</h3>
+        <p className="type-body text-ink">{fmt(fc.pending, { seconds: left })}</p>
+        <p className="type-data text-3xl leading-10 font-semibold text-warn-fg" aria-hidden="true">
+          {clock(left * 1000)}
+        </p>
         <span className="flex flex-wrap gap-2">
           <Button
             type="button"
-            size="sm"
             onClick={() => confirm.mutate()}
             disabled={confirm.isPending}
             data-testid="firewall-keep"
@@ -72,8 +79,8 @@ function PendingAlert({ fw }: { fw: FirewallState }) {
           </Button>
         </span>
         {confirm.error ? <ProblemAlert error={confirm.error} /> : null}
-      </AlertDescription>
-    </Alert>
+      </div>
+    </section>
   );
 }
 
@@ -289,50 +296,48 @@ export function FirewallCard() {
   const effective = useConfig("effective");
   const s = fw.data;
   return (
-    <Card size="sm" data-testid="firewall-card">
-      <CardHeader>
-        <CardTitle>
-          <h2 className="flex items-center gap-2">
-            <ShieldIcon className="size-4" aria-hidden="true" />
-            {fc.title}
-          </h2>
-        </CardTitle>
-        <CardDescription>{fc.intro}</CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        {fw.error ? <ProblemAlert error={fw.error} /> : null}
-        <DataList>
+    <Panel
+      testId="firewall-card"
+      title={
+        <span className="flex items-center gap-2">
+          <ShieldIcon className="size-5 text-primary-solid" aria-hidden="true" />
+          {fc.title}
+        </span>
+      }
+      description={fc.intro}
+    >
+      {fw.error ? <ProblemAlert error={fw.error} /> : null}
+      <DataList>
+        <DataRow
+          label={fc.loaded}
+          loading={!s}
+          value={
+            s ? (
+              <Badge variant={s.live_policy === "drop" ? "success" : "info"} size="sm" data-testid="firewall-live">
+                {s.live_policy ? fc.policies[s.live_policy] : fc.notLoaded}
+              </Badge>
+            ) : (
+              ""
+            )
+          }
+        />
+        {s && !s.unit_active ? <DataRow label={fc.unit} value={fc.unitInactive} /> : null}
+        {s?.rolled_back_at ? (
           <DataRow
-            label={fc.loaded}
-            loading={!s}
-            value={
-              s ? (
-                <Badge variant={s.live_policy === "drop" ? "success" : "info"} size="sm" data-testid="firewall-live">
-                  {s.live_policy ? fc.policies[s.live_policy] : fc.notLoaded}
-                </Badge>
-              ) : (
-                ""
-              )
-            }
+            label={fc.rolledBack}
+            value={fmt(fc.rolledBackAt, {
+              time: formatDateTime(s.rolled_back_at),
+              reason: fc.reasons[s.rollback_reason ?? "manual"] ?? "",
+            })}
           />
-          {s && !s.unit_active ? <DataRow label={fc.unit} value={fc.unitInactive} /> : null}
-          {s?.rolled_back_at ? (
-            <DataRow
-              label={fc.rolledBack}
-              value={fmt(fc.rolledBackAt, {
-                time: formatDateTime(s.rolled_back_at),
-                reason: fc.reasons[s.rollback_reason ?? "manual"] ?? "",
-              })}
-            />
-          ) : null}
-        </DataList>
-        {s?.pending_until ? <PendingAlert fw={s} /> : null}
-        {effective.data ? (
-          <PolicyForm key={effective.data.etag} config={effective.data.config} />
-        ) : (
-          <Skeleton className="h-24" />
-        )}
-      </CardContent>
-    </Card>
+        ) : null}
+      </DataList>
+      {s?.pending_until ? <PendingAlert fw={s} /> : null}
+      {effective.data ? (
+        <PolicyForm key={effective.data.etag} config={effective.data.config} />
+      ) : (
+        <Skeleton className="h-24" />
+      )}
+    </Panel>
   );
 }

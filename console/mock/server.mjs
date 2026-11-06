@@ -25,6 +25,7 @@ import { opsRoutes, phaseRoutes } from "./lib/ops.mjs";
 import { backupsRoutes } from "./lib/backups-api.mjs";
 import { restoreRoutes } from "./lib/restore-api.mjs";
 import { DR_KEY } from "./lib/backups-state.mjs";
+import { APPLY_STEPS, startJob } from "./lib/jobs.mjs";
 import { freshState, now } from "./lib/state.mjs";
 import { freshUpdates, updatesRoutes } from "./lib/updates.mjs";
 import { connectivityRoutes, freshConnectivity, tailscaleLogin } from "./lib/connectivity.mjs";
@@ -130,6 +131,21 @@ async function control(req, res, pathname) {
   if (pathname === "/__mock/ntp-sync" && req.method === "POST") {
     state.clock = { ...state.clock, synchronized: true, source: "ntp", trusted: true };
     sendJson(res, 200, { clock: state.clock });
+    return true;
+  }
+  // S67: a job that another device (or the CLI) started. slow makes each step longer, fail the action of a step
+  // that fails. The tests of the Jobs page and of the banner use it.
+  if (pathname === "/__mock/start-job" && req.method === "POST") {
+    const raw = await readBody(req);
+    const opts = raw ? JSON.parse(raw) : {};
+    const job = startJob(state, {
+      kind: opts.kind ?? "apply",
+      source: opts.source ?? "cli",
+      cancellable: Boolean(opts.cancellable),
+      failAt: opts.fail ?? undefined,
+      steps: APPLY_STEPS.map(([a, n, o = {}]) => [a, n, { ...o, slow: opts.slow ?? 1 }]),
+    });
+    sendJson(res, 200, { id: job.id });
     return true;
   }
   if (pathname === "/__mock/tailscale-login" && req.method === "POST") {

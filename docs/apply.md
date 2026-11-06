@@ -399,9 +399,32 @@ The update flow of Phase 4 and the restart of `care-api` (S62) use `maintenance`
 shows "CARE restarts. This takes about 1 minute." When the site is `care` again, the page loads `/` again.
 The API, bucket, and plug routes do not depend on the mode.
 
-The setup page reads `GET /_care-pi/status` and `GET /_care-pi/tls/instructions/<os>`. It shows the state of the
-setup, a link to the console at `https://<host of the page>:8443/`, the root CA download, and its SHA-256
-fingerprint.
+The setup page reads `GET /_care-pi/status` each 5 s and `GET /_care-pi/tls/instructions/<os>` once. It shows the
+state of the setup, a link to the console at `https://<host of the page>:8443/`, the root CA download, and its SHA-256
+fingerprint. When the newest setup job failed, it tells the operator to open the console. When the site is not
+`setup` any more (CARE, the maintenance page, or the clock page), it loads `/` again. Without JavaScript, it loads
+itself again each 15 s.
+
+The job panel of the maintenance page and the setup page (S67, S68). When `GET /_care-pi/status` has a `job`, the page
+opens the public job stream `GET /_care-pi/jobs/<job.id>/events` (`docs/api/README.md` section 6.3). The stream has
+no log lines. The page shows:
+
+- the title of the job (`job.title`), its state, and the time since its start (the clock of the device, from `time`);
+- "Step X of Y" and a progress bar: the steps that ended, of `job.step_count`, the planned step count of the job. With
+  `step_count: null` (a job without a plan), "Step X" and an indeterminate bar. The bar is full only when the job
+  succeeded;
+- the steps, in order, as they come (append-only): the sentence of the step (the same sentence as the console,
+  `render.MaintenanceSteps`), the step name as a tooltip, and the time of the step. The step that runs has a
+  highlight and `aria-current="step"`;
+- the title of a problem that a step reports, and "what happens next" for the kind of the job (`render.JobNext`);
+- "Open the console" to `https://<host of the page>:8443/jobs/<job id>`, where the console shows the log;
+- "Copy status": plain text with the display name and the host name, the page, the setup state, the time of the
+  device, the job id, kind, and state, the steps with their state and time, and the recent jobs (`jobs_recent`).
+  The page uses the clipboard API; without it, a selected text area and `document.execCommand("copy")`; else it shows
+  the text to select.
+
+When the stream closes with an error (`404` or `429`) or the browser has no `EventSource`, the page reads the JSON form
+of the same path after each poll. The pages load no other file: each style and each script is in the page.
 
 ## Caddy
 

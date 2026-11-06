@@ -4,16 +4,40 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="15">
+<noscript><meta http-equiv="refresh" content="15"></noscript>
 <style>
 body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#f4f6f8;color:#1f2933}
 main{max-width:34rem;margin:12vh auto;padding:2rem;background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
 h1{font-size:1.4rem;margin:0 0 1rem}
+h2{font-size:1.1rem;margin:0 0 .3rem}
 p{line-height:1.5;margin:.6rem 0}
 .name{color:#52606d;font-size:.95rem;margin:0 0 1.5rem}
 ul{padding-left:1.2rem;margin:.4rem 0}
 code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.95em}
 small{color:#7b8794}
+.job{border-top:1px solid #e4e7eb;margin-top:1.2rem;padding-top:1.2rem}
+.meta{color:#52606d;margin:0}
+.bar{height:.5rem;background:#e4e7eb;border-radius:4px;overflow:hidden;margin:.8rem 0 .2rem}
+.bar>div{height:100%;width:0;background:#2563eb;transition:width .4s}
+.bar.busy>div{width:30%;animation:busy 1.6s ease-in-out infinite}
+@keyframes busy{from{margin-left:-30%}to{margin-left:100%}}
+.steps{list-style:none;padding:0;margin:.6rem 0}
+.steps li{display:flex;gap:.5rem;align-items:baseline;padding:.3rem .5rem;border-radius:6px;line-height:1.4}
+.steps .mark{flex:none;width:1rem;text-align:center}
+.steps .text{flex:1}
+.steps .time{flex:none}
+.steps .running{background:#eef4ff;font-weight:600}
+.steps .running .mark{color:#2563eb}
+.steps .succeeded .mark{color:#067647}
+.steps .failed{color:#b42318}
+.steps .cancelled,.steps .skipped{color:#7b8794}
+.problem{color:#b42318}
+button{font:inherit;padding:.4rem .9rem;border:1px solid #cbd2d9;border-radius:6px;background:#fff;color:#1f2933;cursor:pointer}
+button:hover{background:#f4f6f8}
+pre{white-space:pre-wrap;font-size:.8rem;background:#f4f6f8;padding:.6rem;border-radius:6px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media (prefers-reduced-motion:reduce){.bar>div{transition:none}.bar.busy>div{animation:none;width:100%;opacity:.4}}
+@media (max-width:36rem){main{margin:1rem .75rem;padding:1.4rem}}
 </style>
 <title>CARE: setup is not complete</title>
 </head>
@@ -24,8 +48,21 @@ small{color:#7b8794}
 <p>The CARE web application is not installed on this device yet.</p>
 <p>Complete the setup in the console of the device:</p>
 <p><a id="console" href="https://care.local:8443/">https://care.local:8443/</a></p>
-<p id="state"></p>
+<p id="state" aria-live="polite"></p>
+<p id="failed" class="problem" hidden>The last setup job failed. Open the console to see why and to try again.</p>
 <p id="firstboot" style="color:#b42318" hidden></p>
+<section id="job" class="job" hidden aria-labelledby="job-title">
+<h2 id="job-title">Job</h2>
+<p class="meta"><span id="job-state"></span> <span id="job-elapsed"></span></p>
+<div id="job-progress" class="bar" role="progressbar" aria-labelledby="job-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="job-bar"></div></div>
+<p><small id="job-count"></small></p>
+<ol id="job-steps" class="steps"></ol>
+<p id="job-problem" class="problem" hidden></p>
+<p id="job-next"></p>
+<p><a id="job-console" href="/">Open the console</a> <small>to see the log of the job (job <code id="job-id"></code>).</small></p>
+</section>
+<p><button type="button" id="copy">Copy status</button> <span id="copied" aria-live="polite"></span></p>
+<pre id="copy-text" hidden></pre>
 <p>The device uses its own certificate authority, so the browser shows a certificate warning.
 Install the root certificate on each device that opens CARE. Then the warning does not show again.</p>
 <p><a id="rootca" href="/_care-pi/tls/root-ca">Download the root certificate</a></p>
@@ -36,9 +73,336 @@ Install the root certificate on each device that opens CARE. Then the warning do
 <li><code>https://192.168.1.10:8443/</code></li>
 <li><code>https://10.0.0.5:8443/</code></li>
 </ul>
-<p><small>This page refreshes every 15 seconds.</small></p>
+<p><small>This page checks the device every 5 seconds.</small></p>
 </main>
 <script>
+var carePiJob = (function () {
+  // The sentence of each step: strings.steps.actions of the console (docs/console-ui.md section 9).
+  var steps = {
+    "activate": "Install the new version",
+    "activate-key": "Use the new recovery key",
+    "archive": "Make the support bundle file",
+    "backup-full": "Make a full backup",
+    "backup-incr": "Make an incremental backup",
+    "ca-rotate": "Make a new root certificate",
+    "check-destinations": "Check the backup destinations",
+    "check-disk": "Check the disk",
+    "check-key": "Check the recovery key",
+    "check-space": "Check the free disk space",
+    "check-stanza": "Check the database backups",
+    "checkpoint": "Make a backup point of the database",
+    "collect": "Collect the support data",
+    "create-care-superuser": "Make the Care administrator",
+    "cutover": "Install the new version behind the maintenance page",
+    "cutover-maintenance-on": "Show the maintenance page",
+    "daemon-reload": "Load the new service files",
+    "delete-files": "Delete the old configuration files",
+    "disable-units": "Stop the DNS address timer",
+    "dns-address": "Send the address to the DNS service",
+    "dns-delete": "Delete the public name",
+    "dns-register": "Register the device with the DNS service",
+    "drill-check": "Check the test database",
+    "drill-cleanup": "Delete the test database",
+    "drill-restore": "Restore the latest backup into a test folder",
+    "drill-start": "Start a test database",
+    "enable-target": "Start Care at each boot",
+    "ensure-buckets": "Make the file storage",
+    "ensure-ca": "Make the root certificate of the device",
+    "ensure-dirs": "Make the directories",
+    "ensure-fe": "Build the Care web app",
+    "ensure-mounts": "Prepare the backup disks",
+    "ensure-repositories": "Prepare the backup destinations",
+    "ensure-stanza": "Prepare the database backups",
+    "ensure-telemetry": "Start or stop the telemetry",
+    "ensure-timers": "Set the backup schedule",
+    "fetch-config": "Get the settings from the backup",
+    "fetch-db-repo": "Get the database backup from the destination",
+    "fetch-files": "Get the files from the backup",
+    "fetch-index": "Download the list of versions",
+    "fetch-lock": "Download the description of the version",
+    "finish": "Complete the restore",
+    "forget": "Remove the old copies",
+    "format": "Make the file system",
+    "full-cycle": "Stop and start all the services of Care",
+    "host-check": "Check the device",
+    "init-destination": "Prepare a new copy at the destination",
+    "maintenance-off": "Remove the maintenance page",
+    "maintenance-on": "Show the maintenance page",
+    "migrate": "Update the database",
+    "mount": "Mount the disk",
+    "os-hold": "Hold the container packages again",
+    "os-refresh": "Read the list of OS packages",
+    "os-unhold": "Release the tested container packages",
+    "os-upgrade": "Install the OS updates",
+    "partition": "Make the partition",
+    "pause-backups": "Stop the scheduled backups",
+    "plan": "Find the changes",
+    "plug-config": "Send the plug settings to Care",
+    "prune": "Delete the old builds of the web app",
+    "prune-images": "Delete the old container images",
+    "pull-images": "Download the container images",
+    "reboot": "Restart the device",
+    "rekey-local": "Make the local backups with the new key",
+    "reload-caddy": "Load the new web server settings",
+    "reload-firewall": "Load the new firewall rules",
+    "remove-old-repositories": "Delete the old backups",
+    "render": "Make the configuration files",
+    "resolve-lock": "Resolve the versions of the images",
+    "resolve-refs": "Resolve the custom versions",
+    "restart": "Start the changed services again",
+    "restart-caddy": "Restart the web server for the new certificate",
+    "restore-account": "Restore the console account of the old device",
+    "restore-db": "Restore the database",
+    "restore-files": "Restore the files",
+    "resume-backups": "Start the scheduled backups again",
+    "rollback": "Go back to the previous version",
+    "set-hostname": "Set the host name",
+    "set-secrets": "Store the secret keys",
+    "snapshot": "Copy the backup to the destination",
+    "stage-build": "Build the custom parts on this device",
+    "stage-bundles": "Download the web app and the plug files",
+    "stage-pull": "Download the new container images",
+    "start": "Start Care",
+    "start-app": "Start Care",
+    "start-db": "Start the database",
+    "start-s3": "Start the file storage",
+    "start-target": "Start all the services of Care",
+    "stop": "Stop Care",
+    "stop-app": "Stop Care",
+    "stop-db": "Stop the database",
+    "stop-s3": "Stop the file storage",
+    "tailscale-down": "Disconnect from the tailnet",
+    "tailscale-install": "Install Tailscale",
+    "tailscale-login": "Wait for the login to Tailscale",
+    "tailscale-logout": "Remove the device from the tailnet",
+    "tailscale-up": "Connect to the tailnet",
+    "update-dns": "Send the new address to the DNS service",
+    "validate": "Check the settings",
+    "verify": "Make sure that Care works",
+    "verify-destination": "Verify the copy at the destination",
+    "verify-files": "Verify the restored files",
+    "verify-local": "Verify the backups on this device",
+    "wait-certificate": "Wait for the certificate of the public name",
+    "wait-healthy": "Wait until Care answers",
+    "wait-promote": "Wait until the database accepts changes",
+    "wifi-connect": "Connect to the Wi-Fi network",
+    "wifi-profile": "Write the Wi-Fi settings",
+    "wifi-radio": "Turn on the Wi-Fi radio",
+    "wifi-remove": "Remove the Wi-Fi network",
+    "wifi-verify": "Check the network routes",
+    "wipe-disk": "Erase the disk",
+    "write-config": "Save the settings",
+    "write-files": "Write the configuration files",
+    "write-lock": "Record the installed versions",
+    "write-mount-unit": "Write the mount settings",
+  };
+  var titles = {"apply":"Apply the settings","backup-run":"Back up","backup-verify":"Verify the backups","disk-prepare":"Prepare a backup disk","fe-build":"Build the Care web app","fe-prune":"Delete the old builds of the web app","network-wifi":"Change the Wi-Fi","os-update":"Install the OS updates","plug-change":"Change a plug","recovery-key-rotate":"Change the recovery key","restore-dr":"Restore the device from a backup","restore-drill":"Test restore","restore-files":"Restore files","restore-pitr":"Restore the database to a point in time","setup":"Set up the device","support-bundle":"Make a support bundle","tls-local-ca-rotate":"Make a new root certificate","tls-public-enrol":"Change the public name","tls-tailscale-enrol":"Change Tailscale","update-apply":"Install an update","update-check":"Check for updates","update-rollback":"Go back to the previous version","update-stage":"Download an update"} || {};
+  var next = {"":"When the job is complete, this page opens CARE again.","apply":"When the job is complete, CARE starts again and this page opens CARE.","fe-build":"When the build is complete, this page opens CARE.","os-update":"When the OS updates are installed, the device can restart. Then this page opens CARE again.","plug-change":"When the plug change is complete, this page opens CARE again.","restore-dr":"When the restore is complete, CARE starts with the data of the backup. Then log in to the console again.","restore-files":"When the restore is complete, this page opens CARE again.","restore-pitr":"When the restore is complete, this page opens CARE again. The data is as it was at the time of the restore point.","setup":"When the setup is complete, this page opens CARE. Then log in to CARE with the administrator account of the setup.","update-apply":"When the update is complete, this page opens CARE again. If a step fails, the device goes back to the previous version.","update-rollback":"When the device runs the previous version, this page opens CARE again."} || {};
+  var port = 8443;
+  var marks = {succeeded: "\u2713", failed: "\u2717", running: "\u25cf", cancelled: "\u2013", skipped: "\u2013", pending: "\u25cb"};
+  var words = {succeeded: "complete", failed: "failed", running: "runs now", cancelled: "cancelled", skipped: "skipped", pending: "waits"};
+  var states = {queued: "Waiting", running: "Running", succeeded: "Complete", failed: "Failed", cancelled: "Cancelled"};
+  var job = null, list = [], problem = null, status = null, skew = 0, es = null, last = 0, ended = false;
+
+  function $(id) { return document.getElementById(id); }
+  function now() { return Date.now() + skew; }
+  function dur(ms) {
+    var s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) { return s + " s"; }
+    var m = Math.floor(s / 60);
+    if (m < 60) { return m + " min " + (s % 60) + " s"; }
+    return Math.floor(m / 60) + " h " + (m % 60) + " min";
+  }
+  function actionOf(name) { return String(name || "").split(":")[0].split(" ")[0]; }
+  function stepText(s) { return (s.action && steps[s.action]) || steps[actionOf(s.name)] || s.name; }
+  function stepTime(s) {
+    if (!s.started_at) { return ""; }
+    return dur((s.finished_at ? Date.parse(s.finished_at) : now()) - Date.parse(s.started_at));
+  }
+  function title() { return job.title || titles[job.kind] || job.kind; }
+  function current() {
+    for (var i = list.length - 1; i >= 0; i--) {
+      if (list[i] && list[i].state === "running") { return list[i]; }
+    }
+    return null;
+  }
+  function draw() {
+    var box = $("job");
+    if (!job) { box.hidden = true; return; }
+    box.hidden = false;
+    $("job-title").textContent = title();
+    $("job-id").textContent = job.id;
+    $("job-console").href = "https://" + location.hostname + ":" + port + "/jobs/" + encodeURIComponent(job.id);
+    $("job-state").textContent = states[job.state] || job.state;
+    var start = job.started_at ? Date.parse(job.started_at) : 0;
+    var end = job.finished_at ? Date.parse(job.finished_at) : now();
+    $("job-elapsed").textContent = start ? (ended ? "in " : "for ") + dur(end - start) : "";
+    // job.step_count is the planned step count, or null for a job without a plan: then "Step N" and an
+    // indeterminate bar. The bar is full only when the job is done.
+    var total = job.step_count ? Math.max(job.step_count, list.length) : 0, done = 0, i;
+    for (i = 0; i < list.length; i++) {
+      if (list[i] && list[i].state !== "running" && list[i].state !== "pending") { done++; }
+    }
+    if (job.state === "succeeded" && total) { done = total; }
+    var pct = job.state === "succeeded" ? 100 : total ? Math.min(99, Math.round(100 * done / total)) : 0;
+    var bar = $("job-progress"), busy = !total && !ended;
+    bar.className = busy ? "bar busy" : "bar";
+    $("job-bar").style.width = busy ? "" : pct + "%";
+    if (busy) { bar.removeAttribute("aria-valuenow"); } else { bar.setAttribute("aria-valuenow", String(pct)); }
+    var cur = current();
+    if (!cur && !list.length && job.step && !ended) {
+      cur = {index: job.step_index || 0, name: job.step, action: actionOf(job.step)};
+    }
+    $("job-count").textContent = cur ? "Step " + (cur.index + 1) + (total ? " of " + total : "") + (list.length ? "" : ": " + stepText(cur))
+      : !done ? "" : total ? done + " of " + total + " steps complete" : done + " steps complete";
+    var ol = $("job-steps");
+    for (i = 0; i < list.length; i++) {
+      var s = list[i] || {index: i, name: "", state: "pending"};
+      var li = $("job-step-" + i);
+      if (!li) {
+        li = document.createElement("li");
+        li.id = "job-step-" + i;
+        li.innerHTML = '<span class="mark" aria-hidden="true"></span><span class="text"></span><span class="sr"></span><small class="time"></small>';
+        ol.appendChild(li);
+      }
+      li.className = s.state;
+      if (s.state === "running") { li.setAttribute("aria-current", "step"); } else { li.removeAttribute("aria-current"); }
+      li.children[0].textContent = marks[s.state] || "";
+      li.children[1].textContent = stepText(s);
+      li.children[1].title = s.name;
+      li.children[2].textContent = " (" + (words[s.state] || s.state) + ")";
+      li.children[3].textContent = stepTime(s);
+    }
+    var p = $("job-problem");
+    p.hidden = !problem || job.state === "succeeded";
+    p.textContent = problem ? (job.state === "failed" ? "The job failed: " : "A step reported a problem: ") + problem.title + "." : "";
+    $("job-next").textContent = job.state === "succeeded" ? "The job is complete." : job.state === "failed" ? "Open the console to see the details and the log of the job."
+      : job.state === "cancelled" ? "The job stopped." : next[job.kind] || next[""];
+  }
+  function finish(j) {
+    ended = true;
+    job.state = j.state;
+    job.started_at = j.started_at || job.started_at;
+    job.finished_at = j.finished_at;
+    for (var i = 0; i < j.steps.length; i++) { list[j.steps[i].index] = j.steps[i]; }
+    if (j.error) { problem = j.error; }
+    if (es) { es.close(); es = null; }
+    draw();
+  }
+  function event(name, data, id) {
+    if (id > last) { last = id; }
+    if (name === "step") { list[data.index] = data; } else if (name === "error") { problem = data; } else if (name === "done") { finish(data); return; }
+    draw();
+  }
+  function open() {
+    if (!window.EventSource) { return; }
+    es = new EventSource("/_care-pi/jobs/" + encodeURIComponent(job.id) + "/events");
+    var on = function (name) {
+      es.addEventListener(name, function (e) {
+        // An error event without data is the connection. A closed stream (404, 429) leaves the poll to the JSON form.
+        if (!e.data) {
+          if (es && es.readyState === 2) { es = null; }
+          return;
+        }
+        event(name, JSON.parse(e.data), parseInt(e.lastEventId, 10) || 0);
+      });
+    };
+    on("step");
+    on("error");
+    on("done");
+  }
+  function page() {
+    var id = job.id;
+    fetch("/_care-pi/jobs/" + encodeURIComponent(id) + "/events?after=" + last, {cache: "no-store", headers: {"Accept": "application/json"}})
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (p) {
+        if (!p || !job || job.id !== id) { return; }
+        for (var i = 0; i < p.events.length; i++) { event(p.events[i].event, p.events[i].data, p.events[i].id); }
+        if (p.last_event_id > last) { last = p.last_event_id; }
+      })
+      .catch(function () {});
+  }
+  function update(s) {
+    status = s;
+    if (s.time) { skew = Date.parse(s.time) - Date.now(); }
+    var j = s.job;
+    if (j && (!job || j.id !== job.id)) {
+      if (es) { es.close(); es = null; }
+      job = {id: j.id, kind: j.kind, title: j.title, state: j.state, started_at: j.started_at, finished_at: null,
+        step: j.step, step_index: j.step_index, step_count: j.step_count};
+      list = [];
+      problem = null;
+      last = 0;
+      ended = false;
+      var ol = $("job-steps");
+      while (ol.firstChild) { ol.removeChild(ol.firstChild); }
+      open();
+    } else if (j && !ended) {
+      job.state = j.state;
+      job.step = j.step;
+      job.step_index = j.step_index;
+      job.step_count = j.step_count;
+    }
+    if (job && !ended && !es) { page(); }
+    draw();
+  }
+  function text() {
+    var s = status || {}, out = [], i;
+    out.push("CARE device status");
+    out.push("Device: " + (s.display_name || "") + " (" + location.hostname + ")");
+    out.push("Page: " + (s.site || "") + ", setup state: " + (s.setup_state || ""));
+    out.push("Device time: " + (s.time || ""));
+    out.push("Copied at: " + new Date().toISOString());
+    if (job) {
+      out.push("", "Job: " + job.id, "Kind: " + job.kind + " (" + title() + ")", "State: " + job.state);
+      if (job.started_at) { out.push("Started: " + job.started_at); }
+      if (job.finished_at) { out.push("Finished: " + job.finished_at); }
+      if (problem) { out.push("Problem: " + problem.title + " (" + problem.type + ")"); }
+      out.push("Steps:");
+      for (i = 0; i < list.length; i++) {
+        var st = list[i];
+        if (st) {
+          var t = stepTime(st);
+          out.push("  " + (i + 1) + ". [" + st.state + "] " + stepText(st) + " (" + st.name + ")" + (t ? ", " + t : ""));
+        }
+      }
+      if (!list.length && job.step) { out.push("  " + ((job.step_index || 0) + 1) + ". [running] " + job.step); }
+    }
+    var r = s.jobs_recent || [];
+    if (r.length) {
+      out.push("", "Recent jobs:");
+      for (i = 0; i < r.length; i++) { out.push("  " + r[i].id + " " + r[i].state); }
+    }
+    return out.join("\n") + "\n";
+  }
+  function legacy(t) {
+    var a = document.createElement("textarea"), ok = false;
+    a.value = t;
+    a.setAttribute("readonly", "");
+    a.style.position = "fixed";
+    a.style.opacity = "0";
+    document.body.appendChild(a);
+    a.select();
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    document.body.removeChild(a);
+    return ok;
+  }
+  function copy() {
+    var t = text(), msg = $("copied"), pre = $("copy-text");
+    var done = function () { msg.textContent = "Copied."; pre.hidden = true; setTimeout(function () { msg.textContent = ""; }, 4000); };
+    var fail = function () { msg.textContent = "Select the text below and copy it."; pre.textContent = t; pre.hidden = false; };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(t).then(done, function () { if (legacy(t)) { done(); } else { fail(); } });
+    } else if (legacy(t)) {
+      done();
+    } else {
+      fail();
+    }
+  }
+  $("copy").addEventListener("click", copy);
+  setInterval(function () { if (job && !ended) { draw(); } }, 1000);
+  return {update: update, text: text, sentence: function (action) { return steps[action]; }};
+})();
 (function () {
   var port = 8443;
   var link = document.getElementById("console");
@@ -52,17 +416,36 @@ Install the root certificate on each device that opens CARE. Then the warning do
     document.getElementById("fingerprint").textContent = d.root.fingerprint_sha256_colon;
     document.getElementById("rootca").href = d.root.download_path;
   }).catch(function () {});
-  fetch("/_care-pi/status").then(function (r) { return r.ok ? r.json() : null; }).then(function (s) {
-    if (!s) { return; }
-    var t = { unclaimed: "Open the console and claim the device.", claimed: "Open the console and continue the setup.",
-      setup: "Open the console and continue the setup.", applying: "The device installs CARE now.", ready: "Setup is complete." };
+  var t = { unclaimed: "Open the console and claim the device.", claimed: "Open the console and continue the setup.",
+    setup: "Open the console and continue the setup.", applying: "The device installs CARE now.", ready: "Setup is complete." };
+  function show(s) {
     document.getElementById("state").textContent = t[s.setup_state] || "";
     if (s.firstboot_error) {
       var fb = document.getElementById("firstboot");
       fb.textContent = s.firstboot_error;
       fb.hidden = false;
     }
-  }).catch(function () {});
+    // The newest setup job failed, and the setup did not start again.
+    var failed = false, r = s.jobs_recent || [];
+    for (var i = 0; i < r.length; i++) {
+      if (r[i].kind === "setup") { failed = r[i].state === "failed"; break; }
+    }
+    document.getElementById("failed").hidden = !failed || s.setup_state === "applying" || s.setup_state === "ready";
+  }
+  function poll() {
+    fetch("/_care-pi/status", {cache: "no-store", headers: {"Accept": "application/json"}})
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) {
+        if (!s) { return; }
+        // CARE, the maintenance page, or the clock page replaces this page.
+        if (s.site !== "setup") { window.location.reload(); return; }
+        show(s);
+        carePiJob.update(s);
+      })
+      .catch(function () {})
+      .then(function () { setTimeout(poll, 5000); });
+  }
+  poll();
 })();
 </script>
 </body>

@@ -27,6 +27,8 @@ It has these pages:
 | `/support` | Support bundle, versions | yes |
 | `/updates` | Phase 4: the running version, the new version, check, download, install, the track, the window, rollback, OS updates, the history (section 11) | yes, state `ready` |
 | `/plugs` | Phase 4: the solution and its plugs: on or off with a plan preview, the settings form of each plug (section 11) | yes, state `ready` |
+| `/jobs` | S67: the jobs of the device, the running jobs first, then the recent ones (section 13.3) | yes |
+| `/jobs/:id` | S67: one job: the steps (live), the log, "Copy the transcript", Cancel. Without a session: the public progress (steps only, section 13.3) | optional |
 
 Phase 2 exit (`plans/06-roadmap.md`): a non-technical tester completes setup from a phone and a laptop.
 Phase 4 exit: the console shows a visible maintenance flow, and a plug switch in the console gives a working Care.
@@ -34,14 +36,18 @@ Each decision below serves these goals.
 
 ## 2. Design decisions
 
-1. **Monospace first.** Geist Mono is the body font (`src/styles/console.css` sets `--font-sans`).
-   The font files come from `@fontsource-variable/geist-mono`, so they are in the build. The page loads no font from another origin.
-2. **careui tokens and components, without change.** The console uses the Care UI design tokens and components
-   (section 3). It does not make its own version of a careui component.
+1. **Geist for text, Geist Mono for data (v2, S66; it was "Monospace first").** Geist is the font of headings and body;
+   Geist Mono is the font of ids, hashes, logs, metrics, keys, code, and times (`src/styles/typography.css`).
+   The font files are in `src/styles/fonts/` (latin subset; the build hashes them into `/assets/`; the OFL licence is
+   `public/fonts/OFL.txt`), so the page loads no font from another origin. Section 13.
+2. **careui tokens and components, tuned (v2, S66).** The console uses the Care UI design tokens and components
+   (section 3). It does not make its own version of a careui component. `src/styles/tokens.css` tunes the careui semantic
+   tokens (surfaces, text, borders, radii) for v2; it does not edit `careui.css`. Section 13.
 3. **Light and dark theme.** The default is the theme of the system. Section 4 tells more.
 4. **Stable layout.** A page does not move when data arrives or refreshes. Section 5 gives the rules.
 5. **Mobile and desktop.** The console works at a width of 360 px or more (phone) and 1024 px or more (laptop).
-   The navigation is a side bar from 1024 px (`lg`) and a sheet below 1024 px.
+   The navigation is a rail from 1024 px (`lg`) and a bottom bar below 1024 px (v2: up to 5 places, "More" opens a sheet;
+   before the state is `ready` a Menu button opens the navigation).
 6. **Keyboard.** Each control is a careui (Base UI) control with a visible focus ring.
    The top bar has a "Go to the content" link. Dialogs keep the focus inside.
 7. **No request leaves the origin.** The console loads each file from its own origin and calls only `/api/v1` and `/_care-pi`.
@@ -280,7 +286,7 @@ argument of the step name. A key that is not in the map shows the raw step name 
 | `write-lock` | Record the installed versions | — |
 | `wait-healthy` | Wait until Care answers | `care-api` |
 | `set-hostname` | Set the host name | `care → lumine` |
-| `create-care-superuser` | Make the Care administrator | the user name |
+| `create-care-superuser` | Make the Care administrator | the user name (the detail) |
 | `collect` | Collect the support data | the argument |
 | `archive` | Make the support bundle file | the argument |
 | `prune` | Delete the old builds of the web app (in `backup-verify`: "Remove the data of the old copies") | the argument |
@@ -411,7 +417,10 @@ reloaded the page in Chromium).
 Each choice opens `DestinationForm` (`src/features/backups/destination-form.tsx`): the name (the id), the fields, the test
 (`POST /backups/destinations/test`), the interval and the retention with the defaults (15 min; 14 days, 14 daily, 8 weekly,
 6 monthly) and the RPO that they give ("Data loss at most 20 min"). "Add this destination" needs a passed test
-(`next_action: none`). A value that is the default stays out of `config.yaml`.
+(`next_action: none`). The default interval stays out of `config.yaml`. The retention numbers that the operator sets are
+always written, also when they are the defaults: a destination without `retention` takes `keep_daily` and `keep_weekly`
+from `backups.retention.files_keep_daily` and `files_keep_weekly`, so each place shows those defaults
+(`retentionDefaults` in `src/features/backups/backups-format.ts`).
 
 - **USB disk**: `GET /backups/disks`. The system disk shows with "This is the system disk. You cannot use it."; a disk with
   care-pi backups shows "Use this disk"; a mounted disk shows why it cannot be used; another disk shows "Prepare this disk". The
@@ -618,10 +627,14 @@ for an external bundle "The browser loads the bundle from <url>. It is not pinne
 
 ### 11.6 The maintenance banner
 
-`maintenance` of `GET /_care-pi/status` (the member that the maintenance page of Caddy reads): "Maintenance in progress:
-<operator text of `maintenance.step`>", a link to the Updates page. From 640 px it is in a slot of the top bar between the
+`maintenance` of `GET /_care-pi/status` (the member that the maintenance page of Caddy reads) or `job` of the same read
+(S67, contract 0.9.0: each job that holds the apply lock, from any tab, device, timer, or the CLI): "Maintenance in progress
+· step X of Y · <operator text of the step> · Open", a link to `/jobs/<id>` (to the Updates page when the status has no job
+id). Y is `job.step_count`, the planned step count of the job; a job without a plan (`step_count: null`) shows "step X"
+without a total. The banner reads the public status each 15 s, each 3 s while a job runs, so it shows on each open page of each device. From 640 px it is in a slot of the top bar between the
 state and the buttons; the slot is always there. Below 640 px it takes the place of the device name and of the state badge,
-on 2 lines ("Maintenance in progress" and the step). The top bar keeps its height (56 px). The dashboard shows the same
+on 2 lines ("Maintenance in progress" and the step). The top bar keeps its height (v2: 56 px, 64 px from 1024 px; the
+banner slot is 40 px high, `--banner-height`). The dashboard shows the same
 text first in its problems (`Status.maintenance`), and its state is "Maintenance".
 
 ### 11.6.1 The clock banner (S52)
@@ -697,3 +710,113 @@ does not answer), `tailscale_login: "manual"` (the login waits until `POST /__mo
 `e2e/connectivity.spec.ts` (public name, Tailscale with the login link, Wi-Fi, the certificate page, the dashboard) and
 `e2e/real/connectivity.spec.ts` (opt-in on a device).
 
+## 13. Console v2 (S66)
+
+The v2 design system is the look of the console for non-technical operators: calm green-tinted surfaces, a gradient on
+heroes and on the setup rail only, 8 line illustrations, motion at key moments, Geist and Geist Mono. **`console/design.md`
+is its specification** (principles, palette with measured contrast, type scale, space, motion, layouts, components,
+illustrations, copy, states, do and don't, page recipes). The rules of this note stay in force; v2 adds to them:
+
+| Topic | v2 |
+| --- | --- |
+| Tokens | `src/styles/tokens.css` (light `:root`, dark `.dark`): `--surface-*`, `--ink*`, `--line*`, the tones `--ok-*`, `--warn-*`, `--danger-*`, `--info-*`, `--gradient-hero`, scrims, `--shadow-soft`, layout sizes. Tailwind: `bg-surface-tint`, `text-ink-muted`, `border-danger-border`, `rounded-card`, `h-topbar`, … |
+| Type | `type-display`, `type-h1`, `type-h2`, `type-h3`, `type-body`, `type-small`, `type-data` (not `text-*`: `cn()` takes an unknown `text-*` class for a colour) |
+| Motion | `src/styles/motion.css`: 150/250/400 ms, ease-out, the variant `motion-ok:` (off with "reduce motion" and with careui `data-reduced-motion="true"`), view transitions for the Stage, the toasts |
+| Components | `src/components/v2/`: AppShell, Stage, Focus, Hero, Panel, StatCard, MetricBar, DashboardGrid, KeyValueList, MonoBlock, CopyButton (S68 report header), ProblemCard, EmptyState, ChoiceCards, Explainer (backups retention), StepList, ProgressRing, StatusChip, Timeline, Illustration, Toaster, ThemeToggle |
+| Shell | `src/app/layout/` uses the v2 AppShell: rail from 1024 px, bottom bar below (4 primary places and "More"), minimal mode before `ready`, a banner slot of 40 px; the public pages use the Focus backdrop |
+| Gallery | `/__v2` on the Vite dev server only (`vite.config.ts`, `apply: "serve"`): each component with sample data, light and dark |
+| Checks | `npm run test:v2`: axe (0 serious or critical), stability (boxes and CLS 0.0000 when the data comes), reduced motion (0 animations), font loading (swap, preloaded), token contrast |
+| Texts | The default texts of the components are in `src/components/v2/strings.ts`; the texts of a page stay in `src/lib/strings.ts` |
+
+
+### 13.1 The pages on v2
+
+Each page keeps its data flow (queries, polling, the plan preview, the jobs) and its test ids; v2 changes the presentation.
+The layout of each page comes from a recipe of `console/design.md` section 13.
+
+| Page | Layout | What the operator sees |
+| --- | --- | --- |
+| Claim, Login, Recover | Focus (gradient backdrop, illustration) | One task for each screen. The password strength is a calm bar (amber for a weak password, never red). The recovery codes are a printable dashed card with Copy, Download, Print, and "I saved them". |
+| Setup wizard | Stage (rail with progress; below 1024 px a progress header) | Each Continue has a "what happens next" line. The hardware step is a short summary with a "Details" disclosure. Identity shows the address big. The size step is section 13.4. The TLS step is one sentence and the switch "Keep Care working offline". The review is a calm summary. |
+| Setup progress | Stage | The StepList with the expected length of each step ("Usually about 2 min") and a sentence for each phase. A reload or a second device resumes it (section 13.3). |
+| Hand-off | Hero | A big "Open Care", "Install the certificate on this device", and a QR code for a phone. |
+| Certificate | Focus | The OS of the browser first, one path at a time, the trust check with a green tick, the fingerprint and the name limits in "Check the fingerprint (for experts)", the QR code of the `/cert` page. |
+| Dashboard | DashboardGrid of fixed StatCards | Health, backups ("Last copy 12 minutes ago"), updates, names with mode chips, memory bars, units; the banner row above. |
+| Backups | Hero + Panels | "Back up now" (all places), destination cards in plain words, the Explainer of the retention (section 13.5), the recovery key card, verify and the test restore. |
+| Restore | 3 ChoiceCards | Undo a mistake (a calm time picker and "You will lose the changes after HH:MM"), files only, a new device; the undo card after a restore. |
+| Updates | Panels | The version card, the new version with "Install tonight" (the window) and "Install now", the window in words, the history (section 13.6). |
+| Solution and plugs | Panels | A card for each plug with its settings form. |
+| Settings | Tabs, one Panel each | One sentence of help for each tab and each setting; Settings > Backups uses the pickers of section 13.5. |
+| Security | Panels | Password, recovery codes, two-step login (TOTP) with a QR card, sessions, the firewall policy and extra ports ("If you lose the connection, the firewall opens again in 90 s" with a countdown). |
+| Logs | Panel | The service as chips, Follow, "Copy the log" (section 13.2). |
+| Support | Panels | The health checks as a checklist (the failed ones first, a plain fix for each), "Copy the result", the support bundle with a message to copy, the CLI in a disclosure. |
+| Connectivity | Settings tab, CardFrames | The public name big with "Bookmark this name on each device", Tailscale, Wi-Fi. |
+| Jobs | Panel list / StepList | Section 13.3. |
+
+A hash, a sha, or a path shows only in a "Technical details" disclosure. Each page has the empty, loading, and error states of
+`console/design.md` section 12: the skeletons keep the boxes of the data (`e2e/a11y.spec.ts` and the stability checks of
+`e2e/backups.spec.ts`, `e2e/updates.spec.ts`, `e2e/login-dashboard.spec.ts`, and `e2e/jobs.spec.ts`).
+
+### 13.2 Copy to clipboard (S68)
+
+`CopyButton` (`src/components/v2/copy-button.tsx`) copies a text with a header line: device name · agent version · time
+(`CopyHeaderProvider` in the shell; the version comes from `GET /status`). A long text comes from the agent as plain text
+(`src/api/exports.ts`, `parseAs: "text"`); the button starts the request at the click (a `ClipboardItem` with a promise, so
+Safari keeps the user gesture).
+
+| Where | What it copies |
+| --- | --- |
+| Each log view | The whole view: `GET /logs/{unit}/export` |
+| Each job (job page, the job of a page, the setup progress) | The transcript: `GET /jobs/{id}/export` |
+| Each ProblemCard | The title, the detail, the code, and the request id |
+| Support > Health checks | `GET /doctor/export` |
+| Support > Support bundle | The message for the support team |
+| Certificate | The fingerprint |
+| Ids (key id, job id, versions) | The value |
+
+### 13.3 Jobs from any tab or device (S67)
+
+- `/jobs`: `GET /jobs?state=active` (each 3 s) first, then `GET /jobs?state=recent` (each 15 s). Each row (title, state chip,
+  step X of Y, source, time) opens `/jobs/<id>`. The skeleton has the number of rows of the last visit (`localStorage`
+  `care-pi.jobs.recent`).
+- `/jobs/<id>`: `GET /jobs/{id}` gives the steps so far and `log_tail`; the page then opens
+  `GET /jobs/{id}/events?after=<last_event_id>`, so a reload or another device shows the same steps without a gap. The log
+  is in a disclosure. "Copy the transcript" and Cancel (when the job allows it).
+- The banner (section 11.6) links to the job on each page of each device.
+- Setup `applying`: `setup_job_id` of `GET /_care-pi/status`. With a session, the wizard goes to `/setup/progress` (not a
+  stale step). Without a session (a second device), `/` goes to `/jobs/<setup_job_id>`: a Focus page "Care is being set up"
+  (or "updated") with "Step X of Y" and a bar above the step list of the public stream `GET /_care-pi/jobs/{id}/events`
+  (steps only, no log), and a link to log in. Y is `job.step_count` of the public status; without it (`null`, a job
+  without a plan) the page shows "Step X" and an indeterminate bar. The bar is full only when the job succeeded. On port 443 the maintenance page of Caddy covers the same case.
+
+### 13.4 The size step: preset cards (S65)
+
+Easy mode shows the 3 presets of `GET /config/presets` as ChoiceCards: Just me, Small clinic, Busy counter, each with a
+plain fit text and the "Recommended" badge of the agent. On a device with less than 4 GB of memory the agent gives the
+warning `busy-counter-low-ram`: the Busy counter card is off with the reason "This device has 2 GB of memory. Busy counter
+needs 4 GB or more." The questions about the staff and the `presetFromAnswers` mapping are gone. Advanced mode keeps the
+numbers (workers, concurrency, shared buffers) with the live hint "≈ <preset>" (`nearestPreset` in
+`src/features/setup/size-logic.ts`).
+
+### 13.5 The backup schedule in words (S66)
+
+Each place that sets the retention (the wizard step backups, the Backups page, Settings > Backups) has 2 pickers and the
+Explainer:
+
+- "How often we save a copy": every 5, 15 (default), 30, or 60 minutes.
+- "How far back you can go": Standard (2 days of every copy, 2 weeks of daily copies, 2 months of weekly copies, 6 months of
+  monthly copies), Longer (7 days, 30 days, 24 weeks, 24 months), or Custom (the 4 numbers; the Explainer changes while the
+  operator types). A destination with other numbers shows Custom.
+- The sentence of the RPO: "If the device breaks, you lose at most N minutes of work."
+
+### 13.6 An interrupted update (S69)
+
+A history entry of an update that a power loss interrupted (`rolled-back` with a recovery reason, or the problem detail
+"interrupted") says: "The update was interrupted. Care returned to the previous version." The PITR offer (section 11.4)
+shows under it. The mock scenario `updates: "recovered"` gives this entry (`e2e/updates.spec.ts`).
+
+### 13.7 Checks
+
+`e2e/a11y.spec.ts` runs axe on each page in the light and the dark theme (0 serious or critical), checks reduced motion,
+and the stability of the Jobs page. `npm run test:v2` checks the gallery. `playwright.shots.config.ts` takes a screenshot of
+each page (desktop light and dark, phone light) for a design review. Each test checks that each request stays on the origin.

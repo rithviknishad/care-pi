@@ -4,7 +4,10 @@ import { FormField } from "@/components/app/form-field";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { formatMinutes } from "@/features/backups/backups-format";
+import type { Destination } from "@/api/types";
+import { INTERVAL_DEFAULT_MIN, formatRpoMinutes, retentionDefaults } from "@/features/backups/backups-format";
+import { DestinationSchedule, type ScheduleValue } from "@/features/backups/destination-parts";
+import { TYPE_ICONS } from "@/features/backups/destination-meta";
 import { fmt, strings } from "@/lib/strings";
 import { ConfigChange } from "./config-change";
 
@@ -71,8 +74,22 @@ export function BackupsTab({ config }: { config: Config }) {
   const id = useId();
   const [v, setV] = useState<BackupsValue>(() => fromConfig(config));
   const errors = validateBackups(v);
-  const destinations = config.backups?.destinations ?? [];
-  const minInterval = destinations.length ? Math.min(...destinations.map((d) => d.interval_min ?? 15)) : null;
+  const destinations = (config.backups?.destinations ?? []) as Destination[];
+  // S66, item 2: the frequency and "how far back" of each destination, with the explainer.
+  const [schedules, setSchedules] = useState<Record<string, ScheduleValue>>(() =>
+    Object.fromEntries(destinations.map((d) => [d.id, { interval_min: d.interval_min, retention: d.retention }])),
+  );
+  // A schedule without interval_min has the default of the agent, not the value of config.yaml before the change.
+  const intervalOf = (d: Destination) => {
+    const sv = schedules[d.id];
+    return (sv ? sv.interval_min : d.interval_min) ?? INTERVAL_DEFAULT_MIN;
+  };
+  const minInterval = destinations.length ? Math.min(...destinations.map(intervalOf)) : null;
+  // A destination without its own numbers keeps the files_keep_* of this form (the agent takes them from the config).
+  const defaults = retentionDefaults({
+    files_keep_daily: intIn(v.daily, 0, 3650) ?? config.backups?.retention?.files_keep_daily,
+    files_keep_weekly: intIn(v.weekly, 0, 520) ?? config.backups?.retention?.files_keep_weekly,
+  });
   const wal = intIn(v.wal, 1, 60);
   const num = (k: keyof typeof RANGES, label: string, help?: string) => (
     <FormField id={`${id}-${k}`} label={label} help={help} error={errors[k]}>
@@ -95,7 +112,7 @@ export function BackupsTab({ config }: { config: Config }) {
         id={`${id}-${k}`}
         value={v.schedule[k]}
         onChange={(e) => setV({ ...v, schedule: { ...v.schedule, [k]: e.target.value } })}
-        className="max-w-56 font-mono"
+        className="max-w-56 type-data"
         spellCheck={false}
         aria-invalid={errors[k] ? true : undefined}
       />
@@ -108,6 +125,16 @@ export function BackupsTab({ config }: { config: Config }) {
         ...file,
         backups: {
           ...file.backups,
+          destinations: (file.backups?.destinations ?? []).map((d) => {
+            const sv = schedules[d.id];
+            if (!sv) return d;
+            const { interval_min: _i, retention: _r, ...rest } = d;
+            return {
+              ...rest,
+              ...(sv.interval_min ? { interval_min: sv.interval_min } : {}),
+              ...(sv.retention ? { retention: sv.retention } : {}),
+            };
+          }),
           wal_archive_timeout_min: Number(v.wal),
           schedule: { ...file.backups?.schedule, ...v.schedule },
           retention: {
@@ -122,19 +149,51 @@ export function BackupsTab({ config }: { config: Config }) {
         },
       })}
     >
-      <div className="flex flex-col gap-4" data-testid="backups-settings">
-        <p className="text-sm text-soft-foreground">{st.backupsIntro}</p>
+      <div className="flex flex-col gap-6" data-testid="backups-settings">
+        <p className="max-w-prose type-small text-ink-muted">{st.backupsIntro}</p>
+        {destinations.length > 0 ? (
+          <section className="flex flex-col gap-4" aria-labelledby={`${id}-dest`}>
+            <div>
+              <h3 id={`${id}-dest`} className="type-h3 text-ink">
+                {st.destSchedules}
+              </h3>
+              <p className="type-small text-ink-muted">{st.destSchedulesHelp}</p>
+            </div>
+            {destinations.map((d) => {
+              const Icon = TYPE_ICONS[d.type];
+              return (
+                <div
+                  key={d.id}
+                  className="flex flex-col gap-4 rounded-card border border-line-soft bg-surface-tint p-4 sm:p-5"
+                  data-testid="settings-dest-schedule"
+                  data-id={d.id}
+                >
+                  <p className="flex items-center gap-2 type-body font-semibold text-ink">
+                    {Icon ? <Icon className="size-5 text-primary-solid" aria-hidden="true" /> : null}
+                    {strings.dest.types[d.type]} <span className="type-data font-normal text-ink-soft">· {d.id}</span>
+                  </p>
+                  <DestinationSchedule
+                    value={schedules[d.id] ?? {}}
+                    onChange={(sv) => setSchedules({ ...schedules, [d.id]: sv })}
+                    walTimeoutMin={intIn(v.wal, 1, 60) ?? undefined}
+                    defaults={defaults}
+                  />
+                </div>
+              );
+            })}
+          </section>
+        ) : null}
         {num("wal", st.walTimeout, st.walTimeoutHelp)}
-        <p className="text-sm" data-testid="settings-rpo">
+        <p className="type-body font-medium text-ink" data-testid="settings-rpo">
           {wal
             ? minInterval
-              ? fmt(st.rpoNow, { local: formatMinutes(wal), offsite: formatMinutes(wal + minInterval) })
-              : fmt(st.rpoNoOffsite, { local: formatMinutes(wal) })
+              ? fmt(st.rpoNow, { local: formatRpoMinutes(wal), offsite: formatRpoMinutes(wal + minInterval) })
+              : fmt(st.rpoNoOffsite, { local: formatRpoMinutes(wal) })
             : "\u00a0"}
         </p>
         <fieldset className="flex flex-col">
-          <legend className="mb-1 font-semibold">{st.scheduleTitle}</legend>
-          <p className="mb-3 text-xs text-soft-foreground">{st.calendarHelp}</p>
+          <legend className="mb-1 type-h3 text-ink">{st.scheduleTitle}</legend>
+          <p className="mb-3 type-small text-ink-muted">{st.calendarHelp}</p>
           <div className="grid gap-x-4 sm:grid-cols-2">
             {cal("db_full", st.dbFull)}
             {cal("db_incr", st.dbIncr)}
@@ -148,7 +207,7 @@ export function BackupsTab({ config }: { config: Config }) {
           </Label>
         </fieldset>
         <fieldset className="flex flex-col">
-          <legend className="mb-3 font-semibold">{st.retentionTitle}</legend>
+          <legend className="mb-3 type-h3 text-ink">{st.retentionTitle}</legend>
           <div className="grid gap-x-4 sm:grid-cols-2">
             {num("dbFull", st.dbFullKeep, st.dbFullKeepHelp)}
             {num("alertAfter", st.alertAfter, st.alertAfterHelp)}
@@ -160,7 +219,7 @@ export function BackupsTab({ config }: { config: Config }) {
           <Switch checked={v.paused} onCheckedChange={(c) => setV({ ...v, paused: c })} />
           <span className="flex flex-col">
             <span>{st.paused}</span>
-            <span className="text-xs text-soft-foreground">{st.pausedHelp}</span>
+            <span className="type-small text-ink-muted">{st.pausedHelp}</span>
           </span>
         </Label>
       </div>

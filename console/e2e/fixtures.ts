@@ -32,7 +32,9 @@ export const test = base.extend<Fixtures>({
           !p.startsWith("/assets/") &&
           p !== "/favicon.svg" &&
           p !== "/theme.js" &&
-          !/^\/[a-z/-]*$/.test(p),
+          !/^\/[a-z/-]*$/.test(p) &&
+          // S67: the page of a job (/jobs/<id>).
+          !/^\/jobs\/\d{8}T\d{6}(\.\d+)?Z-[a-z-]+$/.test(p),
       );
       expect(unexpected, "same-origin requests other than the API, assets, and page routes").toEqual([]);
     },

@@ -14,6 +14,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { fmt, strings } from "@/lib/strings";
+import { LINK_TONE } from "@/components/app/link-tone";
+import { cn } from "@/lib/utils";
 import {
   buildFields,
   changesOf,
@@ -69,7 +71,7 @@ function SecretControl({
           type="button"
           variant="link"
           size="xs"
-          className="self-start px-0"
+          className={cn("self-start px-0", LINK_TONE)}
           onClick={() => onChange({ mode: "keep", text: "" })}
         >
           {p.secretKeep}
@@ -259,7 +261,7 @@ function SettingField({
       {help ? <FieldDescription id={helpId}>{help}</FieldDescription> : null}
       {field.source === "operator" && field.type !== "secret" && !reset ? (
         <div>
-          <Button type="button" variant="link" size="xs" className="px-0" onClick={onReset}>
+          <Button type="button" variant="link" size="xs" className={cn("px-0", LINK_TONE)} onClick={onReset}>
             {p.useDefault}
           </Button>
         </div>

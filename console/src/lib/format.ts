@@ -144,3 +144,18 @@ export function shortIdOf(value: string | null | undefined, length = 12): string
   if (digest?.[1]) return `sha256:${digest[1].slice(0, length)}`;
   return /^[0-9a-f]{13,}$/.test(value) ? value.slice(0, length) : value;
 }
+
+// A plain time in the past for operators (console/design.md, "Copy"): "less than 1 minute ago", "12 minutes ago",
+// "3 hours ago", "2 days ago". Never seconds.
+export function formatAgo(iso: string | null | undefined, now: number = Date.now()): string {
+  if (!iso) return "—";
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "—";
+  const min = Math.floor(Math.max(0, now - t) / 60_000);
+  if (min < 1) return "less than 1 minute ago";
+  if (min < 60) return min === 1 ? "1 minute ago" : `${min} minutes ago`;
+  const h = Math.floor(min / 60);
+  if (h < 48) return h === 1 ? "1 hour ago" : `${h} hours ago`;
+  const d = Math.floor(h / 24);
+  return `${d} days ago`;
+}

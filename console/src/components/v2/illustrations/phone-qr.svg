@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 160" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><style>.illo-i{stroke:var(--illo-ink,#22413a)}.illo-p{stroke:var(--illo-primary,#059669)}.illo-f{fill:var(--illo-fill,#d7f4e7)}.illo-w{fill:var(--illo-paper,#fcfefd)}.illo-d{fill:var(--illo-primary,#059669)}.illo-k{fill:var(--illo-ink,#22413a)}</style>
+<ellipse class="illo-f" cx="100" cy="144" rx="50" ry="6"/>
+<rect class="illo-w illo-i" x="64" y="14" width="72" height="126" rx="14"/>
+<path class="illo-i" d="M92 24h16" stroke-width="2"/>
+<rect class="illo-f" x="72" y="32" width="56" height="94" rx="6"/>
+<rect class="illo-w illo-i" x="80" y="46" width="13" height="13" rx="2" stroke-width="2"/>
+<rect class="illo-w illo-i" x="107" y="46" width="13" height="13" rx="2" stroke-width="2"/>
+<rect class="illo-w illo-i" x="80" y="73" width="13" height="13" rx="2" stroke-width="2"/>
+<rect class="illo-k" x="84" y="50" width="5" height="5" rx="1"/>
+<rect class="illo-k" x="111" y="50" width="5" height="5" rx="1"/>
+<rect class="illo-k" x="84" y="77" width="5" height="5" rx="1"/>
+<rect class="illo-d" x="99" y="47" width="4" height="4" rx="1"/>
+<rect class="illo-d" x="99" y="56" width="4" height="4" rx="1"/>
+<rect class="illo-d" x="106" y="66" width="4" height="4" rx="1"/>
+<rect class="illo-d" x="114" y="73" width="4" height="4" rx="1"/>
+<rect class="illo-d" x="100" y="78" width="4" height="4" rx="1"/>
+<rect class="illo-d" x="108" y="82" width="4" height="4" rx="1"/>
+<rect class="illo-d" x="116" y="82" width="4" height="4" rx="1"/>
+<rect class="illo-d" x="84" y="64" width="4" height="4" rx="1"/>
+<path class="illo-p" d="M76 50v-8h8M124 50v-8h-8M76 82v8h8M124 82v8h-8" stroke-width="2"/>
+<path class="illo-p" d="M58 66h84" stroke-width="3" opacity=".7"/>
+<circle class="illo-w illo-p" cx="146" cy="112" r="14"/>
+<path class="illo-p" d="M139 112l5 5 9-10" stroke-width="3"/>
+<circle class="illo-d" cx="36" cy="40" r="3"/>
+<path class="illo-p" d="M44 112v10M39 117h10"/>
+</svg>

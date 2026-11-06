@@ -1,12 +1,12 @@
-import { expect, login, noSideScroll, shot, test } from "./fixtures";
+import { expect, isMobile, login, noSideScroll, shot, test } from "./fixtures";
 
 // Wave 4d (Phase 2 exit test follow-ups 3 to 6): the progress page, a failed setup, and the hardware step.
 
 async function startSetup(page: import("@playwright/test").Page) {
   await page.goto("/login?next=%2Fsetup%2Freview");
   await login(page);
-  await expect(page.getByTestId("step-title")).toHaveText("Review");
-  await page.getByRole("button", { name: "Start the setup" }).click();
+  await expect(page.getByTestId("step-title")).toHaveText("Check your choices");
+  await page.getByRole("button", { name: "Install Care" }).click();
   await expect(page).toHaveURL(/\/setup\/progress$/);
 }
 
@@ -44,7 +44,8 @@ test("the progress page shows operator text and movement during the lock resolut
   for (const t of titles) expect(t).not.toMatch(/^[a-z]+(-[a-z]+)+(:|$)/);
   await expect(page.getByTestId("job-step-raw")).toHaveCount(0);
   const pull = page.locator('[data-testid="job-step"][data-action="pull-images"]');
-  await expect(pull).toContainText("caddy:2, care@sha256:77fe743e51a6, redis@sha256:21090af93f83");
+  // The images are a count for the operator; the names are in the tooltip and in the log of the step.
+  await expect(pull).toContainText("3 images");
   await expect(pull).toHaveAttribute("title", /^pull-images: localhost\/care-pi\/caddy:2 /);
   await noSideScroll(page);
   await shot(page, info, "progress");
@@ -67,13 +68,14 @@ test("a failed setup shows the step, the problem, a retry, the details, and the 
   await expect(page.getByTestId("setup-failed-log")).toHaveAttribute("href", "/logs?unit=db");
   await expect(page.getByTestId("setup-failed-log")).toHaveText("Show the log of care-db");
   await expect(failed.getByRole("button", { name: "Copy details" })).toBeVisible();
-  // The raw error is in the collapsed technical details.
-  await expect(page.getByTestId("setup-failed-technical")).toHaveCount(0);
+  // The raw error is in the collapsed technical details of the problem card.
+  const technical = failed.locator("details");
+  await expect(technical).not.toHaveAttribute("open");
   await noSideScroll(page);
   await shot(page, info, "setup-failed");
-  await failed.getByRole("button", { name: "Technical details" }).click();
-  await expect(page.getByTestId("setup-failed-technical")).toContainText("Step: ensure-stanza");
-  await expect(page.getByTestId("setup-failed-technical")).toContainText("problems/internal 500 Internal error");
+  await failed.getByText("Technical details").click();
+  await expect(technical).toContainText("Step: ensure-stanza");
+  await expect(technical).toContainText("problems/internal 500 Internal error");
   await shot(page, info, "setup-failed-details");
 
   // Retry: POST /setup/finish again. The mock fails one time, so the second job reaches the hand-off.
@@ -90,25 +92,28 @@ test("the hardware step shows the failures first and one row for the passed chec
   await resetMock("setup");
   await page.goto("/login?next=%2Fsetup%2Fhardware");
   await login(page);
-  await expect(page.getByTestId("step-title")).toHaveText("Hardware check");
+  await expect(page.getByTestId("step-title")).toHaveText("Check the device");
   const summary = page.getByTestId("host-check-summary");
   await expect(summary).toContainText("All 43 checks passed");
+  // A short summary in plain words; each fact and each check is in "Details".
+  await expect(page.getByTestId("hardware-summary")).toContainText("238.5 GiB disk");
   await expect(page.getByTestId("host-check-problems")).toHaveCount(0);
-  await expect(page.getByTestId("host-check-passed")).toHaveCount(0);
-  // The same size format as the check: binary units, 1 decimal (256 GB).
-  await expect(page.getByText("USB drive, 238.5 GiB (/dev/sda)")).toBeVisible();
-  // The button is in the window without a scroll (a fixed bar on a phone).
-  await expect(page.getByRole("button", { name: "I read the warnings" })).toBeInViewport();
+  await expect(page.getByTestId("host-check-passed")).toBeHidden();
+  // The step is short: on a desktop the button is in the window without a scroll (the checks are in "Details").
+  const next = page.getByRole("button", { name: "I read the notes" });
+  if (isMobile(page)) await next.scrollIntoViewIfNeeded();
+  await expect(next).toBeInViewport();
   await noSideScroll(page);
   await shot(page, info, "hardware", false);
 
-  await summary.click();
+  await page.getByTestId("hardware-details").getByText("Details", { exact: true }).click();
+  // The same size format as the check: binary units, 1 decimal (256 GB).
+  await expect(page.getByText("USB drive, 238.5 GiB (/dev/sda)")).toBeVisible();
   const passed = page.getByTestId("host-check-passed");
   await expect(passed.locator("li")).toHaveCount(20);
   await expect(passed.locator('[data-check="directories"]')).toContainText("Directories: 24 OK");
   await expect(passed.locator('[data-check^="dir "]')).toHaveCount(0);
   await expect(passed.locator('[data-check="root disk"]')).toContainText("/dev/sda (usb, 238.5 GiB)");
-  await expect(page.getByRole("button", { name: "I read the warnings" })).toBeInViewport({ ratio: 1 });
   await passed.locator('[data-check="directories"]').scrollIntoViewIfNeeded();
   await shot(page, info, "hardware-open", false);
 });

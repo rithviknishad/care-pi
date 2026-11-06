@@ -433,7 +433,8 @@ func (s *Service) StartApply(ctx context.Context, req ApplyRequest, source strin
 	}
 	return s.Jobs.Start(ctx, jobs.Spec{Kind: jobs.KindApply, Source: source, Reason: req.Reason, Lock: true},
 		func(ctx context.Context, rec *jobs.Recorder) (any, error) {
-			o := s.applyOptions(apply.Options{Reason: req.Reason, Update: req.Update, Out: rec.Writer(), Journal: rec, LockHeld: true})
+			o := s.applyOptions(apply.Options{Reason: req.Reason, Update: req.Update, Out: rec.Writer(), Journal: rec, LockHeld: true,
+				Planned: rec.PlanSteps})
 			r, err := apply.Run(ctx, o)
 			if err != nil {
 				return nil, applyProblem(err)

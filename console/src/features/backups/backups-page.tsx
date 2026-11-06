@@ -1,16 +1,16 @@
 import { useMutation } from "@tanstack/react-query";
-import { HistoryIcon, PlusIcon } from "lucide-react";
+import { HistoryIcon, PlayIcon, PlusIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router";
 import { api, call } from "@/api/client";
 import { useBackups, useBackupsHealth, useSetup } from "@/api/queries";
 import type { BackupRunRequest, DestinationState, Job } from "@/api/types";
-import { PageHeader } from "@/components/app/page";
+import { EmptyState } from "@/components/v2/empty-state";
+import { Hero } from "@/components/v2/hero";
 import { ProblemAlert } from "@/components/app/problem-alert";
 import { Button } from "@/components/ui/button";
-import { Empty, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { useStableOrder } from "@/hooks/use-stable-order";
-import { formatTime } from "@/lib/format";
+import { formatAgo, formatTime } from "@/lib/format";
 import { fmt, strings } from "@/lib/strings";
 import { jobKindText } from "@/features/jobs/step-text";
 import { BackupBannerList, BackupHealthRow } from "./backup-banners";
@@ -23,9 +23,12 @@ import {
   VerifyCard,
 } from "./backups-cards";
 import { AddDestinationDialog, EditDestinationDialog, RemoveDestinationDialog } from "./destination-change";
+import { formatRpoMinutes, retentionDefaults } from "./backups-format";
 import { lastOffsiteCopy } from "./health";
 import { JobDialog } from "./job-dialog";
 import { RecoveryKeyCard } from "./key-card";
+import { LINK_TONE } from "@/components/app/link-tone";
+import { cn } from "@/lib/utils";
 
 const p = strings.backupsPage;
 const destKey = (d: DestinationState) => d.id;
@@ -60,10 +63,6 @@ export default function BackupsPage() {
 
   const start = useMutation({ mutationFn: (fn: () => Promise<Job>) => fn(), onSuccess: setJob });
   const run = (body: BackupRunRequest) => start.mutate(() => call(api.POST("/backups/run", { body })));
-  const openRunning = useMutation({
-    mutationFn: (id: string) => call(api.GET("/jobs/{job_id}", { params: { path: { job_id: id } } })),
-    onSuccess: setJob,
-  });
 
   useEffect(() => {
     if (!o) return;
@@ -87,56 +86,80 @@ export default function BackupsPage() {
   const now = o ? Date.parse(o.generated_at) : 0;
   const walTimeout = o?.rpo.wal_archive_timeout_min;
   const busy = start.isPending;
+  const lastCopy = lastOffsiteCopy(o);
 
   return (
-    <div className="flex flex-col gap-4">
-      <PageHeader
+    <div className="flex flex-col gap-6">
+      <Hero
+        size="compact"
         title={p.title}
+        illustration="backup-vault"
+        loading={!o}
         description={
-          <span className="tabular-nums" data-testid="backups-updated">
-            {fmt(p.updated, { time: o ? formatTime(o.generated_at) : "--:--:--" })}
-          </span>
+          o ? (
+            <>
+              {lastCopy ? fmt(p.heroCopy, { age: formatAgo(lastCopy, now) }) : p.heroNoCopy}{" "}
+              {o.rpo.offsite_minutes && o.destinations.length > 0
+                ? fmt(strings.dest.rpoSentence, { minutes: formatRpoMinutes(o.rpo.offsite_minutes) })
+                : ""}
+            </>
+          ) : undefined
         }
         actions={
-          <Button asChild variant="outline">
-            <Link to="/restore">
-              <HistoryIcon data-icon="inline-start" />
-              {p.restore}
-            </Link>
-          </Button>
+          <>
+            <Button
+              type="button"
+              variant="secondary"
+              className="no-underline"
+              disabled={!o || busy}
+              onClick={() => run({ scope: "all", type: "incr", reason: null })}
+              data-testid="backup-all"
+            >
+              <PlayIcon data-icon="inline-start" />
+              {p.backupNow}
+            </Button>
+            <Button
+              asChild
+              variant="ghost"
+              className="text-on-gradient no-underline hover:bg-white/10 hover:text-on-gradient"
+            >
+              <Link to="/restore">
+                <HistoryIcon data-icon="inline-start" />
+                {p.restore}
+              </Link>
+            </Button>
+          </>
         }
+        testId="backups-hero"
       />
-      {backups.isError ? <ProblemAlert error={backups.error} /> : null}
+      <span className="sr-only" data-testid="backups-updated">
+        {fmt(p.updated, { time: o ? formatTime(o.generated_at) : "--:--:--" })}
+      </span>
+      {backups.isError ? <ProblemAlert error={backups.error} onRetry={() => void backups.refetch()} /> : null}
       <BackupHealthRow
         health={health.data ?? o?.health}
-        lastCopy={lastOffsiteCopy(o)}
+        lastCopy={lastCopy}
         loading={!health.data && !o}
         linkToPage={false}
         onMore={() => setMoreOpen((v) => !v)}
         moreOpen={moreOpen}
       />
       {moreOpen ? <BackupBannerList health={health.data ?? o?.health} /> : null}
-      <div className="flex h-9 items-center gap-3 text-sm" data-testid="running-job">
+      <div className="flex h-9 items-center gap-3 type-small" data-testid="running-job">
         {o?.running_job ? (
           <>
-            <span className="truncate">{fmt(p.runningJob, { kind: jobKindText(o.running_job.kind) })}</span>
-            <Button
-              type="button"
-              variant="link"
-              size="sm"
-              className="px-0"
-              onClick={() => openRunning.mutate(o.running_job?.id ?? "")}
-            >
-              {p.openJob}
+            <span className="truncate text-ink">{fmt(p.runningJob, { kind: jobKindText(o.running_job.kind) })}</span>
+            <Button asChild variant="link" size="sm" className={cn("px-0", LINK_TONE)}>
+              <Link to={`/jobs/${encodeURIComponent(o.running_job.id)}`}>{p.openJob}</Link>
             </Button>
           </>
         ) : (
-          <span className="text-soft-foreground">{o ? p.noJob : "\u00a0"}</span>
+          <span className="text-ink-soft">{o ? p.noJob : "\u00a0"}</span>
         )}
       </div>
       {start.error ? <ProblemAlert error={start.error} /> : null}
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-2">
         <LocalCard
           local={o?.local}
           now={now}
@@ -146,18 +169,12 @@ export default function BackupsPage() {
         <RecoveryKeyCard overview={o} clinic={clinic} onJob={setJob} />
       </div>
 
-      <section className="flex flex-col gap-3" aria-labelledby="destinations-title" data-testid="destinations">
+      <section className="flex flex-col gap-4" aria-labelledby="destinations-title" data-testid="destinations">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 id="destinations-title" className="flex-1 text-base font-semibold">
+          <h2 id="destinations-title" className="flex-1 type-h2 text-ink">
             {p.destinations}
           </h2>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => setAdding(true)}
-            data-testid="destination-add"
-          >
+          <Button type="button" variant="outline" onClick={() => setAdding(true)} data-testid="destination-add">
             <PlusIcon data-icon="inline-start" />
             {p.add}
           </Button>
@@ -170,7 +187,7 @@ export default function BackupsPage() {
               ))}
             </div>
           ) : (
-            <div className="min-h-32" />
+            <div className="min-h-72" />
           )
         ) : destinations && destinations.length > 0 ? (
           <div className="grid gap-4 md:grid-cols-2">
@@ -180,6 +197,7 @@ export default function BackupsPage() {
                 d={d}
                 now={now}
                 busy={busy}
+                defaults={retentionDefaults(o?.retention)}
                 onRun={() => run({ scope: "destination", destination: d.id, type: "incr", reason: null })}
                 onVerify={() =>
                   start.mutate(() =>
@@ -196,15 +214,23 @@ export default function BackupsPage() {
             ))}
           </div>
         ) : (
-          <Empty className="min-h-32 rounded-lg border border-dashed" data-testid="no-destinations">
-            <EmptyHeader>
-              <EmptyDescription>{p.noDestinations}</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
+          <div data-testid="no-destinations">
+            <EmptyState
+              illustration="backup-vault"
+              title={p.emptyTitle}
+              description={p.emptyText}
+              action={
+                <Button type="button" onClick={() => setAdding(true)}>
+                  <PlusIcon data-icon="inline-start" />
+                  {p.add}
+                </Button>
+              }
+            />
+          </div>
         )}
       </section>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-2">
         <ScheduleCard overview={o} rows={4 + skeletons + (skeletons > 0 ? 1 : 0)} />
         <VerifyCard
           overview={o}

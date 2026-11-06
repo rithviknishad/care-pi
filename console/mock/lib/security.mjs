@@ -2,6 +2,8 @@
 // A config write with apply=true that switches security.firewall.policy to drop starts a 90 s timer. The option
 // firewall_rollback_s (reset) makes it shorter for a test. When it ends without a confirmation, the policy goes back
 // to accept, in the file too.
+import { supportHeader } from "./jobs.mjs";
+import { sendText } from "./ops.mjs";
 import { Problem, sendJson } from "./http.mjs";
 import { now } from "./state.mjs";
 
@@ -150,6 +152,17 @@ function doctorReport(state) {
 
 export const securityRoutes = [
   { method: "GET", path: "/api/v1/doctor", handler: ({ res, state }) => sendJson(res, 200, doctorReport(state)) },
+  {
+    method: "GET",
+    path: "/api/v1/doctor/export",
+    handler: ({ res, state }) => {
+      const r = doctorReport(state);
+      const rows = r.checks.map(
+        (c) => `[${c.status.toUpperCase().padEnd(4)}] ${c.title}: ${c.detail}${c.fix ? `\n       fix: ${c.fix}` : ""}`,
+      );
+      sendText(res, `${supportHeader(state, "doctor")}\n\nStatus: ${r.status}\n\n${rows.join("\n")}\n`);
+    },
+  },
   { method: "GET", path: "/api/v1/security/firewall", handler: ({ res, state }) => sendJson(res, 200, view(state)) },
   {
     method: "POST",

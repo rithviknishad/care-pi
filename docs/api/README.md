@@ -33,6 +33,7 @@ The public operations are on both ports:
 | Operation | Port 443 | Port 8443 |
 |---|---|---|
 | Public status | `/_care-pi/status` | `/_care-pi/status` |
+| Public job events (contract 0.9.0, section 6.3) | `/_care-pi/jobs/{job_id}/events` | `/_care-pi/jobs/{job_id}/events` |
 | Agent health | `/_care-pi/health` | `/api/v1/health`, `/_care-pi/health` |
 | Root CA (DER or PEM) | `/_care-pi/tls/root-ca` | `/api/v1/tls/root-ca`, `/_care-pi/tls/root-ca` |
 | Root CA (Apple profile) | `/_care-pi/tls/root-ca/mobileconfig` | `/api/v1/tls/root-ca/mobileconfig`, `/_care-pi/tls/root-ca/mobileconfig` |
@@ -221,6 +222,7 @@ The cookie and the two ports:
 | Operation | Why it is public |
 |---|---|
 | `GET /_care-pi/status` (ports 443 and 8443) | The status pages and the installer read it before a login can exist. It gives no address, no version, and no unit detail. |
+| `GET /_care-pi/jobs/{job_id}/events` (ports 443 and 8443) | Contract 0.9.0 (S67). The maintenance page and the setup page of Caddy, and a device without a session, follow the job of the public status. It gives only the steps and the title of a problem, never a log line (section 6.3). |
 | `GET /health` (port 8443 `/api/v1/health`; both ports `/_care-pi/health`) | Liveness for Caddy and the installer. The console also uses it to test the trust of the root CA on another host name (section 2.7). |
 | `POST /session/claim` | The first operator has no account yet. The claim secret is the credential (07 §4.2). |
 | `POST /session/login` | It makes the session. |
@@ -274,8 +276,10 @@ The promise resolves only when the browser trusts the certificate of that host. 
 | Failed claims | all addresses together | 5: the claim is locked for 15 minutes (07 §4.2) | `429 locked-out` |
 | Failed passwords of the account: login, reauth, password change | operator account | 10 failures in a row: the account is locked for 1 minute; each next failure doubles the lock, up to 60 minutes; a success resets the count | `429 locked-out` |
 | Public reads: `/_care-pi/status`, `/health`, the public `/tls/*` operations | client address | 60 each minute (600 for the shared address `tailscale`) | `429 rate-limited` |
+| Public job events: `/_care-pi/jobs/{job_id}/events` (contract 0.9.0) | client address | 60 each minute (600 for the shared address `tailscale`), a bucket of its own: the poll of the public status does not use it | `429 rate-limited` |
 | Requests with a session | session | 300 each minute | `429 rate-limited` |
 | Open SSE streams | session, agent | 4 for each session, 16 in total | `429 rate-limited` |
+| Open public job streams (contract 0.9.0) | client address, agent | 4 for each address (16 for the shared address `tailscale`), 16 in total. They do not use the slots of the sessions | `429 rate-limited` |
 
 Rules:
 
@@ -469,6 +473,70 @@ data: {"id":"20261030T101500.123Z-apply","kind":"apply","state":"succeeded","sou
 `GET /logs/{unit}?follow=true` uses the same format with `event: log` (a `LogLine`) and `heartbeat`.
 The event id is the journal cursor. After a reconnect, the stream continues after that cursor.
 
+### 6.3 The public job stream (S67)
+
+Each running job is visible from each tab and each device, also before a login. `GET /_care-pi/status` names the
+job that holds the apply lock (`job`: `id`, `kind`, `state`, `title`, `step`, `step_index`, `step_count`,
+`started_at`), lists the 5 newest jobs (`jobs_recent`: `id`, `kind`, `state`, `started_at`, `finished_at`), and
+names the finish job of the setup while `setup_state` is `applying` (`setup_job_id`). The maintenance page and the
+setup page of Caddy, and the console on a device without a session, follow that job with
+`GET /_care-pi/jobs/{job_id}/events`. The path is the same on port 443 and port 8443; it is not below `/api/v1`.
+`step_count` is the planned step count of a job that knows its plan: `apply` and `setup` (the plan actions and the
+fixed steps), `update-stage`, and `update-apply`. It stays the same while the job runs. Another job has
+`step_count: null`, and a page shows "Step N" without a total.
+
+The privacy boundary. The public stream is read-only and has no session, so it gives only what the maintenance page
+shows:
+
+| Job event | Public stream |
+|---|---|
+| `step` | The `JobStep` with `detail: null` and its action key as `name`. The detail of a failed step is the error text: it can tell a path, a host fact, or the output of a command. |
+| `log` | Never. Log lines are the output of commands. |
+| `progress` | Never. |
+| `error` | Only `type`, `title`, and `status` (`PublicJobProblem`). No `detail`. |
+| `done` | The `PublicJob`: `id`, `kind`, `state`, the times, the steps (the action key as `name`, without detail), `error` (only `type`, `title`, `status`), `last_event_id`. No `reason`, `source`, `result`, or `cancellable`. |
+| `heartbeat` | Every 15 s, as in section 6.2. |
+
+The public stream and `job.step` of the public status name a step only by its action key: `name` is the text before
+`:` (`create-care-superuser`, not `create-care-superuser: NAME`), and `action` stays. The argument of a step name can
+name the Care user, the host name, a path, a destination id, or an image. The maintenance page and the console show
+the sentence of the key (docs/console-ui.md section 9), so a person sees the same step.
+
+The event ids are the ids of the job events, so they have gaps where the stream leaves out an event. `Last-Event-ID`
+and `after` work as in section 6.2. Without `Accept: text/event-stream`, the path gives one `PublicJobEventPage`; its
+`last_event_id` also counts the events that the page does not show, so the next page starts after them. The limits of
+section 4: 60 requests each minute for each address (a bucket of its own), 4 open streams for each address, 16 in
+total, separate from the streams of the sessions. The agent reads each public stream from its byte offset in the event
+file, and reads it again at most each 250 ms, so the log lines of a busy job cost little.
+
+### 6.4 The Jobs page and copy for support (S67, S68)
+
+- `GET /jobs?state=active` lists the jobs that run (`queued` or `running`); `GET /jobs?state=recent` lists the jobs
+  that ended (`succeeded`, `failed`, `cancelled`). A `JobState` value still filters one state.
+- `GET /jobs/{job_id}` has `log_tail` (`JobLogTail`): the last 200 log lines with an id of `last_event_id` or less,
+  oldest first, and `total`, the number of log lines up to that id. After a reload, the console shows the steps and
+  the tail, then follows `GET /jobs/{job_id}/events?after=<last_event_id>`. It does not read the events again from 0.
+- The "Copy" target of each view is plain text (`text/plain; charset=utf-8`): `GET /jobs/{job_id}/export` (the job,
+  each step with its times, each log line, each reported problem, the problem), `GET /logs/{unit}/export` (the page
+  of `GET /logs/{unit}` with the same `n`, `since`, and `after`), and `GET /doctor/export` (the text of
+  `care-pi doctor`). They are separate operations, so the JSON operations keep one media type. Each text starts with
+  the same header:
+
+  ```text
+  CARE support text: job 20261030T101500.123Z-apply
+  Device: Sunrise Clinic (care.local)
+  Agent: v0.9.0, commit 1a2b3c4, built 2026-11-06
+  Lock: 2026.11.1 (solution care, track stable, source lock, generated 2026-11-01T10:00:00Z)
+  Time: 2026-11-06T10:20:00Z
+  ```
+
+- Redaction: `log_tail` and each export go through the redaction of the support bundle. The agent replaces with
+  `<redacted>` each secret value of the device (the files of `/etc/care-pi/secrets`, the S3 keys of the destinations,
+  the values of the recovery keys), a bearer token, the session cookie, a Tailscale auth key (`tskey-…`), and the value
+  of a pair with a secret name (`password=…`, `"token": "…"`, `X-CSRF-Token: …`, `DJANGO_SECRET_KEY=…`). A value
+  `true`, `false`, `null`, an object, or an array stays.
+- `care-pi jobs export JOB_ID` prints the same transcript. `care-pi jobs list --state active|recent` uses the groups.
+
 ## 7. Errors
 
 Each error is RFC 9457 `application/problem+json` (schema `Problem`): `type`, `title`, `status`, `detail`, `instance`,
@@ -493,7 +561,7 @@ An operation with a session can also return `csrf` (403); see §3.
 | `csrf` | 403 | The `X-CSRF-Token` or the `Origin` is not correct. |
 | `reauth-required` | 403 | The operation needs a credential check in the last 5 minutes. |
 | `not-found` | 404 | The resource does not exist. |
-| `job-not-found` | 404 | The job does not exist. |
+| `job-not-found` | 404 | The job does not exist. The public job stream (section 6.3) also gives it for a path segment that is not a job id. |
 | `unit-not-found` | 404 | The unit has no journal on this host. |
 | `not-claimed` | 409 | Login or recover before the claim. |
 | `already-claimed` | 409 | A claim after the claim. |
@@ -508,7 +576,7 @@ An operation with a session can also return `csrf` (403); see §3.
 | `payload-too-large` | 413 | The body is larger than 1 MiB. |
 | `unsupported-media-type` | 415 | The `Content-Type` is not the one of the operation. |
 | `precondition-required` | 428 | `If-Match` is not there. |
-| `rate-limited` | 429 | A rate limit (section 4). |
+| `rate-limited` | 429 | A rate limit (section 4), also the limits of the public job stream (section 6.3). |
 | `locked-out` | 429 | A lockout (section 4). |
 | `internal` | 500 | An error of the agent or a host command. The journal of `care-pi.service` has the detail. |
 | `not-implemented-in-this-version` | 501 | An operation with `x-phase` greater than the version. `phase` tells when. |
@@ -616,7 +684,7 @@ The console stops the job event poll on a 4xx problem other than `429` and shows
 
 CLI parity is an exit criterion of Phase 2 (`06`). Each operation has the CLI command with the same effect
 (`x-cli`). `-` means that the operation only manages browser state. "new" means that Phase 2 adds the command.
-The paths are below `/api/v1` on port 8443, except `/_care-pi/status`. Section 1 gives the paths of the public operations on port 443.
+The paths are below `/api/v1` on port 8443, except `/_care-pi/status` and `/_care-pi/jobs/{job_id}/events`. Section 1 gives the paths of the public operations on port 443.
 
 | Method | Path | Auth | CLI command (`x-cli`) | Phase | In the CLI today |
 |---|---|---|---|---|---|
@@ -660,6 +728,10 @@ The paths are below `/api/v1` on port 8443, except `/_care-pi/status`. Section 1
 | GET | `/jobs` | session | `care-pi jobs list --json` | 2 | new |
 | GET | `/jobs/{job_id}` | session | `care-pi jobs show JOB_ID --json` | 2 | new |
 | GET | `/jobs/{job_id}/events` | session | `care-pi jobs follow JOB_ID` | 2 | new |
+| GET | `/_care-pi/jobs/{job_id}/events` | public | `care-pi jobs follow JOB_ID` | 0.9.0 | yes |
+| GET | `/jobs/{job_id}/export` | session | `care-pi jobs export JOB_ID` | 0.9.0 | new |
+| GET | `/logs/{unit}/export` | session | `care-pi logs UNIT [-n N] [--since TIME]` | 0.9.0 | yes |
+| GET | `/doctor/export` | session | `care-pi doctor` | 0.9.0 | yes |
 | POST | `/jobs/{job_id}/cancel` | session + CSRF | `care-pi jobs cancel JOB_ID` | 2 | new |
 | GET | `/logs` | session | `care-pi logs --help` | 2 | yes |
 | GET | `/logs/{unit}` | session | `care-pi logs UNIT [-n N] [--since TIME] [-f] [--json]` | 2 | `--since`, `--json` are new |
@@ -1796,3 +1868,25 @@ All changes are additive.
 
 - The config key `security.firewall.allow_ports` (S64, section 17.2).
 - `FirewallState.allow_ports` and the schema `FirewallAllowPort` (section 17.2).
+
+## 18. Jobs from each device and copy for support (S67, S68)
+
+Console v2 shows each running job from each tab and each device, also on the maintenance page and the setup page of
+Caddy (S67), and each log view, job view, problem, and doctor result has "Copy" (S68). Section 6.3 has the public job
+stream and its privacy boundary; section 6.4 has the Jobs page and the plain-text exports.
+
+### 18.1 Changes of contract 0.9.0
+
+All changes are additive.
+
+- `PublicJobProgress` (`PublicStatus.job`) has `id`, `state`, and `title`. `job` was an object before, so no `job_id`
+  is necessary.
+- `PublicStatus.jobs_recent` (`PublicJobSummary`, the 5 newest jobs) and `PublicStatus.setup_job_id` (the finish job
+  while `setup_state` is `applying`; `SetupState.job_id` of `GET /setup` has it too).
+- `GET /_care-pi/jobs/{job_id}/events` (public, both ports) and the schemas `PublicJobEvent`, `PublicJobEventPage`,
+  `PublicJob`, `PublicJobProblem`, `PublicJobErrorEvent`, `PublicJobDoneEvent`. No new problem type.
+- `GET /jobs?state=` takes `JobStateFilter`: the job states and the groups `active` and `recent`.
+- `Job.log_tail` (`JobLogTail`), only in the response of `GET /jobs/{job_id}`.
+- `GET /jobs/{job_id}/export`, `GET /logs/{unit}/export`, and `GET /doctor/export` (`text/plain`).
+- The status pages of Caddy (`docs/apply.md`, "Status pages and modes") follow the job of the public status, show the
+  steps, the progress, and the next step, link to `https://<host>:8443/jobs/<id>`, and have "Copy status".

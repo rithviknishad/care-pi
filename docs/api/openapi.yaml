@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: care-pi agent API
-  version: 0.8.1
+  version: 0.9.0
   summary: The HTTP API between the care-pi agent and the console.
   description: |
     This document is the contract between the care-pi agent (`care-pi serve`) and the console.
@@ -15,8 +15,9 @@ info:
       `308` to `https://<host>:8443/`.
     - The agent listens on the unix socket `/run/care-pi/api.sock`. Caddy is the only client.
       On port 8443, Caddy sends each request to the socket. On port 443, Caddy sends only `/_care-pi/*` to the socket.
-    - The public operations are on both ports, below `/_care-pi/`: `GET /_care-pi/status`, `GET /_care-pi/health`,
-      and the three public `/_care-pi/tls/...` operations. On port 8443 they are also below `/api/v1/`.
+    - The public operations are on both ports, below `/_care-pi/`: `GET /_care-pi/status`,
+      `GET /_care-pi/jobs/{job_id}/events` (contract 0.9.0), `GET /_care-pi/health`, and the three public
+      `/_care-pi/tls/...` operations. On port 8443 the health and the TLS operations are also below `/api/v1/`.
       Each of these operations lists its servers.
     - The agent sends no CORS headers (`Access-Control-*`) on any response.
     - Each request body and each response body is JSON (`application/json`), except where an
@@ -123,6 +124,9 @@ paths:
         It gives only the data that the status pages show: the page that Caddy serves now, the setup state,
         the claim methods, the clock gate, and the progress of a job that changes the host.
         It gives no address, no version, and no unit detail.
+        Contract 0.9.0 (S67): `job` has the id, the state, and the title of the job, `jobs_recent` lists the 5 newest jobs,
+        and `setup_job_id` names the finish job of the setup. A page or a device without a session follows the steps
+        of the job with `GET /_care-pi/jobs/{job_id}/events`.
         The agent keeps the result for 2 s.
       security: []
       x-cli: care-pi status --json
@@ -139,6 +143,91 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PublicStatus'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+  /_care-pi/jobs/{job_id}/events:
+    servers:
+      - url: 'https://{host}:{port}'
+        description: The root of each origin. Port 443 (Care) and port 8443 (console) serve this path.
+        variables:
+          host:
+            default: care.local
+            description: A host name or a LAN address that Caddy serves.
+          port:
+            enum: ['443', '8443']
+            default: '443'
+            description: '`443`: the Care origin. `8443`: the console origin.'
+    get:
+      tags: [jobs]
+      operationId: getPublicJobEvents
+      summary: Follow the steps of a job without a session
+      description: |
+        Contract 0.9.0 (S67). The public, read-only form of `GET /jobs/{job_id}/events`. The maintenance page and the
+        setup page of Caddy, and a device without a session, follow the job of `GET /_care-pi/status` (`job.id`,
+        `setup_job_id`) with it. It needs no session.
+
+        The privacy boundary (design note section 6.3). The agent sends only these events:
+
+        - `step`: a step after a change, with `detail: null` (the detail of a failed step has the error text) and with
+          its action key as `name` (the text before `:`: the argument of a name can name the Care user, the host, or a
+          path);
+        - `error`: the `type`, the `title`, and the `status` of a problem that a step reports (`PublicJobProblem`);
+        - `done`: the public job (`PublicJob`), without the reason, the source, the result, and the error detail;
+        - `heartbeat`: every 15 s, only in SSE.
+
+        It never sends a `log` or a `progress` event. The event ids are the ids of the job events, so they can have gaps.
+        `Last-Event-ID` and `after` work as for `GET /jobs/{job_id}/events`.
+
+        Two forms, by the `Accept` header: `text/event-stream` (SSE, until `done`) and `application/json` (one
+        `PublicJobEventPage`; its `last_event_id` also counts the events that the page does not show).
+        Limits: 60 requests each minute for each client address (600 for the shared address `tailscale`), separate from
+        the other public reads; 4 open streams for each address and 16 open public streams in total. The public streams
+        do not use the stream slots of the sessions.
+      security: []
+      x-cli: care-pi jobs follow JOB_ID
+      x-problems: [job-not-found, invalid-request]
+      parameters:
+        - $ref: '#/components/parameters/JobIdPath'
+        - $ref: '#/components/parameters/AfterEventId'
+        - $ref: '#/components/parameters/LastEventId'
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The public events.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControl'
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/EventStream'
+              examples:
+                update:
+                  summary: The public stream of an update (the log events 2 and 4 are not in it)
+                  value: |
+                    retry: 3000
+
+                    id: 1
+                    event: step
+                    data: {"index":0,"name":"cutover-maintenance-on","action":"cutover-maintenance-on","state":"running","started_at":"2026-11-22T02:04:55Z","finished_at":null,"detail":null}
+
+                    id: 3
+                    event: step
+                    data: {"index":0,"name":"cutover-maintenance-on","action":"cutover-maintenance-on","state":"succeeded","started_at":"2026-11-22T02:04:55Z","finished_at":"2026-11-22T02:04:56Z","detail":null}
+
+                    event: heartbeat
+                    data: {"time":"2026-11-22T02:05:10Z"}
+
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicJobEventPage'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -1386,9 +1475,11 @@ paths:
             $ref: '#/components/schemas/JobKind'
         - name: state
           in: query
-          description: Only jobs in this state.
+          description: |
+            Only jobs in this state. Contract 0.9.0 adds two groups: `active` (`queued` or `running`) and `recent`
+            (`succeeded`, `failed`, or `cancelled`).
           schema:
-            $ref: '#/components/schemas/JobState'
+            $ref: '#/components/schemas/JobStateFilter'
         - name: limit
           in: query
           description: The largest number of jobs in the page.
@@ -1420,6 +1511,10 @@ paths:
       tags: [jobs]
       operationId: getJob
       summary: Get a job
+      description: |
+        Contract 0.9.0 (S67): the job has `log_tail`, the last 200 log lines up to `last_event_id`, without secrets.
+        After a reload, the console shows the steps and these lines, then follows
+        `GET /jobs/{job_id}/events?after=<last_event_id>`. It does not read the events again from 0.
       x-cli: care-pi jobs show JOB_ID --json
       x-problems: [not-authenticated, job-not-found]
       parameters:
@@ -1496,6 +1591,57 @@ paths:
           $ref: '#/components/responses/UnprocessableContent'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /jobs/{job_id}/export:
+    get:
+      tags: [jobs]
+      operationId: exportJob
+      summary: Get a job as plain text for support
+      description: |
+        Contract 0.9.0 (S68). The "Copy" target of the job view of the console: a plain-text transcript for support. It has
+        a header (the display name and the host name of the device, the agent version, the lock version, the time), the job,
+        each step with its sentence and its start and end times, each log line, each problem that a step reported, and the
+        problem of a failed job. It is complete: also a log line that `log_tail` does not have.
+        The agent removes the secrets: each secret value of the device, bearer tokens, the session cookie, Tailscale auth
+        keys, and the value of a pair such as `password=…`, `"token": "…"`, or `DJANGO_SECRET_KEY=…`.
+      x-cli: care-pi jobs export JOB_ID
+      x-problems: [not-authenticated, job-not-found]
+      parameters:
+        - $ref: '#/components/parameters/JobIdPath'
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The transcript (`text/plain; charset=utf-8`).
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: |
+                CARE support text: job 20261030T101500.123Z-apply
+                Device: Sunrise Clinic (care.local)
+                Agent: v0.9.0, commit 1a2b3c4, built 2026-11-06
+                Lock: 2026.11.1 (solution care, track stable, source lock, generated 2026-11-01T10:00:00Z)
+                Time: 2026-11-06T10:20:00Z
+
+                Job: 20261030T101500.123Z-apply
+                Kind: apply (Apply the settings)
+                State: succeeded
+                Source: console
+                Reason: preset change
+                Created: 2026-10-30T10:15:00.123Z
+                Started: 2026-10-30T10:15:00.123Z
+                Finished: 2026-10-30T10:15:24.000Z (23.9s)
+
+                Steps (1):
+                  1. [succeeded] Start the changed services again (restart: care-api.service)
+                     2026-10-30T10:15:02.000Z to 2026-10-30T10:15:24.000Z (22s)
+
+                Log (1 lines; time, stream, step | line):
+                2026-10-30T10:15:03.000Z agent 1 | waiting for care-api.service to become healthy
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
   /jobs/{job_id}/cancel:
     post:
       tags: [jobs]
@@ -1537,6 +1683,7 @@ paths:
         certificates (14 days before the end), each backup destination (the last snapshot against
         `backups.alert_after_hours`), the firewall, a pending reboot, and the updates. The checks change nothing; a run
         takes about 1 s. The failed checks come first.
+        Contract 0.9.0 (S68): `GET /doctor/export` gives the same checks as plain text.
       x-cli: care-pi doctor --json
       x-problems: [not-authenticated]
       responses:
@@ -1548,6 +1695,39 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DoctorReport'
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+  /doctor/export:
+    get:
+      tags: [status]
+      operationId: exportDoctor
+      summary: Run the health checks and get them as plain text for support
+      description: |
+        Contract 0.9.0 (S68). The "Copy" target of the health checks in the console: the checks of `GET /doctor` as the text
+        of `care-pi doctor` (a table, the fix hints, the status), with the header of the plain-text exports (the device, the
+        agent version, the lock version, the time), without secrets (design note section 6.4).
+      x-cli: care-pi doctor
+      x-problems: [not-authenticated]
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The checks (`text/plain; charset=utf-8`).
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: |
+                CARE support text: care-pi doctor
+                Device: Sunrise Clinic (care.local)
+                Agent: v0.9.0, commit 1a2b3c4, built 2026-11-06
+                Lock: 2026.11.1 (solution care, track stable, source lock, generated 2026-11-01T10:00:00Z)
+                Time: 2026-11-06T10:20:00Z
+                Checked: 2026-11-06T10:20:00Z
+
+                STATUS  CHECK                DETAIL
+                OK      Ports 80, 443, 8443  no other program listens on a port of the pod
+                status: ok
         '401':
           $ref: '#/components/responses/NotAuthenticated'
   /metrics:
@@ -1608,6 +1788,8 @@ paths:
         - `application/json`: the last `n` lines (or the lines after the cursor `after`), oldest first.
         - `text/event-stream` with `follow=true`: the last `n` lines, then each new line. The event id is the journal cursor.
           After a reconnect with `Last-Event-ID`, the stream continues after that cursor. A `heartbeat` event comes every 15 s.
+
+        Contract 0.9.0 (S68): `GET /logs/{unit}/export` gives the same page as plain text.
       x-cli: care-pi logs UNIT [-n N] [--since TIME] [-f] [--json]
       x-problems: [not-authenticated, unit-not-found, invalid-request]
       parameters:
@@ -1671,6 +1853,63 @@ paths:
           $ref: '#/components/responses/UnprocessableContent'
         '429':
           $ref: '#/components/responses/TooManyRequests'
+  /logs/{unit}/export:
+    get:
+      tags: [logs]
+      operationId: exportLogs
+      summary: Get the journal of a unit as plain text for support
+      description: |
+        Contract 0.9.0 (S68). The "Copy" target of the log view of the console: the page of `GET /logs/{unit}` (the same `n`,
+        `since`, and `after`) as plain text, one line for each journal line (time, priority, unit, message), with the header
+        of the plain-text exports (the device, the agent version, the lock version, the time), without secrets
+        (design note section 6.4).
+      x-cli: care-pi logs UNIT [-n N] [--since TIME]
+      x-problems: [not-authenticated, unit-not-found, invalid-request]
+      parameters:
+        - $ref: '#/components/parameters/LogUnitPath'
+        - name: n
+          in: query
+          description: The number of lines.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 5000
+            default: 100
+        - name: since
+          in: query
+          description: Only lines at or after this time.
+          schema:
+            type: string
+            format: date-time
+        - name: after
+          in: query
+          description: Only lines after this journal cursor.
+          schema:
+            $ref: '#/components/schemas/JournalCursor'
+      responses:
+        default:
+          $ref: '#/components/responses/UnexpectedProblem'
+        '200':
+          description: The lines (`text/plain; charset=utf-8`).
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: |
+                CARE support text: the journal of care-api.service
+                Device: Sunrise Clinic (care.local)
+                Agent: v0.9.0, commit 1a2b3c4, built 2026-11-06
+                Lock: 2026.11.1 (solution care, track stable, source lock, generated 2026-11-01T10:00:00Z)
+                Time: 2026-11-06T10:20:00Z
+
+                Unit: care-api.service (api), 1 lines (time, priority, unit: message):
+                2026-10-30T10:15:00.000000Z info care-api.service: Booting worker with pid: 12
+        '401':
+          $ref: '#/components/responses/NotAuthenticated'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableContent'
   /support-bundle:
     post:
       tags: [support]
@@ -4810,7 +5049,7 @@ components:
       type: object
       additionalProperties: false
       description: The minimal public status. No address, no version, no unit detail.
-      required: [site, setup_state, claim_methods, display_name, console_port, clock, care_healthy, job, time, maintenance, firstboot_error]
+      required: [site, setup_state, claim_methods, display_name, console_port, clock, care_healthy, job, jobs_recent, setup_job_id, time, maintenance, firstboot_error]
       properties:
         site:
           type: string
@@ -4855,9 +5094,27 @@ components:
           type: boolean
           description: care-api is active and healthy.
         job:
-          description: The job that holds the apply lock, for the progress on the maintenance page. `null` when no such job runs.
+          description: |
+            The job that holds the apply lock, for the progress on the maintenance page and the setup page. `null` when no
+            such job runs. Contract 0.9.0 adds `id`, `state`, and `title`: a page or a device without a session follows the
+            steps of the job with `GET /_care-pi/jobs/{job_id}/events` (S67).
           oneOf:
             - $ref: '#/components/schemas/PublicJobProgress'
+            - type: 'null'
+        jobs_recent:
+          type: array
+          maxItems: 5
+          description: |
+            Contract 0.9.0 (S67). The 5 newest jobs of all kinds, newest first, also the jobs that run. Only the id, the kind,
+            the state, and the times. The status pages copy them in "Copy status".
+          items:
+            $ref: '#/components/schemas/PublicJobSummary'
+        setup_job_id:
+          description: |
+            Contract 0.9.0 (S67). The finish job of the setup while `setup_state` is `applying`, else `null`. A second
+            device that opens the console during the finish shows the progress of this job, not a step of the wizard.
+          oneOf:
+            - $ref: '#/components/schemas/JobId'
             - type: 'null'
         time:
           type: string
@@ -4885,6 +5142,8 @@ components:
             trusted: true
           care_healthy: false
           job: null
+          jobs_recent: []
+          setup_job_id: null
           time: '2026-10-30T10:15:00Z'
           maintenance: {active: false, kind: null, job_id: null, step: null, started_at: null}
           firstboot_error: null
@@ -4899,22 +5158,36 @@ components:
             source: ntp
             trusted: true
           care_healthy: false
-          job: {kind: update-apply, step: 'migrate: start care-beat.service', step_index: 9, step_count: 15, started_at: '2026-11-22T02:03:00Z'}
+          job: {id: 20261122T020300.000Z-update-apply, kind: update-apply, state: running, title: Install an update, step: migrate, step_index: 10, step_count: 17, started_at: '2026-11-22T02:03:00Z'}
+          jobs_recent:
+            - {id: 20261122T020300.000Z-update-apply, kind: update-apply, state: running, started_at: '2026-11-22T02:03:00Z', finished_at: null}
+            - {id: 20261122T020000.000Z-backup-run, kind: backup-run, state: succeeded, started_at: '2026-11-22T02:00:00Z', finished_at: '2026-11-22T02:01:12Z'}
+          setup_job_id: null
           time: '2026-11-22T02:06:10Z'
           maintenance: {active: true, kind: update-apply, job_id: 20261122T020300.000Z-update-apply, step: migrate, started_at: '2026-11-22T02:04:55Z'}
           firstboot_error: null
     PublicJobProgress:
       type: object
       additionalProperties: false
-      description: The progress of a job that changes the host. Only the kind and the step.
-      required: [kind, step, step_index, step_count, started_at]
+      description: |
+        The progress of a job that changes the host. Only the id, the kind, the state, the title, and the step.
+        Contract 0.9.0 adds `id`, `state`, and `title` (S67).
+      required: [id, kind, state, title, step, step_index, step_count, started_at]
       properties:
+        id:
+          $ref: '#/components/schemas/JobId'
         kind:
           $ref: '#/components/schemas/JobKind'
+        state:
+          $ref: '#/components/schemas/JobState'
+        title:
+          type: string
+          description: The title of the kind for a person (`strings.jobs.kinds` of the console).
+          examples: [Install an update]
         step:
           type: [string, 'null']
-          description: The name of the step that runs now.
-          examples: ['ensure-fe: build 8d2f0c1a9b7e']
+          description: The action key of the step that runs now (the text before `:` of its name, as in the public job stream).
+          examples: [ensure-fe]
         step_index:
           type: [integer, 'null']
           minimum: 0
@@ -4922,17 +5195,223 @@ components:
         step_count:
           type: [integer, 'null']
           minimum: 0
-          description: The number of steps that the job knows now. It can grow.
+          description: |
+            The planned number of steps of the job, when the job knows its plan: `apply` and `setup` (the plan
+            actions and the fixed steps), `update-stage`, and `update-apply`. It stays the same while the job runs
+            (it grows only when the job runs more steps than it planned, for example a rollback). `null` when the
+            job has no plan: a page then shows "Step N" without a total and an indeterminate bar. A page never shows
+            all the steps complete before the job is done.
         started_at:
           type: string
           format: date-time
           description: The start of the job.
       examples:
-        - kind: setup
-          step: 'ensure-fe: build 8d2f0c1a9b7e'
+        - id: 20261030T101500.000Z-setup
+          kind: setup
+          state: running
+          title: Set up the device
+          step: ensure-fe
           step_index: 9
           step_count: 12
           started_at: '2026-10-30T10:15:00Z'
+    PublicJobSummary:
+      type: object
+      additionalProperties: false
+      description: Contract 0.9.0 (S67). One job of `PublicStatus.jobs_recent`. No source, step, reason, or error.
+      required: [id, kind, state, started_at, finished_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/JobId'
+        kind:
+          $ref: '#/components/schemas/JobKind'
+        state:
+          $ref: '#/components/schemas/JobState'
+        started_at:
+          type: [string, 'null']
+          format: date-time
+          description: The start of the job.
+        finished_at:
+          type: [string, 'null']
+          format: date-time
+          description: The end of the job. `null` while it runs.
+      examples:
+        - id: 20261122T020000.000Z-backup-run
+          kind: backup-run
+          state: succeeded
+          started_at: '2026-11-22T02:00:00Z'
+          finished_at: '2026-11-22T02:01:12Z'
+    PublicJobProblem:
+      type: object
+      additionalProperties: false
+      description: |
+        Contract 0.9.0 (S67). The problem of a job in the public event stream: only the type, the title, and the status.
+        The detail can tell facts of the host, so only a session reads it (`GET /jobs/{job_id}`).
+      required: [type, title, status]
+      properties:
+        type:
+          $ref: '#/components/schemas/ProblemType'
+        title:
+          type: string
+          description: The title of the type.
+          examples: [A migration failed]
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+          description: The HTTP status of the type.
+      examples:
+        - type: https://care-pi.rithviknishad.dev/problems/migration-failed
+          title: A migration failed
+          status: 500
+    PublicJob:
+      type: object
+      additionalProperties: false
+      description: |
+        Contract 0.9.0 (S67). The job in the `done` event of the public stream: no reason, source, result, or error detail.
+        Each step has `detail: null`, and its action key as `name` (the text before `:`).
+      required: [id, kind, state, created_at, started_at, finished_at, steps, error, last_event_id]
+      properties:
+        id:
+          $ref: '#/components/schemas/JobId'
+        kind:
+          $ref: '#/components/schemas/JobKind'
+        state:
+          $ref: '#/components/schemas/JobState'
+        created_at:
+          type: string
+          format: date-time
+          description: The creation of the job.
+        started_at:
+          type: [string, 'null']
+          format: date-time
+          description: The start of the job.
+        finished_at:
+          type: [string, 'null']
+          format: date-time
+          description: The end of the job.
+        steps:
+          type: array
+          description: The steps in order, each with `detail` null.
+          items:
+            $ref: '#/components/schemas/JobStep'
+        error:
+          description: Why the job failed, without the detail. `null` unless the state is `failed`.
+          oneOf:
+            - $ref: '#/components/schemas/PublicJobProblem'
+            - type: 'null'
+        last_event_id:
+          type: integer
+          minimum: 0
+          description: The id of the last event of the job.
+      examples:
+        - id: 20261030T110000.000Z-fe-prune
+          kind: fe-prune
+          state: succeeded
+          created_at: '2026-10-30T11:00:00Z'
+          started_at: '2026-10-30T11:00:00Z'
+          finished_at: '2026-10-30T11:00:01Z'
+          steps:
+            - {index: 0, name: prune, action: prune, state: succeeded, started_at: '2026-10-30T11:00:00Z', finished_at: '2026-10-30T11:00:01Z', detail: null}
+          error: null
+          last_event_id: 3
+    PublicJobErrorEvent:
+      type: object
+      additionalProperties: false
+      description: Contract 0.9.0. A step reports a problem; the job can continue. `data` has no detail.
+      required: [id, event, data]
+      properties:
+        id:
+          $ref: '#/components/schemas/EventId'
+        event:
+          type: string
+          const: error
+          description: The event type.
+        data:
+          $ref: '#/components/schemas/PublicJobProblem'
+      examples:
+        - id: 30
+          event: error
+          data: {type: 'https://care-pi.rithviknishad.dev/problems/internal', title: Internal error, status: 500}
+    PublicJobDoneEvent:
+      type: object
+      additionalProperties: false
+      description: Contract 0.9.0. The job ended. `data` is the public job. The agent closes the stream after this event.
+      required: [id, event, data]
+      properties:
+        id:
+          $ref: '#/components/schemas/EventId'
+        event:
+          type: string
+          const: done
+          description: The event type.
+        data:
+          $ref: '#/components/schemas/PublicJob'
+      examples:
+        - id: 3
+          event: done
+          data:
+            id: 20261030T110000.000Z-fe-prune
+            kind: fe-prune
+            state: succeeded
+            created_at: '2026-10-30T11:00:00Z'
+            started_at: '2026-10-30T11:00:00Z'
+            finished_at: '2026-10-30T11:00:01Z'
+            steps:
+              - {index: 0, name: prune, action: prune, state: succeeded, started_at: '2026-10-30T11:00:00Z', finished_at: '2026-10-30T11:00:01Z', detail: null}
+            error: null
+            last_event_id: 3
+    PublicJobEvent:
+      description: |
+        Contract 0.9.0 (S67). One event of `GET /_care-pi/jobs/{job_id}/events`: `step` (a `JobStep` with its action key
+        as `name` and `detail: null`), `error` (a `PublicJobProblem`), `done` (a `PublicJob`), and `heartbeat` (only in
+        SSE). Never `log` or `progress`.
+      oneOf:
+        - $ref: '#/components/schemas/JobStepEvent'
+        - $ref: '#/components/schemas/PublicJobErrorEvent'
+        - $ref: '#/components/schemas/PublicJobDoneEvent'
+        - $ref: '#/components/schemas/HeartbeatEvent'
+      discriminator:
+        propertyName: event
+        mapping:
+          step: '#/components/schemas/JobStepEvent'
+          error: '#/components/schemas/PublicJobErrorEvent'
+          done: '#/components/schemas/PublicJobDoneEvent'
+          heartbeat: '#/components/schemas/HeartbeatEvent'
+      examples:
+        - id: 3
+          event: step
+          data: {index: 0, name: cutover-maintenance-on, action: cutover-maintenance-on, state: succeeded, started_at: '2026-11-22T02:04:55Z', finished_at: '2026-11-22T02:04:56Z', detail: null}
+    PublicJobEventPage:
+      type: object
+      additionalProperties: false
+      description: |
+        Contract 0.9.0 (S67). The JSON form of `GET /_care-pi/jobs/{job_id}/events`. It never has `heartbeat`, `log`, or
+        `progress` events.
+      required: [job_id, events, last_event_id, done]
+      properties:
+        job_id:
+          $ref: '#/components/schemas/JobId'
+        events:
+          type: array
+          maxItems: 1000
+          description: The public events after `after`, oldest first. The page reads 1000 job events at most.
+          items:
+            $ref: '#/components/schemas/PublicJobEvent'
+        last_event_id:
+          type: integer
+          minimum: 0
+          description: The id of the last job event that the page read, also an event that it does not show. Send it as `after`.
+        done:
+          type: boolean
+          description: The job ended and the page has the `done` event.
+      examples:
+        - job_id: 20261122T020300.000Z-update-apply
+          events:
+            - id: 1
+              event: step
+              data: {index: 0, name: cutover-maintenance-on, action: cutover-maintenance-on, state: running, started_at: '2026-11-22T02:04:55Z', finished_at: null, detail: null}
+          last_event_id: 2
+          done: false
     HostCheck:
       type: object
       additionalProperties: false
@@ -7393,6 +7872,14 @@ components:
         A journal of Phase 1 maps so: `result: running` → `running`, `ok` → `succeeded`, `failed` → `failed`.
         When no process holds the apply lock, `result: running` → `failed` with the problem `internal` and the detail "interrupted".
       examples: [running]
+    JobStateFilter:
+      type: string
+      enum: [queued, running, succeeded, failed, cancelled, active, recent]
+      description: |
+        The filter `state` of `GET /jobs`: a `JobState`, or a group (contract 0.9.0). `active`: `queued` or `running`,
+        the jobs that run now. `recent`: `succeeded`, `failed`, or `cancelled`, the jobs that ended. The Jobs page of
+        the console lists `state=active` and `state=recent` (S67).
+      examples: [active]
     JobStepState:
       type: string
       enum: [pending, running, succeeded, failed, skipped, cancelled]
@@ -7462,7 +7949,8 @@ components:
     Job:
       type: object
       additionalProperties: false
-      description: A job, from its journal file.
+      description: |
+        A job, from its journal file. Contract 0.9.0: only the response of `GET /jobs/{job_id}` has `log_tail`.
       required: [id, kind, state, source, reason, created_at, started_at, finished_at, cancellable, steps, error, result, last_event_id]
       properties:
         id:
@@ -7513,6 +8001,8 @@ components:
           type: integer
           minimum: 0
           description: The id of the last event of the job. `0` before the first event.
+        log_tail:
+          $ref: '#/components/schemas/JobLogTail'
       examples:
         - id: 20261030T101500.123Z-apply
           kind: apply
@@ -7916,6 +8406,31 @@ components:
           step_index: 0
           stream: agent
           line: 'resolve docker.io/library/redis:8-alpine … 21090af93f83'
+    JobLogTail:
+      type: object
+      additionalProperties: false
+      description: |
+        Contract 0.9.0 (S67). The last log lines of a job in `GET /jobs/{job_id}`: up to 200 `log` events with an id of
+        `last_event_id` or less, oldest first, without secrets. After a reload, the console shows them and follows
+        `GET /jobs/{job_id}/events?after=<last_event_id>`, so it does not read the events again from 0.
+      required: [lines, total]
+      properties:
+        lines:
+          type: array
+          maxItems: 200
+          description: The last lines, oldest first.
+          items:
+            $ref: '#/components/schemas/JobLogLine'
+        total:
+          type: integer
+          minimum: 0
+          description: |
+            The number of log lines of the job up to `last_event_id`. When it is larger than the number of `lines`, the older
+            lines are only in the event stream (`after=0`) and in `GET /jobs/{job_id}/export`.
+      examples:
+        - lines:
+            - {time: '2026-10-30T10:15:03Z', step_index: 2, stream: agent, line: waiting for care-api.service to become healthy}
+          total: 1
     JobProgressEvent:
       type: object
       additionalProperties: false

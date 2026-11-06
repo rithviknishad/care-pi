@@ -55,18 +55,21 @@ export function PasswordInput({ className, ...props }: Omit<React.ComponentProps
   );
 }
 
-const BAR_COLORS = ["bg-muted", "bg-red-500", "bg-amber-500", "bg-primary-500", "bg-primary-700"];
-
+// A calm bar for the strength (S66): one track that fills, in the primary colour (amber while it is weak), and the word.
 function StrengthMeter({ password }: { password: string }) {
   const score = passwordStrength(password);
   return (
-    <div className="flex items-center gap-3" aria-live="polite">
-      <div className="grid flex-1 grid-cols-4 gap-1" aria-hidden="true">
-        {[1, 2, 3, 4].map((i) => (
-          <div key={i} className={cn("h-1.5 rounded-full", i <= score ? BAR_COLORS[score] : "bg-muted")} />
-        ))}
+    <div className="flex items-center gap-3" aria-live="polite" data-testid="password-strength" data-score={score}>
+      <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-primary-track" aria-hidden="true">
+        <div
+          className={cn(
+            "absolute inset-0 origin-left rounded-full motion-ok:transition-transform motion-ok:duration-(--duration-slow) motion-ok:ease-out",
+            score <= 1 ? "bg-warn-solid" : "bg-primary-solid",
+          )}
+          style={{ transform: `scaleX(${score / 4})` }}
+        />
       </div>
-      <span className="w-[10ch] text-right text-xs text-soft-foreground">
+      <span className="w-[10ch] text-right type-small text-ink-soft">
         <span className="sr-only">{strings.password.strengthLabel}: </span>
         {strings.password.strength[score]}
       </span>

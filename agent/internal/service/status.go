@@ -480,14 +480,30 @@ func (s *Service) Status(ctx context.Context) (*Status, error) {
 	return st, nil
 }
 
-// PublicJobProgress is the progress of a job that changes the host (schema PublicJobProgress).
+// PublicJobProgress is the progress of a job that changes the host (schema PublicJobProgress). Contract 0.9.0 adds
+// the id, the state, and the title (S67): a device without a session opens the public event stream of the job.
 type PublicJobProgress struct {
+	ID        string    `json:"id"`
 	Kind      string    `json:"kind"`
+	State     string    `json:"state"`
+	Title     string    `json:"title"`
 	Step      *string   `json:"step"`
 	StepIndex *int      `json:"step_index"`
 	StepCount *int      `json:"step_count"`
 	StartedAt time.Time `json:"started_at"`
 }
+
+// PublicJobSummary is one recent job of the public status (schema PublicJobSummary, contract 0.9.0).
+type PublicJobSummary struct {
+	ID         string     `json:"id"`
+	Kind       string     `json:"kind"`
+	State      string     `json:"state"`
+	StartedAt  *time.Time `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at"`
+}
+
+// PublicRecentJobs is the number of jobs in PublicStatus.jobs_recent.
+const PublicRecentJobs = 5
 
 // PublicStatus is the minimal public status (schema PublicStatus).
 type PublicStatus struct {
@@ -504,8 +520,12 @@ type PublicStatus struct {
 	} `json:"clock"`
 	CareHealthy bool               `json:"care_healthy"`
 	Job         *PublicJobProgress `json:"job"`
-	Time        time.Time          `json:"time"`
-	Maintenance MaintenanceState   `json:"maintenance"`
+	// JobsRecent are the 5 newest jobs of all kinds, newest first (contract 0.9.0).
+	JobsRecent []PublicJobSummary `json:"jobs_recent"`
+	// SetupJobID is the finish job while setup_state is applying (contract 0.9.0), else nil.
+	SetupJobID  *string          `json:"setup_job_id"`
+	Time        time.Time        `json:"time"`
+	Maintenance MaintenanceState `json:"maintenance"`
 	// FirstbootError is why the first boot of the image did not use the pre-seed (state/firstboot-error.json),
 	// until the setup is finished; else nil.
 	FirstbootError *string `json:"firstboot_error"`
@@ -574,13 +594,18 @@ func (s *Service) PublicStatus(ctx context.Context) *PublicStatus {
 	if p.SetupState != setup.Ready {
 		p.FirstbootError = s.firstbootError()
 	}
+	if p.SetupState == setup.Applying {
+		if rec, _, err := s.Setup.Load(); err == nil && rec.JobID != "" {
+			id := rec.JobID
+			p.SetupJobID = &id
+		}
+	}
 	if j := jobs.Latest(s.Paths, func(j *jobs.Job) bool { return j.State == jobs.StateRunning && jobs.LockKinds[j.Kind] }); j != nil {
-		jp := &PublicJobProgress{Kind: j.Kind, StartedAt: j.CreatedAt}
-		n := len(j.Steps)
-		jp.StepCount = &n
+		jp := &PublicJobProgress{ID: j.ID, Kind: j.Kind, State: j.State, Title: render.JobTitle(j.Kind), StartedAt: j.CreatedAt}
+		jp.StepCount = j.StepCount()
 		for i := len(j.Steps) - 1; i >= 0; i-- {
 			if j.Steps[i].State == jobs.StepRunning {
-				name, idx := j.Steps[i].Name, i
+				name, idx := jobs.PublicStepName(j.Steps[i]), i
 				jp.Step, jp.StepIndex = &name, &idx
 				break
 			}
@@ -589,6 +614,10 @@ func (s *Service) PublicStatus(ctx context.Context) *PublicStatus {
 			jp.StartedAt = *j.StartedAt
 		}
 		p.Job = jp
+	}
+	p.JobsRecent = []PublicJobSummary{}
+	for _, j := range jobs.Recent(s.Paths, PublicRecentJobs) {
+		p.JobsRecent = append(p.JobsRecent, PublicJobSummary{ID: j.ID, Kind: j.Kind, State: j.State, StartedAt: j.StartedAt, FinishedAt: j.FinishedAt})
 	}
 	if ctx.Err() != nil {
 		return p

@@ -1,18 +1,37 @@
-import { AlertTriangleIcon, CheckCircle2Icon, RotateCcwIcon } from "lucide-react";
+import {
+  ActivityIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  DatabaseBackupIcon,
+  GlobeIcon,
+  RefreshCwIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import { Link } from "react-router";
-import { useStatus } from "@/api/queries";
+import { useJobList, useStatus } from "@/api/queries";
+import type { Status, UnitStatus } from "@/api/types";
+import { ProblemAlert } from "@/components/app/problem-alert";
+import { DashboardGrid } from "@/components/v2/dashboard-grid";
+import { Hero } from "@/components/v2/hero";
+import { InlineSkeleton } from "@/components/v2/inline-skeleton";
+import { KeyValueList } from "@/components/v2/key-value-list";
+import { MetricBar } from "@/components/v2/metric-bar";
+import { Panel } from "@/components/v2/panel";
+import { StatCard } from "@/components/v2/stat-card";
+import { StatusChip } from "@/components/v2/status-chip";
+import { Timeline } from "@/components/v2/timeline";
+import type { Tone } from "@/components/v2/tone";
+import { useNow } from "@/components/v2/use-now";
+import { Skeleton } from "@/components/ui/skeleton";
+import { maintenanceText } from "@/app/layout/maintenance";
 import { BackupHealthRow } from "@/features/backups/backup-banners";
 import { lastOffsiteCopy } from "@/features/backups/health";
-import type { Status, UnitStatus } from "@/api/types";
-import { DataList, DataRow, PageHeader } from "@/components/app/page";
-import { ProblemAlert } from "@/components/app/problem-alert";
-import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { JOB_STATE_TONE } from "@/features/jobs/job-steps";
+import { servedNames, type HostMode } from "@/features/connectivity/connectivity-logic";
+import { summaryText } from "@/features/updates/update-text";
 import { useStableOrder } from "@/hooks/use-stable-order";
 import {
+  formatAgo,
   formatBytes,
   formatDateTime,
   formatDuration,
@@ -23,544 +42,539 @@ import {
   shortDigest,
   shortSha,
 } from "@/lib/format";
-import { maintenanceText } from "@/app/layout/maintenance";
-import { summaryText, trackBadge } from "@/features/updates/update-text";
 import { fmt, jobKindText, strings } from "@/lib/strings";
 import { cn } from "@/lib/utils";
-import { servedNames, type HostMode } from "@/features/connectivity/connectivity-logic";
 
 const d = strings.dashboard;
-const MODE_VARIANT: Record<HostMode, "success" | "neutral" | "info"> = {
-  public: "success",
-  local: "neutral",
-  tailscale: "info",
-};
 const unitKey = (u: UnitStatus) => u.unit;
 
-const STATE_VARIANT: Record<string, "success" | "warning" | "destructive" | "info" | "neutral"> = {
-  ok: "success",
-  degraded: "destructive",
-  maintenance: "warning",
-  "clock-wait": "warning",
+const STATE_TONE: Record<string, Tone> = {
+  ok: "ok",
+  degraded: "danger",
+  maintenance: "warn",
+  "clock-wait": "warn",
   starting: "info",
   setup: "info",
 };
 
-function Section({
-  title,
-  children,
-  className,
-  testId,
-}: {
-  title: string;
-  children: React.ReactNode;
-  className?: string;
-  testId?: string;
-}) {
-  return (
-    <Card size="sm" className={className} data-testid={testId}>
-      <CardHeader>
-        <CardTitle>
-          <h2>{title}</h2>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>{children}</CardContent>
-    </Card>
-  );
-}
-
-function StateCard({ status }: { status: Status | undefined }) {
-  const flags = status
-    ? (Object.entries(status.flags) as [string, boolean][])
-        .filter(([k, on]) => on && k !== "degraded")
-        .map(([k]) => d.flags[k] ?? k)
-    : [];
-  // The maintenance banner of the dashboard: the step of the update that runs (Status.maintenance).
-  const maintenance = status?.maintenance?.active ? [maintenanceText(status.maintenance)] : [];
-  const items = status
-    ? [...maintenance, ...flags.filter((f) => !maintenance.length || f !== d.flags.maintenance), ...status.problems]
-    : [];
-  return (
-    <Card size="sm">
-      <CardContent className="grid gap-4 sm:grid-cols-[14rem_minmax(0,1fr)]">
-        <div className="flex flex-col gap-2">
-          <span className="text-sm text-soft-foreground">{d.state}</span>
-          <div className="flex h-8 items-center">
-            {status ? (
-              <Badge variant={STATE_VARIANT[status.state] ?? "neutral"} size="lg" data-testid="status-state">
-                {d.states[status.state] ?? status.state}
-              </Badge>
-            ) : (
-              <Skeleton className="h-7 w-24" />
-            )}
-          </div>
-        </div>
-        <div className="flex flex-col gap-2">
-          <span className="text-sm text-soft-foreground">{d.problems}</span>
-          <ul className="flex min-h-16 flex-col gap-1 text-sm" aria-live="polite" data-testid="status-problems">
-            {!status ? (
-              <li>
-                <Skeleton className="h-4 w-48" />
-              </li>
-            ) : items.length === 0 ? (
-              <li className="flex items-center gap-2">
-                <CheckCircle2Icon className="size-4 text-green-600 dark:text-green-400" aria-hidden="true" />
-                {d.noProblems}
-              </li>
-            ) : (
-              items.map((p) => (
-                <li
-                  key={p}
-                  className="flex items-start gap-2"
-                  data-testid={p === maintenance[0] ? "status-maintenance" : undefined}
-                >
-                  <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden="true" />
-                  {p}
-                </li>
-              ))
-            )}
-          </ul>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-// The update summary (Status.updates, Phase 4): the version, the track, the new version, the state, the last check,
-// and the last result. Each row has its place before the data arrives. null before Phase 4.
-function UpdatesSection({ status }: { status: Status | undefined }) {
-  const loading = !status;
-  const sum = status?.updates ?? null;
-  const tz = status?.clock.timezone;
-  const track = trackBadge(sum?.track);
-  const line = sum ? summaryText(sum) : null;
-  const last = sum?.last_result ?? null;
-  const lastText = last
-    ? fmt(d.updatesResult, {
-        kind: strings.updates.historyKinds[last.kind] ?? last.kind,
-        outcome: strings.updates.outcomes[last.outcome] ?? last.outcome,
-        time: formatDateTime(last.finished_at, tz),
-      })
-    : "—";
-  return (
-    <Section title={d.updates} testId="updates-summary">
-      <DataList>
-        <DataRow label={d.updatesVersion} loading={loading} value={sum?.current_version ?? "—"} />
-        <DataRow
-          label={d.updatesTrack}
-          loading={loading}
-          value={
-            sum ? (
-              <Badge size="sm" variant={track.variant}>
-                {track.text}
-              </Badge>
-            ) : (
-              "—"
-            )
-          }
-        />
-        <DataRow
-          label={d.updatesUpdate}
-          loading={loading}
-          testId="updates-line"
-          value={
-            !sum ? (
-              d.updatesNotAvailable
-            ) : line?.link ? (
-              <Link
-                to="/updates"
-                className={cn(
-                  "underline-offset-4 hover:underline",
-                  line.variant === "warning" && "text-amber-700 dark:text-amber-300",
-                )}
-              >
-                {line.text}
-              </Link>
-            ) : (
-              line?.text
-            )
-          }
-          title={line?.text}
-        />
-        <DataRow
-          label={d.updatesState}
-          loading={loading}
-          value={sum ? (strings.updates.states[sum.state] ?? sum.state) : "—"}
-        />
-        <DataRow label={d.updatesLastCheck} loading={loading} value={formatDateTime(sum?.last_check_at, tz)} />
-        <DataRow label={d.updatesLastResult} loading={loading} value={lastText} title={lastText} />
-      </DataList>
-    </Section>
-  );
-}
-
-function memoryText(used: number | null, cap: number | null): string {
-  if (used === null) return "—";
-  return cap ? fmt(d.memoryOf, { used: formatBytes(used), cap: formatBytes(cap) }) : formatBytes(used);
-}
-
-function MemoryBar({ used, cap, compact = false }: { used: number | null; cap: number | null; compact?: boolean }) {
-  const p = percent(used, cap);
-  return (
-    <div className={cn("flex w-full items-center", compact ? "min-w-0 gap-2" : "min-w-40 gap-3")}>
-      <Progress
-        value={p ?? 0}
-        aria-label={d.memory}
-        className={cn(
-          "gap-0",
-          compact ? "min-w-10 flex-1" : "w-20 shrink-0",
-          p !== null && p > 90 && "[&_[data-slot=progress-indicator]]:bg-destructive",
-        )}
-      />
-      <span className={cn("text-xs text-soft-foreground", compact ? "shrink-0" : "w-[21ch] truncate")}>
-        {memoryText(used, cap)}
-      </span>
-    </div>
-  );
-}
-
-// The badge of a unit on a phone: the health when the unit has a health check, else the state.
-function unitBadge(u: UnitStatus): { text: string; variant: "success" | "info" | "warning" | "destructive" } {
-  if (u.active_state !== "active") {
-    return { text: u.active_state, variant: u.active_state === "failed" ? "destructive" : "warning" };
-  }
-  if (u.health) {
-    return {
-      text: u.health,
-      variant: u.health === "healthy" ? "success" : u.health === "starting" ? "info" : "destructive",
-    };
-  }
-  return { text: u.sub_state, variant: "success" };
-}
-
-function UnitName({ u }: { u: UnitStatus }) {
-  return u.log_unit ? (
-    <Link to={`/logs?unit=${u.log_unit}`} className="underline-offset-4 hover:underline">
-      {u.unit}
-    </Link>
-  ) : (
-    <>{u.unit}</>
-  );
-}
-
-// The units below 640 px: one compact card for each unit, so nothing scrolls sideways (wave 4c: the table needed
-// 722-729 px in a 324 px card). Each card has a fixed height; the skeleton has the 10 cards of GET /status.
-function UnitCards({ units }: { units: UnitStatus[] | undefined }) {
-  return (
-    <ul className="flex flex-col divide-y sm:hidden" data-testid="units-cards" aria-label={d.units}>
-      {units
-        ? units.map((u) => {
-            const b = unitBadge(u);
-            return (
-              <li key={u.unit} className="flex h-[4.25rem] flex-col justify-center gap-2" data-unit-card={u.unit}>
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate text-sm">
-                    <UnitName u={u} />
-                  </span>
-                  <Badge size="sm" variant={b.variant} title={`${u.active_state}/${u.sub_state}`}>
-                    {b.text}
-                  </Badge>
-                </div>
-                <div className="flex min-w-0 items-center gap-3">
-                  <MemoryBar used={u.memory_current_bytes} cap={u.memory_max_bytes} compact />
-                  <span
-                    className="flex shrink-0 items-center gap-1 text-xs text-soft-foreground"
-                    title={fmt(d.restartsCount, { count: u.restarts })}
-                    aria-label={fmt(d.restartsCount, { count: u.restarts })}
-                  >
-                    <RotateCcwIcon className="size-3.5" aria-hidden="true" />
-                    {u.restarts}
-                  </span>
-                </div>
-              </li>
-            );
-          })
-        : Array.from({ length: UNIT_ROWS }, (_, i) => (
-            <li key={i} className="flex h-[4.25rem] flex-col justify-center gap-2">
-              <Skeleton className="h-4 w-40" />
-              <Skeleton className="h-3 w-full" />
-            </li>
-          ))}
-    </ul>
-  );
-}
+const MODE_TONE: Record<HostMode, Tone> = { public: "ok", local: "neutral", tailscale: "info" };
 
 // GET /status lists 10 units: care.target, care-clock, and the 8 units of the stack (agent/internal/status).
 const UNIT_ROWS = 10;
 
-function Units({ status }: { status: Status | undefined }) {
+// The plain name of a service (console/design.md: "service", not "unit").
+function serviceName(u: UnitStatus): string {
+  const key = u.unit.replace(/\.(service|target)$/, "");
+  return d.services[key] ?? key;
+}
+
+function unitTone(u: UnitStatus): { tone: Tone; text: string } {
+  if (u.active_state !== "active") {
+    return {
+      tone: u.active_state === "failed" ? "danger" : "warn",
+      text: d.unitStates[u.active_state] ?? u.active_state,
+    };
+  }
+  if (u.health === "unhealthy") return { tone: "danger", text: d.unitStates.unhealthy ?? u.health };
+  if (u.health === "starting") return { tone: "info", text: d.unitStates.starting ?? u.health };
+  return { tone: "ok", text: d.unitStates.running ?? "Running" };
+}
+
+// The problems of the device in plain words: the maintenance step, the flags, and the problems of the agent.
+function problemsOf(status: Status): { items: string[]; maintenance: string | null } {
+  const flags = (Object.entries(status.flags) as [string, boolean][])
+    .filter(([k, on]) => on && k !== "degraded")
+    .map(([k]) => d.flags[k] ?? k);
+  const maintenance = status.maintenance?.active ? maintenanceText(status.maintenance) : null;
+  return {
+    items: [
+      ...(maintenance ? [maintenance] : []),
+      ...flags.filter((f) => !maintenance || f !== d.flags.maintenance),
+      ...status.problems,
+    ],
+    maintenance,
+  };
+}
+
+// The services: one row for each, the plain name, the state in a word, and the memory against its cap (MetricBar).
+function Services({ status }: { status: Status | undefined }) {
   const units = useStableOrder(status?.units, unitKey);
   return (
-    <>
-      <UnitCards units={units} />
-      <div className="hidden sm:block">
-        <UnitsTable units={units} />
-      </div>
-    </>
-  );
-}
-
-function UnitsTable({ units }: { units: UnitStatus[] | undefined }) {
-  return (
-    <Table data-testid="units">
-      <TableHeader>
-        <TableRow>
-          <TableHead>{d.unit}</TableHead>
-          <TableHead className="w-[14ch]">{d.unitState}</TableHead>
-          <TableHead className="w-[10ch]">{d.health}</TableHead>
-          <TableHead>{d.memory}</TableHead>
-          <TableHead className="w-[8ch] text-right">{d.restarts}</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
+    <Panel title={d.services.title} description={d.services.intro} testId="units-card">
+      <ul className="flex flex-col divide-y divide-line-soft" data-testid="units" aria-label={d.units}>
         {units
-          ? units.map((u) => (
-              <TableRow key={u.unit} className="h-11" data-unit={u.unit}>
-                <TableCell className="max-w-[24ch] truncate">
-                  <UnitName u={u} />
-                </TableCell>
-                <TableCell>
-                  <span className={cn(u.active_state === "active" ? "" : "text-amber-700 dark:text-amber-300")}>
-                    {u.active_state}/{u.sub_state}
-                  </span>
-                </TableCell>
-                <TableCell>
-                  {u.health ? (
-                    <Badge
-                      size="sm"
-                      variant={u.health === "healthy" ? "success" : u.health === "starting" ? "info" : "destructive"}
-                    >
-                      {u.health}
-                    </Badge>
-                  ) : (
-                    <span className="text-soft-foreground">—</span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <MemoryBar used={u.memory_current_bytes} cap={u.memory_max_bytes} />
-                </TableCell>
-                <TableCell className="text-right">{u.restarts}</TableCell>
-              </TableRow>
-            ))
+          ? units.map((u) => {
+              const s = unitTone(u);
+              return (
+                <li
+                  key={u.unit}
+                  className="grid h-20 content-center gap-2 py-2"
+                  data-unit={u.unit}
+                  data-active={u.active_state}
+                  data-sub={u.sub_state}
+                  title={u.unit}
+                >
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate type-body font-medium text-ink">
+                      {u.log_unit ? (
+                        <Link
+                          to={`/logs?unit=${u.log_unit}`}
+                          className="underline-offset-4 hover:underline"
+                          aria-label={`${serviceName(u)}: ${d.openLog}`}
+                        >
+                          {serviceName(u)}
+                        </Link>
+                      ) : (
+                        serviceName(u)
+                      )}
+                    </span>
+                    {u.restarts > 0 ? (
+                      <span
+                        className="shrink-0 type-data text-ink-soft"
+                        title={fmt(d.restartsCount, { count: u.restarts })}
+                      >
+                        {fmt(d.restartsShort, { count: u.restarts })}
+                      </span>
+                    ) : null}
+                    <StatusChip tone={s.tone} size="sm" width={9}>
+                      {s.text}
+                    </StatusChip>
+                  </div>
+                  <MetricBar label={d.memory} used={u.memory_current_bytes} cap={u.memory_max_bytes} />
+                </li>
+              );
+            })
           : Array.from({ length: UNIT_ROWS }, (_, i) => (
-              <TableRow key={i} className="h-11">
-                <TableCell colSpan={5}>
-                  <Skeleton className="h-4 w-full" />
-                </TableCell>
-              </TableRow>
+              <li key={i} className="grid h-20 content-center gap-2 py-2" aria-hidden="true">
+                <Skeleton className="h-5 w-48" />
+                <MetricBar label={d.memory} used={null} cap={null} loading />
+              </li>
             ))}
-      </TableBody>
-    </Table>
+      </ul>
+    </Panel>
   );
 }
 
+// The names of Care with their mode (local, public, Tailscale) and certificate.
+function Names({ status }: { status: Status | undefined }) {
+  return (
+    <Panel
+      title={d.names}
+      testId="network-card"
+      action={<GlobeIcon className="size-5 text-primary-solid" aria-hidden="true" />}
+    >
+      <ul className="flex flex-col gap-3" aria-label={d.names} data-testid="served-names">
+        {status ? (
+          servedNames(status).map((n) => (
+            <li key={n.host} className="flex min-w-0 items-start gap-3">
+              <StatusChip tone={MODE_TONE[n.mode]} size="sm" width={8} className="mt-0.5">
+                {d.modes[n.mode]}
+              </StatusChip>
+              <div className="flex min-w-0 flex-col">
+                <span className="truncate type-data text-ink" title={n.host}>
+                  {n.host}
+                </span>
+                <span className="truncate type-small text-ink-soft">{d.certs[n.mode]}</span>
+              </div>
+            </li>
+          ))
+        ) : (
+          <li className="flex items-start gap-3" aria-hidden>
+            <Skeleton className="mt-0.5 h-6 w-20 shrink-0 rounded-full" />
+            <div className="flex min-w-0 flex-col">
+              <span className="type-data">
+                <InlineSkeleton className="h-4 w-32 align-middle" />
+              </span>
+              <span className="type-small">
+                <InlineSkeleton className="h-4 w-40 align-middle" />
+              </span>
+            </div>
+          </li>
+        )}
+      </ul>
+      <KeyValueList
+        loading={!status}
+        labelWidth="md"
+        items={[
+          { id: "configured", label: d.configured, value: status?.network.mdns_configured, mono: true },
+          {
+            id: "advertised",
+            label: d.advertised,
+            mono: true,
+            value: (
+              <span className={cn(status?.flags.mdns_collision && "text-warn-fg")}>
+                {status?.network.mdns_advertised ?? "—"}
+              </span>
+            ),
+          },
+          { id: "addresses", label: d.addresses, value: status?.addresses.join(", "), mono: true },
+          {
+            id: "internet",
+            label: d.internet,
+            value:
+              status?.network.internet_reachable === null
+                ? "—"
+                : status?.network.internet_reachable
+                  ? d.reachable
+                  : d.notReachable,
+          },
+        ]}
+      />
+    </Panel>
+  );
+}
+
+// This device: the facts, with the memory of the device as a bar.
+function Device({ status }: { status: Status | undefined }) {
+  const mem = status?.host.memory;
+  const disk = status?.disks[0];
+  return (
+    <Panel title={d.host}>
+      <div className="flex flex-col gap-4">
+        <MetricBar
+          label={d.ram}
+          used={mem ? mem.total_bytes - mem.available_bytes : null}
+          cap={mem?.total_bytes}
+          loading={!status}
+          testId="mem-bar"
+        />
+        <MetricBar
+          label={disk ? fmt(d.diskOf, { mount: disk.mount }) : d.disks}
+          used={disk ? disk.total_bytes - disk.free_bytes : null}
+          cap={disk?.total_bytes}
+          loading={!status}
+        />
+      </div>
+      <KeyValueList
+        loading={!status}
+        labelWidth="md"
+        items={[
+          { id: "model", label: d.model, value: status?.host.model ?? "—", title: status?.host.model ?? undefined },
+          { id: "os", label: d.os, value: status?.host.os, title: status?.host.os },
+          {
+            id: "available",
+            label: d.available,
+            mono: true,
+            testId: "mem-available",
+            value: mem
+              ? `${formatBytes(mem.available_bytes)} (${formatPercent(percent(mem.available_bytes, mem.total_bytes))})`
+              : "",
+          },
+          { id: "uptime", label: d.uptime, value: status ? formatDuration(status.host.uptime_s) : "" },
+          { id: "time", label: d.time, mono: true, value: status ? formatDateTime(status.clock.time) : "" },
+          { id: "tz", label: d.timezone, value: status?.clock.timezone },
+        ]}
+      />
+    </Panel>
+  );
+}
+
+// The facts for support: the versions, the lock, the certificate, the load. A hash only here (console/design.md).
+function Technical({ status }: { status: Status | undefined }) {
+  const care = status?.images.find((i) => i.name === "care");
+  const mem = status?.host.memory;
+  return (
+    <details className="group rounded-card border border-line bg-surface-card shadow-soft" data-testid="technical">
+      <summary className="flex h-14 cursor-pointer list-none items-center gap-2 px-4 type-body font-medium text-ink outline-none select-none hover:bg-surface-tint focus-visible:ring-3 focus-visible:ring-ring/50 sm:px-6 [&::-webkit-details-marker]:hidden">
+        <ChevronDownIcon
+          aria-hidden="true"
+          className="size-4 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+        />
+        {strings.jobsPage.technical}
+      </summary>
+      <div className="px-4 pb-4 sm:px-6">
+        <KeyValueList
+          loading={!status}
+          labelWidth="md"
+          items={[
+            { id: "agent", label: d.agent, mono: true, value: status?.agent.version },
+            {
+              id: "solution",
+              label: d.solution,
+              value: status?.lock ? `${status.lock.solution.name} (${status.lock.solution.track})` : d.noLock,
+            },
+            {
+              id: "care",
+              label: d.careDigest,
+              mono: true,
+              testId: "care-digest",
+              value: shortDigest(care?.pull),
+              title: care?.pull,
+              copy: care?.pull ?? undefined,
+            },
+            {
+              id: "fe",
+              label: d.careFeSha,
+              mono: true,
+              value: shortSha(status?.care_fe_sha),
+              title: status?.care_fe_sha ?? undefined,
+            },
+            { id: "build", label: d.buildId, mono: true, testId: "fe-build-id", value: status?.fe_build_id ?? "—" },
+            { id: "locked", label: d.lockedAt, mono: true, value: formatDateTime(status?.locked_at) },
+            {
+              id: "fingerprint",
+              label: d.fingerprint,
+              mono: true,
+              value: status?.tls.local_ca.fingerprint_sha256 ? (
+                <Link to="/certificate" className="underline-offset-4 hover:underline" data-testid="fingerprint">
+                  {shortSha(status.tls.local_ca.fingerprint_sha256, 16)}…
+                </Link>
+              ) : (
+                "—"
+              ),
+              title: status?.tls.local_ca.fingerprint_sha256 ?? undefined,
+            },
+            { id: "notafter", label: d.notAfter, mono: true, value: formatDateTime(status?.tls.local_ca.not_after) },
+            { id: "kernel", label: d.kernel, mono: true, value: status?.host.kernel },
+            {
+              id: "cpus",
+              label: d.cpus,
+              mono: true,
+              value: status ? `${status.host.cpu_count} × ${status.host.arch}` : "",
+            },
+            {
+              id: "load",
+              label: d.load,
+              mono: true,
+              testId: "load",
+              value: status ? formatLoad(status.host.load_average) : "",
+            },
+            {
+              id: "swap",
+              label: d.swap,
+              mono: true,
+              value: mem
+                ? fmt(d.swapUsed, {
+                    used: formatBytes(mem.swap_total_bytes - mem.swap_free_bytes),
+                    total: formatBytes(mem.swap_total_bytes),
+                  })
+                : "",
+            },
+            { id: "policy", label: d.policy, mono: true, value: status?.clock.policy },
+            { id: "gate", label: d.gate, mono: true, value: status?.clock.gate },
+          ]}
+        />
+      </div>
+    </details>
+  );
+}
+
+// The day: the jobs that ended, newest first (a Timeline), each one a link to its page.
+function Today() {
+  const recent = useJobList("recent", 5);
+  const items = recent.data?.items ?? [];
+  return (
+    <Panel
+      title={d.today}
+      action={
+        <Link
+          to="/jobs"
+          className="flex items-center gap-1 type-small font-medium text-primary-ink underline-offset-4 hover:underline"
+        >
+          {d.allJobs}
+          <ChevronRightIcon className="size-4" aria-hidden="true" />
+        </Link>
+      }
+      testId="today"
+    >
+      {recent.isPending ? (
+        <div className="flex flex-col gap-4" aria-hidden="true">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-10" />
+          ))}
+        </div>
+      ) : items.length === 0 ? (
+        <p className="type-body text-ink-muted">{d.noJobsToday}</p>
+      ) : (
+        <Timeline
+          items={items.map((j) => ({
+            id: j.id,
+            time: formatTime(j.finished_at ?? j.created_at).slice(0, 5),
+            datetime: j.finished_at ?? j.created_at,
+            tone: JOB_STATE_TONE[j.state] ?? "neutral",
+            title: (
+              <Link to={`/jobs/${encodeURIComponent(j.id)}`} className="underline-offset-4 hover:underline">
+                {jobKindText(j.kind)}
+              </Link>
+            ),
+            description: strings.progress.states[j.state] ?? j.state,
+          }))}
+        />
+      )}
+    </Panel>
+  );
+}
+
+// The dashboard (console/design.md section 8.4, Monitor): the compact hero with the state in one sentence, 4 cards of
+// a fixed size (health, backups, updates, names), then the services, this device, the names, and the day.
 export default function DashboardPage() {
   const status = useStatus(10_000);
+  const now = useNow(true, 30_000);
   const s = status.data;
   const loading = !s;
-  const mem = s?.host.memory;
-  const care = s?.images.find((i) => i.name === "care");
+  const problems = s ? problemsOf(s) : null;
+  const lastCopy = lastOffsiteCopy(s?.backups);
+  const backups = s?.backups;
+  const health = backups?.health;
+  const backupTone: Tone = !health
+    ? "neutral"
+    : health.state === "ok"
+      ? "ok"
+      : health.state === "error"
+        ? "danger"
+        : "warn";
+  const updates = s?.updates ?? null;
+  const updateLine = updates ? summaryText(updates) : null;
+  const names = s ? servedNames(s) : [];
+  const publicName = names.find((n) => n.mode === "public");
+  const stateTone = s ? (STATE_TONE[s.state] ?? "neutral") : "neutral";
   return (
-    <div className="flex flex-col gap-4">
-      <PageHeader
-        title={d.title}
+    <div className="flex flex-col gap-6">
+      <Hero
+        size="compact"
+        as="h1"
+        eyebrow={s ? (s.network.mdns_advertised ?? s.hostnames[0]) : "\u00a0"}
+        title={s ? (d.heroTitles[s.state] ?? d.title) : d.title}
         description={
-          <span className="tabular-nums" data-testid="status-updated">
-            {fmt(d.updated, { time: s ? formatTime(s.generated_at) : "--:--:--" })}
-          </span>
+          s ? (
+            <>
+              {s.state === "maintenance"
+                ? d.heroMaintenance
+                : problems && problems.items.length > 0
+                  ? d.heroProblems
+                  : d.heroOk}{" "}
+              {/* line-height 1: the monospace font does not make its line taller than the skeleton (360 px). */}
+              <span className="type-data" style={{ lineHeight: 1 }} data-testid="status-updated">
+                {fmt(d.updatedShort, { time: formatTime(s.generated_at) })}
+              </span>
+            </>
+          ) : undefined
         }
+        loading={loading}
+        illustration="pi-box"
+        testId="dashboard-hero"
       />
-      {status.isError ? <ProblemAlert error={status.error} /> : null}
-      {/* The backup banners (plans/02 section 7). Status.backups is GET /backups: no second request. */}
+      {status.isError ? <ProblemAlert error={status.error} onRetry={() => void status.refetch()} /> : null}
+      {/* The banner slot of the backups (plans/02 section 7). Status.backups is GET /backups: no second request. */}
       <BackupHealthRow
         health={s?.backups?.health}
-        lastCopy={lastOffsiteCopy(s?.backups)}
+        lastCopy={lastCopy}
         loading={!s}
         unavailable={Boolean(s) && !s?.backups}
       />
-      <StateCard status={s} />
-      <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
-        <Section title={d.host}>
-          <DataList>
-            <DataRow
-              label={d.model}
-              loading={loading}
-              value={s?.host.model ?? "—"}
-              title={s?.host.model ?? undefined}
-            />
-            <DataRow label={d.os} loading={loading} value={s?.host.os} title={s?.host.os} />
-            <DataRow label={d.kernel} loading={loading} value={s?.host.kernel} />
-            <DataRow label={d.cpus} loading={loading} value={s ? `${s.host.cpu_count} × ${s.host.arch}` : ""} />
-            <DataRow label={d.load} loading={loading} value={s ? formatLoad(s.host.load_average) : ""} testId="load" />
-            <DataRow label={d.uptime} loading={loading} value={s ? formatDuration(s.host.uptime_s) : ""} />
-          </DataList>
-        </Section>
-        <Section title={d.ram}>
-          <DataList>
-            <DataRow label={d.ram} loading={loading} value={formatBytes(mem?.total_bytes)} />
-            <DataRow
-              label={d.available}
-              loading={loading}
-              value={
-                mem
-                  ? `${formatBytes(mem.available_bytes)} (${formatPercent(percent(mem.available_bytes, mem.total_bytes))})`
-                  : ""
-              }
-              testId="mem-available"
-            />
-            <DataRow
-              label={d.swap}
-              loading={loading}
-              value={
-                mem
-                  ? fmt(d.swapUsed, {
-                      used: formatBytes(mem.swap_total_bytes - mem.swap_free_bytes),
-                      total: formatBytes(mem.swap_total_bytes),
-                    })
-                  : ""
-              }
-            />
-            {(s?.disks ?? [null]).map((disk, i) =>
-              disk ? (
-                <DataRow
-                  key={disk.mount}
-                  label={`${d.disks} ${disk.mount}`}
-                  value={fmt(d.free, { free: formatBytes(disk.free_bytes), total: formatBytes(disk.total_bytes) })}
-                />
-              ) : (
-                <DataRow key={i} label={d.disks} loading value="" />
-              ),
-            )}
-          </DataList>
-        </Section>
-        <Section title={d.clock}>
-          <DataList>
-            <DataRow label={d.time} loading={loading} value={s ? formatDateTime(s.clock.time) : ""} />
-            <DataRow label={d.timezone} loading={loading} value={s?.clock.timezone} />
-            <DataRow label={d.policy} loading={loading} value={s?.clock.policy} />
-            <DataRow
-              label={d.synchronized}
-              loading={loading}
-              value={s ? (s.clock.synchronized ? strings.common.yes : strings.common.no) : ""}
-            />
-            <DataRow label={d.gate} loading={loading} value={s?.clock.gate} />
-          </DataList>
-        </Section>
-        <Section title={d.network} testId="network-card">
-          {/* Each name has 2 lines at each width (the name, then its certificate), so the skeleton keeps the height. */}
-          <ul className="mb-2 flex flex-col gap-1.5" aria-label={d.names} data-testid="served-names">
-            {s ? (
-              servedNames(s).map((n) => (
-                <li key={n.host} className="flex min-w-0 items-start gap-2">
-                  <Badge variant={MODE_VARIANT[n.mode]} size="xs" className="mt-0.5 w-20 shrink-0 justify-center">
-                    {d.modes[n.mode]}
-                  </Badge>
-                  <div className="flex min-w-0 flex-col">
-                    <span className="truncate text-sm leading-5 font-medium" title={n.host}>
-                      {n.host}
-                    </span>
-                    <span className="truncate text-xs leading-4 text-soft-foreground">{d.certs[n.mode]}</span>
-                  </div>
-                </li>
-              ))
-            ) : (
-              <li className="flex items-start gap-2" aria-hidden>
-                <Skeleton className="mt-0.5 h-4 w-20 shrink-0" />
-                <div className="flex flex-col gap-0">
-                  <Skeleton className="my-0.5 h-4 w-32" />
-                  <Skeleton className="h-4 w-40" />
-                </div>
-              </li>
-            )}
-          </ul>
-          <DataList>
-            <DataRow label={d.configured} loading={loading} value={s?.network.mdns_configured} />
-            <DataRow
-              label={d.advertised}
-              loading={loading}
-              value={
-                <span className={cn(s?.flags.mdns_collision && "text-amber-700 dark:text-amber-300")}>
-                  {s?.network.mdns_advertised ?? "—"}
-                </span>
-              }
-            />
-            <DataRow label={d.addresses} loading={loading} value={s?.addresses.join(", ")} />
-            <DataRow
-              label={d.internet}
-              loading={loading}
-              value={
-                s?.network.internet_reachable === null
-                  ? "—"
-                  : s?.network.internet_reachable
-                    ? strings.common.yes
-                    : strings.common.no
-              }
-            />
-          </DataList>
-        </Section>
-        <Section title={d.lock}>
-          <DataList>
-            <DataRow
-              label={d.solution}
-              loading={loading}
-              value={s?.lock ? `${s.lock.solution.name} (${s.lock.solution.track})` : d.noLock}
-            />
-            <DataRow
-              label={d.careDigest}
-              loading={loading}
-              value={shortDigest(care?.pull)}
-              title={care?.pull}
-              testId="care-digest"
-            />
-            <DataRow
-              label={d.careFeSha}
-              loading={loading}
-              value={shortSha(s?.care_fe_sha)}
-              title={s?.care_fe_sha ?? undefined}
-            />
-            <DataRow label={d.buildId} loading={loading} value={s?.fe_build_id ?? "—"} testId="fe-build-id" />
-            <DataRow label={d.lockedAt} loading={loading} value={formatDateTime(s?.locked_at)} />
-            <DataRow label={d.agent} loading={loading} value={s?.agent.version} />
-          </DataList>
-        </Section>
-        <UpdatesSection status={s} />
-        <Section title={d.certificate}>
-          <DataList>
-            <DataRow
-              label={d.fingerprint}
-              loading={loading}
-              value={
-                s?.tls.local_ca.fingerprint_sha256 ? (
-                  <Link to="/certificate" className="underline-offset-4 hover:underline" data-testid="fingerprint">
-                    {shortSha(s.tls.local_ca.fingerprint_sha256, 16)}…
+      <DashboardGrid>
+        <StatCard
+          label={d.state}
+          icon={ActivityIcon}
+          loading={loading}
+          value={
+            <span data-testid="status-state" data-tone={stateTone}>
+              {s ? (d.states[s.state] ?? s.state) : ""}
+            </span>
+          }
+          hint={
+            problems
+              ? problems.items.length === 0
+                ? d.noProblems
+                : fmt(d.problemCount, { count: problems.items.length })
+              : undefined
+          }
+          hintTone={problems && problems.items.length > 0 ? "warn" : "ok"}
+          testId="stat-health"
+        />
+        <StatCard
+          label={d.backupsCard}
+          icon={DatabaseBackupIcon}
+          loading={loading}
+          value={!backups ? "—" : lastCopy ? formatAgo(lastCopy, now).replace(/ ago$/, "") : d.noCopy}
+          unit={lastCopy ? d.ago : undefined}
+          hint={!backups ? d.backupsNotAvailable : lastCopy ? d.lastCopy : d.noCopyHint}
+          hintTone={backupTone}
+          action={
+            backups ? (
+              <Link
+                to="/backups"
+                className="type-small font-medium text-primary-ink underline-offset-4 hover:underline"
+              >
+                {strings.common.open}
+              </Link>
+            ) : null
+          }
+          testId="stat-backups"
+        />
+        <StatCard
+          label={d.updates}
+          icon={RefreshCwIcon}
+          loading={loading}
+          value={updates?.current_version ?? "—"}
+          hint={
+            <span data-testid="updates-line">
+              {updateLine ? (
+                updateLine.link ? (
+                  <Link to="/updates" className="underline-offset-4 hover:underline">
+                    {updateLine.text}
                   </Link>
                 ) : (
-                  "—"
+                  updateLine.text
                 )
-              }
-              title={s?.tls.local_ca.fingerprint_sha256 ?? undefined}
-            />
-            <DataRow label={d.notAfter} loading={loading} value={formatDateTime(s?.tls.local_ca.not_after)} />
-            <DataRow
-              label={d.runningJob}
-              loading={loading}
-              value={s?.jobs.running ? `${jobKindText(s.jobs.running.kind)}: ${s.jobs.running.step ?? ""}` : d.noJob}
-            />
-            <DataRow
-              label={d.lastJob}
-              loading={loading}
-              value={
-                s?.jobs.last
-                  ? `${jobKindText(s.jobs.last.kind)}: ${strings.progress.states[s.jobs.last.state] ?? s.jobs.last.state} ${formatTime(s.jobs.last.finished_at)}`
-                  : d.noJob
-              }
-            />
-          </DataList>
-        </Section>
+              ) : (
+                d.updatesNotAvailable
+              )}
+            </span>
+          }
+          hintTone={updateLine?.variant === "warning" ? "warn" : updateLine?.link ? "primary" : "neutral"}
+          testId="updates-summary"
+        />
+        <StatCard
+          label={d.names}
+          icon={GlobeIcon}
+          loading={loading}
+          value={<span className="type-data text-xl leading-9">{publicName?.host ?? names[0]?.host ?? "—"}</span>}
+          hint={
+            <span className="flex gap-1">
+              {(["local", "public", "tailscale"] as HostMode[])
+                .filter((m) => names.some((n) => n.mode === m))
+                .map((m) => (
+                  <StatusChip key={m} tone={MODE_TONE[m]} size="sm">
+                    {d.modes[m]}
+                  </StatusChip>
+                ))}
+            </span>
+          }
+          testId="stat-names"
+        />
+      </DashboardGrid>
+      <Panel title={d.problems} testId="problems-card">
+        <ul className="flex min-h-12 flex-col gap-2 type-body" aria-live="polite" data-testid="status-problems">
+          {!problems ? (
+            <li>
+              <Skeleton className="h-5 w-64" />
+            </li>
+          ) : problems.items.length === 0 ? (
+            <li className="text-ink-muted">{d.noProblems}</li>
+          ) : (
+            problems.items.map((p) => (
+              <li
+                key={p}
+                className="flex items-start gap-2 text-ink"
+                data-testid={p === problems.maintenance ? "status-maintenance" : undefined}
+              >
+                <TriangleAlertIcon className="mt-1 size-4 shrink-0 text-warn-solid" aria-hidden="true" />
+                {p}
+              </li>
+            ))
+          )}
+        </ul>
+      </Panel>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Services status={s} />
+        <div className="flex min-w-0 flex-col gap-6">
+          <Device status={s} />
+          <Names status={s} />
+          <Today />
+        </div>
       </div>
-      <Section title={d.units} testId="units-card">
-        <Units status={s} />
-      </Section>
+      <Technical status={s} />
     </div>
   );
 }

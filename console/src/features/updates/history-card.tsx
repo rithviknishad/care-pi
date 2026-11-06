@@ -1,33 +1,41 @@
-import { HistoryIcon, LifeBuoyIcon, PuzzleIcon, RotateCcwIcon } from "lucide-react";
+import { HistoryIcon, PuzzleIcon, RotateCcwIcon } from "lucide-react";
 import { useUpdateHistory } from "@/api/queries";
 import type { UpdateHistoryEntry } from "@/api/types";
 import { ProblemAlert } from "@/components/app/problem-alert";
 import { SectionCard } from "@/components/app/section-card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
+import { StatusChip } from "@/components/v2/status-chip";
+import { toneSolid, type Tone } from "@/components/v2/tone";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { formatDuration } from "@/lib/format";
 import { fmt, problemText, strings } from "@/lib/strings";
 import { slugOf } from "@/api/problem";
-import { historyVersions, outcomeBadge } from "./update-text";
+import { cn } from "@/lib/utils";
+import { historyVersions, outcomeBadge, outcomeSentence } from "./update-text";
 import { formatZoned, secondsBetween } from "./window";
 
 const u = strings.updates;
 // The list reserves the height of 3 rows, so the first entries do not move the page.
 const RESERVED_ROWS = 3;
 
+const OUTCOME_TONE: Record<string, Tone> = {
+  succeeded: "ok",
+  "rolled-back": "warn",
+  failed: "danger",
+  "rollback-failed": "danger",
+};
+
 function KindIcon({ e }: { e: UpdateHistoryEntry }) {
   const cls = "size-4 shrink-0";
-  if (e.kind === "rollback" || e.outcome === "rolled-back")
-    return <RotateCcwIcon className={`${cls} text-amber-600`} aria-hidden="true" />;
+  if (e.kind === "rollback" || e.outcome === "rolled-back") return <RotateCcwIcon className={cls} aria-hidden="true" />;
   if (e.kind === "plug-change") return <PuzzleIcon className={cls} aria-hidden="true" />;
   return <HistoryIcon className={cls} aria-hidden="true" />;
 }
 
-function Row({ e, tz }: { e: UpdateHistoryEntry; tz: string }) {
+function Row({ e, tz, last }: { e: UpdateHistoryEntry; tz: string; last: boolean }) {
   const badge = outcomeBadge(e.outcome);
+  const tone = OUTCOME_TONE[e.outcome] ?? "neutral";
   const took = secondsBetween(e.started_at, e.finished_at);
   const kind = u.historyKinds[e.kind] ?? e.kind;
   const what =
@@ -36,52 +44,65 @@ function Row({ e, tz }: { e: UpdateHistoryEntry; tz: string }) {
       : e.kind === "plug-change" && e.plug_id
         ? `${kind}: ${fmt(u.plugOf, { plug: e.plug_id })}`
         : `${kind}: ${historyVersions(e)}`;
+  const recovery = (e.reason ?? "").startsWith("recovery ");
   const details = [
-    formatZoned(e.finished_at, tz),
     took !== null ? fmt(u.took, { time: formatDuration(took) }) : null,
     e.downtime_s ? fmt(u.downtimeWas, { time: formatDuration(e.downtime_s) }) : null,
-    u.sourcesOfJob[e.source] ?? e.source,
+    recovery ? u.recoveryOf : (u.sourcesOfJob[e.source] ?? e.source),
   ].filter(Boolean);
-  const problem = e.problem ? problemText(slugOf(e.problem.type)) : null;
+  const sentence = outcomeSentence(e);
+  const problem = e.problem && !sentence ? problemText(slugOf(e.problem.type)) : null;
   return (
-    <Item
-      asChild
-      size="xs"
-      className="min-h-14 flex-nowrap rounded-none px-1"
+    <li
+      className="relative grid grid-cols-[1.5rem_minmax(0,1fr)] gap-x-3 pb-5 last:pb-0 sm:grid-cols-[9.5rem_1.5rem_minmax(0,1fr)_auto]"
       data-testid="history-row"
       data-kind={e.kind}
       data-outcome={e.outcome}
       title={e.problem?.detail ?? e.reason ?? undefined}
     >
-      <li>
-        <ItemMedia variant="icon">
-          <KindIcon e={e} />
-        </ItemMedia>
-        <ItemContent className="min-w-0">
-          <ItemTitle
-            className="line-clamp-2 w-full font-semibold break-words sm:line-clamp-1"
-            data-testid="history-what"
-          >
-            {what}
-          </ItemTitle>
-          <ItemDescription className="line-clamp-2 text-xs sm:line-clamp-1">{details.join(" · ")}</ItemDescription>
-          {problem ? (
-            <ItemDescription className="line-clamp-1 text-xs text-destructive">{problem}</ItemDescription>
-          ) : null}
-        </ItemContent>
-        <ItemActions className="flex-col items-end gap-1">
-          <Badge size="sm" variant={badge.variant} data-testid="history-outcome">
-            {badge.text}
-          </Badge>
-          {e.pitr_offer ? (
-            <Badge size="sm" variant="warning">
-              <LifeBuoyIcon data-icon="inline-start" />
-              {u.pitrOffered}
-            </Badge>
-          ) : null}
-        </ItemActions>
-      </li>
-    </Item>
+      {last ? null : (
+        <span
+          aria-hidden="true"
+          className="absolute top-7 bottom-1 left-[0.6875rem] w-0.5 rounded-full bg-line sm:left-[calc(9.5rem+0.75rem+0.6875rem)]"
+        />
+      )}
+      <time
+        dateTime={e.finished_at}
+        className="col-start-2 row-start-1 type-data text-ink-soft sm:col-start-1 sm:pt-0.5 sm:text-right"
+      >
+        {formatZoned(e.finished_at, tz)}
+      </time>
+      <span
+        className={cn(
+          "col-start-1 row-span-2 row-start-1 grid size-6 place-items-center rounded-full text-white sm:col-start-2 dark:text-black/80",
+          toneSolid[tone],
+        )}
+      >
+        <KindIcon e={e} />
+      </span>
+      <div className="col-start-2 min-w-0 sm:col-start-3 sm:row-start-1">
+        <p className="type-body font-medium break-words text-ink" data-testid="history-what">
+          {what}
+        </p>
+        {sentence ? (
+          <p className="type-body text-ink" data-testid="history-sentence">
+            {sentence}
+          </p>
+        ) : null}
+        <p className="type-small text-ink-muted">{details.join(" · ")}</p>
+        {problem ? <p className="type-small text-danger-fg">{problem}</p> : null}
+      </div>
+      <div className="col-start-2 mt-2 flex flex-wrap items-start gap-1 sm:col-start-4 sm:row-start-1 sm:mt-0 sm:flex-col sm:items-end">
+        <StatusChip tone={tone} size="sm" testId="history-outcome">
+          {badge.text}
+        </StatusChip>
+        {e.pitr_offer ? (
+          <StatusChip tone="warn" size="sm">
+            {u.pitrOffered}
+          </StatusChip>
+        ) : null}
+      </div>
+    </li>
   );
 }
 
@@ -111,7 +132,7 @@ export function HistoryCard({ tz }: { tz: string }) {
       }
     >
       <ol
-        className="flex flex-col divide-y"
+        className="flex flex-col"
         style={{ minHeight: `${RESERVED_ROWS * 3.5}rem` }}
         aria-label={u.historyTitle}
         data-testid="history-list"
@@ -124,9 +145,9 @@ export function HistoryCard({ tz }: { tz: string }) {
             </li>
           ))
         ) : items.length === 0 ? (
-          <li className="flex flex-1 items-center justify-center text-sm text-soft-foreground">{u.historyEmpty}</li>
+          <li className="flex flex-1 items-center justify-center type-body text-ink-muted">{u.historyEmpty}</li>
         ) : (
-          items.map((e) => <Row key={e.job_id} e={e} tz={tz} />)
+          items.map((e, i) => <Row key={e.job_id} e={e} tz={tz} last={i === items.length - 1} />)
         )}
       </ol>
       {history.error ? <ProblemAlert error={history.error} /> : null}

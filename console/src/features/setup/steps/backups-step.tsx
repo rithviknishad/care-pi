@@ -1,19 +1,20 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangleIcon, InfoIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { InfoIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 import { api, call } from "@/api/client";
 import { qk } from "@/api/queries";
 import type { Destination, DestinationCredentials, RecoveryKeyStatus } from "@/api/types";
 import { ProblemAlert } from "@/components/app/problem-alert";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { ProblemCard } from "@/components/v2/problem-card";
 import { Button } from "@/components/ui/button";
-import { formatRpo, intervalText, rpoMinutes } from "@/features/backups/backups-format";
+import { effectiveRetention, formatRpoMinutes, rpoMinutes } from "@/features/backups/backups-format";
+import { retentionSummary } from "@/components/v2/retention";
 import { DestinationForm } from "@/features/backups/destination-form";
 import { TYPE_ICONS, destinationPlace, type Choice } from "@/features/backups/destination-meta";
 import { DestinationChoices } from "@/features/backups/destination-parts";
 import { RecoveryKeyCeremony } from "@/features/backups/recovery-key-ceremony";
 import { fmt, strings } from "@/lib/strings";
-import { StepActions, StepIntro, type StepProps } from "../step-frame";
+import { StepActions, type StepProps } from "../step-frame";
 
 const s = strings.backups;
 
@@ -38,21 +39,26 @@ function DestinationRow({
   walTimeoutMin: number;
 }) {
   const Icon = TYPE_ICONS[d.type] ?? InfoIcon;
+  const retention = effectiveRetention(d.retention);
   return (
-    <li className="flex items-center gap-3 rounded-lg border p-3" data-testid="dest-row" data-id={d.id}>
-      <Icon className="size-5 shrink-0 text-primary" aria-hidden="true" />
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-semibold">
-          {d.id} <span className="font-normal text-soft-foreground">· {strings.dest.types[d.type]}</span>
+    <li
+      className="flex items-start gap-4 rounded-card border border-line bg-surface-card p-4 shadow-soft"
+      data-testid="dest-row"
+      data-id={d.id}
+    >
+      <span className="grid size-11 shrink-0 place-items-center rounded-lg bg-surface-tint-strong text-primary-solid">
+        <Icon className="size-5" aria-hidden="true" />
+      </span>
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <p className="truncate type-body font-semibold text-ink">
+          {strings.dest.types[d.type]} <span className="type-data font-normal text-ink-soft">· {d.id}</span>
         </p>
-        <p className="truncate text-xs text-soft-foreground" title={destinationPlace(d)}>
+        <p className="truncate type-data text-ink-soft" title={destinationPlace(d)}>
           {destinationPlace(d)}
         </p>
-        <p className="text-xs text-soft-foreground">
-          {fmt(s.schedule, {
-            interval: intervalText(d.interval_min ?? 15).toLowerCase(),
-            rpo: formatRpo(rpoMinutes(d.interval_min, walTimeoutMin)),
-          })}
+        <p className="type-small text-ink-muted">
+          {retentionSummary({ interval_min: d.interval_min ?? 15, ...retention })}{" "}
+          {fmt(strings.dest.rpoSentence, { minutes: formatRpoMinutes(rpoMinutes(d.interval_min, walTimeoutMin)) })}
         </p>
       </div>
       <Button
@@ -70,7 +76,7 @@ function DestinationRow({
 
 // The step backups (docs/api/README.md sections 13.4 and 13.5): the recovery key ceremony first, then 1 or more
 // destinations. PUT /setup/steps/backups writes the destinations and the S3 keys. A dev build can skip the step.
-export function BackupsStep({ setup, onDone, onBack }: StepProps) {
+export function BackupsStep({ setup, onDone, onBack, next }: StepProps) {
   const qc = useQueryClient();
   const step = setup.steps.find((x) => x.id === "backups");
   const draft = setup.draft.backups;
@@ -106,22 +112,20 @@ export function BackupsStep({ setup, onDone, onBack }: StepProps) {
         save.mutate();
       }}
     >
-      <StepIntro>{s.intro}</StepIntro>
       {setup.dev_build ? (
-        <Alert variant="info">
-          <InfoIcon />
-          <AlertDescription>{s.devBuild}</AlertDescription>
-        </Alert>
+        <p className="flex items-start gap-2 rounded-input border border-info-border bg-info-bg p-3 type-small text-info-fg">
+          <InfoIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          {s.devBuild}
+        </p>
       ) : null}
       {keyStatus.state === "unconfirmed" ? (
-        <Alert variant="warning" data-testid="key-reminder">
-          <AlertTriangleIcon />
-          <AlertDescription>{strings.keyCeremony.reminder}</AlertDescription>
-        </Alert>
+        <div data-testid="key-reminder">
+          <ProblemCard tone="warn" title={strings.keyCeremony.reminder} />
+        </div>
       ) : null}
 
       <section className="flex flex-col gap-3" aria-labelledby="backups-key">
-        <h3 id="backups-key" className="font-semibold">
+        <h3 id="backups-key" className="type-h3 text-ink">
           {s.keyTitle}
         </h3>
         <RecoveryKeyCeremony
@@ -135,10 +139,10 @@ export function BackupsStep({ setup, onDone, onBack }: StepProps) {
       </section>
 
       <section className="flex flex-col gap-3" aria-labelledby="backups-dest" data-testid="backups-destinations">
-        <h3 id="backups-dest" className="font-semibold">
+        <h3 id="backups-dest" className="type-h3 text-ink">
           {s.destTitle}
         </h3>
-        <p className="text-sm text-soft-foreground">{keyConfirmed ? s.destIntro : s.keyFirst}</p>
+        <p className="max-w-prose type-small text-ink-muted">{keyConfirmed ? s.destIntro : s.keyFirst}</p>
         {destinations.length > 0 ? (
           <ul className="flex flex-col gap-2">
             {destinations.map((d) => (
@@ -180,16 +184,14 @@ export function BackupsStep({ setup, onDone, onBack }: StepProps) {
           </div>
         ) : null}
         {missing.map((d) => (
-          <Alert key={d.id} variant="warning">
-            <AlertTriangleIcon />
-            <AlertDescription>{fmt(s.missingSecret, { name: d.id })}</AlertDescription>
-          </Alert>
+          <ProblemCard key={d.id} tone="warn" title={fmt(s.missingSecret, { name: d.id })} />
         ))}
       </section>
 
       {save.error ? <ProblemAlert error={save.error} /> : null}
       {skip.error ? <ProblemAlert error={skip.error} /> : null}
       <StepActions
+        next={next}
         onBack={onBack}
         busy={save.isPending || skip.isPending}
         disabled={!keyConfirmed || destinations.length === 0 || missing.length > 0 || choice !== null}

@@ -169,8 +169,9 @@ export async function pageWidth(page: Page): Promise<{ scroll: number; client: n
 }
 
 // cardBoxes gives [x, y, width, height] of each card of the main area, in page coordinates.
+// The boxes of the cards of a v2 page: the panels, the stat cards, the hero (sections), and the disclosures.
 export async function cardBoxes(page: Page): Promise<number[][]> {
-  return page.locator("main [data-slot=card]").evaluateAll((els) =>
+  return page.locator("main section, main details, main [data-slot=card]").evaluateAll((els) =>
     els.map((el) => {
       const r = el.getBoundingClientRect();
       return [r.x, r.y + window.scrollY, r.width, r.height].map((v) => Math.round(v));
@@ -193,14 +194,14 @@ export async function followSetupJob(page: Page, info: TestInfo, finishAt: numbe
     if ((await page.getByTestId("setup-failed").count()) > 0) break;
     const steps = await page.getByTestId("job-step").evaluateAll((els) =>
       els.map((el) => ({
-        name: el.querySelector("p")?.textContent ?? "",
+        name: el.querySelector('[data-testid="job-step-title"], [data-testid="job-step-raw"]')?.textContent ?? "",
         state: el.getAttribute("data-state") ?? "",
         hint: el.querySelectorAll("p")[1]?.textContent ?? "",
       })),
     );
     const names = steps.map((s) => s.name);
     expect(names.slice(0, previous.length), "the step list only appends").toEqual(previous);
-    for (const s of steps) if (s.hint.startsWith("Expected:")) hints.add(`${s.name} | ${s.hint}`);
+    for (const s of steps) if (s.hint.startsWith("Usually about")) hints.add(`${s.name} | ${s.hint}`);
     const last = timeline[timeline.length - 1];
     if (!last || JSON.stringify(last.steps) !== JSON.stringify(steps)) {
       timeline.push({ t: Math.round((Date.now() - finishAt) / 1000), steps });
@@ -243,14 +244,12 @@ export async function checkHandoffAndDashboard(page: Page, info: TestInfo): Prom
   await page.getByRole("link", { name: "Go to the dashboard" }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(page.getByTestId("status-state")).toBeVisible();
-  const rows = page.getByTestId("units").locator("tbody tr");
+  const rows = page.getByTestId("units").locator("[data-unit]");
   await expect.poll(() => rows.count()).toBeGreaterThan(5);
-  const unitText = await rows.allTextContents();
-  note(
-    info,
-    `dashboard state: ${await page.getByTestId("status-state").textContent()}; units: ${unitText.join(" | ")}`,
+  const units = await rows.evaluateAll((els) =>
+    els.map((el) => `${el.getAttribute("data-unit")} ${el.getAttribute("data-active")}/${el.getAttribute("data-sub")}`),
   );
-  for (const r of unitText) expect(r).toMatch(/active\//);
-  for (const r of unitText) expect(r).not.toMatch(/inactive|failed/);
+  note(info, `dashboard state: ${await page.getByTestId("status-state").textContent()}; units: ${units.join(" | ")}`);
+  for (const r of units) expect(r).toMatch(/ active\//);
   await shot(page, info, "15-dashboard");
 }

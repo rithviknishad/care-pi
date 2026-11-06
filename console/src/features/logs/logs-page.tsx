@@ -8,7 +8,10 @@ import type { LogLine, LogPage, LogUnit } from "@/api/types";
 import { PageHeader } from "@/components/app/page";
 import { ProblemAlert } from "@/components/app/problem-alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { CopyButton } from "@/components/v2/copy-button";
+import { Panel } from "@/components/v2/panel";
+import { exportLogs } from "@/api/exports";
 import { Label } from "@/components/ui/label";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Switch } from "@/components/ui/switch";
@@ -21,8 +24,8 @@ const COUNTS = [100, 200, 500, 1000];
 const MAX_LINES = 5000;
 
 function priorityClass(p: number): string {
-  if (p <= 3) return "text-destructive";
-  if (p === 4) return "text-amber-700 dark:text-amber-300";
+  if (p <= 3) return "text-danger-fg";
+  if (p === 4) return "text-warn-fg";
   return "";
 }
 
@@ -134,116 +137,129 @@ export default function LogsPage() {
     atBottom.current = true;
   };
 
+  const unitItems = units.data?.items ?? [{ name: unit, unit }];
   return (
-    <div className="flex flex-col gap-4">
-      <PageHeader title={l.title} />
-      <Card size="sm">
-        <CardContent className="flex flex-col gap-4">
-          <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
-            <div className="flex flex-col gap-1">
-              <Label htmlFor={`${id}-unit`}>{l.unit}</Label>
-              <NativeSelect
-                id={`${id}-unit`}
-                value={unit}
-                onChange={(e) => setParams({ unit: e.target.value }, { replace: true })}
-                data-testid="log-unit"
-              >
-                {(units.data?.items ?? [{ name: unit, unit }]).map((u) => (
-                  <NativeSelectOption key={u.name} value={u.name}>
-                    {u.name} ({u.unit})
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </div>
-            <div className="flex flex-col gap-1">
-              <Label htmlFor={`${id}-n`}>{l.lines}</Label>
-              <NativeSelect id={`${id}-n`} value={String(count)} onChange={(e) => setCount(Number(e.target.value))}>
-                {COUNTS.map((n) => (
-                  <NativeSelectOption key={n} value={String(n)}>
-                    {n}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </div>
-            <Label htmlFor={`${id}-follow`} className="flex h-10 items-center gap-3">
-              <Switch
-                id={`${id}-follow`}
-                checked={follow}
-                onCheckedChange={(v) => {
-                  setFollow(v);
-                  setPaused(false);
-                  atBottom.current = true;
-                }}
-                data-testid="log-follow"
-              />
-              {l.follow}
-            </Label>
-            <div className="ml-auto flex flex-wrap gap-2">
-              {follow ? (
-                paused ? (
-                  <Button type="button" variant="outline" size="sm" onClick={resume} data-testid="log-resume">
-                    <PlayIcon data-icon="inline-start" />
-                    {l.resume}
-                  </Button>
-                ) : (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPaused(true)}
-                    data-testid="log-pause"
-                  >
-                    <PauseIcon data-icon="inline-start" />
-                    {l.pause}
-                  </Button>
-                )
-              ) : (
-                <Button type="button" variant="outline" size="sm" onClick={() => void page.refetch()}>
-                  <RotateCwIcon data-icon="inline-start" />
-                  {l.load}
-                </Button>
-              )}
-              <Button type="button" variant="ghost" size="sm" onClick={toEnd}>
-                <ArrowDownToLineIcon data-icon="inline-start" />
-                {l.jumpToEnd}
-              </Button>
-            </div>
-          </div>
-          <p className="min-h-5 text-xs text-soft-foreground" aria-live="polite">
-            {follow
-              ? paused
-                ? fmt(l.paused, { count: pending.length })
-                : streamError
-                  ? strings.progress.reconnect
-                  : l.following
-              : ""}
-          </p>
-          {page.isError && !follow ? <ProblemAlert error={page.error} /> : null}
-          <div
-            ref={box}
-            onScroll={onScroll}
-            className="h-[60dvh] min-h-64 overflow-y-auto rounded-lg border bg-soft-background p-3 text-xs leading-5"
-            role="log"
-            aria-live="off"
-            data-testid="log-lines"
+    <div className="flex flex-col gap-6">
+      <PageHeader title={l.title} description={l.intro} />
+      <Panel>
+        <fieldset className="flex min-w-0 flex-col gap-2">
+          <legend className="mb-1 type-small font-medium text-ink-muted">{l.unit}</legend>
+          <ToggleGroup
+            variant="outline"
+            size="sm"
+            spacing={1}
+            value={[unit]}
+            onValueChange={(v) => {
+              const next = v[0];
+              if (next) setParams({ unit: next }, { replace: true });
+            }}
+            aria-label={l.unit}
+            className="flex flex-wrap justify-start gap-2"
+            data-testid="log-unit"
           >
-            {lines.length === 0 ? (
-              <p className="text-soft-foreground">{page.isPending && !follow ? "" : l.empty}</p>
-            ) : null}
-            {lines.map((line) => (
-              <p
-                key={line.cursor}
-                className={cn("break-all whitespace-pre-wrap", priorityClass(line.priority))}
-                data-testid="log-line"
+            {unitItems.map((u) => (
+              <ToggleGroupItem
+                key={u.name}
+                value={u.name}
+                className="rounded-full"
+                title={u.unit}
+                data-testid={`log-unit-${u.name}`}
               >
-                <span className="text-soft-foreground">{formatDateTime(line.time)} </span>
-                <span className="text-soft-foreground">{l.priority[line.priority] ?? line.priority} </span>
-                {line.message}
-              </p>
+                {l.units[u.name] ?? u.name}
+              </ToggleGroupItem>
             ))}
+          </ToggleGroup>
+        </fieldset>
+        <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
+          <div className="flex flex-col gap-1">
+            <Label htmlFor={`${id}-n`}>{l.lines}</Label>
+            <NativeSelect id={`${id}-n`} value={String(count)} onChange={(e) => setCount(Number(e.target.value))}>
+              {COUNTS.map((n) => (
+                <NativeSelectOption key={n} value={String(n)}>
+                  {n}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
           </div>
-        </CardContent>
-      </Card>
+          <Label htmlFor={`${id}-follow`} className="flex h-10 items-center gap-3">
+            <Switch
+              id={`${id}-follow`}
+              checked={follow}
+              onCheckedChange={(v) => {
+                setFollow(v);
+                setPaused(false);
+                atBottom.current = true;
+              }}
+              data-testid="log-follow"
+            />
+            {l.follow}
+          </Label>
+          <div className="ml-auto flex flex-wrap gap-2">
+            {follow ? (
+              paused ? (
+                <Button type="button" variant="outline" size="sm" onClick={resume} data-testid="log-resume">
+                  <PlayIcon data-icon="inline-start" />
+                  {l.resume}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPaused(true)}
+                  data-testid="log-pause"
+                >
+                  <PauseIcon data-icon="inline-start" />
+                  {l.pause}
+                </Button>
+              )
+            ) : (
+              <Button type="button" variant="outline" size="sm" onClick={() => void page.refetch()}>
+                <RotateCwIcon data-icon="inline-start" />
+                {l.load}
+              </Button>
+            )}
+            <Button type="button" variant="ghost" size="sm" className="no-underline" onClick={toEnd}>
+              <ArrowDownToLineIcon data-icon="inline-start" />
+              {l.jumpToEnd}
+            </Button>
+            <CopyButton text={() => exportLogs(unit, count)} support label={l.copy} />
+          </div>
+        </div>
+        <p className="min-h-5 type-small text-ink-soft" aria-live="polite">
+          {follow
+            ? paused
+              ? fmt(l.paused, { count: pending.length })
+              : streamError
+                ? strings.progress.reconnect
+                : l.following
+            : ""}
+        </p>
+        {page.isError && !follow ? <ProblemAlert error={page.error} onRetry={() => void page.refetch()} /> : null}
+        <div
+          ref={box}
+          onScroll={onScroll}
+          tabIndex={0}
+          className="h-[60dvh] min-h-64 overflow-y-auto rounded-input border border-line bg-surface-sunken p-3 type-data text-ink outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          role="log"
+          aria-live="off"
+          aria-label={fmt(l.logOf, { unit: l.units[unit] ?? unit })}
+          data-testid="log-lines"
+        >
+          {lines.length === 0 ? <p className="text-ink-soft">{page.isPending && !follow ? "" : l.empty}</p> : null}
+          {lines.map((line) => (
+            <p
+              key={line.cursor}
+              className={cn("break-all whitespace-pre-wrap", priorityClass(line.priority))}
+              data-testid="log-line"
+            >
+              <span className="text-ink-soft">{formatDateTime(line.time)} </span>
+              <span className="text-ink-soft">{l.priority[line.priority] ?? line.priority} </span>
+              {line.message}
+            </p>
+          ))}
+        </div>
+      </Panel>
     </div>
   );
 }

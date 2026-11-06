@@ -1,7 +1,15 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { ComponentType } from "react";
 import { createBrowserRouter } from "react-router";
-import { CrashPage, HomeRedirect, NotFoundPage, RequireSession, RootLayout, SessionOptionalShell } from "./guards";
+import {
+  CrashPage,
+  HomeRedirect,
+  NotFoundPage,
+  RequireSession,
+  RootLayout,
+  SessionOptionalBare,
+  SessionOptionalShell,
+} from "./guards";
 import { ShellSkeleton } from "./layout/app-shell";
 import { PublicLayout } from "./layout/public-layout";
 
@@ -31,6 +39,11 @@ export function createAppRouter(queryClient: QueryClient) {
           children: [{ path: "certificate", lazy: page(() => import("@/features/certificate/certificate-page")) }],
         },
         {
+          // S67: the page of a job. With a session: the shell and the full stream. Without: the public progress.
+          element: <SessionOptionalBare />,
+          children: [{ path: "jobs/:id", lazy: page(() => import("@/features/jobs/job-page")) }],
+        },
+        {
           element: <RequireSession />,
           children: [
             { path: "setup", lazy: page(() => import("@/features/setup/setup-wizard")) },
@@ -40,6 +53,7 @@ export function createAppRouter(queryClient: QueryClient) {
             { path: "setup/:page", lazy: page(() => import("@/features/setup/setup-wizard")) },
             { path: "dashboard", lazy: page(() => import("@/features/dashboard/dashboard-page")) },
             { path: "logs", lazy: page(() => import("@/features/logs/logs-page")) },
+            { path: "jobs", lazy: page(() => import("@/features/jobs/jobs-page")) },
             { path: "settings", lazy: page(() => import("@/features/settings/settings-page")) },
             { path: "security", lazy: page(() => import("@/features/security/security-page")) },
             { path: "support", lazy: page(() => import("@/features/support/support-page")) },

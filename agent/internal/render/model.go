@@ -182,6 +182,9 @@ type Model struct {
 	MaintenanceSteps map[string]string
 	// MaintenanceRestart is the text of the maintenance page for a restart of care-api (S62).
 	MaintenanceRestart string
+	// JobTitles maps a job kind to its title, and JobNext to the "what happens next" text of the status pages (S67).
+	JobTitles map[string]string
+	JobNext   map[string]string
 
 	// Phase 6 (docs/connectivity.md). LocalHosts are the names of the local CA mode; LocalSites adds the LAN addresses.
 	LocalHosts []string
@@ -596,6 +599,8 @@ func NewModel(in Input) (*Model, error) {
 		CareBuild:          in.CareBuild,
 		MaintenanceSteps:   MaintenanceSteps,
 		MaintenanceRestart: MaintenanceRestart,
+		JobTitles:          JobTitles,
+		JobNext:            JobNext,
 		Header:             Header,
 		DisplayName:        cfg.Identity.DisplayName,
 		Hostnames:          hosts,
@@ -968,6 +973,61 @@ func withDeviceHosts(v any, names []string) (out []any, ok bool) {
 // MaintenanceRestart is the text of the maintenance page while care-api restarts behind the page (S62, the step
 // restart). The console keeps its own sentence for the step restart, because the step also restarts other units.
 const MaintenanceRestart = "CARE restarts. This takes about 1 minute."
+
+// JobTitles are the titles of each job kind: a verbatim copy of strings.jobs.kinds of the console
+// (console/src/lib/strings.ts). GET /_care-pi/status gives the title of the running job (S67), and the status pages
+// show it. TestJobTitlesMatchConsole compares the two tables.
+var JobTitles = map[string]string{
+	"apply":               "Apply the settings",
+	"setup":               "Set up the device",
+	"fe-build":            "Build the Care web app",
+	"fe-prune":            "Delete the old builds of the web app",
+	"support-bundle":      "Make a support bundle",
+	"backup-run":          "Back up",
+	"backup-verify":       "Verify the backups",
+	"restore-pitr":        "Restore the database to a point in time",
+	"restore-files":       "Restore files",
+	"restore-dr":          "Restore the device from a backup",
+	"disk-prepare":        "Prepare a backup disk",
+	"recovery-key-rotate": "Change the recovery key",
+	"restore-drill":       "Test restore",
+	"update-check":        "Check for updates",
+	"update-stage":        "Download an update",
+	"update-apply":        "Install an update",
+	"update-rollback":     "Go back to the previous version",
+	"os-update":           "Install the OS updates",
+	"plug-change":         "Change a plug",
+	"tls-public-enrol":    "Change the public name",
+	"tls-tailscale-enrol": "Change Tailscale",
+	"network-wifi":        "Change the Wi-Fi",
+	"tls-local-ca-rotate": "Make a new root certificate",
+}
+
+// JobTitle returns the title of a job kind, or the kind itself.
+func JobTitle(kind string) string {
+	if t, ok := JobTitles[kind]; ok {
+		return t
+	}
+	return kind
+}
+
+// JobNextDefault is the "what happens next" text of the status pages for a kind without its own text.
+const JobNextDefault = "When the job is complete, this page opens CARE again."
+
+// JobNext is the "what happens next" text of the status pages for the kinds that run behind them (S67).
+var JobNext = map[string]string{
+	"":                JobNextDefault,
+	"apply":           "When the job is complete, CARE starts again and this page opens CARE.",
+	"setup":           "When the setup is complete, this page opens CARE. Then log in to CARE with the administrator account of the setup.",
+	"fe-build":        "When the build is complete, this page opens CARE.",
+	"update-apply":    "When the update is complete, this page opens CARE again. If a step fails, the device goes back to the previous version.",
+	"update-rollback": "When the device runs the previous version, this page opens CARE again.",
+	"restore-pitr":    "When the restore is complete, this page opens CARE again. The data is as it was at the time of the restore point.",
+	"restore-files":   "When the restore is complete, this page opens CARE again.",
+	"restore-dr":      "When the restore is complete, CARE starts with the data of the backup. Then log in to the console again.",
+	"plug-change":     "When the plug change is complete, this page opens CARE again.",
+	"os-update":       "When the OS updates are installed, the device can restart. Then this page opens CARE again.",
+}
 
 // MaintenanceSteps are the texts of the maintenance page for each JobStep.action: a verbatim copy of
 // strings.steps.actions of the console (console/src/lib/strings.ts, docs/console-ui.md section 9), so the page,

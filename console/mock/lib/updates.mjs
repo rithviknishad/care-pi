@@ -1,6 +1,6 @@
 // Phase 4 of the mock: updates, OS updates, plugs, and solutions (docs/api/README.md section 14,
 // docs/solutions.md). The state lives in state.u (freshUpdates). Reset options:
-//   updates: idle | available | staged | updated | agent-too-old | withdrawn   (default idle)
+//   updates: idle | available | staged | updated | recovered | agent-too-old | withdrawn   (default idle)
 //   window_open: true | false | "real"   (default false: the window is closed; "real" computes it from the clock)
 //   update_fail: checkpoint | migrate | verify | rollback   (one update fails at this step, then rolls back)
 //   phase4: false   (each Phase 4 operation answers 501, as an agent of Phase 2 or 3)
@@ -479,6 +479,56 @@ export function freshUpdates(options = {}) {
       pitr_offer: null,
       problem: null,
       downtime_s: 162.5,
+    });
+  }
+  // S69: a power loss during the cutover of 2026.11.1. At the next start the agent marked the update failed
+  // ("interrupted") and a recovery job (update-rollback, source timer, reason "recovery <job id>") installed the lock
+  // on disk again, with the PITR offer of the interrupted job (docs/solutions.md section 8.6).
+  if (scenario === "recovered") {
+    const cp = checkpointOf("20261122T020300.000Z-update-apply", "2026-11-22T02:05:12Z");
+    const offer = offerOf(cp);
+    u.cached = [L1, L0];
+    u.lastCheckAt = "2026-11-22T01:58:00Z";
+    u.history.unshift({
+      job_id: "20261122T020300.000Z-update-apply",
+      kind: "update",
+      source: "timer",
+      reason: "window Sun 02:00",
+      started_at: "2026-11-22T02:03:00Z",
+      finished_at: "2026-11-22T02:06:40Z",
+      outcome: "rolled-back",
+      from_version: "2026.11.0",
+      to_version: "2026.11.1",
+      from_lock: "20261115T020741Z",
+      to_lock: null,
+      plug_id: null,
+      checkpoint: cp,
+      pitr_offer: offer,
+      problem: {
+        type: "https://care-pi.rithviknishad.dev/problems/internal",
+        title: "Internal error",
+        status: 500,
+        detail: "interrupted: no process holds the apply lock",
+      },
+      downtime_s: null,
+    });
+    u.history.unshift({
+      job_id: "20261122T021500.000Z-update-rollback",
+      kind: "rollback",
+      source: "timer",
+      reason: "recovery 20261122T020300.000Z-update-apply",
+      started_at: "2026-11-22T02:15:00Z",
+      finished_at: "2026-11-22T02:17:31Z",
+      outcome: "rolled-back",
+      from_version: "2026.11.1",
+      to_version: "2026.11.0",
+      from_lock: null,
+      to_lock: "20261115T020741Z",
+      plug_id: null,
+      checkpoint: null,
+      pitr_offer: offer,
+      problem: null,
+      downtime_s: 91.0,
     });
   }
   if (scenario === "agent-too-old") {

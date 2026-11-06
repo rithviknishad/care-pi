@@ -138,3 +138,12 @@ export function previousText(o: Pick<UpdatesOverview, "rollback">, tz: string): 
   if (r.to_lock) return fmt(u.previousLock, { time: formatZoned(lockTime(r.to_lock), tz) });
   return u.rollbackNone;
 }
+
+// S69: an update that did not finish, in one plain sentence. A recovery (a rollback with the reason "recovery <id>",
+// docs/solutions.md section 8.6) or an "interrupted" problem: the power went off during the update.
+export function outcomeSentence(e: Pick<UpdateHistoryEntry, "kind" | "outcome" | "reason" | "problem">): string | null {
+  const interrupted = (e.reason ?? "").startsWith("recovery ") || /interrupted/i.test(e.problem?.detail ?? "");
+  if (e.outcome === "rolled-back") return interrupted ? u.interrupted : u.notFinished;
+  if (e.kind === "rollback" && e.outcome === "succeeded") return u.wentBack;
+  return null;
+}

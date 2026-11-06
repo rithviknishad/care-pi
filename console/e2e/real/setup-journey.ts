@@ -57,10 +57,12 @@ export async function setupJourney(page: Page, info: TestInfo, stateName: string
   await shot(page, info, "04-confirm-code");
   await page.getByTestId("step-submit").click();
 
-  // Step: hardware. The facts of the device.
-  await expect(page.getByTestId("step-title")).toHaveText("Hardware check");
+  // Step: hardware. A short summary; the facts of the device are in "Details".
+  await expect(page.getByTestId("step-title")).toHaveText("Check the device");
   await expect(page.getByTestId("host-check-summary")).toContainText(/checks passed/);
-  const facts = page.locator("dl").first();
+  const details = page.getByTestId("hardware-details");
+  await details.getByText("Details", { exact: true }).click();
+  const facts = details.locator("dl").first();
   await expect(facts).toContainText("Memory (RAM)");
   const fact = async (label: string) => {
     const dd = facts.locator("dt", { hasText: new RegExp(`^${label.replace(/[()]/g, "\\$&")}$`) });
@@ -89,16 +91,17 @@ export async function setupJourney(page: Page, info: TestInfo, stateName: string
     info,
     `host checks: ${await page.getByTestId("host-check-summary").textContent()}, failed: ${await failedChecks.count()}`,
   );
-  await expect(page.getByRole("button", { name: "I read the warnings" })).toBeInViewport();
+  const ack = page.getByTestId("step-submit");
+  await ack.scrollIntoViewIfNeeded();
+  await expect(ack).toBeInViewport();
   await shot(page, info, "05-hardware");
-  await page.getByRole("button", { name: "I read the warnings" }).click();
+  await ack.click();
 
   // Step: identity. The easy path keeps the host name and shows the announced name and the addresses.
-  await expect(page.getByTestId("step-title")).toHaveText("Name and address");
+  await expect(page.getByTestId("step-title")).toHaveText("Name your clinic");
   await expect(page.getByTestId("advertised-name")).toContainText(".local");
   const advertised = (await page.getByTestId("advertised-name").textContent()) ?? "";
-  const panel = page.getByTestId("advertised-name").locator("..");
-  const ipsText = (await panel.locator("p").nth(1).textContent()) ?? "";
+  const ipsText = (await page.getByTestId("network-ips").textContent()) ?? "";
   note(info, `identity: "${advertised.trim()}" / "${ipsText.trim()}"`);
   if (env.hostname) expect(advertised).toContain(`${env.hostname}.local`);
   for (const ip of env.ips) expect(ipsText).toContain(ip);
@@ -107,27 +110,32 @@ export async function setupJourney(page: Page, info: TestInfo, stateName: string
   await shot(page, info, "06-identity");
   await page.getByTestId("step-submit").click();
 
-  // Step: certificate (local CA).
-  await expect(page.getByTestId("step-title")).toHaveText("Certificate");
+  // Step: certificate (local CA): one sentence and "Keep Care working offline".
+  await expect(page.getByTestId("step-title")).toHaveText("Keep the connection safe");
+  await expect(page.getByRole("switch", { name: "Keep Care working offline" })).toBeChecked();
   await shot(page, info, "07-tls");
-  await page.getByRole("button", { name: "Use the local certificate" }).click();
+  await page.getByTestId("step-submit").click();
 
-  // Step: size, easy path. 2 to 4 people, 3 or 4 at the busiest time: small-clinic.
-  await expect(page.getByTestId("step-title")).toHaveText("Size");
-  await page.getByRole("radio", { name: "2 to 4 people" }).click();
-  await page.getByRole("radio", { name: "3 or 4" }).click();
-  await expect(page.getByTestId("size-result")).toContainText("Preset: small-clinic");
+  // Step: size, easy path (S65): the 3 preset cards. The agent recommends a preset for the RAM of the device; on
+  // 2 GB that is Small clinic, and Busy counter is dimmed with the reason.
+  await expect(page.getByTestId("step-title")).toHaveText("How big is your clinic?");
+  const presets = page.getByTestId("size-presets");
+  await expect(presets.getByRole("radio")).toHaveCount(3);
+  const recommended = presets.locator("label", { hasText: "Recommended" });
+  note(info, `size: recommended ${await recommended.getAttribute("data-value")}`);
+  await presets.getByText("Small clinic").click();
+  await expect(presets.getByRole("radio", { name: /Small clinic/ })).toBeChecked();
   await shot(page, info, "08-size");
   await page.getByTestId("step-submit").click();
 
   // The easy path skips env. Look at env on the advanced path: the defaults are read-only. Keep it skipped.
-  await expect(page.getByTestId("step-title")).toHaveText("Backups");
+  await expect(page.getByTestId("step-title")).toHaveText("Keep a copy of your data");
   await page
     .getByRole("radio", { name: "Advanced" })
     .or(page.getByRole("button", { name: "Advanced" }))
     .click();
   await page.goto("/setup/env");
-  await expect(page.getByTestId("step-title")).toHaveText("Environment");
+  await expect(page.getByTestId("step-title")).toHaveText("Settings of Care");
   const defaults = page.locator("details", { hasText: "Defaults of this version (read-only)" });
   await expect(defaults).toHaveCount(2);
   await defaults.first().locator("summary").click();
@@ -138,7 +146,7 @@ export async function setupJourney(page: Page, info: TestInfo, stateName: string
   await expect(page.getByText("No variables.")).toHaveCount(2);
   await shot(page, info, "09-env-advanced");
   await page.getByRole("button", { name: "Skip this step" }).click();
-  await expect(page.getByTestId("step-title")).toHaveText("Backups");
+  await expect(page.getByTestId("step-title")).toHaveText("Keep a copy of your data");
   await page
     .getByRole("radio", { name: "Easy" })
     .or(page.getByRole("button", { name: "Easy" }))
@@ -148,7 +156,7 @@ export async function setupJourney(page: Page, info: TestInfo, stateName: string
   await backupsWizardStep(page, info);
 
   // Step: Care administrator.
-  await expect(page.getByTestId("step-title")).toHaveText("Care administrator");
+  await expect(page.getByTestId("step-title")).toHaveText("Make the Care administrator");
   await page.getByLabel("User name").fill(env.careUsername);
   await page.getByLabel("Email").fill(env.careEmail);
   await page.getByLabel("Care password").fill(env.carePassword);
@@ -157,15 +165,15 @@ export async function setupJourney(page: Page, info: TestInfo, stateName: string
   await page.getByTestId("step-submit").click();
 
   // Review and finish.
-  await expect(page.getByTestId("step-title")).toHaveText("Review");
+  await expect(page.getByTestId("step-title")).toHaveText("Check your choices");
   const review = page.getByTestId("review");
   await expect(review).toContainText(env.displayName);
   await expect(review).toContainText("small-clinic");
   await expect(review).toContainText(env.careUsername);
-  await expect(page.getByText(/^Setup takes about 10 minutes\./)).toBeVisible();
+  await expect(page.getByText(/^The install takes about 10 min\./)).toBeVisible();
   await shot(page, info, "12-review");
   const finishAt = Date.now();
-  await page.getByRole("button", { name: "Start the setup" }).click();
+  await page.getByRole("button", { name: "Install Care" }).click();
   note(info, `finish clicked at ${new Date(finishAt).toISOString()}`);
 
   await followSetupJob(page, info, finishAt);

@@ -3,7 +3,16 @@
 import { gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import { Problem, openSse, sendJson } from "./http.mjs";
-import { SUPPORT_STEPS, startJob, summary } from "./jobs.mjs";
+import {
+  SUPPORT_STEPS,
+  jobExport,
+  logTail,
+  publicEvent,
+  startJob,
+  stateFilter,
+  summary,
+  supportHeader,
+} from "./jobs.mjs";
 import { FINGERPRINT, now } from "./state.mjs";
 import { currentRoot } from "./connectivity.mjs";
 
@@ -75,18 +84,22 @@ function backlog(unit, n) {
   return Array.from({ length: n }, (_, i) => line(unit, i, new Date(start + i * 7000)));
 }
 
-function streamJob(ctx, entry) {
+function streamJob(ctx, entry, filter = (ev) => ev) {
   const { req, res, query } = ctx;
   const header = req.headers["last-event-id"];
   const after = Number(header ?? query.get("after") ?? 0) || 0;
   const sse = openSse(res);
-  for (const ev of entry.events) if (ev.id > after) sse.send(ev.id, ev.event, ev.data);
+  const send = (raw) => {
+    const ev = filter(raw);
+    if (ev) sse.send(ev.id, ev.event, ev.data);
+  };
+  for (const ev of entry.events) if (ev.id > after) send(ev);
   if (entry.job.state !== "running" && entry.job.state !== "queued") {
     sse.close();
     return;
   }
   const listener = (ev) => {
-    sse.send(ev.id, ev.event, ev.data);
+    send(ev);
     if (ev.event === "done") {
       entry.listeners.delete(listener);
       sse.close();
@@ -94,6 +107,11 @@ function streamJob(ctx, entry) {
   };
   entry.listeners.add(listener);
   res.on("close", () => entry.listeners.delete(listener));
+}
+
+export function sendText(res, text) {
+  res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" });
+  res.end(text);
 }
 
 function jobEntry(state, id) {
@@ -223,7 +241,7 @@ export const opsRoutes = [
       const limit = Number(query.get("limit") ?? 20);
       const items = state.jobOrder
         .map((id) => state.jobs.get(id).job)
-        .filter((j) => (!kind || j.kind === kind) && (!st || j.state === st))
+        .filter((j) => (!kind || j.kind === kind) && stateFilter(st)(j))
         .slice(0, limit)
         .map(summary);
       sendJson(res, 200, { items, next_before: null });
@@ -232,7 +250,36 @@ export const opsRoutes = [
   {
     method: "GET",
     path: "/api/v1/jobs/:id",
-    handler: ({ res, state, params }) => sendJson(res, 200, jobEntry(state, params.id).job),
+    handler: ({ res, state, params }) => {
+      const entry = jobEntry(state, params.id);
+      sendJson(res, 200, { ...entry.job, log_tail: logTail(entry) });
+    },
+  },
+  {
+    method: "GET",
+    path: "/api/v1/jobs/:id/export",
+    handler: ({ res, state, params }) => sendText(res, jobExport(state, jobEntry(state, params.id))),
+  },
+  // S67: the public, read-only stream of the steps (docs/api/README.md section 6.3). The same path on 443 and 8443.
+  {
+    method: "GET",
+    path: "/_care-pi/jobs/:id/events",
+    public: true,
+    handler: (ctx) => {
+      const entry = jobEntry(ctx.state, ctx.params.id);
+      if ((ctx.req.headers.accept ?? "").includes("text/event-stream")) {
+        streamJob(ctx, entry, publicEvent);
+        return;
+      }
+      const after = Number(ctx.query.get("after") ?? 0) || 0;
+      const read = entry.events.filter((e) => e.id > after).slice(0, 1000);
+      sendJson(ctx.res, 200, {
+        job_id: entry.job.id,
+        events: read.map(publicEvent).filter(Boolean),
+        last_event_id: read.at(-1)?.id ?? after,
+        done: entry.job.state !== "running" && entry.job.state !== "queued",
+      });
+    },
   },
   {
     method: "GET",
@@ -298,6 +345,19 @@ export const opsRoutes = [
         return;
       }
       sendJson(res, 200, { unit, lines, next_cursor: lines.at(-1)?.cursor ?? null });
+    },
+  },
+  {
+    method: "GET",
+    path: "/api/v1/logs/:unit/export",
+    handler: ({ res, params, query, state }) => {
+      const unit = params.unit;
+      if (!UNITS[unit]) throw new Problem("invalid-request", "Unknown unit.");
+      const n = Math.min(5000, Math.max(1, Number(query.get("n") ?? 100)));
+      const body = backlog(unit, n)
+        .map((l) => `${l.time} ${l.unit} p${l.priority} ${l.message}`)
+        .join("\n");
+      sendText(res, `${supportHeader(state, `log ${UNITS[unit]}`)}\n\n${body}\n`);
     },
   },
   {

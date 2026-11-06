@@ -2,6 +2,7 @@ package render
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -146,6 +147,12 @@ var funcs = template.FuncMap{
 	},
 	// sd escapes a value for an Exec line of systemd: % starts a specifier.
 	"sd": func(s string) string { return strings.ReplaceAll(s, "%", "%%") },
+	// js writes a value as JSON for a script of a status page. json.Marshal escapes <, >, and &, so a value
+	// cannot end the script element.
+	"js": func(v any) (string, error) {
+		b, err := json.Marshal(v)
+		return string(b), err
+	},
 	"short": func(s string) string {
 		if i := strings.Index(s, "@sha256:"); i >= 0 && len(s) > i+20 {
 			return s[:i+20]

@@ -1,14 +1,12 @@
 import { AlertTriangleIcon, CheckCircle2Icon, InfoIcon, XCircleIcon } from "lucide-react";
 import { Link } from "react-router";
 import type { BackupBanner, BackupsHealth } from "@/api/types";
-import { Alert, AlertAction, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { StatusChip } from "@/components/v2/status-chip";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatRelative } from "@/lib/format";
+import { formatAgo } from "@/lib/format";
 import { fmt, strings } from "@/lib/strings";
 import { cn } from "@/lib/utils";
-import { bannerAction, bannerText, healthSummary, severityVariant } from "./health";
+import { bannerAction, bannerText, healthSummary } from "./health";
 
 const b = strings.banners;
 
@@ -18,13 +16,33 @@ function reportTime(health: BackupsHealth | null | undefined): number {
   return Number.isNaN(t) ? Date.now() : t;
 }
 // The row has one fixed height: below 640 px the text can use 2 lines. A skeleton of the same height shows first.
-const ROW = "h-[4.75rem] sm:h-14";
+const ROW =
+  "flex h-[4.75rem] min-w-0 items-center gap-3 rounded-card border px-4 type-body sm:h-14 [&>svg]:size-5 [&>svg]:shrink-0";
+
+const SURFACE: Record<string, string> = {
+  error: "border-danger-border bg-danger-bg text-danger-fg",
+  warning: "border-warn-border bg-warn-bg text-warn-fg",
+  info: "border-info-border bg-info-bg text-info-fg",
+  ok: "border-ok-border bg-ok-bg text-ok-fg",
+  neutral: "border-line bg-surface-tint text-ink-muted",
+};
 
 function SeverityIcon({ severity }: { severity: BackupBanner["severity"] | "ok" }) {
   if (severity === "error") return <XCircleIcon aria-hidden="true" />;
   if (severity === "warning") return <AlertTriangleIcon aria-hidden="true" />;
   if (severity === "info") return <InfoIcon aria-hidden="true" />;
   return <CheckCircle2Icon aria-hidden="true" />;
+}
+
+function RowLink({ to, label }: { to: string; label: string }) {
+  return (
+    <Link
+      to={to}
+      className="ml-auto shrink-0 type-small font-semibold underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+    >
+      {label}
+    </Link>
+  );
 }
 
 // The banner row of the backups (docs/api/README.md section 13.10, plans/02 section 7): one row with a fixed height
@@ -50,46 +68,40 @@ export function BackupHealthRow({
   onMore?: () => void;
   moreOpen?: boolean;
 }) {
-  if (loading) return <Skeleton className={cn(ROW, "w-full rounded-lg")} data-testid="backup-health-skeleton" />;
+  if (loading)
+    return <Skeleton className="h-[4.75rem] w-full rounded-card sm:h-14" data-testid="backup-health-skeleton" />;
   const summary = healthSummary(health);
   if (unavailable || !summary) {
     return (
-      <Alert layout="horizontal" className={ROW} data-testid="backup-health" data-state="unavailable">
+      <div role="status" className={cn(ROW, SURFACE.neutral)} data-testid="backup-health" data-state="unavailable">
         <InfoIcon aria-hidden="true" />
-        <AlertDescription className="line-clamp-2 sm:truncate">{b.notAvailable}</AlertDescription>
-      </Alert>
+        <span className="line-clamp-2 min-w-0 sm:truncate">{b.notAvailable}</span>
+      </div>
     );
   }
   const top = summary.top;
   if (!top) {
     return (
-      <Alert variant="success" layout="horizontal" className={ROW} data-testid="backup-health" data-state="ok">
+      <div role="status" className={cn(ROW, SURFACE.ok)} data-testid="backup-health" data-state="ok">
         <CheckCircle2Icon aria-hidden="true" />
-        <AlertDescription className="line-clamp-2 sm:truncate">
-          {b.ok} {lastCopy ? fmt(b.okDetail, { age: formatRelative(lastCopy, reportTime(health)) }) : b.okNoCopy}
-        </AlertDescription>
-        {linkToPage ? (
-          <AlertAction>
-            <Button asChild variant="link" size="sm" className="px-0">
-              <Link to="/backups">{b.open}</Link>
-            </Button>
-          </AlertAction>
-        ) : null}
-      </Alert>
+        <span className="line-clamp-2 min-w-0 sm:truncate">
+          {b.ok} {lastCopy ? fmt(b.okDetail, { age: formatAgo(lastCopy, reportTime(health)) }) : b.okNoCopy}
+        </span>
+        {linkToPage ? <RowLink to="/backups" label={b.open} /> : null}
+      </div>
     );
   }
   const action = linkToPage ? { to: "/backups", label: b.open } : bannerAction(top);
   return (
-    <Alert
-      variant={severityVariant(top.severity)}
-      layout="horizontal"
-      className={ROW}
+    <div
+      role="status"
+      className={cn(ROW, SURFACE[top.severity] ?? SURFACE.warning)}
       data-testid="backup-health"
       data-state={summary.state}
       data-code={top.code}
     >
       <SeverityIcon severity={top.severity} />
-      <AlertDescription className="flex min-w-0 items-center gap-2">
+      <span className="flex min-w-0 flex-1 items-center gap-2">
         <span className="line-clamp-2 min-w-0 sm:truncate" data-testid="backup-health-text">
           {bannerText(top, reportTime(health))}
         </span>
@@ -98,27 +110,21 @@ export function BackupHealthRow({
             type="button"
             onClick={onMore}
             aria-expanded={moreOpen}
-            className="shrink-0 rounded-sm outline-none focus-visible:outline-2 focus-visible:outline-indigo-500"
+            className="shrink-0 rounded-full outline-none focus-visible:outline-2 focus-visible:outline-indigo-500"
             data-testid="backup-health-more"
           >
-            <Badge size="sm" variant="neutral">
+            <StatusChip tone="neutral" size="sm">
               {fmt(b.more, { count: summary.more })}
-            </Badge>
+            </StatusChip>
           </button>
         ) : summary.more > 0 ? (
-          <Badge size="sm" variant="neutral" className="shrink-0" data-testid="backup-health-more">
+          <StatusChip tone="neutral" size="sm" className="shrink-0" testId="backup-health-more">
             {fmt(b.more, { count: summary.more })}
-          </Badge>
+          </StatusChip>
         ) : null}
-      </AlertDescription>
-      {action ? (
-        <AlertAction>
-          <Button asChild variant="link" size="sm" className="px-0">
-            <Link to={action.to}>{action.label}</Link>
-          </Button>
-        </AlertAction>
-      ) : null}
-    </Alert>
+      </span>
+      {action ? <RowLink to={action.to} label={action.label} /> : null}
+    </div>
   );
 }
 
@@ -131,18 +137,13 @@ export function BackupBannerList({ health }: { health: BackupsHealth | null | un
       {summary.banners.map((banner, i) => {
         const action = bannerAction(banner);
         return (
-          <li key={`${banner.code}-${banner.destination_id ?? ""}-${i}`}>
-            <Alert variant={severityVariant(banner.severity)} layout="horizontal">
-              <SeverityIcon severity={banner.severity} />
-              <AlertDescription>{bannerText(banner, reportTime(health))}</AlertDescription>
-              {action ? (
-                <AlertAction>
-                  <Button asChild variant="link" size="sm" className="px-0">
-                    <Link to={action.to}>{action.label}</Link>
-                  </Button>
-                </AlertAction>
-              ) : null}
-            </Alert>
+          <li
+            key={`${banner.code}-${banner.destination_id ?? ""}-${i}`}
+            className={cn(ROW, "h-auto min-h-14 py-3", SURFACE[banner.severity] ?? SURFACE.warning)}
+          >
+            <SeverityIcon severity={banner.severity} />
+            <span className="min-w-0 flex-1">{bannerText(banner, reportTime(health))}</span>
+            {action ? <RowLink to={action.to} label={action.label} /> : null}
           </li>
         );
       })}

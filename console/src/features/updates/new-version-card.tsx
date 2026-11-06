@@ -6,6 +6,8 @@ import { asProblem, ProblemError, type ProblemError as PE } from "@/api/problem"
 import type { Job, Status, UpdatesOverview } from "@/api/types";
 import { DataList, DataRow } from "@/components/app/page";
 import { ProblemAlert } from "@/components/app/problem-alert";
+import { WhatNext } from "@/components/v2/panel";
+import { useNow } from "@/components/v2/use-now";
 import { SectionCard } from "@/components/app/section-card";
 import { ShortId } from "@/components/app/short-id";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -78,11 +80,13 @@ function ApplyButton({
   tz,
   disabled,
   onJob,
+  secondary = false,
 }: {
   o: UpdatesOverview;
   tz: string;
   disabled: boolean;
   onJob: (j: Job) => void;
+  secondary?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [closed, setClosed] = useState<PE | null>(null);
@@ -104,6 +108,7 @@ function ApplyButton({
     <AlertDialog open={open} onOpenChange={setOpen}>
       <Button
         type="button"
+        variant={secondary ? "outline" : "default"}
         onClick={() => {
           apply.reset();
           setClosed(null);
@@ -174,6 +179,12 @@ export function NewVersionCard({
   const canStage = Boolean(target && !target.staged && !blocker);
   const canApply = Boolean(target && !blocker);
   const error = check.error ?? stage.error;
+  const now = useNow(true, 60_000);
+  // "Install tonight" (S66): download now, install in the update window (the next one, when it is within a day).
+  const nextOpen = o?.window.next_open_at ? Date.parse(o.window.next_open_at) : null;
+  const windowStart = o?.next_apply_at ?? o?.window.next_open_at ?? null;
+  const tonight = nextOpen !== null && nextOpen - now < 24 * 3600 * 1000;
+  const windowAt = windowStart ? formatZoned(windowStart, tz) : null;
   return (
     <SectionCard
       title={u.newVersion}
@@ -182,7 +193,8 @@ export function NewVersionCard({
         <>
           <Button
             type="button"
-            variant={canApply ? "outline" : "default"}
+            variant={canApply ? "ghost" : "default"}
+            className={canApply ? "no-underline" : undefined}
             onClick={() => check.mutate()}
             disabled={loading || busy || check.isPending}
             data-testid="update-check"
@@ -193,16 +205,20 @@ export function NewVersionCard({
           {canStage ? (
             <Button
               type="button"
-              variant="outline"
               onClick={() => stage.mutate()}
               disabled={busy || stage.isPending}
               data-testid="update-stage"
             >
               {stage.isPending ? <Spinner data-icon="inline-start" /> : <DownloadIcon data-icon="inline-start" />}
-              {u.stage}
+              {tonight ? u.installTonight : u.installInWindow}
             </Button>
           ) : null}
-          {o && canApply ? <ApplyButton o={o} tz={tz} disabled={busy} onJob={onJob} /> : null}
+          {o && canApply ? <ApplyButton o={o} tz={tz} disabled={busy} onJob={onJob} secondary={canStage} /> : null}
+          {o && canApply && windowAt ? (
+            <WhatNext className="w-full" id="install-next">
+              {fmt(target?.staged ? u.stagedNext : u.installLaterNext, { time: windowAt })}
+            </WhatNext>
+          ) : null}
         </>
       }
     >
