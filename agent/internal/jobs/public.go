@@ -165,8 +165,22 @@ type PublicJob struct {
 	LastEventID int            `json:"last_event_id"`
 }
 
-// publicStep removes the detail of a step: a failed step has the error text there.
+// PublicStepName returns the public name of a step: its action key, else the text of its name before ":". The
+// argument after ":" can name a user, a path, a destination, or an image (docs/api/README.md section 6.3).
+func PublicStepName(s Step) string {
+	if s.Action != nil && *s.Action != "" {
+		return *s.Action
+	}
+	head, _, _ := strings.Cut(s.Name, ":")
+	if w := strings.Fields(head); len(w) > 0 {
+		return w[0]
+	}
+	return ""
+}
+
+// publicStep removes the argument of the name and the detail of a step: a failed step has the error text there.
 func publicStep(s Step) Step {
+	s.Name = PublicStepName(s)
 	s.Detail = nil
 	return s
 }

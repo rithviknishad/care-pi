@@ -487,20 +487,24 @@ shows:
 
 | Job event | Public stream |
 |---|---|
-| `step` | The `JobStep` with `detail: null`. The detail of a failed step is the error text: it can tell a path, a host fact, or the output of a command. |
+| `step` | The `JobStep` with `detail: null` and its action key as `name`. The detail of a failed step is the error text: it can tell a path, a host fact, or the output of a command. |
 | `log` | Never. Log lines are the output of commands. |
 | `progress` | Never. |
 | `error` | Only `type`, `title`, and `status` (`PublicJobProblem`). No `detail`. |
-| `done` | The `PublicJob`: `id`, `kind`, `state`, the times, the steps (without detail), `error` (only `type`, `title`, `status`), `last_event_id`. No `reason`, `source`, `result`, or `cancellable`. |
+| `done` | The `PublicJob`: `id`, `kind`, `state`, the times, the steps (the action key as `name`, without detail), `error` (only `type`, `title`, `status`), `last_event_id`. No `reason`, `source`, `result`, or `cancellable`. |
 | `heartbeat` | Every 15 s, as in section 6.2. |
 
-The step names are public, as in `job.step` of the public status: they name a unit, a path, a destination id, or an
-image, never a secret. The event ids are the ids of the job events, so they have gaps where the stream leaves out an
-event. `Last-Event-ID` and `after` work as in section 6.2. Without `Accept: text/event-stream`, the path gives one
-`PublicJobEventPage`; its `last_event_id` also counts the events that the page does not show, so the next page starts
-after them. The limits of section 4: 60 requests each minute for each address (a bucket of its own), 4 open streams
-for each address, 16 in total, separate from the streams of the sessions. The agent reads each public stream from its
-byte offset in the event file, and reads it again at most each 250 ms, so the log lines of a busy job cost little.
+The public stream and `job.step` of the public status name a step only by its action key: `name` is the text before
+`:` (`create-care-superuser`, not `create-care-superuser: NAME`), and `action` stays. The argument of a step name can
+name the Care user, the host name, a path, a destination id, or an image. The maintenance page and the console show
+the sentence of the key (docs/console-ui.md section 9), so a person sees the same step.
+
+The event ids are the ids of the job events, so they have gaps where the stream leaves out an event. `Last-Event-ID`
+and `after` work as in section 6.2. Without `Accept: text/event-stream`, the path gives one `PublicJobEventPage`; its
+`last_event_id` also counts the events that the page does not show, so the next page starts after them. The limits of
+section 4: 60 requests each minute for each address (a bucket of its own), 4 open streams for each address, 16 in
+total, separate from the streams of the sessions. The agent reads each public stream from its byte offset in the event
+file, and reads it again at most each 250 ms, so the log lines of a busy job cost little.
 
 ### 6.4 The Jobs page and copy for support (S67, S68)
 

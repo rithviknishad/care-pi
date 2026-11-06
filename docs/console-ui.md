@@ -286,7 +286,7 @@ argument of the step name. A key that is not in the map shows the raw step name 
 | `write-lock` | Record the installed versions | — |
 | `wait-healthy` | Wait until Care answers | `care-api` |
 | `set-hostname` | Set the host name | `care → lumine` |
-| `create-care-superuser` | Make the Care administrator | the user name |
+| `create-care-superuser` | Make the Care administrator | the user name (the detail) |
 | `collect` | Collect the support data | the argument |
 | `archive` | Make the support bundle file | the argument |
 | `prune` | Delete the old builds of the web app (in `backup-verify`: "Remove the data of the old copies") | the argument |

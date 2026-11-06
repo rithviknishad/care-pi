@@ -9,6 +9,7 @@ import {
   APPLY_STEPS,
   FE_BUILD_STEPS,
   publicProgress,
+  publicStepName,
   publicSummary,
   runningHostJob,
   startJob,
@@ -502,7 +503,9 @@ export const systemRoutes = [
         console_port: 8443,
         clock: clockView(state),
         care_healthy: state.setup.state === "ready",
-        job: running ? { ...publicProgress(running), step: step?.name ?? null, step_index: step?.index ?? null } : null,
+        job: running
+          ? { ...publicProgress(running), step: step ? publicStepName(step) : null, step_index: step?.index ?? null }
+          : null,
         jobs_recent: state.jobOrder.slice(0, 5).map((id) => publicSummary(state.jobs.get(id).job)),
         setup_job_id: state.setup.state === "applying" ? (state.setup.jobId ?? null) : null,
         time: now(),

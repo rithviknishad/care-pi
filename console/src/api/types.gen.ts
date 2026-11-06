@@ -44,7 +44,9 @@ export interface paths {
          *
          *     The privacy boundary (design note section 6.3). The agent sends only these events:
          *
-         *     - `step`: a step after a change, with `detail: null` (the detail of a failed step has the error text);
+         *     - `step`: a step after a change, with `detail: null` (the detail of a failed step has the error text) and with
+         *       its action key as `name` (the text before `:`: the argument of a name can name the Care user, the host, or a
+         *       path);
          *     - `error`: the `type`, the `title`, and the `status` of a problem that a step reports (`PublicJobProblem`);
          *     - `done`: the public job (`PublicJob`), without the reason, the source, the result, and the error detail;
          *     - `heartbeat`: every 15 s, only in SSE.
@@ -2734,7 +2736,7 @@ export interface components {
          *         "kind": "update-apply",
          *         "state": "running",
          *         "title": "Install an update",
-         *         "step": "migrate: start care-beat.service",
+         *         "step": "migrate",
          *         "step_index": 9,
          *         "step_count": 15,
          *         "started_at": "2026-11-22T02:03:00Z"
@@ -2840,7 +2842,7 @@ export interface components {
          *       "kind": "setup",
          *       "state": "running",
          *       "title": "Set up the device",
-         *       "step": "ensure-fe: build 8d2f0c1a9b7e",
+         *       "step": "ensure-fe",
          *       "step_index": 9,
          *       "step_count": 12,
          *       "started_at": "2026-10-30T10:15:00Z"
@@ -2856,8 +2858,8 @@ export interface components {
              */
             title: string;
             /**
-             * @description The name of the step that runs now.
-             * @example ensure-fe: build 8d2f0c1a9b7e
+             * @description The action key of the step that runs now (the text before `:` of its name, as in the public job stream).
+             * @example ensure-fe
              */
             step: string | null;
             /** @description The index of that step. */
@@ -2916,7 +2918,7 @@ export interface components {
         };
         /**
          * @description Contract 0.9.0 (S67). The job in the `done` event of the public stream: no reason, source, result, or error detail.
-         *     Each step has `detail: null`.
+         *     Each step has `detail: null`, and its action key as `name` (the text before `:`).
          * @example {
          *       "id": "20261030T110000.000Z-fe-prune",
          *       "kind": "fe-prune",
@@ -3024,8 +3026,9 @@ export interface components {
             data: components["schemas"]["PublicJob"];
         };
         /**
-         * @description Contract 0.9.0 (S67). One event of `GET /_care-pi/jobs/{job_id}/events`: `step` (a `JobStep` with `detail: null`),
-         *     `error` (a `PublicJobProblem`), `done` (a `PublicJob`), and `heartbeat` (only in SSE). Never `log` or `progress`.
+         * @description Contract 0.9.0 (S67). One event of `GET /_care-pi/jobs/{job_id}/events`: `step` (a `JobStep` with its action key
+         *     as `name` and `detail: null`), `error` (a `PublicJobProblem`), `done` (a `PublicJob`), and `heartbeat` (only in
+         *     SSE). Never `log` or `progress`.
          * @example {
          *       "id": 3,
          *       "event": "step",

@@ -173,6 +173,26 @@ func mustPublic(t *testing.T, e Event) Event {
 	return pe
 }
 
+// TestPublicStepName: the public name of a step is its action key, else the first word of its name before ":".
+func TestPublicStepName(t *testing.T) {
+	key := func(k string) *string { return &k }
+	for _, c := range []struct {
+		step Step
+		want string
+	}{
+		{Step{Name: "create-care-superuser: dr-asha", Action: key("create-care-superuser")}, "create-care-superuser"},
+		{Step{Name: "restart: care-api.service", Action: key("restart")}, "restart"},
+		{Step{Name: "daemon-reload", Action: key("daemon-reload")}, "daemon-reload"},
+		{Step{Name: "scale-down: solo, care-worker stopped"}, "scale-down"},
+		{Step{Name: "an old step name"}, "an"},
+		{Step{Name: ""}, ""},
+	} {
+		if got := PublicStepName(c.step); got != c.want {
+			t.Errorf("PublicStepName(%q) = %q, want %q", c.step.Name, got, c.want)
+		}
+	}
+}
+
 // TestStateGroups: the filter values active and recent of GET /jobs.
 func TestStateGroups(t *testing.T) {
 	for _, c := range []struct {

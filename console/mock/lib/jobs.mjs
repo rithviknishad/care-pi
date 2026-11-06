@@ -263,7 +263,7 @@ export const SETUP_STEPS = [
   ["ensure-fe", "ensure-fe", { progress: "percent", stream: "stdout" }],
   ["write-lock", "write-lock"],
   ["wait-healthy", "wait-healthy: care-api.service"],
-  ["create-care-superuser", "create-care-superuser: admin"],
+  ["create-care-superuser", "create-care-superuser", { detail: "admin" }],
 ];
 
 export const APPLY_STEPS = [
@@ -343,7 +343,7 @@ export function publicProgress(job) {
     kind: job.kind,
     state: job.state,
     title: KIND_TITLES[job.kind] ?? job.kind,
-    step: step?.name ?? null,
+    step: step ? publicStepName(step) : null,
     step_index: step?.index ?? null,
     step_count: job.steps.length || null,
     started_at: job.started_at,
@@ -354,11 +354,20 @@ function publicProblem(p) {
   return p ? { type: p.type, title: p.title, status: p.status } : null;
 }
 
+// The public name of a step: its action key, else the first word before ":" (the argument can name the Care user).
+export function publicStepName(step) {
+  return step.action || (step.name ?? "").split(":")[0].trim().split(/\s+/)[0] || "";
+}
+
+function publicStep(step) {
+  return { ...step, name: publicStepName(step), detail: null };
+}
+
 // The event of the public stream (docs/api/README.md section 6.3), or null: no log, no progress, no detail.
 export function publicEvent(ev) {
   switch (ev.event) {
     case "step":
-      return { ...ev, data: { ...ev.data, detail: null } };
+      return { ...ev, data: publicStep(ev.data) };
     case "error":
       return { ...ev, data: publicProblem(ev.data) };
     case "done": {
@@ -372,7 +381,7 @@ export function publicEvent(ev) {
           created_at: j.created_at,
           started_at: j.started_at,
           finished_at: j.finished_at,
-          steps: j.steps.map((s) => ({ ...s, detail: null })),
+          steps: j.steps.map(publicStep),
           error: publicProblem(j.error),
           last_event_id: j.last_event_id,
         },

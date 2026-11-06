@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -149,6 +150,65 @@ func TestPublicJobEvents(t *testing.T) {
 	}
 }
 
+// TestPublicSetupStepNames: the public stream of a setup job names each step by its action key only: no ":" and no
+// user name, also in done (docs/api/README.md section 6.3). The private job has the user name in the detail.
+func TestPublicSetupStepNames(t *testing.T) {
+	e := newEnv(t)
+	must(t, os.MkdirAll(e.p.Abs("/etc"), 0o755))
+	must(t, os.WriteFile(e.p.Abs("/etc/hostname"), []byte("raspberrypi\n"), 0o644))
+	must(t, os.WriteFile(e.p.Abs("/etc/hosts"), []byte("127.0.0.1\tlocalhost\n127.0.1.1\traspberrypi\n"), 0o644))
+	const user = "dr-asha-rao"
+	codes := e.claim()
+	e.steps(codes, "care")
+	e.want(e.do("PUT", "/api/v1/setup/steps/care-admin", map[string]any{"username": user, "email": "asha@sunrise.example",
+		"password": "a care superuser passphrase"}), 200, "")
+	r := e.do("POST", "/api/v1/setup/finish", nil)
+	e.want(r, 202, "")
+	id := r.json(t)["id"].(string)
+	j := e.waitJob(id)
+	if j.State != jobs.StateSucceeded {
+		t.Fatalf("setup job %s %+v", j.State, j.Error)
+	}
+	var admin *jobs.Step
+	for i, s := range j.Steps {
+		if s.Action != nil && *s.Action == "create-care-superuser" {
+			admin = &j.Steps[i]
+		}
+	}
+	if admin == nil || admin.Name != "create-care-superuser" || admin.Detail == nil || *admin.Detail != user {
+		t.Fatalf("the private step of the Care user: %+v", admin)
+	}
+
+	e.cookie = ""
+	r = e.do("GET", "/_care-pi/jobs/"+id+"/events", nil)
+	e.want(r, 200, "")
+	if strings.Contains(string(r.body), user) || strings.Contains(string(r.body), "raspberrypi") {
+		t.Fatalf("the public stream names the user or the host: %s", r.body)
+	}
+	var names []string
+	for _, ev := range r.json(t)["events"].([]any) {
+		m := ev.(map[string]any)
+		var steps []any
+		switch m["event"] {
+		case "step":
+			steps = []any{m["data"]}
+		case "done":
+			steps = m["data"].(map[string]any)["steps"].([]any)
+		}
+		for _, s := range steps {
+			st := s.(map[string]any)
+			name, _ := st["name"].(string)
+			if name == "" || strings.ContainsAny(name, ": \t") || (st["action"] != nil && st["action"] != name) {
+				t.Errorf("public step %v: the name must be the action key", st)
+			}
+			names = append(names, name)
+		}
+	}
+	if !slices.Contains(names, "create-care-superuser") || !slices.Contains(names, "set-hostname") || !slices.Contains(names, "validate") {
+		t.Fatalf("public step names %v", names)
+	}
+}
+
 // TestPublicJobEventsLimits: 60 requests each minute for each address, separate from the public status; 4 open
 // streams for each address and 16 in total, separate from the streams of the sessions.
 func TestPublicJobEventsLimits(t *testing.T) {
@@ -233,7 +293,7 @@ func TestPublicJobLive(t *testing.T) {
 	job := pub["job"].(map[string]any)
 	recent := pub["jobs_recent"].([]any)
 	if pub["setup_state"] != "applying" || pub["setup_job_id"] != id || job["id"] != id || job["state"] != "running" ||
-		job["title"] != "Set up the device" || job["kind"] != "setup" || job["step"] != "ensure-fe: build 8d2f0c1a9b7e" ||
+		job["title"] != "Set up the device" || job["kind"] != "setup" || job["step"] != "ensure-fe" ||
 		job["step_index"] != float64(1) || job["step_count"] != float64(2) {
 		t.Fatalf("public status during the finish: %s", r.body)
 	}

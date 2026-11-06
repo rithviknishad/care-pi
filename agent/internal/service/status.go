@@ -606,7 +606,7 @@ func (s *Service) PublicStatus(ctx context.Context) *PublicStatus {
 		jp.StepCount = &n
 		for i := len(j.Steps) - 1; i >= 0; i-- {
 			if j.Steps[i].State == jobs.StepRunning {
-				name, idx := j.Steps[i].Name, i
+				name, idx := jobs.PublicStepName(j.Steps[i]), i
 				jp.Step, jp.StepIndex = &name, &idx
 				break
 			}

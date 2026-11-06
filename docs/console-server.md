@@ -222,7 +222,7 @@ The Care superuser password is only in the memory of the agent.
    `resolve ghcr.io/ohcnetwork/care:latest … 77fe743e51a6` (about 25 s on lumine). An apply job of the console
    (`POST /apply`, `PUT /config?apply=true`) shows the same step. Without a network resolution there is no such step.
 4. `wait-healthy: care-api.service` (10 minutes at most).
-5. `create-care-superuser: NAME`. When the user exists, the job keeps it.
+5. `create-care-superuser`, with the user name in the detail. When the user exists, the job keeps it.
 
 On success the record gets `ready_at`, and the state is `ready`. On failure the state is `setup` again, and
 `GET /setup` gives the `job_id` of the failed job. At its start, the agent marks each `running` job without a

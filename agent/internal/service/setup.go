@@ -570,11 +570,13 @@ func (s *Service) runSetup(ctx context.Context, rec *jobs.Recorder, admin setup.
 	if err != nil {
 		return nil, err
 	}
-	end = rec.StepAction("create-care-superuser: "+admin.Username, "create-care-superuser")
+	// The user name goes to the detail, not to the name: the public job stream gives the names (section 6.3).
+	end = rec.StepAction("create-care-superuser", "create-care-superuser")
+	rec.SetDetail(admin.Username)
 	_, err = s.createSuperuser(ctx, admin.Username, admin.Email, password)
 	if problem.Is(err, problem.CareUserExists) {
 		rec.Logf("the Care user %s exists; the setup keeps it", admin.Username)
-		rec.SetDetail("the user exists")
+		rec.SetDetail("the user " + admin.Username + " exists")
 		err = nil
 	}
 	end(err)

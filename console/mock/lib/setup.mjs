@@ -313,11 +313,7 @@ export const setupRoutes = [
       const withBackups = state.setup.steps.backups.status === "done";
       const n = (state.file.backups?.destinations ?? []).length;
       const steps = SETUP_STEPS.flatMap(([a, name, o]) => {
-        const step = [
-          a,
-          a === "create-care-superuser" ? `create-care-superuser: ${state.careAdmin.username}` : name,
-          o,
-        ];
+        const step = [a, name, a === "create-care-superuser" ? { ...o, detail: state.careAdmin.username } : o];
         if (!withBackups || a !== "ensure-stanza") return [step];
         return [
           step,
