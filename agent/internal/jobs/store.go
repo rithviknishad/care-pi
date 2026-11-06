@@ -44,7 +44,15 @@ func alive(p paths.Paths, d fileDoc) bool {
 }
 
 // Load returns the job with the id.
-func Load(p paths.Paths, id string) (*Job, error) {
+func Load(p paths.Paths, id string) (*Job, error) { return load(p, id, true) }
+
+// Peek returns the job without a read of its event file: the last_event_id of a running job is the one of its
+// journal. A public stream uses it to see the end of a job.
+func Peek(p paths.Paths, id string) (*Job, error) { return load(p, id, false) }
+
+// load returns the job. Without count, a running job keeps the last_event_id of its journal: List does not
+// read the event file, because the summary has no event id.
+func load(p paths.Paths, id string, count bool) (*Job, error) {
 	if !IDPattern.MatchString(id) {
 		return nil, ErrNotFound
 	}
@@ -57,7 +65,7 @@ func Load(p paths.Paths, id string) (*Job, error) {
 	}
 	dead := (d.Result == "running" || d.Result == "queued") && !alive(p, d)
 	j := toJob(id, d, dead)
-	if j.State == StateRunning {
+	if count && j.State == StateRunning {
 		if n := countEvents(p, id); n > j.LastEventID {
 			j.LastEventID = n
 		}
@@ -82,12 +90,34 @@ func ids(p paths.Paths) []string {
 	return out
 }
 
+// Groups of states for Filter.State (contract 0.9.0, schema JobStateFilter).
+const (
+	// StateActive is queued or running.
+	StateActive = "active"
+	// StateRecent is succeeded, failed, or cancelled: the jobs that ended.
+	StateRecent = "recent"
+)
+
 // Filter selects jobs for List.
 type Filter struct {
-	Kind   string
+	Kind string
+	// State is a job state, or a group: active or recent.
 	State  string
 	Limit  int
 	Before string
+}
+
+// StateMatches reports whether a job state matches a filter value: a job state or a group (active, recent).
+func StateMatches(filter, state string) bool {
+	switch filter {
+	case "":
+		return true
+	case StateActive:
+		return state == StateQueued || state == StateRunning
+	case StateRecent:
+		return state == StateSucceeded || state == StateFailed || state == StateCancelled
+	}
+	return state == filter
 }
 
 // List returns one page of jobs, newest first, and the id for the next page ("" on the last page).
@@ -101,11 +131,11 @@ func List(p paths.Paths, f Filter) ([]Summary, string) {
 		if f.Before != "" && id >= f.Before {
 			continue
 		}
-		j, err := Load(p, id)
+		j, err := load(p, id, false)
 		if err != nil {
 			continue
 		}
-		if (f.Kind != "" && j.Kind != f.Kind) || (f.State != "" && j.State != f.State) {
+		if (f.Kind != "" && j.Kind != f.Kind) || !StateMatches(f.State, j.State) {
 			continue
 		}
 		if len(out) == f.Limit {

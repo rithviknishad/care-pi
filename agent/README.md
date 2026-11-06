@@ -31,7 +31,7 @@ the same service layer (`internal/service`), so each operation has a CLI command
 | `care create-superuser`, `care info` | `cmd/care-pi/care.go`, `cmd/care-pi/ops.go` |
 | `auth claim-code\|set-password\|reset\|recovery-codes\|totp\|sessions\|unlock\|status` | `cmd/care-pi/auth.go` |
 | `setup status\|skip\|finish` | `cmd/care-pi/setup.go` |
-| `jobs list\|show\|follow\|cancel`, `support-bundle`, `tls show\|root-ca`, `power reboot\|shutdown` | `cmd/care-pi/ops.go` |
+| `jobs list\|show\|follow\|export\|cancel`, `support-bundle`, `tls show\|root-ca`, `power reboot\|shutdown` | `cmd/care-pi/ops.go` |
 | `clock wait` | `cmd/care-pi/clock.go` |
 | `host check` | `cmd/care-pi/host.go` |
 | `fe build`, `fe status`, `fe prune` (and the hidden `fe build-id`, `fe env`, `fe script` for CI) | `cmd/care-pi/fe.go` |

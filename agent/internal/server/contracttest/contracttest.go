@@ -160,7 +160,8 @@ func route(d *openapi3.T, method, path string) (*routers.Route, map[string]strin
 	rest := path
 	var public bool
 	switch {
-	case path == "/_care-pi/status":
+	case path == "/_care-pi/status", strings.HasPrefix(path, "/_care-pi/jobs/"):
+		// The operations that are only below /_care-pi/: the contract has the full path.
 	case strings.HasPrefix(path, "/api/v1/"):
 		rest = strings.TrimPrefix(path, "/api/v1")
 	case strings.HasPrefix(path, "/_care-pi/"):
@@ -322,6 +323,19 @@ func checkSSE(t testing.TB, d *openapi3.T, where, op string, body []byte) {
 			if f.ID != "" {
 				t.Errorf("%s: a heartbeat has an id", where)
 			}
+		case op == "getPublicJobEvents":
+			// The privacy boundary of the public job stream (docs/api/README.md section 6.3).
+			if f.Event == "log" || f.Event == "progress" {
+				t.Errorf("%s: the public stream has a %s event", where, f.Event)
+			}
+			if m, ok := data.(map[string]any); ok && f.Event == "step" && m["detail"] != nil {
+				t.Errorf("%s: a public step has a detail: %s", where, f.Data)
+			}
+			id, err := strconv.Atoi(f.ID)
+			if err != nil {
+				t.Errorf("%s: frame %q has no integer id", where, f.Event)
+			}
+			schema, value = "PublicJobEvent", map[string]any{"id": id, "event": f.Event, "data": data}
 		default:
 			id, err := strconv.Atoi(f.ID)
 			if err != nil {

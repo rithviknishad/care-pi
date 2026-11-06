@@ -71,7 +71,7 @@ session id, or CSRF token.
 | Port | Path | Target |
 |---|---|---|
 | 80 | each path | `308` to `https://{host}{uri}` |
-| 443 | `/_care-pi/*` | the agent socket. The agent answers only the public operations there (`status`, `health`, `tls/root-ca`, `tls/root-ca/mobileconfig`, `tls/instructions/{os}`). Each other path gives `404`. |
+| 443 | `/_care-pi/*` | the agent socket. The agent answers only the public operations there (`status`, `jobs/{job_id}/events`, `health`, `tls/root-ca`, `tls/root-ca/mobileconfig`, `tls/instructions/{os}`). Each other path gives `404`. Caddy sends an event stream at once (`reverse_proxy` flushes `text/event-stream`, and `encode` flushes its encoder with each event). |
 | 443 | `/console`, `/console/*` | `308` to `https://{host}:8443/` |
 | 443 | `/api/*`, `/health/*`, and the other Care paths | Care, as in Phase 1 (`docs/apply.md`, "Caddy"). Caddy strips the console cookie before Care. |
 | 443 | the two S3 buckets | versitygw. Caddy strips the console cookie before versitygw. |
@@ -275,6 +275,20 @@ stopped with `missing steps: tls`).
 - `GET /logs/{unit}?follow=true` with `Accept: text/event-stream` follows the journal (`journalctl --follow`).
   The event id is the journal cursor. The units are the units of `care-pi logs`, and `agent` (`care-pi.service`).
 - A session has 4 open streams at most, and the agent 16. When the session ends, the agent closes its streams.
+- The public job stream (contract 0.9.0, S67; `docs/api/README.md` section 6.3): `GET /_care-pi/jobs/{id}/events` on
+  port 443 and port 8443, without a session. It sends `step` events without the detail, `error` events with only the
+  type and the title, and `done` with the public job; never a log or progress event. 60 requests each minute for each
+  address (a bucket of its own), 4 open streams for each address and 16 in total, separate from the sessions. The
+  agent reads the event file of a public stream from its byte offset (`jobs.Cursor`) at most each 250 ms
+  (`Options.PublicGap`). `GET /_care-pi/status` names the job (`job.id`, `job.title`), lists `jobs_recent` (5), and has
+  `setup_job_id` while the finish of the setup runs.
+- The Jobs page of the console (S67): `GET /jobs?state=active|recent`, and `GET /jobs/{id}` with `log_tail` (the last
+  200 log lines up to `last_event_id`), so a reload shows the history and then follows the stream after
+  `last_event_id`.
+- Copy for support (S68): `GET /jobs/{id}/export`, `GET /logs/{unit}/export`, and `GET /doctor/export` give
+  plain text with a header (the device, the agent version, the lock version, the time). `log_tail` and each text go
+  through the redaction of the support bundle (`service.Redactor`): the secret values of the device, bearer tokens,
+  the console cookie, Tailscale auth keys, and the value of a pair with a secret name (`password=…`, `"token": "…"`).
 - The job `restore-dr` ends each session after the event `done`. It first waits until each open stream of the job sent
   `done` (5 s at most; `jobs.Spec.AfterDone`, `Manager.Watch`). The result has `display_name`, because the console cannot
   read `GET /config` after that.
@@ -319,6 +333,8 @@ stopped with `missing steps: tls`).
 `tls show|root-ca`, `care info`, `power reboot|shutdown`, and the flags `host check --probe`,
 `logs --since --json`, `logs agent`, and `fe status --json`. The `--json` output of a command is the JSON
 object of the operation. Phase 3 adds `backup …` and `restore …` (`docs/backups.md`, section 10) and `logs backup`.
+Contract 0.9.0 adds `jobs export JOB_ID` (the text of `GET /jobs/{id}/export`) and the groups `active` and `recent` of
+`jobs list --state`.
 
 ## 9. The dev listener (for the console developer)
 
@@ -434,6 +450,10 @@ Stop the agent with Ctrl-C. To start again from an unclaimed device, remove `.de
   `/solutions*`) with success and problem responses, on a fake host with a local `file://` index of two locks
   (`internal/update/updatetest`). `maintenance_test.go` checks `maintenance{}` in both statuses.
 - The body limits, a slow body, `Sec-Fetch-Site`, and a live socket (`limits_test.go`).
+- `jobsview_test.go` (S67, S68): the public job stream (no log or progress event and no detail, also when the job has
+  them; the JSON form and SSE; resume; `404`; the rate limit `429` and the stream slots), the setup finish on a second
+  device (`job`, `setup_job_id`, `jobs_recent`, a live public stream), the state groups, the cap of `log_tail`, and the
+  plain-text exports with a token, a password, and a secret value of the device in a log line.
 - `internal/auth`, `internal/jobs`, and `internal/setup` have unit tests. `internal/auth` also checks that the
   locks stay after a restart and that the claim hint orders `claim_methods`. `agent/internal/render` has the golden
   tree `small-clinic-bootstrap` (setup mode).

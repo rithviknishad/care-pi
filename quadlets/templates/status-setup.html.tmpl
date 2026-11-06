@@ -1,4 +1,4 @@
-{{template "status-head" .}}
+{{template "status-head-live" .}}
 <title>CARE: setup is not complete</title>
 </head>
 <body>
@@ -8,8 +8,10 @@
 <p>The CARE web application is not installed on this device yet.</p>
 <p>Complete the setup in the console of the device:</p>
 <p><a id="console" href="https://{{.Canonical}}:{{.ConsolePort}}/">https://{{.Canonical}}:{{.ConsolePort}}/</a></p>
-<p id="state"></p>
+<p id="state" aria-live="polite"></p>
+<p id="failed" class="problem" hidden>The last setup job failed. Open the console to see why and to try again.</p>
 <p id="firstboot" style="color:#b42318" hidden></p>
+{{template "status-job" .}}
 <p>The device uses its own certificate authority, so the browser shows a certificate warning.
 Install the root certificate on each device that opens CARE. Then the warning does not show again.</p>
 <p><a id="rootca" href="/_care-pi/tls/root-ca">Download the root certificate</a></p>
@@ -20,9 +22,10 @@ Install the root certificate on each device that opens CARE. Then the warning do
 <li><code>https://{{.}}:{{$.ConsolePort}}/</code></li>
 {{- end}}
 </ul>
-<p><small>This page refreshes every 15 seconds.</small></p>
+<p><small>This page checks the device every 5 seconds.</small></p>
 </main>
 <script>
+{{template "status-job-script" .}}
 (function () {
   var port = {{.ConsolePort}};
   var link = document.getElementById("console");
@@ -36,17 +39,36 @@ Install the root certificate on each device that opens CARE. Then the warning do
     document.getElementById("fingerprint").textContent = d.root.fingerprint_sha256_colon;
     document.getElementById("rootca").href = d.root.download_path;
   }).catch(function () {});
-  fetch("/_care-pi/status").then(function (r) { return r.ok ? r.json() : null; }).then(function (s) {
-    if (!s) { return; }
-    var t = { unclaimed: "Open the console and claim the device.", claimed: "Open the console and continue the setup.",
-      setup: "Open the console and continue the setup.", applying: "The device installs CARE now.", ready: "Setup is complete." };
+  var t = { unclaimed: "Open the console and claim the device.", claimed: "Open the console and continue the setup.",
+    setup: "Open the console and continue the setup.", applying: "The device installs CARE now.", ready: "Setup is complete." };
+  function show(s) {
     document.getElementById("state").textContent = t[s.setup_state] || "";
     if (s.firstboot_error) {
       var fb = document.getElementById("firstboot");
       fb.textContent = s.firstboot_error;
       fb.hidden = false;
     }
-  }).catch(function () {});
+    // The newest setup job failed, and the setup did not start again.
+    var failed = false, r = s.jobs_recent || [];
+    for (var i = 0; i < r.length; i++) {
+      if (r[i].kind === "setup") { failed = r[i].state === "failed"; break; }
+    }
+    document.getElementById("failed").hidden = !failed || s.setup_state === "applying" || s.setup_state === "ready";
+  }
+  function poll() {
+    fetch("/_care-pi/status", {cache: "no-store", headers: {"Accept": "application/json"}})
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) {
+        if (!s) { return; }
+        // CARE, the maintenance page, or the clock page replaces this page.
+        if (s.site !== "setup") { window.location.reload(); return; }
+        show(s);
+        carePiJob.update(s);
+      })
+      .catch(function () {})
+      .then(function () { setTimeout(poll, 5000); });
+  }
+  poll();
 })();
 </script>
 </body>

@@ -2,8 +2,6 @@ package main
 
 import (
 	"fmt"
-	"strings"
-	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
@@ -32,18 +30,7 @@ reboot, and the updates. It changes nothing. Exit code 1 when a check failed.`,
 				return err
 			}
 		} else {
-			tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-			_, _ = fmt.Fprintln(tw, "STATUS\tCHECK\tDETAIL")
-			for _, c := range rep.Checks {
-				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\n", strings.ToUpper(c.Status), c.Title, c.Detail)
-			}
-			_ = tw.Flush()
-			for _, c := range rep.Checks {
-				if c.Fix != nil {
-					_, _ = fmt.Fprintf(w, "fix %s: %s\n", c.ID, *c.Fix)
-				}
-			}
-			_, _ = fmt.Fprintf(w, "status: %s\n", rep.Status)
+			service.WriteDoctorText(w, rep)
 		}
 		if rep.Status == service.DoctorFail {
 			return exitcode.With(exitcode.Failed, fmt.Errorf("a check failed"))

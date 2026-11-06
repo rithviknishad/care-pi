@@ -25,11 +25,33 @@
 body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#f4f6f8;color:#1f2933}
 main{max-width:34rem;margin:12vh auto;padding:2rem;background:#fff;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
 h1{font-size:1.4rem;margin:0 0 1rem}
+h2{font-size:1.1rem;margin:0 0 .3rem}
 p{line-height:1.5;margin:.6rem 0}
 .name{color:#52606d;font-size:.95rem;margin:0 0 1.5rem}
 ul{padding-left:1.2rem;margin:.4rem 0}
 code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.95em}
 small{color:#7b8794}
+.job{border-top:1px solid #e4e7eb;margin-top:1.2rem;padding-top:1.2rem}
+.meta{color:#52606d;margin:0}
+.bar{height:.5rem;background:#e4e7eb;border-radius:4px;overflow:hidden;margin:.8rem 0 .2rem}
+.bar>div{height:100%;width:0;background:#2563eb;transition:width .4s}
+.steps{list-style:none;padding:0;margin:.6rem 0}
+.steps li{display:flex;gap:.5rem;align-items:baseline;padding:.3rem .5rem;border-radius:6px;line-height:1.4}
+.steps .mark{flex:none;width:1rem;text-align:center}
+.steps .text{flex:1}
+.steps .time{flex:none}
+.steps .running{background:#eef4ff;font-weight:600}
+.steps .running .mark{color:#2563eb}
+.steps .succeeded .mark{color:#067647}
+.steps .failed{color:#b42318}
+.steps .cancelled,.steps .skipped{color:#7b8794}
+.problem{color:#b42318}
+button{font:inherit;padding:.4rem .9rem;border:1px solid #cbd2d9;border-radius:6px;background:#fff;color:#1f2933;cursor:pointer}
+button:hover{background:#f4f6f8}
+pre{white-space:pre-wrap;font-size:.8rem;background:#f4f6f8;padding:.6rem;border-radius:6px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media (prefers-reduced-motion:reduce){.bar>div{transition:none}}
+@media (max-width:36rem){main{margin:1rem .75rem;padding:1.4rem}}
 </style>
 {{- end -}}
 
@@ -40,4 +62,235 @@ small{color:#7b8794}
 <li><code>https://{{.}}</code></li>
 {{- end}}
 </ul>
+{{- end -}}
+
+{{- /* The job of the page and the "Copy status" button (S67, S68). */ -}}
+{{- define "status-job" -}}
+<section id="job" class="job" hidden aria-labelledby="job-title">
+<h2 id="job-title">Job</h2>
+<p class="meta"><span id="job-state"></span> <span id="job-elapsed"></span></p>
+<div id="job-progress" class="bar" role="progressbar" aria-labelledby="job-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="job-bar"></div></div>
+<p><small id="job-count"></small></p>
+<ol id="job-steps" class="steps"></ol>
+<p id="job-problem" class="problem" hidden></p>
+<p id="job-next"></p>
+<p><a id="job-console" href="/">Open the console</a> <small>to see the log of the job (job <code id="job-id"></code>).</small></p>
+</section>
+<p><button type="button" id="copy">Copy status</button> <span id="copied" aria-live="polite"></span></p>
+<pre id="copy-text" hidden></pre>
+{{- end -}}
+
+{{- /* carePiJob shows the job of GET /_care-pi/status: the public job stream gives the steps without log lines
+(docs/api/README.md section 6.3). carePiJob.update(status) takes each public status of the poll. */ -}}
+{{- define "status-job-script" -}}
+var carePiJob = (function () {
+  // The sentence of each step: strings.steps.actions of the console (docs/console-ui.md section 9).
+  var steps = {
+{{- range $k, $v := .MaintenanceSteps}}
+    {{printf "%q" $k}}: {{printf "%q" $v}},
+{{- end}}
+  };
+  var titles = {{js .JobTitles}} || {};
+  var next = {{js .JobNext}} || {};
+  var port = {{.ConsolePort}};
+  var marks = {succeeded: "\u2713", failed: "\u2717", running: "\u25cf", cancelled: "\u2013", skipped: "\u2013", pending: "\u25cb"};
+  var words = {succeeded: "complete", failed: "failed", running: "runs now", cancelled: "cancelled", skipped: "skipped", pending: "waits"};
+  var states = {queued: "Waiting", running: "Running", succeeded: "Complete", failed: "Failed", cancelled: "Cancelled"};
+  var job = null, list = [], problem = null, status = null, skew = 0, es = null, last = 0, ended = false;
+
+  function $(id) { return document.getElementById(id); }
+  function now() { return Date.now() + skew; }
+  function dur(ms) {
+    var s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) { return s + " s"; }
+    var m = Math.floor(s / 60);
+    if (m < 60) { return m + " min " + (s % 60) + " s"; }
+    return Math.floor(m / 60) + " h " + (m % 60) + " min";
+  }
+  function actionOf(name) { return String(name || "").split(":")[0].split(" ")[0]; }
+  function stepText(s) { return (s.action && steps[s.action]) || steps[actionOf(s.name)] || s.name; }
+  function stepTime(s) {
+    if (!s.started_at) { return ""; }
+    return dur((s.finished_at ? Date.parse(s.finished_at) : now()) - Date.parse(s.started_at));
+  }
+  function title() { return job.title || titles[job.kind] || job.kind; }
+  function current() {
+    for (var i = list.length - 1; i >= 0; i--) {
+      if (list[i] && list[i].state === "running") { return list[i]; }
+    }
+    return null;
+  }
+  function draw() {
+    var box = $("job");
+    if (!job) { box.hidden = true; return; }
+    box.hidden = false;
+    $("job-title").textContent = title();
+    $("job-id").textContent = job.id;
+    $("job-console").href = "https://" + location.hostname + ":" + port + "/jobs/" + encodeURIComponent(job.id);
+    $("job-state").textContent = states[job.state] || job.state;
+    var start = job.started_at ? Date.parse(job.started_at) : 0;
+    var end = job.finished_at ? Date.parse(job.finished_at) : now();
+    $("job-elapsed").textContent = start ? (ended ? "in " : "for ") + dur(end - start) : "";
+    var total = Math.max(list.length, job.step_count || 0), done = 0, i;
+    for (i = 0; i < list.length; i++) {
+      if (list[i] && list[i].state !== "running" && list[i].state !== "pending") { done++; }
+    }
+    if (job.state === "succeeded") { done = total; }
+    var pct = total ? Math.round(100 * done / total) : 0;
+    $("job-bar").style.width = pct + "%";
+    $("job-progress").setAttribute("aria-valuenow", String(pct));
+    var cur = current();
+    if (!cur && !list.length && job.step && !ended) {
+      cur = {index: job.step_index || 0, name: job.step, action: actionOf(job.step)};
+    }
+    $("job-count").textContent = !total ? "" : cur ? "Step " + (cur.index + 1) + " of " + total + (list.length ? "" : ": " + stepText(cur))
+      : done + " of " + total + " steps complete";
+    var ol = $("job-steps");
+    for (i = 0; i < list.length; i++) {
+      var s = list[i] || {index: i, name: "", state: "pending"};
+      var li = $("job-step-" + i);
+      if (!li) {
+        li = document.createElement("li");
+        li.id = "job-step-" + i;
+        li.innerHTML = '<span class="mark" aria-hidden="true"></span><span class="text"></span><span class="sr"></span><small class="time"></small>';
+        ol.appendChild(li);
+      }
+      li.className = s.state;
+      if (s.state === "running") { li.setAttribute("aria-current", "step"); } else { li.removeAttribute("aria-current"); }
+      li.children[0].textContent = marks[s.state] || "";
+      li.children[1].textContent = stepText(s);
+      li.children[1].title = s.name;
+      li.children[2].textContent = " (" + (words[s.state] || s.state) + ")";
+      li.children[3].textContent = stepTime(s);
+    }
+    var p = $("job-problem");
+    p.hidden = !problem || job.state === "succeeded";
+    p.textContent = problem ? (job.state === "failed" ? "The job failed: " : "A step reported a problem: ") + problem.title + "." : "";
+    $("job-next").textContent = job.state === "succeeded" ? "The job is complete." : job.state === "failed" ? "Open the console to see the details and the log of the job."
+      : job.state === "cancelled" ? "The job stopped." : next[job.kind] || next[""];
+  }
+  function finish(j) {
+    ended = true;
+    job.state = j.state;
+    job.started_at = j.started_at || job.started_at;
+    job.finished_at = j.finished_at;
+    for (var i = 0; i < j.steps.length; i++) { list[j.steps[i].index] = j.steps[i]; }
+    if (j.error) { problem = j.error; }
+    if (es) { es.close(); es = null; }
+    draw();
+  }
+  function event(name, data, id) {
+    if (id > last) { last = id; }
+    if (name === "step") { list[data.index] = data; } else if (name === "error") { problem = data; } else if (name === "done") { finish(data); return; }
+    draw();
+  }
+  function open() {
+    if (!window.EventSource) { return; }
+    es = new EventSource("/_care-pi/jobs/" + encodeURIComponent(job.id) + "/events");
+    var on = function (name) {
+      es.addEventListener(name, function (e) {
+        // An error event without data is the connection. A closed stream (404, 429) leaves the poll to the JSON form.
+        if (!e.data) {
+          if (es && es.readyState === 2) { es = null; }
+          return;
+        }
+        event(name, JSON.parse(e.data), parseInt(e.lastEventId, 10) || 0);
+      });
+    };
+    on("step");
+    on("error");
+    on("done");
+  }
+  function page() {
+    var id = job.id;
+    fetch("/_care-pi/jobs/" + encodeURIComponent(id) + "/events?after=" + last, {cache: "no-store", headers: {"Accept": "application/json"}})
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (p) {
+        if (!p || !job || job.id !== id) { return; }
+        for (var i = 0; i < p.events.length; i++) { event(p.events[i].event, p.events[i].data, p.events[i].id); }
+        if (p.last_event_id > last) { last = p.last_event_id; }
+      })
+      .catch(function () {});
+  }
+  function update(s) {
+    status = s;
+    if (s.time) { skew = Date.parse(s.time) - Date.now(); }
+    var j = s.job;
+    if (j && (!job || j.id !== job.id)) {
+      if (es) { es.close(); es = null; }
+      job = {id: j.id, kind: j.kind, title: j.title, state: j.state, started_at: j.started_at, finished_at: null,
+        step: j.step, step_index: j.step_index, step_count: j.step_count};
+      list = [];
+      problem = null;
+      last = 0;
+      ended = false;
+      var ol = $("job-steps");
+      while (ol.firstChild) { ol.removeChild(ol.firstChild); }
+      open();
+    } else if (j && !ended) {
+      job.state = j.state;
+      job.step = j.step;
+      job.step_index = j.step_index;
+      job.step_count = j.step_count;
+    }
+    if (job && !ended && !es) { page(); }
+    draw();
+  }
+  function text() {
+    var s = status || {}, out = [], i;
+    out.push("CARE device status");
+    out.push("Device: " + (s.display_name || "") + " (" + location.hostname + ")");
+    out.push("Page: " + (s.site || "") + ", setup state: " + (s.setup_state || ""));
+    out.push("Device time: " + (s.time || ""));
+    out.push("Copied at: " + new Date().toISOString());
+    if (job) {
+      out.push("", "Job: " + job.id, "Kind: " + job.kind + " (" + title() + ")", "State: " + job.state);
+      if (job.started_at) { out.push("Started: " + job.started_at); }
+      if (job.finished_at) { out.push("Finished: " + job.finished_at); }
+      if (problem) { out.push("Problem: " + problem.title + " (" + problem.type + ")"); }
+      out.push("Steps:");
+      for (i = 0; i < list.length; i++) {
+        var st = list[i];
+        if (st) {
+          var t = stepTime(st);
+          out.push("  " + (i + 1) + ". [" + st.state + "] " + stepText(st) + " (" + st.name + ")" + (t ? ", " + t : ""));
+        }
+      }
+      if (!list.length && job.step) { out.push("  " + ((job.step_index || 0) + 1) + ". [running] " + job.step); }
+    }
+    var r = s.jobs_recent || [];
+    if (r.length) {
+      out.push("", "Recent jobs:");
+      for (i = 0; i < r.length; i++) { out.push("  " + r[i].id + " " + r[i].state); }
+    }
+    return out.join("\n") + "\n";
+  }
+  function legacy(t) {
+    var a = document.createElement("textarea"), ok = false;
+    a.value = t;
+    a.setAttribute("readonly", "");
+    a.style.position = "fixed";
+    a.style.opacity = "0";
+    document.body.appendChild(a);
+    a.select();
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    document.body.removeChild(a);
+    return ok;
+  }
+  function copy() {
+    var t = text(), msg = $("copied"), pre = $("copy-text");
+    var done = function () { msg.textContent = "Copied."; pre.hidden = true; setTimeout(function () { msg.textContent = ""; }, 4000); };
+    var fail = function () { msg.textContent = "Select the text below and copy it."; pre.textContent = t; pre.hidden = false; };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(t).then(done, function () { if (legacy(t)) { done(); } else { fail(); } });
+    } else if (legacy(t)) {
+      done();
+    } else {
+      fail();
+    }
+  }
+  $("copy").addEventListener("click", copy);
+  setInterval(function () { if (job && !ended) { draw(); } }, 1000);
+  return {update: update, text: text, sentence: function (action) { return steps[action]; }};
+})();
 {{- end -}}
