@@ -9,7 +9,6 @@ import { fmt, strings } from "@/lib/strings";
 import {
   FREQUENCY_CHOICES,
   INTERVAL_DEFAULT_MIN,
-  RETENTION_DEFAULTS,
   RETENTION_PRESETS,
   effectiveRetention,
   formatRpoMinutes,
@@ -55,27 +54,28 @@ const KEEP_FIELDS: { key: keyof DestinationRetention; max: number }[] = [
 
 // The schedule of a destination (S66, item 2): "How often we save a copy" (a frequency), "How far back you can go"
 // (Standard, Longer, or Custom with the 4 numbers), the RPO in one sentence, and the Explainer that draws the policy
-// and says it in plain words. It updates live. A value that is the default of the agent stays out of config.yaml.
+// and says it in plain words. It updates live. The default frequency stays out of config.yaml. The numbers that the
+// operator sets are always written: the defaults of a destination come from backups.retention, so they can change.
 export function DestinationSchedule({
   value,
   onChange,
   walTimeoutMin,
+  defaults,
 }: {
   value: ScheduleValue;
   onChange: (v: ScheduleValue) => void;
   walTimeoutMin: number | undefined;
+  /** The retention of a destination without its own numbers (retentionDefaults of the config). */
+  defaults?: Required<DestinationRetention>;
 }) {
   const id = useId();
   const d = strings.dest;
   const interval = value.interval_min ?? INTERVAL_DEFAULT_MIN;
-  const retention = effectiveRetention(value.retention);
+  const retention = effectiveRetention(value.retention, defaults);
   const [customOpen, setCustomOpen] = useState(false);
   const preset: RetentionPresetName = customOpen ? "custom" : retentionPreset(retention);
   const frequencies = FREQUENCY_CHOICES.includes(interval) ? FREQUENCY_CHOICES : [...FREQUENCY_CHOICES, interval];
-  const setRetention = (next: Required<DestinationRetention>) => {
-    const same = KEEP_FIELDS.every((f) => next[f.key] === RETENTION_DEFAULTS[f.key]);
-    onChange({ ...value, retention: same ? undefined : next });
-  };
+  const setRetention = (next: Required<DestinationRetention>) => onChange({ ...value, retention: next });
   const setKeep = (key: keyof DestinationRetention, raw: string) => {
     const n = Math.max(0, Math.min(10_000, Math.round(Number(raw) || 0)));
     setRetention({ ...retention, [key]: n });

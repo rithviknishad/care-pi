@@ -1,7 +1,7 @@
 import { ChevronDownIcon, PencilIcon, PlayIcon, ShieldCheckIcon, Trash2Icon } from "lucide-react";
 import { useEffect } from "react";
 import { Link } from "react-router";
-import type { BackupsOverview, DestinationState, LocalBackupState } from "@/api/types";
+import type { BackupsOverview, DestinationRetention, DestinationState, LocalBackupState } from "@/api/types";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { InlineSkeleton } from "@/components/v2/inline-skeleton";
@@ -18,6 +18,7 @@ import {
   INTERVAL_DEFAULT_MIN,
   calendarText,
   effectiveRetention,
+  retentionDefaults,
   formatLocalRetention,
   formatMinute,
   formatRpoMinutes,
@@ -151,6 +152,7 @@ export function DestinationCard({
   onEdit,
   onRemove,
   busy,
+  defaults,
 }: {
   d: DestinationState;
   now: number;
@@ -159,12 +161,14 @@ export function DestinationCard({
   onEdit: () => void;
   onRemove: () => void;
   busy: boolean;
+  /** The retention of a destination without its own numbers (retentionDefaults of GET /backups retention). */
+  defaults?: Required<DestinationRetention>;
 }) {
   const Icon = TYPE_ICONS[d.type] ?? ShieldCheckIcon;
   const badge = destinationBadge(d.state);
   const policy = {
     interval_min: d.destination.interval_min ?? INTERVAL_DEFAULT_MIN,
-    ...effectiveRetention(d.destination.retention),
+    ...effectiveRetention(d.destination.retention, defaults),
   };
   return (
     <section
@@ -338,7 +342,7 @@ export function ScheduleCard({ overview, rows }: { overview: BackupsOverview | u
   const firstDest = overview?.destinations[0];
   const policy = {
     interval_min: firstDest?.destination.interval_min ?? INTERVAL_DEFAULT_MIN,
-    ...effectiveRetention(firstDest?.destination.retention),
+    ...effectiveRetention(firstDest?.destination.retention, retentionDefaults(overview?.retention)),
   };
   const scheduleLabel = (kind: string, destination: string | null) =>
     fmt(p.schedules[kind] ?? kind, { destination: destination ?? "" });

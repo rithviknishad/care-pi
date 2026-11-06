@@ -417,7 +417,10 @@ reloaded the page in Chromium).
 Each choice opens `DestinationForm` (`src/features/backups/destination-form.tsx`): the name (the id), the fields, the test
 (`POST /backups/destinations/test`), the interval and the retention with the defaults (15 min; 14 days, 14 daily, 8 weekly,
 6 monthly) and the RPO that they give ("Data loss at most 20 min"). "Add this destination" needs a passed test
-(`next_action: none`). A value that is the default stays out of `config.yaml`.
+(`next_action: none`). The default interval stays out of `config.yaml`. The retention numbers that the operator sets are
+always written, also when they are the defaults: a destination without `retention` takes `keep_daily` and `keep_weekly`
+from `backups.retention.files_keep_daily` and `files_keep_weekly`, so each place shows those defaults
+(`retentionDefaults` in `src/features/backups/backups-format.ts`).
 
 - **USB disk**: `GET /backups/disks`. The system disk shows with "This is the system disk. You cannot use it."; a disk with
   care-pi backups shows "Use this disk"; a mounted disk shows why it cannot be used; another disk shows "Prepare this disk". The

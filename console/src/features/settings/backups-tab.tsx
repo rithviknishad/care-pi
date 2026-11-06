@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import type { Destination } from "@/api/types";
-import { INTERVAL_DEFAULT_MIN, formatRpoMinutes } from "@/features/backups/backups-format";
+import { INTERVAL_DEFAULT_MIN, formatRpoMinutes, retentionDefaults } from "@/features/backups/backups-format";
 import { DestinationSchedule, type ScheduleValue } from "@/features/backups/destination-parts";
 import { TYPE_ICONS } from "@/features/backups/destination-meta";
 import { fmt, strings } from "@/lib/strings";
@@ -85,6 +85,11 @@ export function BackupsTab({ config }: { config: Config }) {
     return (sv ? sv.interval_min : d.interval_min) ?? INTERVAL_DEFAULT_MIN;
   };
   const minInterval = destinations.length ? Math.min(...destinations.map(intervalOf)) : null;
+  // A destination without its own numbers keeps the files_keep_* of this form (the agent takes them from the config).
+  const defaults = retentionDefaults({
+    files_keep_daily: intIn(v.daily, 0, 3650) ?? config.backups?.retention?.files_keep_daily,
+    files_keep_weekly: intIn(v.weekly, 0, 520) ?? config.backups?.retention?.files_keep_weekly,
+  });
   const wal = intIn(v.wal, 1, 60);
   const num = (k: keyof typeof RANGES, label: string, help?: string) => (
     <FormField id={`${id}-${k}`} label={label} help={help} error={errors[k]}>
@@ -171,6 +176,7 @@ export function BackupsTab({ config }: { config: Config }) {
                     value={schedules[d.id] ?? {}}
                     onChange={(sv) => setSchedules({ ...schedules, [d.id]: sv })}
                     walTimeoutMin={intIn(v.wal, 1, 60) ?? undefined}
+                    defaults={defaults}
                   />
                 </div>
               );

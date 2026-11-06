@@ -1,7 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { api } from "@/api/client";
 import type { Config } from "@/api/types";
 import { BackupsTab } from "@/features/settings/backups-tab";
 
@@ -28,7 +29,19 @@ function renderTab(config: Config) {
   );
 }
 
+// The body of the PUT /config of the preview (the save of the form).
+function capturePut() {
+  const bodies: Config[] = [];
+  vi.spyOn(api, "PUT").mockImplementation((async (_path: string, init: { body: Config }) => {
+    bodies.push(init.body);
+    return { data: { written: false, etag: '"1"', plan: { changed: false }, job: null }, response: new Response(null) };
+  }) as never);
+  return bodies;
+}
+
 describe("Settings > Backups", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it("the RPO uses the frequency that the operator picks, also the default of the agent (review m1)", async () => {
     renderTab(
       configWith({
@@ -39,5 +52,48 @@ describe("Settings > Backups", () => {
     expect(screen.getByTestId("settings-rpo")).toHaveTextContent("you lose at most 1 hour 5 minutes of work");
     await userEvent.click(screen.getByRole("button", { name: "Every 15 minutes" }));
     expect(screen.getByTestId("settings-rpo")).toHaveTextContent("you lose at most 20 minutes of work");
+  });
+
+  // review m3: the agent takes the retention of a destination without its own numbers from backups.retention.
+  it("a destination without retention shows files_keep_daily of the config, and the save writes the numbers", async () => {
+    const bodies = capturePut();
+    renderTab(
+      configWith({
+        retention: { db_full: 2, files_keep_daily: 30, files_keep_weekly: 8 },
+        destinations: [{ id: "usb", type: "posix", path: "/mnt/usb" }],
+      }),
+    );
+    const daily = screen.getByLabelText("1 copy each day, for (days)");
+    expect(daily).toHaveValue(30);
+    const monthly = screen.getByLabelText("1 copy each month, for (months)");
+    await userEvent.clear(monthly);
+    await userEvent.type(monthly, "12");
+    await userEvent.click(screen.getByTestId("config-preview"));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]?.backups?.destinations?.[0]).toMatchObject({
+      id: "usb",
+      retention: { keep_within_days: 14, keep_daily: 30, keep_weekly: 8, keep_monthly: 12 },
+    });
+  });
+
+  it("writes the numbers of the operator also when they are the constants of the agent", async () => {
+    const bodies = capturePut();
+    renderTab(
+      configWith({
+        retention: { db_full: 2, files_keep_daily: 30, files_keep_weekly: 8 },
+        destinations: [{ id: "usb", type: "posix", path: "/mnt/usb" }],
+      }),
+    );
+    const daily = screen.getByLabelText("1 copy each day, for (days)");
+    await userEvent.clear(daily);
+    await userEvent.type(daily, "14");
+    await userEvent.click(screen.getByTestId("config-preview"));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]?.backups?.destinations?.[0]?.retention).toEqual({
+      keep_within_days: 14,
+      keep_daily: 14,
+      keep_weekly: 8,
+      keep_monthly: 6,
+    });
   });
 });

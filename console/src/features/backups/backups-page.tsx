@@ -23,7 +23,7 @@ import {
   VerifyCard,
 } from "./backups-cards";
 import { AddDestinationDialog, EditDestinationDialog, RemoveDestinationDialog } from "./destination-change";
-import { formatRpoMinutes } from "./backups-format";
+import { formatRpoMinutes, retentionDefaults } from "./backups-format";
 import { lastOffsiteCopy } from "./health";
 import { JobDialog } from "./job-dialog";
 import { RecoveryKeyCard } from "./key-card";
@@ -197,6 +197,7 @@ export default function BackupsPage() {
                 d={d}
                 now={now}
                 busy={busy}
+                defaults={retentionDefaults(o?.retention)}
                 onRun={() => run({ scope: "destination", destination: d.id, type: "incr", reason: null })}
                 onVerify={() =>
                   start.mutate(() =>

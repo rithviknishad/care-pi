@@ -15,8 +15,24 @@ export const INTERVAL_DEFAULT_MIN = 15;
 export const WAL_TIMEOUT_DEFAULT_MIN = 5;
 export const INTERVAL_CHOICES = [5, 15, 30, 60, 240, 1440];
 
-export function effectiveRetention(r: DestinationRetention | undefined | null): Required<DestinationRetention> {
-  return { ...RETENTION_DEFAULTS, ...(r ?? {}) };
+// The retention of a destination without its own numbers, as the agent takes it (backup.RetentionOf): keep_daily
+// and keep_weekly come from backups.retention.files_keep_daily and files_keep_weekly of the same config. Only a
+// value that the config does not have takes the constant of the agent.
+export function retentionDefaults(
+  r: { files_keep_daily?: number | null; files_keep_weekly?: number | null } | null | undefined,
+): Required<DestinationRetention> {
+  return {
+    ...RETENTION_DEFAULTS,
+    keep_daily: r?.files_keep_daily ?? RETENTION_DEFAULTS.keep_daily,
+    keep_weekly: r?.files_keep_weekly ?? RETENTION_DEFAULTS.keep_weekly,
+  };
+}
+
+export function effectiveRetention(
+  r: DestinationRetention | undefined | null,
+  defaults: Required<DestinationRetention> = RETENTION_DEFAULTS,
+): Required<DestinationRetention> {
+  return { ...defaults, ...(r ?? {}) };
 }
 
 // S66, item 2: the operator picks a frequency and a "how far back" preset, not the 4 numbers.
