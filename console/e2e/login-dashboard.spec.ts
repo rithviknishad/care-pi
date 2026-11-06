@@ -11,7 +11,7 @@ test("log in and read the dashboard", async ({ page, resetMock, requests }) => {
   await expect(page).toHaveURL(/\/dashboard$/);
 
   await expect(page.getByTestId("status-state")).toHaveText("OK");
-  await expect(page.getByTestId("units").locator("tbody tr")).toHaveCount(10);
+  await expect(page.getByTestId("units").locator("[data-unit]")).toHaveCount(10);
   await expect(page.getByTestId("fe-build-id")).toHaveText("8d2f0c1a9b7e");
   await expect(page.getByTestId("care-digest")).toHaveText("sha256:5e0c3b2a1f9d");
   await expect(page.getByTestId("fingerprint")).toContainText("3f1d6c0e5a2b9e4d");
@@ -65,7 +65,7 @@ test("the dashboard cards keep their size and position when the data arrives", a
   await expect(page.getByTestId("status-state")).toHaveCount(0);
   await page.evaluate(() => document.fonts.ready);
 
-  const cards = page.locator("main [data-slot=card]");
+  const cards = page.locator("main section, main details");
   const boxes = () =>
     cards.evaluateAll((els) =>
       els.map((el) => {
@@ -96,24 +96,20 @@ test("the dashboard fits the width of a phone", async ({ page, resetMock }, info
   await expect(page.getByTestId("fe-build-id")).toHaveText("8d2f0c1a9b7e");
   await page.evaluate(() => document.fonts.ready);
   await noSideScroll(page, ["units-card"]);
+  // The services: the plain name, the state in a word, and the memory against its limit.
+  const rows = page.getByTestId("units").locator("[data-unit]");
+  await expect(rows).toHaveCount(10);
+  const api = page.locator('[data-unit="care-api.service"]');
+  await expect(api.getByRole("link", { name: /Care \(web and API\)/ })).toHaveAttribute("href", "/logs?unit=api");
+  await expect(api).toContainText("Running");
+  await expect(api.getByRole("meter")).toHaveAttribute("aria-valuetext", /MiB of \d+ MiB/);
   if (isMobile(page)) {
-    await expect(page.getByTestId("units")).toBeHidden();
-    const cards = page.getByTestId("units-cards").locator("[data-unit-card]");
-    await expect(cards).toHaveCount(10);
-    const api = cards.filter({ hasText: "care-api.service" });
-    await expect(api.getByRole("link", { name: "care-api.service" })).toHaveAttribute("href", "/logs?unit=api");
-    await expect(api).toContainText("healthy");
-    await expect(api).toContainText(/MiB of \d+ MiB/);
-    await expect(api.getByLabel(/^Restarts: \d+$/)).toBeVisible();
     // Each label and value shows its full text.
     const cut = await page
-      .locator("main dl > dt, main dl > dd > span")
+      .locator("main dl dt, main dl dd > span")
       .evaluateAll((els) => els.filter((el) => el.scrollWidth > el.clientWidth + 1).map((el) => el.textContent));
     expect(cut, "cut labels or values").toEqual([]);
     await expect(page.getByText("Configured name", { exact: true })).toBeVisible();
-  } else {
-    await expect(page.getByTestId("units")).toBeVisible();
-    await expect(page.getByTestId("units-cards")).toBeHidden();
   }
   await shot(page, info, "dashboard");
 });
