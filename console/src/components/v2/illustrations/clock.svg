@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 160" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><style>.illo-i{stroke:var(--illo-ink,#22413a)}.illo-p{stroke:var(--illo-primary,#059669)}.illo-f{fill:var(--illo-fill,#d7f4e7)}.illo-w{fill:var(--illo-paper,#fcfefd)}.illo-d{fill:var(--illo-primary,#059669)}.illo-k{fill:var(--illo-ink,#22413a)}</style>
+<ellipse class="illo-f" cx="100" cy="142" rx="52" ry="6"/>
+<path class="illo-i" d="M92 18h16M100 18v8"/>
+<circle class="illo-w illo-i" cx="100" cy="78" r="50"/>
+<path class="illo-f" d="M100 78V40a38 38 0 0 1 38 38z"/>
+<path class="illo-p" d="M100 40a38 38 0 0 1 38 38" stroke-width="4"/>
+<path class="illo-i" d="M100 32v5M100 119v5M54 78h5M141 78h5" stroke-width="2.5"/>
+<path class="illo-i" d="M100 78h28M100 78l-15-13" stroke-width="3.5"/>
+<circle class="illo-d" cx="100" cy="78" r="4.5"/>
+<path class="illo-p" d="M34 54a70 70 0 0 0 0 48" opacity=".45"/>
+<path class="illo-p" d="M166 54a70 70 0 0 1 0 48" opacity=".45"/>
+<circle class="illo-d" cx="170" cy="28" r="3"/>
+</svg>

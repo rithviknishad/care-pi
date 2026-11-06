@@ -34,14 +34,18 @@ Each decision below serves these goals.
 
 ## 2. Design decisions
 
-1. **Monospace first.** Geist Mono is the body font (`src/styles/console.css` sets `--font-sans`).
-   The font files come from `@fontsource-variable/geist-mono`, so they are in the build. The page loads no font from another origin.
-2. **careui tokens and components, without change.** The console uses the Care UI design tokens and components
-   (section 3). It does not make its own version of a careui component.
+1. **Geist for text, Geist Mono for data (v2, S66; it was "Monospace first").** Geist is the font of headings and body;
+   Geist Mono is the font of ids, hashes, logs, metrics, keys, code, and times (`src/styles/typography.css`).
+   The font files are in `src/styles/fonts/` (latin subset; the build hashes them into `/assets/`; the OFL licence is
+   `public/fonts/OFL.txt`), so the page loads no font from another origin. Section 13.
+2. **careui tokens and components, tuned (v2, S66).** The console uses the Care UI design tokens and components
+   (section 3). It does not make its own version of a careui component. `src/styles/tokens.css` tunes the careui semantic
+   tokens (surfaces, text, borders, radii) for v2; it does not edit `careui.css`. Section 13.
 3. **Light and dark theme.** The default is the theme of the system. Section 4 tells more.
 4. **Stable layout.** A page does not move when data arrives or refreshes. Section 5 gives the rules.
 5. **Mobile and desktop.** The console works at a width of 360 px or more (phone) and 1024 px or more (laptop).
-   The navigation is a side bar from 1024 px (`lg`) and a sheet below 1024 px.
+   The navigation is a rail from 1024 px (`lg`) and a bottom bar below 1024 px (v2: up to 5 places, "More" opens a sheet;
+   before the state is `ready` a Menu button opens the navigation).
 6. **Keyboard.** Each control is a careui (Base UI) control with a visible focus ring.
    The top bar has a "Go to the content" link. Dialogs keep the focus inside.
 7. **No request leaves the origin.** The console loads each file from its own origin and calls only `/api/v1` and `/_care-pi`.
@@ -621,7 +625,8 @@ for an external bundle "The browser loads the bundle from <url>. It is not pinne
 `maintenance` of `GET /_care-pi/status` (the member that the maintenance page of Caddy reads): "Maintenance in progress:
 <operator text of `maintenance.step`>", a link to the Updates page. From 640 px it is in a slot of the top bar between the
 state and the buttons; the slot is always there. Below 640 px it takes the place of the device name and of the state badge,
-on 2 lines ("Maintenance in progress" and the step). The top bar keeps its height (56 px). The dashboard shows the same
+on 2 lines ("Maintenance in progress" and the step). The top bar keeps its height (v2: 56 px, 64 px from 1024 px; the
+banner slot is 40 px high, `--banner-height`). The dashboard shows the same
 text first in its problems (`Status.maintenance`), and its state is "Maintenance".
 
 ### 11.6.1 The clock banner (S52)
@@ -696,4 +701,22 @@ does not answer), `tailscale_login: "manual"` (the login waits until `POST /__mo
 (a wrong passphrase). Vitest: `tests/connectivity-logic.test.ts`, `tests/connectivity-tab.test.tsx`. Playwright:
 `e2e/connectivity.spec.ts` (public name, Tailscale with the login link, Wi-Fi, the certificate page, the dashboard) and
 `e2e/real/connectivity.spec.ts` (opt-in on a device).
+
+## 13. Console v2 (S66)
+
+The v2 design system is the look of the console for non-technical operators: calm green-tinted surfaces, a gradient on
+heroes and on the setup rail only, 8 line illustrations, motion at key moments, Geist and Geist Mono. **`console/design.md`
+is its specification** (principles, palette with measured contrast, type scale, space, motion, layouts, components,
+illustrations, copy, states, do and don't, page recipes). The rules of this note stay in force; v2 adds to them:
+
+| Topic | v2 |
+| --- | --- |
+| Tokens | `src/styles/tokens.css` (light `:root`, dark `.dark`): `--surface-*`, `--ink*`, `--line*`, the tones `--ok-*`, `--warn-*`, `--danger-*`, `--info-*`, `--gradient-hero`, scrims, `--shadow-soft`, layout sizes. Tailwind: `bg-surface-tint`, `text-ink-muted`, `border-danger-border`, `rounded-card`, `h-topbar`, … |
+| Type | `type-display`, `type-h1`, `type-h2`, `type-h3`, `type-body`, `type-small`, `type-data` (not `text-*`: `cn()` takes an unknown `text-*` class for a colour) |
+| Motion | `src/styles/motion.css`: 150/250/400 ms, ease-out, the variant `motion-ok:` (off with "reduce motion" and with careui `data-reduced-motion="true"`), view transitions for the Stage, the toasts |
+| Components | `src/components/v2/`: AppShell, Stage, Focus, Hero, Panel, StatCard, MetricBar, DashboardGrid, KeyValueList, MonoBlock, CopyButton (S68 report header), ProblemCard, EmptyState, ChoiceCards, Explainer (backups retention), StepList, ProgressRing, StatusChip, Timeline, Illustration, Toaster, ThemeToggle |
+| Shell | `src/app/layout/` uses the v2 AppShell: rail from 1024 px, bottom bar below (4 primary places and "More"), minimal mode before `ready`, a banner slot of 40 px; the public pages use the Focus backdrop |
+| Gallery | `/__v2` on the Vite dev server only (`vite.config.ts`, `apply: "serve"`): each component with sample data, light and dark |
+| Checks | `npm run test:v2`: axe (0 serious or critical), stability (boxes and CLS 0.0000 when the data comes), reduced motion (0 animations), font loading (swap, preloaded), token contrast |
+| Texts | The default texts of the components are in `src/components/v2/strings.ts`; the texts of a page stay in `src/lib/strings.ts` |
 

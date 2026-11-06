@@ -23,8 +23,8 @@ export function MaintenanceBanner({ enabled, compact = false }: { enabled: boole
       data-testid="maintenance-banner"
       data-step={m.step ?? undefined}
       className={cn(
-        "flex min-w-0 items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2.5 text-amber-900 outline-none hover:bg-amber-100 focus-visible:ring-3 focus-visible:ring-ring/50 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-50 dark:hover:bg-amber-900",
-        compact ? "h-11 w-full" : "h-9 max-w-full text-sm",
+        "flex h-banner min-w-0 items-center gap-2 rounded-full border border-warn-border bg-warn-bg px-3 text-warn-fg outline-none hover:border-warn-solid focus-visible:ring-3 focus-visible:ring-ring/50",
+        compact ? "w-full" : "max-w-full type-small",
       )}
     >
       {compact ? (

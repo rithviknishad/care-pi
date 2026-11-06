@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 // The banner "Clock not trusted" (S52, docs/api/README.md section 16). A device without internet sets its clock from
 // the browser at the claim; the clock is not trusted until NTP synchronizes it (clock.trusted of GET /_care-pi/status).
-// It has the slot of the maintenance banner in the top bar, so it moves nothing when it shows or hides. The
+// It has the slot of the maintenance banner in the top bar (--banner-height), so it moves nothing when it shows or hides. The
 // maintenance banner wins the slot while it shows. The operator cannot close it: it goes when the clock is trusted.
 export function ClockBanner({ enabled, compact = false }: { enabled: boolean; compact?: boolean }) {
   const status = useMaintenance(enabled);
@@ -20,8 +20,8 @@ export function ClockBanner({ enabled, compact = false }: { enabled: boolean; co
       data-testid="clock-banner"
       data-source={clock.source}
       className={cn(
-        "flex min-w-0 items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-2.5 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-50",
-        compact ? "h-11 w-full" : "h-9 max-w-full text-sm",
+        "flex h-banner min-w-0 items-center gap-2 rounded-full border border-warn-border bg-warn-bg px-3 text-warn-fg",
+        compact ? "w-full" : "max-w-full type-small",
       )}
     >
       <ClockAlertIcon className="size-4 shrink-0" aria-hidden="true" />
