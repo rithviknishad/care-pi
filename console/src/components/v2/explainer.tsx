@@ -146,7 +146,7 @@ export function Explainer({ policy, title = v2Strings.explainer.title, className
         <Track zones={zones} width={320} height={48} density={0.45} className="sm:hidden" />
         <Track zones={zones} width={720} height={56} density={1} className="hidden sm:block" />
         <div className="flex justify-between px-1 type-data text-ink-soft">
-          <span>{oldest ? fmt(v2Strings.explainer.ago, { span: oldest.span }) : ""}</span>
+          <span>{oldest ? fmt(v2Strings.explainer.ago, { span: oldest.length }) : ""}</span>
           <span>{v2Strings.explainer.now}</span>
         </div>
       </div>
@@ -165,7 +165,7 @@ export function Explainer({ policy, title = v2Strings.explainer.title, className
             <span className="min-w-0 type-small text-ink">
               <span className="font-medium">{v2Strings.explainer.zone[z.kind]}</span>
               <span className="text-ink-soft"> · </span>
-              <span className="type-data text-ink-muted">{z.span}</span>
+              <span className="type-data text-ink-muted">{z.length}</span>
             </span>
           </li>
         ))}

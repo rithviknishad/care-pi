@@ -78,4 +78,39 @@ describe("v2 interactive components", () => {
       "Each copy · 2 days",
     ]);
   });
+
+  it.each([
+    [
+      "12 months",
+      { keep_within_days: 2, keep_daily: 14, keep_weekly: 8, keep_monthly: 12 },
+      "1 year",
+      "any month in the last year",
+    ],
+    [
+      "1 month",
+      { keep_within_days: 2, keep_daily: 14, keep_weekly: 8, keep_monthly: 1 },
+      "1 month",
+      "any month in the last month",
+    ],
+    [
+      "1 week",
+      { keep_within_days: 2, keep_daily: 7, keep_weekly: 1, keep_monthly: 0 },
+      "1 week",
+      "any week in the last week",
+    ],
+    [
+      "1 day",
+      { keep_within_days: 0, keep_daily: 1, keep_weekly: 0, keep_monthly: 0 },
+      "1 day",
+      "any day in the last day",
+    ],
+  ])(
+    "Explainer names one unit with its number on the axis (%s), and without it in the sentence",
+    (_, keep, length, clause) => {
+      render(<Explainer policy={{ interval_min: 15, ...keep }} testId="ex" />);
+      expect(screen.getByText(`${length} ago`)).toBeInTheDocument();
+      expect(screen.getAllByRole("listitem")[0]).toHaveTextContent(new RegExp(` · ${length}$`));
+      expect(screen.getByTestId("ex-summary")).toHaveTextContent(clause);
+    },
+  );
 });

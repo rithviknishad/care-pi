@@ -52,7 +52,7 @@ function inMinutes(iso: string, now: number): string {
 function shortPolicy(policy: RetentionPolicy): string {
   const oldest = retentionZones(policy).at(-1);
   return oldest
-    ? `${everyText(policy.interval_min)} · ${fmt(p.backTo, { span: oldest.span })}`
+    ? `${everyText(policy.interval_min)} · ${fmt(p.backTo, { span: oldest.length })}`
     : everyText(policy.interval_min);
 }
 

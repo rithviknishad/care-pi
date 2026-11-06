@@ -17,8 +17,10 @@ export interface RetentionZone {
   kind: RetentionZoneKind;
   /** The number of copies that the zone keeps (moment: an estimate from the interval). */
   count: number;
-  /** "2 days", "2 weeks", "6 months". */
+  /** "2 days", "2 weeks", "6 months", "year": the form of "in the last {span}". */
   span: string;
+  /** The span with its number for one unit too: "1 year", "6 months" (the axis label "1 year ago", the legend). */
+  length: string;
 }
 
 const S = v2Strings.explainer;
@@ -33,42 +35,45 @@ export function everyText(intervalMin: number): string {
   return fmt(S.every.minutes, { n });
 }
 
-export function spanOfDays(days: number): string {
-  if (days === 1) return S.span.day;
-  if (days === 7) return S.span.week;
+// counted: the form with the number for one unit too ("1 year"), else the form of a sentence ("year").
+export function spanOfDays(days: number, counted = false): string {
+  if (days === 1) return counted ? S.span.oneDay : S.span.day;
+  if (days === 7) return counted ? S.span.oneWeek : S.span.week;
   if (days >= 14 && days % 7 === 0) return fmt(S.span.weeks, { n: days / 7 });
   return fmt(S.span.days, { n: days });
 }
 
-export function spanOfWeeks(weeks: number): string {
-  if (weeks === 1) return S.span.week;
-  if (weeks === 4) return S.span.month;
+export function spanOfWeeks(weeks: number, counted = false): string {
+  if (weeks === 1) return counted ? S.span.oneWeek : S.span.week;
+  if (weeks === 4) return counted ? S.span.oneMonth : S.span.month;
   if (weeks >= 8 && weeks % 4 === 0) return fmt(S.span.months, { n: weeks / 4 });
   return fmt(S.span.weeks, { n: weeks });
 }
 
-export function spanOfMonths(months: number): string {
-  if (months === 1) return S.span.month;
-  if (months === 12) return S.span.year;
+export function spanOfMonths(months: number, counted = false): string {
+  if (months === 1) return counted ? S.span.oneMonth : S.span.month;
+  if (months === 12) return counted ? S.span.oneYear : S.span.year;
   if (months >= 24 && months % 12 === 0) return fmt(S.span.years, { n: months / 12 });
   return fmt(S.span.months, { n: months });
 }
 
 // The "moment" span: the last day is "24 hours" (clearer than "the last day").
-function spanOfMoments(days: number): string {
-  return days === 1 ? S.span.hours24 : spanOfDays(days);
+function spanOfMoments(days: number, counted = false): string {
+  return days === 1 ? S.span.hours24 : spanOfDays(days, counted);
 }
 
 // The zones from the newest to the oldest. A zone with 0 copies is not in the list.
 export function retentionZones(p: RetentionPolicy): RetentionZone[] {
   const zones: RetentionZone[] = [];
+  const zone = (kind: RetentionZoneKind, count: number, n: number, span: (n: number, counted?: boolean) => string) =>
+    zones.push({ kind, count, span: span(n), length: span(n, true) });
   if (p.keep_within_days > 0) {
     const perDay = Math.floor(1440 / Math.max(1, p.interval_min));
-    zones.push({ kind: "moment", count: perDay * p.keep_within_days, span: spanOfMoments(p.keep_within_days) });
+    zone("moment", perDay * p.keep_within_days, p.keep_within_days, spanOfMoments);
   }
-  if (p.keep_daily > 0) zones.push({ kind: "day", count: p.keep_daily, span: spanOfDays(p.keep_daily) });
-  if (p.keep_weekly > 0) zones.push({ kind: "week", count: p.keep_weekly, span: spanOfWeeks(p.keep_weekly) });
-  if (p.keep_monthly > 0) zones.push({ kind: "month", count: p.keep_monthly, span: spanOfMonths(p.keep_monthly) });
+  if (p.keep_daily > 0) zone("day", p.keep_daily, p.keep_daily, spanOfDays);
+  if (p.keep_weekly > 0) zone("week", p.keep_weekly, p.keep_weekly, spanOfWeeks);
+  if (p.keep_monthly > 0) zone("month", p.keep_monthly, p.keep_monthly, spanOfMonths);
   return zones;
 }
 
