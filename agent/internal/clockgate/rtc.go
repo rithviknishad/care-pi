@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"regexp"
 	"strconv"
@@ -195,6 +197,15 @@ func LastRTCCheck(p paths.Paths) (RTCCheck, bool) {
 		return RTCCheck{}, false
 	}
 	return c, true
+}
+
+// ClearRTCCheck deletes state/clock-rtc-check.json: a new detection, or the policy ntp (the RTC does not set the clock
+// then, so an old drift means nothing). Without the file, the doctor shows no drift warning.
+func ClearRTCCheck(p paths.Paths) error {
+	if err := os.Remove(p.Abs(rtcCheckFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // verifyRTC compares the time of an rtc marker with the NTP time now: the RTC time plus the uptime since the gate.

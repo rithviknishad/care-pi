@@ -231,7 +231,8 @@ process as `failed` ("interrupted"). An apply is idempotent, so the operator can
 The hardware step and the internet check (S74, `docs/api/README.md` section 19.1): the agent checks the internet
 at its start, after 15 s, 30 s, 60 s, then every 2 minutes until the first success, then every 5 minutes. The probe of
 the hardware step (`GET /host/check?probe=true`) checks again at once. The step records the result, but the wizard and
-the dashboard show the live check, and the finish keeps only the warnings that are still true.
+the dashboard show the live check, and the finish replaces the warning `no-internet` of the record with the live
+check (the disk warnings stay).
 
 Only a dev build can skip the `backups` step. A dev build has a version that is not `vX.Y.Z`
 (`Makefile`: `git describe --tags --match 'v[0-9]*'`). Thus a release build of Phase 2 cannot finish the setup.
@@ -786,7 +787,7 @@ follow the pitfalls of `plans/09-handoff.md` section 3:
 | `ports` | `ss -ltnpH`: another program than conmon on 80, 443, or 8443 of a published address or of all addresses (SP5: `tailscale serve` on 443 of the Tailscale address) | `fail` |
 | `mdns` | avahi announces another name than `<hostname>.local` (a collision: `care-2.local`) or none | `warn` |
 | `internet` | the live internet check (S74): no DNS, or no route | `warn` |
-| `clock` | NTP synchronized; the browser time of S52; the RTC gate (S75); the drift of the RTC at the first NTP synchronization | `warn` (browser, rtc, a drift of more than 5 minutes), `fail` (none) |
+| `clock` | NTP synchronized; the browser time of S52; the RTC gate (S75); the drift of the RTC at the first NTP synchronization (policy `rtc` only; `clock detect` and `clock.policy: ntp` delete the record) | `warn` (browser, rtc, a drift of more than 5 minutes), `fail` (none) |
 | `memory`, `zram` | `MemAvailable` below 256 MiB; no `/dev/zram` in `/proc/swaps` | `warn` |
 | `disk-*` | less than 2 GiB or 10 % free | `warn` |
 | `units` | a unit of Care `failed`; `inactive` after the setup | `fail`, `warn` |

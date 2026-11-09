@@ -167,11 +167,69 @@ func TestSeedDBPasswordFailure(t *testing.T) {
 	if err := writeSeedRecord(p, SeedRecord{File: "pg-x.tar.zst"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := seedDB(context.Background(), o, seedTarget(careGitSHA)); err == nil || !strings.Contains(err.Error(), "password change failed") {
+	err := seedDB(context.Background(), o, seedTarget(careGitSHA))
+	if err == nil || !strings.Contains(err.Error(), "pending password change of an earlier run failed again") || !strings.Contains(err.Error(), "the next apply tries again") {
 		t.Fatalf("%v", err)
 	}
 	if _, err := os.Stat(filepath.Join(pg, "PG_VERSION")); err != nil {
 		t.Fatal("a pending password change must not remove data")
+	}
+}
+
+// S72: a pending password change of an earlier run (an interrupted apply) stops care-db.service first, because
+// care-start.service started care-db on the seeded directory at the next boot and postgres --single needs the
+// directory alone. Then the change runs, and the record says so. When care-db does not stop, the change does not run,
+// the error says what blocks it, and the data stays.
+func TestSeedDBPendingPasswordStopsCareDB(t *testing.T) {
+	p := paths.New(t.TempDir())
+	pg := p.Abs(paths.PGData)
+	if err := os.MkdirAll(pg, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pg, "PG_VERSION"), []byte("17\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeSeedRecord(p, SeedRecord{File: "pg-x.tar.zst", CareGitSHA: careGitSHA}); err != nil {
+		t.Fatal(err)
+	}
+	fake := host.NewFake()
+	var out bytes.Buffer
+	o := Options{Paths: p, Host: host.New(fake), Out: &out}
+	if err := seedDB(context.Background(), o, seedTarget(careGitSHA)); err != nil {
+		t.Fatal(err)
+	}
+	pw := SeedPasswordCmd(pgImageDigest).String()
+	if len(fake.Calls) != 2 || fake.Calls[0] != "systemctl stop care-db.service" || fake.Calls[1] != pw {
+		t.Fatalf("calls %q", fake.Calls)
+	}
+	if rec, ok := readSeedRecord(p); !ok || !rec.PasswordSet || rec.CareGitSHA != careGitSHA {
+		t.Fatalf("record %+v %v", rec, ok)
+	}
+	if !strings.Contains(out.String(), "pending; stop care-db.service first") {
+		t.Fatalf("output:\n%s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(pg, "PG_VERSION")); err != nil {
+		t.Fatal("the data must stay")
+	}
+
+	// care-db does not stop: no password change, the error names the unit, and the record stays pending.
+	if err := writeSeedRecord(p, SeedRecord{File: "pg-x.tar.zst", CareGitSHA: careGitSHA}); err != nil {
+		t.Fatal(err)
+	}
+	fake.Calls = nil
+	fake.On("systemctl stop care-db.service", host.Response{Code: 1, Out: "Job for care-db.service canceled."})
+	err := seedDB(context.Background(), o, seedTarget(careGitSHA))
+	if err == nil || !strings.Contains(err.Error(), "care-db.service did not stop") {
+		t.Fatalf("%v", err)
+	}
+	if len(fake.Filter("systemd-run")) != 0 {
+		t.Fatalf("the password change ran while care-db runs: %q", fake.Calls)
+	}
+	if rec, ok := readSeedRecord(p); !ok || rec.PasswordSet {
+		t.Fatalf("record %+v %v", rec, ok)
+	}
+	if _, err := os.Stat(filepath.Join(pg, "PG_VERSION")); err != nil {
+		t.Fatal("the data must stay")
 	}
 }
 

@@ -143,6 +143,15 @@ func TestFromRTCAndDrift(t *testing.T) {
 			if _, ok := Read(p); ok {
 				t.Fatal("the marker stays after NTP")
 			}
+			if err := ClearRTCCheck(p); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := LastRTCCheck(p); ok {
+				t.Fatal("the RTC check record stays after ClearRTCCheck")
+			}
+			if err := ClearRTCCheck(p); err != nil {
+				t.Fatalf("a second clear: %v", err)
+			}
 		})
 	}
 	// An RTC without battery (1970) does not pass.

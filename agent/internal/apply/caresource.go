@@ -18,6 +18,7 @@ import (
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/exitcode"
 	"github.com/rithviknishad/care-pi/agent/internal/fe"
+	"github.com/rithviknishad/care-pi/agent/internal/host"
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
 	"github.com/rithviknishad/care-pi/agent/internal/problem"
@@ -42,9 +43,10 @@ type gitCare struct {
 
 // resolveGitCare resolves a care.source git (S71, docs/solutions.md section 13.4): the ref (or
 // solution.custom.care_ref on the track custom) to a commit, and the commit to the image that CI built
-// (<care.image>:<sha12>). It returns a copy of the solution with care.Resolved set. Without the image of the commit
-// in the registry, a host with 4 GB of RAM or more builds docker/prod.Dockerfile of the commit (a local build); a
-// host with less RAM stops with unsupported-config. A solution lock pins the commit: no network then.
+// (<care.image>:<sha12>). It returns a copy of the solution with care.Resolved set. When the registry answers that it
+// has no image of the commit, a host with 4 GB of RAM or more builds docker/prod.Dockerfile of the commit (a local
+// build); a host with less RAM stops with unsupported-config. When the registry does not answer (no DNS, a timeout,
+// a 5xx), it stops with build-required-offline: the image can exist. A solution lock pins the commit: no network then.
 func resolveGitCare(ctx context.Context, o PrepareOptions, cfg *config.Config, sol *solution.Solution, sl *solution.Lock,
 	prev *lock.Lock, r lock.Resolver, update bool) (*solution.Solution, *gitCare, error) {
 	if sol == nil || !sol.Care.IsGit() {
@@ -80,6 +82,12 @@ func resolveGitCare(ctx context.Context, o PrepareOptions, cfg *config.Config, s
 	ref := image + ":" + tag
 	if g.SHA != "" && !r.Offline && r.Skopeo != nil && !knownImage(prev, sl, ref) {
 		if _, err := r.Skopeo.Digest(ctx, ref, r.OS, r.Arch); err != nil {
+			if !errors.Is(err, host.ErrImageNotFound) {
+				// No DNS, a timeout, or a 5xx of the registry: the image can exist. A local build of 2 hours, or a
+				// refusal, for a transient error is wrong; the operator tries again.
+				return nil, nil, problem.Newf(problem.BuildRequiredOffline, "Cannot ask the registry for the image %s of CARE %s (%s of %s): %v. "+
+					"Check the internet and the registry, then try again.", ref, tag, g.Ref, g.Repo, err)
+			}
 			ram := memTotal(o.Paths)
 			if ram > 0 && ram < MinRAMCareSourceBuild {
 				p := problem.Newf(problem.UnsupportedConfig, "CARE %s (%s of %s) has no image %s: CI builds it (the workflows solution-lock and "+

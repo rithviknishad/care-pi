@@ -1899,7 +1899,9 @@ All changes are additive.
 The agent checks the internet with a HTTPS `HEAD` request to `https://github.com/` (a name), then to
 `https://1.1.1.1/` (an address: no DNS). Each check uses a new HTTP client, so no connection and no state of an earlier
 check stay. A response of any status counts, and so does a certificate that a wrong clock cannot check yet (the server
-answered). The result:
+answered; x509 gives the reason "expired" to a certificate that is not valid yet). A certificate of an unknown
+authority or with another name (a captive portal, a proxy) does not count. A check whose time limit ends before a
+target answers is not a failed check: the last result stays. The result:
 
 | `github.com` | `1.1.1.1` | `reachable` | `problem` | Detail |
 |---|---|---|---|---|
@@ -1918,8 +1920,9 @@ When it checks:
   hardware step of the console reads it when it opens. `care-pi host check` (without `--probe` too) checks one time:
   the CLI has no background check.
 - The hardware step (`PUT /setup/steps/hardware`) records the result and its time in the setup record, but
-  `GET /setup` gives the warning `no-internet` from the live check, and `POST /setup/finish` keeps in the record only
-  the warnings that are still true. A failed check at the step does not stay in the wizard.
+  `GET /setup` gives the warning `no-internet` from the live check, and `POST /setup/finish` replaces the warning
+  `no-internet` of the record with the live check. The other warnings of the step (`sd-card`, `small-disk`,
+  `slow-disk`) stay: the disk does not change. A failed check at the step does not stay in the wizard.
 
 `PublicStatus.internet`, `Status.network.internet_problem`, `Network.internet.problem`, and
 `Hardware.internet_problem` give the cause. The setup page, the maintenance page, and the clock page of Caddy show the
@@ -1934,8 +1937,10 @@ set. With `rtc`, `care-pi clock wait` passes at once when the RTC time is after 
 `state/clock-trusted.json` has `source: rtc` and `trusted: false`, so `ClockStatus.source` is `rtc` and the console
 shows its "clock not trusted" banner. `systemd-timesyncd` still runs. When NTP synchronizes the clock, the agent records
 the difference between the RTC and NTP (`state/clock-rtc-check.json`), deletes the marker (`source: ntp`,
-`trusted: true`), and a difference of more than 5 minutes gives the doctor warning "clock drift". An RTC time before
-the build time (no battery) waits as `ntp`. `apply` and the pre-seed accept `rtc` now.
+`trusted: true`), and a difference of more than 5 minutes gives the doctor warning "clock drift" while the policy is
+`rtc`. A new `clock detect`, or a config write that sets `clock.policy: ntp`, deletes the record: the warning does not
+stay after the operator follows its hint. An RTC time before the build time (no battery) waits as `ntp`. `apply` and
+the pre-seed accept `rtc` now.
 
 ### 19.3 Changes of contract 0.9.1
 

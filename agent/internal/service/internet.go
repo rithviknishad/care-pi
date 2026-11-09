@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"log/slog"
@@ -145,12 +144,19 @@ func probe(ctx context.Context, c *http.Client, url string) error {
 		_ = resp.Body.Close()
 		return nil
 	}
-	var cert x509.CertificateInvalidError
-	var verify *tls.CertificateVerificationError
-	if errors.As(err, &cert) || errors.As(err, &verify) {
+	if wrongClock(err) {
 		return nil
 	}
 	return err
+}
+
+// wrongClock reports whether a certificate failed only because of the clock of the host: x509 gives the reason
+// Expired also to a certificate that is "not yet valid" (a clock before NTP). Go wraps the x509 error in
+// tls.CertificateVerificationError; errors.As unwraps it. An unknown authority or a wrong name (a captive portal, a
+// proxy with its own certificate) is not the internet.
+func wrongClock(err error) bool {
+	var cert x509.CertificateInvalidError
+	return errors.As(err, &cert) && cert.Reason == x509.Expired
 }
 
 func isDNSError(err error) bool {
@@ -159,6 +165,9 @@ func isDNSError(err error) bool {
 }
 
 // Check runs one check now and returns its result. A caller that comes while a check runs waits for that check.
+//
+// A check whose context ends before a target answers (the 5 s limit of a host check on a slow link, or a caller that
+// goes away) tells nothing about the network: the result stays as it was, and the check does not count as a check.
 func (i *Internet) Check(ctx context.Context) InternetState {
 	i.mu.Lock()
 	if ch := i.running; ch != nil {
@@ -186,6 +195,13 @@ func (i *Internet) Check(ctx context.Context) InternetState {
 			break
 		}
 		dnsFailed = dnsFailed || isDNSError(err)
+	}
+	if !ok && ctx.Err() != nil {
+		i.mu.Lock()
+		i.running = nil
+		i.mu.Unlock()
+		close(ch)
+		return i.Snapshot()
 	}
 	switch {
 	case ok && dnsFailed:

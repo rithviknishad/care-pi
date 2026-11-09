@@ -3,6 +3,7 @@ package host
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"reflect"
 	"strings"
@@ -228,5 +229,36 @@ func TestWriteAptConf(t *testing.T) {
 	}
 	if c, _ := expand(Cmd{Name: "true"}); c.Name != "true" {
 		t.Fatal("another command changed")
+	}
+}
+
+// TestSkopeoDigestTellsAMissingImage: only "manifest unknown", "name unknown", or an HTTP 404 of the registry mean
+// that the image does not exist. No DNS, a timeout, or a 5xx of the registry is another error.
+func TestSkopeoDigestTellsAMissingImage(t *testing.T) {
+	const ref = "ghcr.io/x/y:abc"
+	line := "skopeo inspect --override-os linux --override-arch arm64 --format {{.Digest}} docker://" + ref
+	for _, c := range []struct {
+		stderr   string
+		notFound bool
+	}{
+		{`FATA[0000] Error parsing image name "docker://` + ref + `": reading manifest abc in ghcr.io/x/y: manifest unknown`, true},
+		{"FATA[0000] ... name unknown: repository name not known to registry", true},
+		{"FATA[0000] ... unexpected status code 404 Not Found", true},
+		{"FATA[0000] ... dial tcp: lookup ghcr.io: no such host", false},
+		{"FATA[0000] ... received unexpected HTTP status: 503 Service Unavailable", false},
+		{"FATA[0000] ... too many requests (429)", false},
+		{"FATA[0000] ... context deadline exceeded", false},
+	} {
+		f := NewFake()
+		f.On(line, Response{Code: 1, Out: c.stderr})
+		_, err := ExecSkopeo{R: f}.Digest(context.Background(), ref, "linux", "arm64")
+		if err == nil || errors.Is(err, ErrImageNotFound) != c.notFound || !strings.Contains(err.Error(), "exit code 1") {
+			t.Errorf("%q: not found %v, err %v", c.stderr, c.notFound, err)
+		}
+	}
+	f := NewFake()
+	f.On(line, Response{Out: "sha256:" + strings.Repeat("a", 64) + "\n"})
+	if d, err := (ExecSkopeo{R: f}).Digest(context.Background(), ref, "linux", "arm64"); err != nil || !strings.HasPrefix(d, "sha256:a") {
+		t.Fatalf("%q %v", d, err)
 	}
 }

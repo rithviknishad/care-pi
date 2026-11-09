@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -57,8 +59,14 @@ func TestInternetDNSAndRoute(t *testing.T) {
 		{"no route, DNS fails too", errNoDNS, errNoRoute, false, InternetNoRoute, "the internet is not reachable"},
 		{"no route", errNoRoute, errNoRoute, false, InternetNoRoute, "the internet is not reachable"},
 		{"github.com is blocked, the address answers", errNoRoute, nil, true, "", "the internet is reachable"},
-		// A clock before NTP: the server answered, its certificate is "not yet valid" for the host.
-		{"a wrong clock", &tlsErr{x509.CertificateInvalidError{Reason: x509.Expired}}, nil, true, "", "the internet is reachable"},
+		// A clock before NTP: the server answered, its certificate is "not yet valid" for the host (x509 gives the
+		// reason Expired to it). http wraps the tls error in a url.Error.
+		{"a wrong clock", tlsFailure(x509.CertificateInvalidError{Reason: x509.Expired}), nil, true, "", "the internet is reachable"},
+		// A captive portal or a proxy answers 443 with its own certificate: that is not the internet.
+		{"an unknown authority", tlsFailure(x509.UnknownAuthorityError{}), tlsFailure(x509.UnknownAuthorityError{}), false, InternetNoRoute, "the internet is not reachable"},
+		{"a wrong name", tlsFailure(x509.HostnameError{Host: "github.com"}), tlsFailure(x509.HostnameError{Host: "1.1.1.1"}), false, InternetNoRoute, "the internet is not reachable"},
+		{"another certificate error", tlsFailure(x509.CertificateInvalidError{Reason: x509.NotAuthorizedToSign}), errNoRoute, false, InternetNoRoute, "the internet is not reachable"},
+		{"a portal on the name, the address answers", tlsFailure(x509.UnknownAuthorityError{}), nil, true, "", "the internet is reachable"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			f := &fakeNet{}
@@ -82,10 +90,11 @@ func TestInternetDNSAndRoute(t *testing.T) {
 	}
 }
 
-type tlsErr struct{ err error }
-
-func (u *tlsErr) Error() string { return "tls: " + u.err.Error() }
-func (u *tlsErr) Unwrap() error { return u.err }
+// tlsFailure is the error of http.Client for a certificate that fails the check: a url.Error around the
+// tls.CertificateVerificationError around the x509 error (Go 1.20 and later).
+func tlsFailure(x509Err error) error {
+	return &url.Error{Op: "Head", URL: "https://github.com/", Err: &tls.CertificateVerificationError{Err: x509Err}}
+}
 
 // TestInternetRetrySchedule: after the start the check runs again after 15 s, 30 s, 60 s, then every 2 minutes until
 // the first success, then every 5 minutes (S74).
@@ -168,3 +177,42 @@ func TestInternetCheckOnce(t *testing.T) {
 type roundTrip func(*http.Request) (*http.Response, error)
 
 func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestInternetCheckCancelledKeepsTheResult: a check whose context ends before a target answers (the 5 s limit of a
+// host check on a slow link, or an aborted request) is not a failed check: the last result and its time stay, and the
+// first check of the agent stays "not checked yet". The next check runs.
+func TestInternetCheckCancelledKeepsTheResult(t *testing.T) {
+	f := &fakeNet{}
+	i := &Internet{Transport: f}
+	first := i.Check(context.Background())
+	if first.Reachable == nil || !*first.Reachable {
+		t.Fatalf("the first check: %+v", first)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	slow := roundTrip(func(r *http.Request) (*http.Response, error) {
+		return nil, &url.Error{Op: "Head", URL: r.URL.String(), Err: r.Context().Err()}
+	})
+	i.Transport = slow
+	st := i.Check(ctx)
+	if st.Reachable == nil || !*st.Reachable || st.Problem != "" || st.CheckedAt == nil || !st.CheckedAt.Equal(*first.CheckedAt) {
+		t.Fatalf("a cancelled check changed the result: %+v", st)
+	}
+	if i.running != nil {
+		t.Fatal("the check did not release running")
+	}
+
+	// Before the first result, a cancelled check keeps "not checked yet".
+	j := &Internet{Transport: slow}
+	if st := j.Check(ctx); st.Reachable != nil || st.CheckedAt != nil || st.Detail() != "not checked yet" {
+		t.Fatalf("a cancelled first check gave a result: %+v", st)
+	}
+	// The same limit on a network that fails fast is a failed check.
+	f.set("github.com", errNoRoute)
+	f.set("1.1.1.1", errNoRoute)
+	j.Transport = f
+	if st := j.Check(context.Background()); st.Reachable == nil || *st.Reachable || st.Problem != InternetNoRoute {
+		t.Fatalf("a failed check: %+v", st)
+	}
+}

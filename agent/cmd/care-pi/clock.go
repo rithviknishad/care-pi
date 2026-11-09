@@ -241,6 +241,12 @@ func clockDetect(ctx context.Context, e clockDetectEnv, text bool) (clockgate.De
 		}
 	}
 	out("clock detect: policy %s: %s\n", d.Policy, d.Reason)
+	if !e.dryRun {
+		// A new detection: the drift that an earlier boot measured (state/clock-rtc-check.json) means nothing now.
+		if err := clockgate.ClearRTCCheck(p); err != nil {
+			return d, fmt.Errorf("cannot delete the RTC check record: %w", err)
+		}
+	}
 	data, err := os.ReadFile(e.configPath)
 	if err != nil {
 		out("clock detect: no %s yet; nothing to write\n", e.configPath)

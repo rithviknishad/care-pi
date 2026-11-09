@@ -229,7 +229,8 @@ func (s *Service) Hardware(ctx context.Context) Hardware {
 //
 // The internet check runs again here (S74), at most 5 s: with probe, and without probe when the last check did not
 // succeed and is older than InternetRecheck (the hardware step of the console reads the host check when it opens). A
-// host check of the CLI has no earlier result, so it always checks.
+// host check of the CLI has no earlier result, so it always checks. The check has its own time limit, not the one of
+// the request: a browser that aborts the request does not stop a check in flight.
 func (s *Service) HostCheckView(ctx context.Context, probe bool) *HostCheck {
 	var wg sync.WaitGroup
 	if s.Internet != nil {
@@ -239,7 +240,7 @@ func (s *Service) HostCheckView(ctx context.Context, probe bool) *HostCheck {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				s.Internet.CheckWithin(ctx, InternetProbeTimeout)
+				s.Internet.CheckWithin(context.WithoutCancel(ctx), InternetProbeTimeout)
 			}()
 		}
 	}
