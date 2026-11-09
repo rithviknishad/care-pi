@@ -34,7 +34,7 @@
       "maxLength": 400
     },
     "care": {
-      "description": "The CARE backend. source image (the default): an upstream image; the agent resolves the ref to an image digest and writes the digest to the lock. source git (S71): a git ref of the CARE repository; CI builds docker/prod.Dockerfile of the resolved sha into image with the tag <sha12>.",
+      "description": "The CARE backend. source image (the default): an upstream image; the agent resolves the ref to an image digest and writes the digest to the lock. source git (S71): a git ref of the CARE repository; CI builds docker/prod.Dockerfile of the resolved sha into image with the tag <sha12>. care-pi solution validate checks the rules that the schema does not express: source image needs image and a ref without a slash; source git needs repo.",
       "type": "object",
       "additionalProperties": false,
       "required": ["ref"],
@@ -59,12 +59,6 @@
           "type": "string",
           "pattern": "^([A-Za-z0-9_][A-Za-z0-9_./-]{0,254}|sha256:[a-f0-9]{64})$"
         }
-      },
-      "if": { "properties": { "source": { "const": "git" } }, "required": ["source"] },
-      "then": { "required": ["repo"] },
-      "else": {
-        "required": ["image"],
-        "properties": { "ref": { "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|sha256:[a-f0-9]{64})$" } }
       }
     },
     "care_fe": {

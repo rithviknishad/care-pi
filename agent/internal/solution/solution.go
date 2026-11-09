@@ -208,7 +208,24 @@ func Parse(data []byte, src string) (*Solution, error) {
 	if err := checkPlugIDs(&s); err != nil {
 		return nil, fmt.Errorf("%s is not valid: %w", src, err)
 	}
+	if err := checkCare(s.Care); err != nil {
+		return nil, fmt.Errorf("%s is not valid: %w", src, err)
+	}
 	return &s, nil
+}
+
+// checkCare checks the rules of care that the schema does not express (S71): source git needs repo; source image
+// needs image and an image tag (no slash) or a digest.
+func checkCare(c Care) error {
+	switch {
+	case c.IsGit() && c.Repo == "":
+		return errors.New("care.source git needs care.repo")
+	case !c.IsGit() && c.Image == "":
+		return errors.New("care needs image (or source git with repo)")
+	case !c.IsGit() && (strings.Contains(c.Ref, "/") || len(c.Ref) > 128):
+		return fmt.Errorf("care.ref %q is not an image tag or a digest", c.Ref)
+	}
+	return nil
 }
 
 // checkPlugIDs checks the rule that the schema cannot express: each plug id occurs one time.

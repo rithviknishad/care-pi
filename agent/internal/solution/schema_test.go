@@ -215,10 +215,20 @@ plugs:
 	if err := sch.Validate(yamlValue(t, git)); err != nil {
 		t.Fatalf("care.source git (S71): %v", err)
 	}
+	// The rules that the schema does not express (checkCare): Parse refuses these.
 	for name, src := range map[string]string{
 		"a git source without a repo":   strings.Replace(git, "repo: https://github.com/ohcnetwork/care, ", "", 1),
 		"an image source without image": strings.Replace(base, "image: ghcr.io/ohcnetwork/care, ", "", 1),
 		"a slash in an image tag":       strings.Replace(base, "ref: latest}", "ref: 3.1/base}", 1),
+	} {
+		if _, err := Parse([]byte(src), name); err == nil || !strings.Contains(err.Error(), "care") {
+			t.Errorf("%s: want an error of care, got %v", name, err)
+		}
+	}
+	if _, err := Parse([]byte(git), "git"); err != nil {
+		t.Fatalf("care.source git: %v", err)
+	}
+	for name, src := range map[string]string{
 		"an unknown source":             strings.Replace(git, "source: git", "source: svn", 1),
 		"a secret in the frontend part": strings.Replace(base, "type: string, pattern", "type: secret, pattern", 1),
 		"a bad min_agent_version":       strings.Replace(base, "v0.4.0", "0.4", 1),
