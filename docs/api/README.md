@@ -1890,3 +1890,45 @@ All changes are additive.
 - `GET /jobs/{job_id}/export`, `GET /logs/{unit}/export`, and `GET /doctor/export` (`text/plain`).
 - The status pages of Caddy (`docs/apply.md`, "Status pages and modes") follow the job of the public status, show the
   steps, the progress, and the next step, link to `https://<host>:8443/jobs/<id>`, and have "Copy status".
+
+## 19. The internet check (S74)
+
+### 19.1 The internet check (S74)
+
+The agent checks the internet with a HTTPS `HEAD` request to `https://github.com/` (a name), then to
+`https://1.1.1.1/` (an address: no DNS). Each check uses a new HTTP client, so no connection and no state of an earlier
+check stay. A response of any status counts, and so does a certificate that a wrong clock cannot check yet (the server
+answered). The result:
+
+| `github.com` | `1.1.1.1` | `reachable` | `problem` | Detail |
+|---|---|---|---|---|
+| answers | not asked | `true` | `null` | the internet is reachable |
+| no DNS | answers | `false` | `dns` | the internet is reachable, but DNS does not work |
+| other error | answers | `true` | `null` | the internet is reachable |
+| fails | fails | `false` | `route` | the internet is not reachable |
+
+When it checks:
+
+- `care-pi serve` checks at its start, then after 15 s, 30 s, 60 s, and then every 2 minutes until the first success,
+  then every 5 minutes. On care.local (a fresh image) the agent started 10 s after boot and `/etc/resolv.conf` came at
+  16 s: the first check failed, and before S74 the next one came 5 minutes later.
+- `GET /host/check?probe=true` and `care-pi host check --probe` check again now (at most 5 s), at the same time as the
+  disk probe. `GET /host/check` without `probe` checks again when the last check failed more than 15 s ago: the
+  hardware step of the console reads it when it opens. `care-pi host check` (without `--probe` too) checks one time:
+  the CLI has no background check.
+- The hardware step (`PUT /setup/steps/hardware`) records the result and its time in the setup record, but
+  `GET /setup` gives the warning `no-internet` from the live check, and `POST /setup/finish` keeps in the record only
+  the warnings that are still true. A failed check at the step does not stay in the wizard.
+
+`PublicStatus.internet`, `Status.network.internet_problem`, `Network.internet.problem`, and
+`Hardware.internet_problem` give the cause. The setup page, the maintenance page, and the clock page of Caddy show the
+live check, and "Copy status" copies it.
+
+### 19.2 Changes of contract 0.9.1
+
+All changes are additive. Each new member is optional in the schema: a client of contract 0.9.0 stays valid.
+
+- The schema `InternetProblem` (`dns`, `route`), and `Hardware.internet_problem`, `NetworkSummary.internet_problem`,
+  `Network.internet.problem`, `PublicStatus.internet` (section 19.1).
+- The doctor check `internet`.
+

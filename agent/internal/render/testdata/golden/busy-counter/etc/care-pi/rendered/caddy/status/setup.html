@@ -49,6 +49,7 @@ pre{white-space:pre-wrap;font-size:.8rem;background:#f4f6f8;padding:.6rem;border
 <p>Complete the setup in the console of the device:</p>
 <p><a id="console" href="https://care.local:8443/">https://care.local:8443/</a></p>
 <p id="state" aria-live="polite"></p>
+<p id="internet"></p>
 <p id="failed" class="problem" hidden>The last setup job failed. Open the console to see why and to try again.</p>
 <p id="firstboot" style="color:#b42318" hidden></p>
 <section id="job" class="job" hidden aria-labelledby="job-title">
@@ -76,6 +77,13 @@ Install the root certificate on each device that opens CARE. Then the warning do
 <p><small>This page checks the device every 5 seconds.</small></p>
 </main>
 <script>
+function carePiInternet(s) {
+  var i = (s && s.internet) || {};
+  if (i.reachable === true) { return "Internet: reachable."; }
+  if (i.reachable === false && i.problem === "dns") { return "Internet: the device reaches the internet, but DNS does not work. Check the DNS server that the router gives."; }
+  if (i.reachable === false) { return "Internet: not reachable. Connect the router to the internet."; }
+  return "Internet: not checked yet.";
+}
 var carePiJob = (function () {
   // The sentence of each step: strings.steps.actions of the console (docs/console-ui.md section 9).
   var steps = {
@@ -352,6 +360,7 @@ var carePiJob = (function () {
     out.push("Device: " + (s.display_name || "") + " (" + location.hostname + ")");
     out.push("Page: " + (s.site || "") + ", setup state: " + (s.setup_state || ""));
     out.push("Device time: " + (s.time || ""));
+    out.push(carePiInternet(s));
     out.push("Copied at: " + new Date().toISOString());
     if (job) {
       out.push("", "Job: " + job.id, "Kind: " + job.kind + " (" + title() + ")", "State: " + job.state);
@@ -420,6 +429,7 @@ var carePiJob = (function () {
     setup: "Open the console and continue the setup.", applying: "The device installs CARE now.", ready: "Setup is complete." };
   function show(s) {
     document.getElementById("state").textContent = t[s.setup_state] || "";
+    document.getElementById("internet").textContent = carePiInternet(s);
     if (s.firstboot_error) {
       var fb = document.getElementById("firstboot");
       fb.textContent = s.firstboot_error;

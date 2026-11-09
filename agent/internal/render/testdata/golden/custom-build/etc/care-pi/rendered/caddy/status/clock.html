@@ -47,7 +47,21 @@ pre{white-space:pre-wrap;font-size:.8rem;background:#f4f6f8;padding:.6rem;border
 <p class="name">Riverside Pharmacy</p>
 <p>CARE starts only when the clock of this device is correct. Records with a wrong time cause errors.</p>
 <p>Connect the device to a network with internet access. The device then sets its clock and starts CARE.</p>
+<p id="internet"></p>
 <p><small>This page refreshes every 15 seconds.</small></p>
 </main>
+<script>
+function carePiInternet(s) {
+  var i = (s && s.internet) || {};
+  if (i.reachable === true) { return "Internet: reachable."; }
+  if (i.reachable === false && i.problem === "dns") { return "Internet: the device reaches the internet, but DNS does not work. Check the DNS server that the router gives."; }
+  if (i.reachable === false) { return "Internet: not reachable. Connect the router to the internet."; }
+  return "Internet: not checked yet.";
+}
+fetch("/_care-pi/status", {cache: "no-store", headers: {"Accept": "application/json"}})
+  .then(function (r) { return r.ok ? r.json() : null; })
+  .then(function (s) { if (s) { document.getElementById("internet").textContent = carePiInternet(s); } })
+  .catch(function () {});
+</script>
 </body>
 </html>

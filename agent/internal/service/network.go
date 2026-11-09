@@ -58,6 +58,8 @@ type Network struct {
 	Internet       struct {
 		Reachable *bool      `json:"reachable"`
 		CheckedAt *time.Time `json:"checked_at"`
+		// Problem is dns or route when Reachable is false (contract 0.9.1).
+		Problem *string `json:"problem"`
 	} `json:"internet"`
 	DHCPHint *DHCPHint `json:"dhcp_hint"`
 	// DHCPHints has one hint for each interface with a DHCP address: ethernet, and Wi-Fi (Phase 6).
@@ -205,7 +207,8 @@ func (s *Service) Network(ctx context.Context) *Network {
 	n.MDNS.Collision = n.MDNS.Advertised != nil && *n.MDNS.Advertised != n.MDNS.Configured
 	n.AddressChanged = status.AddressChanged(n.Addresses, n.Published, tsIP)
 	if s.Internet != nil {
-		n.Internet.Reachable, n.Internet.CheckedAt = s.Internet.State()
+		ist := s.Internet.Snapshot()
+		n.Internet.Reachable, n.Internet.CheckedAt, n.Internet.Problem = ist.Reachable, ist.CheckedAt, ist.ProblemPtr()
 	}
 	for _, i := range n.Interfaces {
 		if (i.Kind != "ethernet" && i.Kind != "wifi") || i.MAC == nil {

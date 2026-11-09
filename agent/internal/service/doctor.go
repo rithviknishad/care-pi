@@ -172,6 +172,24 @@ func (s *Service) Doctor(ctx context.Context) (*DoctorReport, error) {
 		add(DoctorCheck{ID: "mdns", Title: "mDNS name", Status: DoctorOK, Detail: st.Network.MDNSConfigured})
 	}
 
+	// The internet (S74): the live check of the agent.
+	if r := st.Network.InternetReachable; r != nil {
+		ist := InternetState{Reachable: r}
+		if p := st.Network.InternetProblem; p != nil {
+			ist.Problem = *p
+		}
+		switch {
+		case *r:
+			add(DoctorCheck{ID: "internet", Title: "Internet", Status: DoctorOK, Detail: ist.Detail()})
+		case ist.Problem == InternetNoDNS:
+			add(DoctorCheck{ID: "internet", Title: "Internet", Status: DoctorWarn, Detail: ist.Detail(),
+				Fix: fix("Check the DNS server that the router gives (DHCP) and /etc/resolv.conf")})
+		default:
+			add(DoctorCheck{ID: "internet", Title: "Internet", Status: DoctorWarn, Detail: ist.Detail(),
+				Fix: fix("Updates and backups to the cloud need the internet: check the router")})
+		}
+	}
+
 	// The clock (S52).
 	switch {
 	case st.Clock.Synchronized:

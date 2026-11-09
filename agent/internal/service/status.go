@@ -110,6 +110,8 @@ type NetworkSummary struct {
 	MDNSConfigured    string  `json:"mdns_configured"`
 	MDNSAdvertised    *string `json:"mdns_advertised"`
 	InternetReachable *bool   `json:"internet_reachable"`
+	// InternetProblem is dns or route when InternetReachable is false (contract 0.9.1).
+	InternetProblem *string `json:"internet_problem"`
 }
 
 // TLSSummary is the TLS part of the status (schema TlsSummary).
@@ -400,7 +402,8 @@ func (s *Service) Status(ctx context.Context) (*Status, error) {
 	st.Clock = s.clockStatus(ctx, cfg)
 	st.Network = NetworkSummary{MDNSConfigured: netinfo.MDNSName(cfg.Identity.Hostname), MDNSAdvertised: s.mdnsAdvertised(ctx)}
 	if s.Internet != nil {
-		st.Network.InternetReachable, _ = s.Internet.State()
+		ist := s.Internet.Snapshot()
+		st.Network.InternetReachable, st.Network.InternetProblem = ist.Reachable, ist.ProblemPtr()
 	}
 	st.TLS = s.tlsSummary(cfg)
 	st.FE = FESummary{Provider: cfg.FE.Provider, BuildID: st.FEBuildID, Current: strPtr(fe.Current(s.Paths)), Building: s.FEBuilding()}
@@ -529,6 +532,14 @@ type PublicStatus struct {
 	// FirstbootError is why the first boot of the image did not use the pre-seed (state/firstboot-error.json),
 	// until the setup is finished; else nil.
 	FirstbootError *string `json:"firstboot_error"`
+	// Internet is the live internet check (contract 0.9.1, S74): the setup page and the clock page show it.
+	Internet PublicInternet `json:"internet"`
+}
+
+// PublicInternet is the last internet check (schema PublicStatus.internet).
+type PublicInternet struct {
+	Reachable *bool   `json:"reachable"`
+	Problem   *string `json:"problem"`
 }
 
 // firstbootError reads the error of state/firstboot-error.json, or nil.
@@ -591,6 +602,10 @@ func (s *Service) PublicStatus(ctx context.Context) *PublicStatus {
 		Time: s.now().Truncate(time.Second), Maintenance: s.Maintenance()}
 	p.Clock.Policy = cfg.Clock.Policy
 	p.Clock.Source, p.Clock.Trusted, p.Clock.Synchronized = s.clockState(ctx)
+	if s.Internet != nil {
+		st := s.Internet.Snapshot()
+		p.Internet = PublicInternet{Reachable: st.Reachable, Problem: st.ProblemPtr()}
+	}
 	if p.SetupState != setup.Ready {
 		p.FirstbootError = s.firstbootError()
 	}

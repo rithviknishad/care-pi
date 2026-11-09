@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -43,18 +44,27 @@ type Ethernet struct {
 
 // Hardware holds the hardware facts of the setup wizard (schema Hardware).
 type Hardware struct {
-	Model             *string    `json:"model"`
-	Arch              string     `json:"arch"`
-	RAMBytes          int64      `json:"ram_bytes"`
-	PageSizeBytes     int        `json:"page_size_bytes"`
-	CPUCount          int        `json:"cpu_count"`
-	RootDisk          RootDisk   `json:"root_disk"`
-	RTCPresent        bool       `json:"rtc_present"`
-	Ethernet          Ethernet   `json:"ethernet"`
-	InternetReachable *bool      `json:"internet_reachable"`
+	Model             *string  `json:"model"`
+	Arch              string   `json:"arch"`
+	RAMBytes          int64    `json:"ram_bytes"`
+	PageSizeBytes     int      `json:"page_size_bytes"`
+	CPUCount          int      `json:"cpu_count"`
+	RootDisk          RootDisk `json:"root_disk"`
+	RTCPresent        bool     `json:"rtc_present"`
+	Ethernet          Ethernet `json:"ethernet"`
+	InternetReachable *bool    `json:"internet_reachable"`
+	// InternetProblem is dns or route when InternetReachable is false (contract 0.9.1, S74).
+	InternetProblem   *string    `json:"internet_problem"`
 	ClockSynchronized bool       `json:"clock_synchronized"`
 	DiskProbe         *DiskProbe `json:"disk_probe"`
 }
+
+// InternetProbeTimeout limits the internet check of a host check. InternetRecheck is the age of a failed result after
+// which a host check without probe checks again.
+const (
+	InternetProbeTimeout = 5 * time.Second
+	InternetRecheck      = 15 * time.Second
+)
 
 // HostCheck is the host check and the hardware facts (schema HostCheck).
 type HostCheck struct {
@@ -199,7 +209,8 @@ func (s *Service) Hardware(ctx context.Context) Hardware {
 		CPUCount: runtime.NumCPU(), RootDisk: s.rootDisk(), RTCPresent: fileExists(s.Paths.Abs("/dev/rtc0")),
 		Ethernet: s.ethernet()}
 	if s.Internet != nil {
-		h.InternetReachable, _ = s.Internet.State()
+		st := s.Internet.Snapshot()
+		h.InternetReachable, h.InternetProblem = st.Reachable, st.ProblemPtr()
 	}
 	if s.Host != nil && s.Host.Clock != nil {
 		h.ClockSynchronized, _ = s.Host.Clock.NTPSynchronized(ctx)
@@ -215,7 +226,23 @@ func (s *Service) Hardware(ctx context.Context) Hardware {
 
 // HostCheckView runs the host checks and adds the advised checks of the hardware.
 // probe measures the root disk first (about 10 s).
+//
+// The internet check runs again here (S74), at most 5 s: with probe, and without probe when the last check did not
+// succeed and is older than InternetRecheck (the hardware step of the console reads the host check when it opens). A
+// host check of the CLI has no earlier result, so it always checks.
 func (s *Service) HostCheckView(ctx context.Context, probe bool) *HostCheck {
+	var wg sync.WaitGroup
+	if s.Internet != nil {
+		st := s.Internet.Snapshot()
+		stale := st.CheckedAt == nil || s.now().Sub(*st.CheckedAt) >= InternetRecheck
+		if probe || st.Reachable == nil || (!*st.Reachable && stale) {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				s.Internet.CheckWithin(ctx, InternetProbeTimeout)
+			}()
+		}
+	}
 	if probe {
 		if p, err := s.ProbeDisk(ctx); err == nil {
 			s.mu.Lock()
@@ -225,6 +252,7 @@ func (s *Service) HostCheckView(ctx context.Context, probe bool) *HostCheck {
 			s.log().Warn("disk probe failed", "error", err)
 		}
 	}
+	wg.Wait()
 	r := s.hostCheck(ctx)
 	hw := s.Hardware(ctx)
 	checks := append([]hostcheck.Check{}, r.Checks...)
@@ -262,13 +290,17 @@ func (s *Service) HostCheckView(ctx context.Context, probe bool) *HostCheck {
 	default:
 		add("ethernet", true, *hw.Ethernet.Interface+" "+*hw.Ethernet.Address, "")
 	}
+	ist := InternetState{Reachable: hw.InternetReachable}
+	if hw.InternetProblem != nil {
+		ist.Problem = *hw.InternetProblem
+	}
 	switch {
-	case hw.InternetReachable == nil:
-		add("internet", true, "not checked yet", "")
-	case *hw.InternetReachable:
-		add("internet", true, "the internet is reachable", "")
+	case hw.InternetReachable == nil, *hw.InternetReachable:
+		add("internet", true, ist.Detail(), "")
+	case ist.Problem == InternetNoDNS:
+		add("internet", false, ist.Detail(), "check the DNS server that the router gives (DHCP) or /etc/resolv.conf; the first apply pulls the images")
 	default:
-		add("internet", false, "the internet is not reachable", "the first apply pulls the images; connect the router to the internet")
+		add("internet", false, ist.Detail(), "the first apply pulls the images; connect the router to the internet")
 	}
 	if hw.ClockSynchronized {
 		add("clock", true, "the clock is synchronized", "")
