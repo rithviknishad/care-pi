@@ -32,7 +32,10 @@ while [ $# -gt 0 ]; do
 	esac
 done
 die() { echo "make-seed.sh: $*" >&2; exit 1; }
-[ -n "$CARE" ] && [ -n "$POSTGRES" ] && [ -n "$REDIS" ] && [ -n "$OUT" ] || { usage >&2; exit 2; }
+if [ -z "$CARE" ] || [ -z "$POSTGRES" ] || [ -z "$REDIS" ] || [ -z "$OUT" ]; then
+	usage >&2
+	exit 2
+fi
 [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || die "--sha must be the 40 hex digits of the CARE commit"
 command -v zstd > /dev/null || die "zstd is not installed"
 DOCKER="${DOCKER:-docker}"
