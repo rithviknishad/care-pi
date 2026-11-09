@@ -31,7 +31,7 @@ It rejects unknown fields at every level.
 |---|---|
 | `apiVersion`, `kind` | Always `care-pi/v1` and `Solution`. |
 | `name`, `title`, `description` | The identifier, the name for the operator, and a short text. |
-| `care` | The upstream backend image: `image` and `ref`. The ref is a tag to track or a `sha256:` digest to pin. |
+| `care` | The backend. `source: image` (the default): an upstream image, `image` and `ref`; the ref is a tag to track or a `sha256:` digest to pin. `source: git` (S71): `repo` and `ref` (a branch or a tag to track, or a 40-digit sha to pin); CI builds `docker/prod.Dockerfile` of the commit into `ghcr.io/rithviknishad/care-pi/care-base:<sha12>` (`docs/solutions.md` section 13.4). |
 | `care_fe` | The frontend source: `repo` and `ref`. The ref is a branch or tag to track, or a git sha to pin. |
 | `plugs` | The list of plugs. |
 | `env` | Default environment variables. `backend` applies to the backend containers. `frontend` applies to the frontend build (`REACT_*`). |
@@ -111,7 +111,8 @@ A schema cannot check that plug ids are unique. The agent and CI check this rule
 Phase 1 (now): the workflow `.github/workflows/solution-image.yml`.
 
 1. It validates `solutions/<name>/solution.yaml` against the schema.
-2. It resolves `care.image` and `care.ref` to a digest with `skopeo`.
+2. It resolves `care.image` and `care.ref` to a digest with `skopeo`. With `care.source: git` it resolves
+   `care.ref` to a commit and calls `care-base.yml`, which builds that commit (or finds its image).
 3. It builds the `ADDITIONAL_PLUGS` JSON from the enabled plugs that have a `backend` part.
 4. It builds `images/care` for `linux/arm64` and `linux/amd64`.
    The base is `<care.image>@<digest>`.

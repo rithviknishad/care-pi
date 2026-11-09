@@ -3,6 +3,8 @@
 # installs the care-pi agent and its service (care-pi.service), and runs "care-pi bootstrap".
 # By default bootstrap starts setup mode: Caddy and the console on port 8443. The
 # operator claims the device in the console with the printed claim code.
+# bootstrap also runs "care-pi clock detect" (S75): clock.policy rtc when the RTC of
+# the host kept the time through the boot (a battery), else ntp.
 #
 #   curl -fsSL <URL> | sudo sh -s -- [options]
 #   sudo sh install.sh [options]
@@ -169,7 +171,9 @@ Usage: install.sh [options]
 
 Prepare this host for Care. Install the care-pi agent and care-pi.service.
 Run "care-pi bootstrap". By default bootstrap starts setup mode: open the
-console at https://<host>:8443/ and enter the printed claim code.
+console at https://<host>:8443/ and enter the printed claim code. bootstrap
+also runs "care-pi clock detect": clock.policy rtc when the RTC kept the time
+through the boot (a battery), else ntp.
 Run the script as root. To run it from a pipe, use sudo and "sh -s --":
 
   curl -fsSL $INSTALL_URL | sudo sh -s -- [options]

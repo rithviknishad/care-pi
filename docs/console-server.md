@@ -228,6 +228,11 @@ On success the record gets `ready_at`, and the state is `ready`. On failure the 
 `GET /setup` gives the `job_id` of the failed job. At its start, the agent marks each `running` job without a
 process as `failed` ("interrupted"). An apply is idempotent, so the operator can finish again.
 
+The hardware step and the internet check (S74, `docs/api/README.md` section 19.1): the agent checks the internet
+at its start, after 15 s, 30 s, 60 s, then every 2 minutes until the first success, then every 5 minutes. The probe of
+the hardware step (`GET /host/check?probe=true`) checks again at once. The step records the result, but the wizard and
+the dashboard show the live check, and the finish keeps only the warnings that are still true.
+
 Only a dev build can skip the `backups` step. A dev build has a version that is not `vX.Y.Z`
 (`Makefile`: `git describe --tags --match 'v[0-9]*'`). Thus a release build of Phase 2 cannot finish the setup.
 
@@ -311,7 +316,9 @@ stopped with `missing steps: tls`).
 | `/var/lib/care-pi/state/auth-unlock` | The unlock request of `care-pi auth unlock` | root 0600 |
 | `/var/lib/care-pi/state/auth-locks.json` | The claim lock, the address locks, and the failed attempts | root 0600 |
 | `/var/lib/care-pi/state/claim-hint` | The claim method that the operator has (`claim-code` after bootstrap), until the claim | root 0600 |
-| `/var/lib/care-pi/state/clock-trusted.json` | S52: the clock that the browser set at the claim, until NTP synchronizes the clock | root 0600 |
+| `/var/lib/care-pi/state/clock-trusted.json` | S52: the clock that the browser set at the claim (`source: browser`), or the RTC gate (`source: rtc`, S75), until NTP synchronizes the clock | root 0600 |
+| `/var/lib/care-pi/seed/pg-<sha12>.tar.zst`, `/var/lib/care-pi/state/seed-db.json` | S72: the pre-migrated database of the image, and the record of its restore and of the password change (`docs/image.md` section 6.5) | root 0644, root 0600 |
+| `/var/lib/care-pi/state/clock-detect.json`, `clock-rtc-check.json` | S75: the last `care-pi clock detect`, and the difference between the RTC and the first NTP synchronization | root 0600 |
 | `/var/lib/care-pi/state/jobs/<id>.json`, `<id>.events.jsonl`, `<id>.cancel` | Job journals, events, cancel requests | root 0600 |
 | `/var/lib/care-pi/state/support/` | The support bundles (`.tar.gz`, redacted) | root 0700 |
 | `/etc/care-pi/secrets/recovery.key`, `recovery.key.pending` | The recovery key (64 hex digits). Never in a response, except `GET /backups/recovery-key` and its download. | root 0600 |
@@ -778,7 +785,8 @@ follow the pitfalls of `plans/09-handoff.md` section 3:
 | `host-*` | The host check of the installer (the memory controller, podman 5.4, …) | `fail` for a required item |
 | `ports` | `ss -ltnpH`: another program than conmon on 80, 443, or 8443 of a published address or of all addresses (SP5: `tailscale serve` on 443 of the Tailscale address) | `fail` |
 | `mdns` | avahi announces another name than `<hostname>.local` (a collision: `care-2.local`) or none | `warn` |
-| `clock` | NTP synchronized; the browser time of S52 | `warn` (browser), `fail` (none) |
+| `internet` | the live internet check (S74): no DNS, or no route | `warn` |
+| `clock` | NTP synchronized; the browser time of S52; the RTC gate (S75); the drift of the RTC at the first NTP synchronization | `warn` (browser, rtc, a drift of more than 5 minutes), `fail` (none) |
 | `memory`, `zram` | `MemAvailable` below 256 MiB; no `/dev/zram` in `/proc/swaps` | `warn` |
 | `disk-*` | less than 2 GiB or 10 % free | `warn` |
 | `units` | a unit of Care `failed`; `inactive` after the setup | `fail`, `warn` |

@@ -41,6 +41,9 @@ type Marker struct {
 	// SetAt is the time that the agent set (the time of the browser); HostBefore is the clock of the host before.
 	SetAt      time.Time `json:"set_at"`
 	HostBefore time.Time `json:"host_time_before"`
+	// Uptime is /proc/uptime when the RTC gate passed (source rtc, S75): the first NTP synchronization measures the
+	// drift of the RTC with it.
+	Uptime float64 `json:"uptime_s,omitempty"`
 }
 
 // Read reads the marker. ok is false when it does not exist.
@@ -70,6 +73,15 @@ func Clear(p paths.Paths) error {
 		return err
 	}
 	return nil
+}
+
+// Synchronized is the end of the marker: NTP synchronized the clock. When the RTC gate set the marker (policy rtc,
+// S75), it records the drift of the RTC first (state/clock-rtc-check.json).
+func Synchronized(p paths.Paths, now time.Time) error {
+	if m, ok := Read(p); ok && m.Source == SourceRTC {
+		verifyRTC(p, m, now)
+	}
+	return Clear(p)
 }
 
 // fallbackFloor is the earliest time of a build without a build date (a dev build): the month of Phase 5.
@@ -121,17 +133,18 @@ func FromBrowser(ctx context.Context, p paths.Paths, clk host.Clock, t, now time
 }
 
 // State returns the source of the clock and whether it is trusted. A clock that NTP synchronized is trusted, and the
-// marker goes. rtc means that the host has an RTC (/dev/rtc0) but no NTP: the battery is not verified (SP9).
+// marker goes; when the RTC gate set the marker (policy rtc, S75), the drift of the RTC is recorded first. rtc means
+// that the host has an RTC (/dev/rtc0) but no NTP: not trusted until NTP confirms it.
 func State(ctx context.Context, p paths.Paths, clk host.Clock) (source string, trusted, synchronized bool) {
 	if clk != nil {
 		synchronized, _ = clk.NTPSynchronized(ctx)
 	}
 	if synchronized {
-		_ = Clear(p)
+		_ = Synchronized(p, time.Now())
 		return SourceNTP, true, true
 	}
-	if m, ok := Read(p); ok && m.Source == SourceBrowser {
-		return SourceBrowser, m.Trusted, false
+	if m, ok := Read(p); ok && (m.Source == SourceBrowser || m.Source == SourceRTC) {
+		return m.Source, m.Trusted, false
 	}
 	if _, err := os.Stat(p.Abs("/dev/rtc0")); err == nil {
 		return SourceRTC, false, false

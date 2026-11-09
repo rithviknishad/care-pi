@@ -29,6 +29,9 @@ type LockInput struct {
 	Care            struct {
 		Digest string `json:"digest"`
 		GitSHA string `json:"git_sha,omitempty"`
+		// Image is the repository of the care image (source git: the image that CI built; default
+		// solution.care.image, else the default of the source).
+		Image string `json:"image,omitempty"`
 	} `json:"care"`
 	SolutionImage struct {
 		Image  string `json:"image"`
@@ -89,12 +92,19 @@ func AssembleLock(in LockInput) ([]byte, error) {
 				configs = map[string]any{}
 			}
 			entry["backend"] = map[string]any{"ref": p.Backend.Ref, "sha": pi.BackendSHA, "additional_plug": map[string]any{
-				"name": p.Backend.Name, "package_name": p.Backend.Package, "version": "@" + pi.BackendSHA, "configs": configs}}
+				"name": p.Backend.Name, "package_name": p.Backend.Package, "version": p.Backend.Version(pi.BackendSHA), "configs": configs}}
+			if p.Backend.Subdirectory != "" {
+				entry["backend"].(map[string]any)["subdirectory"] = p.Backend.Subdirectory
+			}
 		}
 		if f := p.Frontend; f != nil {
 			if f.Repo != "" && pi.FrontendURL != "" {
-				entry["frontend"] = map[string]any{"slug": f.Slug, "source": FrontendBuilt, "ref": f.Ref, "sha": pi.FrontendSHA,
+				fr := map[string]any{"slug": f.Slug, "source": FrontendBuilt, "ref": f.Ref, "sha": pi.FrontendSHA,
 					"url": pi.FrontendURL, "sha256": pi.FrontendSHA256, "entry": f.EntryPath(), "size_bytes": pi.FrontendSizeBytes}
+				if f.Path != "" {
+					fr["path"] = f.Path
+				}
+				entry["frontend"] = fr
 			} else if f.URL != "" {
 				entry["frontend"] = map[string]any{"slug": f.Slug, "source": FrontendExternal, "ref": nil, "sha": nil,
 					"url": f.URL, "sha256": nil, "entry": nil, "size_bytes": nil}
@@ -137,8 +147,15 @@ func AssembleLock(in LockInput) ([]byte, error) {
 	add("min_agent_version", minAgent)
 	add("source", map[string]any{"commit": in.Commit, "solution_sha256": hex.EncodeToString(sum[:]), "run_url": runURL})
 	add("solution", sol.Doc)
-	add("care", map[string]any{"image": firstOr(sol.Care.Image, "ghcr.io/ohcnetwork/care"), "ref": firstOr(sol.Care.Ref, "latest"),
-		"digest": in.Care.Digest, "git_sha": gitSHA})
+	care := map[string]any{"image": firstOr(in.Care.Image, sol.Care.ImageRepo()), "ref": firstOr(sol.Care.Ref, "latest"),
+		"digest": in.Care.Digest, "git_sha": gitSHA}
+	if sol.Care.IsGit() {
+		if in.Care.GitSHA == "" {
+			return nil, fmt.Errorf("care.source is git: the input needs care.git_sha (the commit that CI built)")
+		}
+		care["source"], care["repo"] = "git", sol.Care.Repo
+	}
+	add("care", care)
 	add("solution_image", map[string]any{"image": in.SolutionImage.Image, "tag": in.SolutionImage.Tag, "digest": in.SolutionImage.Digest,
 		"installed_plugs": installed})
 	add("care_fe", map[string]any{"repo": sol.CareFE.Repo, "ref": sol.CareFE.Ref, "sha": in.CareFESHA})

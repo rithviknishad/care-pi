@@ -1,0 +1,21 @@
+# {{.Header}}
+# The local build of CARE from its git source (track custom, care.source git, S71): docker/prod.Dockerfile of
+# {{.CareSource.Repo}} at {{.CareSource.SHA}}. CI builds this image (care-base); a host builds it only when the
+# registry has no image of the commit, and only with 4 GB of RAM or more. Only the agent starts it, after it
+# extracted the source to {{.CareSource.Dir}}.
+
+[Unit]
+Description=care-pi image build of CARE {{.CareSource.Tag}} from the git source
+
+[Build]
+ImageTag={{.CareSource.Image}}
+File={{.CareSource.Dir}}/docker/prod.Dockerfile
+SetWorkingDirectory={{.CareSource.Dir}}
+PodmanArgs=--build-arg=APP_VERSION={{.CareSource.Tag}} --label=org.opencontainers.image.revision={{.CareSource.SHA}}
+Pull=missing
+
+[Service]
+MemoryHigh=2560M
+MemoryMax=3G
+OOMScoreAdjust=900
+TimeoutStartSec=7200

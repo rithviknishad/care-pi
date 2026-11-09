@@ -7,5 +7,5 @@ RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       quilt parted coreutils qemu-user-binfmt debootstrap zerofree zip dosfstools e2fsprogs libcap2-bin \
       grep rsync xz-utils curl xxd file git kmod bc gpg pigz arch-test ca-certificates \
-      fdisk util-linux mtools skopeo podman systemd python3 python3-jsonschema jq bmap-tools \
+      fdisk util-linux mtools skopeo podman systemd python3 python3-jsonschema jq bmap-tools zstd \
  && rm -rf /var/lib/apt/lists/*

@@ -46,12 +46,29 @@ type LockSource struct {
 	RunURL         *string `yaml:"run_url" json:"run_url"`
 }
 
-// LockCare is the upstream care image.
+// LockCare is the care image: upstream (source image), or built by CI from the git source (source git, S71).
 type LockCare struct {
 	Image  string  `yaml:"image" json:"image"`
 	Ref    string  `yaml:"ref" json:"ref"`
 	Digest string  `yaml:"digest" json:"digest"`
 	GitSHA *string `yaml:"git_sha" json:"git_sha"`
+	Source string  `yaml:"source,omitempty" json:"source,omitempty"`
+	Repo   string  `yaml:"repo,omitempty" json:"repo,omitempty"`
+}
+
+// IsGit reports whether CI built the care image from the git source.
+func (c LockCare) IsGit() bool { return c.Source == "git" }
+
+// BaseRef returns the reference of the care image with a tag: <image>:<sha12> for source git (CI tags the image with
+// the commit), else <image>:<ref> or <image>@<ref> for a digest.
+func (c LockCare) BaseRef() string {
+	switch {
+	case c.IsGit() && c.GitSHA != nil:
+		return c.Image + ":" + GitTag(*c.GitSHA)
+	case strings.HasPrefix(c.Ref, "sha256:"):
+		return c.Image + "@" + c.Ref
+	}
+	return c.Image + ":" + c.Ref
 }
 
 // LockSolutionImage is the image that api, worker, and beat run.
@@ -92,6 +109,8 @@ type LockPlugBackend struct {
 	Ref            string         `yaml:"ref" json:"ref"`
 	SHA            string         `yaml:"sha" json:"sha"`
 	AdditionalPlug AdditionalPlug `yaml:"additional_plug" json:"additional_plug"`
+	// Subdirectory is backend.subdirectory of the solution (wave 13); the version of AdditionalPlug has it.
+	Subdirectory string `yaml:"subdirectory,omitempty" json:"subdirectory,omitempty"`
 }
 
 // AdditionalPlug is one entry of ADDITIONAL_PLUGS (upstream plugs/plug.py).
@@ -112,6 +131,8 @@ type LockPlugFrontend struct {
 	SHA256    *string `yaml:"sha256" json:"sha256"`
 	Entry     *string `yaml:"entry" json:"entry"`
 	SizeBytes *int64  `yaml:"size_bytes" json:"size_bytes"`
+	// Path is frontend.path of the solution (wave 13): the directory of the plug in its repository.
+	Path string `yaml:"path,omitempty" json:"path,omitempty"`
 }
 
 // Frontend sources.

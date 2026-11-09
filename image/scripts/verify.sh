@@ -93,6 +93,15 @@ check "machine-id is uninitialized" grep -qx uninitialized "${mnt}/etc/machine-i
 # ---------------------------------------------------------------- the pre-seeded solution
 check "/etc/care-pi/image-release.json" jq -e .version "${mnt}/etc/care-pi/image-release.json"
 info "image-release.json: $(jq -c . "${mnt}/etc/care-pi/image-release.json")"
+# S72: the pre-migrated database, when the build made one.
+seed_file="$(jq -r '.seed.pg.file // empty' "${mnt}/etc/care-pi/image-release.json")"
+if [ -n "${seed_file}" ]; then
+	check "database seed ${seed_file} ($(jq -r .seed.pg.size_bytes "${mnt}/etc/care-pi/image-release.json") bytes, CARE $(jq -r '.seed.pg.care_git_sha[:12]' "${mnt}/etc/care-pi/image-release.json"))" \
+		test "$(stat -c %s "${mnt}${seed_file}" 2>/dev/null)" = "$(jq -r .seed.pg.size_bytes "${mnt}/etc/care-pi/image-release.json")"
+	check "database seed is a zstd archive with PG_VERSION" bash -c "zstd -dc '${mnt}${seed_file}' | tar -t | grep -qx './PG_VERSION'"
+else
+	info "no database seed (the first start migrates an empty database)"
+fi
 dist="${mnt}/var/lib/care-pi-dist"
 check "dist snapshot index.json is valid" "${mnt}/usr/local/bin/care-pi" solution validate "${dist}/index/index.json"
 check "dist snapshot dist_base is file:///var/lib/care-pi-dist/" test "$(jq -r .dist_base "${dist}/index/index.json")" = file:///var/lib/care-pi-dist/

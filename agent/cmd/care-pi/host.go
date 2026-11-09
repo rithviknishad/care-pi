@@ -7,6 +7,7 @@ import (
 
 	"github.com/rithviknishad/care-pi/agent/internal/exitcode"
 	"github.com/rithviknishad/care-pi/agent/internal/hostcheck"
+	"github.com/rithviknishad/care-pi/agent/internal/service"
 )
 
 var hostCheckJSON, hostCheckProbe bool
@@ -24,11 +25,16 @@ later with quadlet, skopeo, the cgroup memory controller, zram swap, avahi,
 nftables, and the directories. It also reports the hardware (RAM, root disk,
 page size, RTC, ethernet, internet, clock) as advised checks. --json prints the
 HostCheck object of GET /api/v1/host/check. --probe measures the root disk (about 10 s).
+check always runs the internet check once (at most 5 s): an HTTPS request to
+github.com, then to 1.1.1.1, which tells "no DNS" from "no route".
 check changes nothing.
 Exit code 0: every required check passes. Exit code 3: a required check fails.`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		hc := newService(cmd).HostCheckView(cmd.Context(), hostCheckProbe)
+		svc := newService(cmd)
+		// The CLI has no background check (S74): HostCheckView checks the internet once.
+		svc.Internet = &service.Internet{}
+		hc := svc.HostCheckView(cmd.Context(), hostCheckProbe)
 		if hostCheckJSON {
 			if err := printJSON(cmd.OutOrStdout(), hc); err != nil {
 				return err
@@ -46,7 +52,7 @@ Exit code 0: every required check passes. Exit code 3: a required check fails.`,
 
 func init() {
 	hostCheckCmd.Flags().BoolVar(&hostCheckJSON, "json", false, "print JSON")
-	hostCheckCmd.Flags().BoolVar(&hostCheckProbe, "probe", false, "measure the write and read speed of the root disk (about 10 s)")
+	hostCheckCmd.Flags().BoolVar(&hostCheckProbe, "probe", false, "measure the write and read speed of the root disk (about 10 s) and check the internet again")
 	hostCmd.AddCommand(hostCheckCmd)
 	rootCmd.AddCommand(hostCmd)
 }

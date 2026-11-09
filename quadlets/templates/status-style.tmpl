@@ -82,9 +82,21 @@ pre{white-space:pre-wrap;font-size:.8rem;background:#f4f6f8;padding:.6rem;border
 <pre id="copy-text" hidden></pre>
 {{- end -}}
 
+{{- /* carePiInternet gives the sentence of the live internet check of GET /_care-pi/status (contract 0.9.1, S74). */ -}}
+{{- define "status-internet-fn" -}}
+function carePiInternet(s) {
+  var i = (s && s.internet) || {};
+  if (i.reachable === true) { return "Internet: reachable."; }
+  if (i.reachable === false && i.problem === "dns") { return "Internet: the device reaches the internet, but DNS does not work. Check the DNS server that the router gives."; }
+  if (i.reachable === false) { return "Internet: not reachable. Connect the router to the internet."; }
+  return "Internet: not checked yet.";
+}
+{{- end -}}
+
 {{- /* carePiJob shows the job of GET /_care-pi/status: the public job stream gives the steps without log lines
 (docs/api/README.md section 6.3). carePiJob.update(status) takes each public status of the poll. */ -}}
 {{- define "status-job-script" -}}
+{{template "status-internet-fn"}}
 var carePiJob = (function () {
   // The sentence of each step: strings.steps.actions of the console (docs/console-ui.md section 9).
   var steps = {
@@ -248,6 +260,7 @@ var carePiJob = (function () {
     out.push("Device: " + (s.display_name || "") + " (" + location.hostname + ")");
     out.push("Page: " + (s.site || "") + ", setup state: " + (s.setup_state || ""));
     out.push("Device time: " + (s.time || ""));
+    out.push(carePiInternet(s));
     out.push("Copied at: " + new Date().toISOString());
     if (job) {
       out.push("", "Job: " + job.id, "Kind: " + job.kind + " (" + title() + ")", "State: " + job.state);

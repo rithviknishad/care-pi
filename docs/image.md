@@ -17,9 +17,10 @@ Related pages: `plans/05-image-and-installer.md` (design), `plans/08-spike-log.m
 flowchart TB
     LOCK["solution lock lock-&lt;solution&gt;-&lt;version&gt;\n+ FE bundle + FE plug bundles"] --> B
     AGENT["care-pi_linux_arm64\n(make build-linux, with the console)"] --> B
+    SEED["image/scripts/make-seed.sh (docker on the build host)\nmigrate + sync of the CARE image of the lock\npg-&lt;sha12&gt;.tar.zst"] --> B
     B["image/build.sh\n(privileged linux/arm64 container)"] --> PG
     PG["pi-gen, branch arm64 (image/pi-gen.ref)\nstage0, stage1, stage2 = Raspberry Pi OS Lite"] --> SC
-    SC["image/stage-care\n00-install: installer/install.sh --image-build\n01-prepull: skopeo into containers-storage\n02-preseed: dist snapshot, FE build, plug bundles\n03-firstboot: care-firstboot.service, LED units"] --> EX
+    SC["image/stage-care\n00-install: installer/install.sh --image-build\n01-prepull: skopeo into containers-storage\n01b-dbseed: the database seed\n02-preseed: dist snapshot, FE build, plug bundles\n03-firstboot: care-firstboot.service, LED units"] --> EX
     EX["pi-gen export: care-pi-&lt;version&gt;-&lt;solution&gt;.img.xz"] --> OUT
     OUT[".img.xz + .sha256 + os_list.json\n+ .rpi-imager-manifest + verify.txt"]
 ```
@@ -35,6 +36,11 @@ flowchart TB
 - **Pre-pull.** Stage `01-prepull` copies each image of the lock with
   `skopeo copy --override-arch arm64 docker://<repo>@<digest> containers-storage:[overlay@<root>/var/lib/containers/storage+<runroot>]<repo>:<tag>`.
   No podman runs in the chroot. podman finds each image by the digest of the lock (the units use `<repo>@<digest>`).
+- **Pre-migrated database (S72).** Before pi-gen, `image/build.sh` runs `image/scripts/make-seed.sh` on the build host
+  with docker: PostgreSQL (the `postgres-pgbackrest` image of the lock), Redis, and the solution image of the lock run
+  `migrate`, `sync_permissions_roles`, and `sync_valueset` against an empty database. Stage `01b-dbseed` copies the
+  data directory as `/var/lib/care-pi/seed/pg-<sha12>.tar.zst` (section 6.5). `--no-seed` builds without it;
+  `--seed FILE` uses a seed of an earlier run.
 - **Pre-seed.** Stage `02-preseed` writes the dist snapshot, the default FE build, the built FE plug bundles, and
   `/etc/care-pi/image-release.json`. Section 3 has the paths.
 - **First boot.** Stage `03-firstboot` installs `care-firstboot.service` and the ACT LED units (section 6).
@@ -50,6 +56,8 @@ flowchart TB
 - A linux/arm64 container runtime: Docker Desktop on Apple silicon, Docker on a GitHub `ubuntu-24.04-arm` runner, or
   Docker on a Pi 5. An x86 host needs `qemu-user-static` (binfmt). It is very slow, and nobody tested it.
 - `--privileged` containers with `/dev`. pi-gen mounts `proc`, `sys`, and `dev` in the chroot and uses loop devices.
+- `jq` and `zstd` on the host, for the database seed (S72): `image/scripts/make-seed.sh` runs the CARE image and the
+  postgres image of the lock with Docker on the host (about 2 minutes with the pulls; `--no-seed` skips it).
 - About 20 GB of free space for the Docker volume `care-pi-image-work` during the build (the build keeps about 2 GB of it
   for `--reuse-base`), and 2 GB in `image/out`. On a Mac with Apple silicon, a full build took 34 minutes (17 of them a
   slow apt download through Docker Desktop), and a build with `--reuse-base` took 6 minutes
@@ -149,7 +157,8 @@ A boot test in QEMU (`virt` machine with the Pi OS kernel) is an open point (sec
 | `/var/lib/care-pi-dist/` | The dist snapshot: `index/index.json` (`dist_base: file:///var/lib/care-pi-dist/`), the lock, the FE bundle, and the FE plug bundles, each with its `.sha256`. |
 | `/var/lib/care-pi/fe/<build id>/` | The default FE build of the lock. No `fe/current`: setup mode shows the setup page. The apply at the end of the setup points `fe/current` at the build. |
 | `/var/lib/care-pi/plugs/<slug>/<sha12>/` | Each built FE plug bundle of the lock. An external FE plug (a `url` only) needs internet in the browser. |
-| `/etc/care-pi/image-release.json` | `version`, `solution`, `lock_version`, `lock_sha256`, `agent_version`, `built_at`, `git_sha`, `base`. |
+| `/var/lib/care-pi/seed/pg-<sha12>.tar.zst`, `.json` | The pre-migrated database of the CARE commit `<sha12>` of the lock (S72, section 6.5): about 8 MB (81 MB extracted). |
+| `/etc/care-pi/image-release.json` | `version`, `solution`, `lock_version`, `lock_sha256`, `agent_version`, `built_at`, `git_sha`, `base`, `seed.pg` (`care_git_sha`, `created_at`, `file`, `size_bytes`, `migrations`; `null` without a seed). |
 | `/usr/local/lib/care-pi/care-firstboot`, `/etc/systemd/system/care-firstboot.service` | The first boot (section 6). |
 | `/usr/local/lib/care-pi/care-pi-led`, `care-pi-led.service`, `care-pi-led.path`, `care-pi-led-off.service` | The ACT LED (section 6.3). |
 
@@ -213,7 +222,8 @@ The mechanism is the cloud-init module `write_files`: it writes the file `/etc/c
 
 - The file is a `config.yaml` document (`docs/config.md`). The keys that it does not set get their defaults.
 - bootstrap validates it, and runs the checks of `apply` on it before it installs it: a feature that this version does
-  not have (for example `clock.policy: rtc`), or a mode that needs an enrol job (`tls.public`, `tls.tailscale`).
+  not have (for example `tls.local_ca.enabled: false`), or a mode that needs an enrol job (`tls.public`, `tls.tailscale`).
+- A pre-seed that sets `clock.policy` keeps its value: `care-pi clock detect` (section 6.4) does not change it.
   A file that fails is not used, and the device is never silent: bootstrap moves the file to `preseed.yaml.rejected`,
   writes the error to `/var/lib/care-pi/state/firstboot-error.json`, and starts setup mode (the claim). The claim page of
   the console and the setup page on port 443 show the error (`firstboot_error` of `GET /_care-pi/status`) until the
@@ -266,8 +276,8 @@ Without a pre-seed, the first boot starts setup mode (the default).
       (a warning below 90 % of the RAM);
    4. runs `care-pi bootstrap --from-image`: the host check, the directories, the secrets, `config.yaml` (or the
       pre-seed), the import of the dist snapshot into the update cache, the claim code, the start of
-      `care-pi.service`, and the apply of setup mode (Caddy and the console; the Caddy image of the lock, no registry);
-      then the marker `/var/lib/care-pi/state/firstboot-done`.
+      `care-pi.service`, `care-pi clock detect` (section 6.4), and the apply of setup mode (Caddy and the console; the
+      Caddy image of the lock, no registry); then the marker `/var/lib/care-pi/state/firstboot-done`.
 4. `care-pi-led.service`: the ACT LED blinks (`heartbeat`) until the claim.
 
 `care-firstboot.service` has `DefaultDependencies=no` and the usual service dependencies by hand. `cloud-final.service`
@@ -301,6 +311,46 @@ Open `https://<host name>.local:8443/` or `https://<IP address>:8443/`. The firs
 `care-pi-led.path` watches `/etc/care-pi/secrets/agent.json` (written by the claim). Then `care-pi-led-off.service`
 stops `care-pi-led.service` (`Conflicts=`), and the LED gets its earlier trigger back.
 
+### 6.4 The clock policy (S75, SP9)
+
+bootstrap runs `care-pi clock detect`. It reads the RTC time at boot from the kernel message
+`rpi-rtc …: setting system clock to <time> UTC (<seconds>)` (`journalctl -k -b 0`) and, on a Pi 5,
+`/sys/class/rtc/rtc0/battery_voltage`:
+
+| RTC | Policy | The clock gate at each boot |
+|---|---|---|
+| A time after the build time of the agent at boot, and no battery voltage of 0 (an RTC battery) | `rtc` | Passes at once from the RTC. NTP confirms it later: the clock is trusted then; a difference of more than 5 minutes gives the warning "clock drift" of `care-pi doctor`. |
+| `1970-01-01` at boot (no battery; care.local), a battery voltage of 0, or no `/dev/rtc0` (a Pi 4 without an RTC module) | `ntp` | Waits for NTP, or (without internet) for the time of the browser at the claim (S52). |
+
+A warm reboot keeps the RTC time also without a battery (the board keeps its power): so a Pi 5 that reports a battery
+voltage of 0 never gets `rtc`. `fake-hwclock` and the clock file of `systemd-timesyncd` restore the time of the last
+shutdown: they are never trusted. `sudo care-pi clock detect --dry-run` prints what detect would set. detect does not
+change a value that the operator set (`--force` does). `docs/config.md` has `clock.policy`.
+
+### 6.5 The pre-migrated database (S72)
+
+The migrations of an empty CARE database take about 3 min 20 s on a Pi 5. The image has them done:
+`/var/lib/care-pi/seed/pg-<sha12>.tar.zst` is the data directory of PostgreSQL after `migrate`,
+`sync_permissions_roles`, and `sync_valueset` of the CARE image of the lock (`image/scripts/make-seed.sh`).
+
+- **The first start** of `care.target` (the apply at the end of the setup, or a pre-seed apply) on a device with an
+  empty `/var/lib/care-pi/pg`: the agent extracts the seed of the CARE commit of the lock (else the newest seed) into
+  it with the owner 999:999, then sets the password of the user `postgres` to the generated secret of the device:
+  `podman run --network none` of the postgres image with `postgres --single` and the podman secret (no server, no
+  password on a command line). Then `care-beat` runs `migrate`: "No migrations to apply" when the commit is the same,
+  or only the migrations that a newer lock adds. A seed of another commit is used too (migrations go forward), and the
+  job log says so. `state/seed-db.json` records the restore.
+- **What the seed does not have:** no secret of a device (the password and `DJANGO_SECRET_KEY` of the build are thrown
+  away; CARE keeps neither in the database), no CARE user (the setup makes the superuser), no session. The roles and
+  the value sets of `sync_*` are the same rows on each device of one image.
+- **A failure** of the password change right after the restore removes the restored files: `care-db` then
+  initializes an empty database, as without a seed.
+- **Measured** (Docker Desktop on the Mac, arm64, CARE `28211e29a359` of the branch `ENG-737-backup-backup`): the seed
+  is 7.8 MB (`zstd -19`; 81 MB extracted, 117 tables, 847 migrations); `migrate` and the `sync_*` commands of an empty
+  database took 60 s, with the seed 7 s (restore 1 s, password change below 1 s, `migrate` "No migrations to apply"
+  2.3 s). On a Pi 5 the empty database took about 3 min 20 s (Phase 1 exit test), so the gain is about 3 minutes of
+  the first start.
+
 ## 7. Without internet, and later with internet
 
 The image needs no internet for the first boot and for the setup:
@@ -308,7 +358,7 @@ The image needs no internet for the first boot and for the setup:
 | Part | Without internet |
 |---|---|
 | Setup mode (Caddy, console, claim) | Works. The Caddy image comes from the solution lock in the cache. In setup mode, `care.target` does not wait for the clock gate. |
-| Install at the end of the setup | The lock comes from the dist snapshot. No pull (each image is in the storage), no FE build (the FE build of the lock exists), only the migrations and the first user. The clock gate passes with the time of the browser (S52): the console sends it at the claim, and the agent sets the clock when NTP is not synchronized (`docs/api/README.md` section 16). The console shows "Clock not trusted" until the device reaches an NTP server. |
+| Install at the end of the setup | The lock comes from the dist snapshot. No pull (each image is in the storage: the job log says "image present, no pull"), no FE build (the FE build of the lock exists), no migration of an empty database (the seed, section 6.5), only the first user. The clock gate passes with the time of the browser (S52): the console sends it at the claim, and the agent sets the clock when NTP is not synchronized (`docs/api/README.md` section 16). The console shows "Clock not trusted" until the device reaches an NTP server. |
 | FE plugs with a built bundle | Work (pre-seeded). |
 | FE plugs with only a `url` (`requires_internet: true`, for example `care_onboarding_fe` today) | The browser cannot load them. Care works without them. |
 | A change of the frontend env (another FE build id) | Needs internet for the local FE build (`docs/fe.md`). |
@@ -383,4 +433,5 @@ For each device:
 5. ~~**The clock gate without internet.**~~ Resolved by S52: at the claim, the console sends the time of the browser, and
    the agent sets the clock one time when NTP is not synchronized; the gate passes, and the console shows "Clock not
    trusted" until NTP synchronizes the clock (`docs/api/README.md` section 16). After a reboot without internet the clock
-   continues from `fake-hwclock` (the time of its last save). The `rtc` policy still waits for SP9.
+   continues from the clock file of `systemd-timesyncd` (the time of its last save). A Pi 5 with an RTC battery gets the
+   `rtc` policy (S75, section 6.4): the gate then passes from the RTC at each boot.

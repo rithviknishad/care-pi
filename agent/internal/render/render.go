@@ -58,6 +58,7 @@ func full(m *Model) bool         { return !m.Bootstrap }
 func feBuild(m *Model) bool      { return m.FEBuild }
 func careBuild(m *Model) bool    { return m.CareBuild != nil && !m.Bootstrap }
 func plugBuild(m *Model) bool    { return m.PlugBuild && !m.Bootstrap }
+func careSource(m *Model) bool   { return m.CareSource != nil && !m.Bootstrap }
 func quadlet(name string) string { return paths.QuadletDir + "/" + name }
 func systemd(name string) string { return paths.SystemdDir + "/" + name }
 
@@ -104,6 +105,8 @@ var phase4Outputs = []dynOutput{
 	{output{"care-update-apply.timer.tmpl", systemd("care-update-apply.timer"), 0o644, 0, full}, nil},
 	{output{"care-update-apply.service.tmpl", systemd("care-update-apply.service"), 0o644, 0, full}, nil},
 	{output{"care-build.build.tmpl", "", 0o644, 0, careBuild}, func(m *Model) string { return quadlet("care-build-" + m.SolutionName + ".build") }},
+	// S71: the local build of CARE from its git source (4 GB of RAM or more).
+	{output{"care-base-build.build.tmpl", "", 0o644, 0, careSource}, func(m *Model) string { return quadlet("care-build-" + m.SolutionName + "-base.build") }},
 	{output{"care-plug-build.container.tmpl", quadlet("care-plug-build.container"), 0o644, 0, plugBuild}, nil},
 	{output{"plug-build.sh.tmpl", paths.RenderedPlugs + "/plug-build.sh", 0o700, 0, plugBuild}, nil},
 	// Phase 6 (docs/connectivity.md).

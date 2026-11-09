@@ -94,6 +94,16 @@ type StepRecord struct {
 	Status    string    `json:"status"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Warnings  []Issue   `json:"warnings,omitempty"`
+	// Internet is the internet check when the hardware step was done (S74). It is a record only: the setup state
+	// shows the live check, and the finish keeps only the warnings that are still true.
+	Internet *ProbeResult `json:"internet,omitempty"`
+}
+
+// ProbeResult is one internet check.
+type ProbeResult struct {
+	Reachable *bool      `json:"reachable"`
+	Problem   string     `json:"problem,omitempty"`
+	CheckedAt *time.Time `json:"checked_at,omitempty"`
 }
 
 // Step statuses.

@@ -110,13 +110,19 @@ func careBuild(ctx context.Context, cfg *config.Config, sol *solution.Solution, 
 	if !needs {
 		return nil, nil
 	}
-	image := firstNonEmpty(sol.Care.Image, render.ImageCareUpstream)
+	image := sol.Care.ImageRepo()
 	baseRef := image + ":" + firstNonEmpty(sol.Care.Ref, "latest")
 	if strings.HasPrefix(sol.Care.Ref, "sha256:") {
 		baseRef = image + "@" + sol.Care.Ref
 	}
 	var seedDigest string
 	switch {
+	case sol.Care.Resolved != "":
+		// A git source (S71): resolveGitCare resolved the ref (or solution.custom.care_ref) to the image of the commit.
+		baseRef = image + ":" + sol.Care.Resolved
+		if sl != nil && sl.Care.IsGit() && sl.Care.BaseRef() == baseRef {
+			seedDigest = sl.Care.Digest
+		}
 	case cfg.Solution.Custom.CareRef != "" && strings.HasPrefix(cfg.Solution.Custom.CareRef, "sha256:"):
 		baseRef = image + "@" + cfg.Solution.Custom.CareRef
 	case cfg.Solution.Custom.CareRef != "":
@@ -164,11 +170,15 @@ func careBuild(ctx context.Context, cfg *config.Config, sol *solution.Solution, 
 		return nil, err
 	}
 	base := res.Images["care-base"]
-	if base.Digest == "" {
+	if base.Digest == "" && !base.Local {
 		return nil, fmt.Errorf("the local image build needs the digest of %s; connect the device to the internet", baseRef)
 	}
 	cb := &render.CareBuild{Base: image + "@" + base.Digest, Refs: map[string]lock.GitRef{}, BaseImage: image,
 		BaseRef: strings.TrimPrefix(strings.TrimPrefix(baseRef, image), ":"), BaseDigest: base.Digest}
+	if base.Local {
+		// The base is the local build of CARE from its git source (S71): no digest.
+		cb.Base = baseRef
+	}
 	ids := make([]string, 0, len(byID))
 	for id := range byID {
 		ids = append(ids, id)
@@ -182,7 +192,7 @@ func careBuild(ctx context.Context, cfg *config.Config, sol *solution.Solution, 
 		}
 		cb.Refs[id] = g
 		cb.Plugs = append(cb.Plugs, render.AdditionalPlug{Name: p.Backend.Name, PackageName: p.Backend.Package,
-			Version: "@" + g.SHA, Configs: map[string]any{}})
+			Version: p.Backend.Version(g.SHA), Configs: map[string]any{}})
 	}
 	finishBuild(cb)
 	return cb, nil
@@ -235,7 +245,7 @@ func pinnedBuild(l *lock.Lock, _ *config.Config) *render.CareBuild {
 		}
 		cb.Refs[id] = lock.GitRef{Repo: p.Backend.Repo, Ref: p.Backend.Ref, SHA: p.Backend.SHA}
 		cb.Plugs = append(cb.Plugs, render.AdditionalPlug{Name: p.Backend.Name, PackageName: "git+" + p.Backend.Repo,
-			Version: "@" + p.Backend.SHA, Configs: map[string]any{}})
+			Version: solution.PipVersion(p.Backend.SHA, p.Backend.Subdirectory), Configs: map[string]any{}})
 	}
 	finishBuild(cb)
 	cb.ID = c.Build.ID
@@ -371,7 +381,7 @@ func fillComponents(lk *lock.Lock, cfg *config.Config, des *render.Plan, sl *sol
 		}
 		if p.HasBackend() {
 			b := lock.PlugBackend{Name: p.Backend.Name, Repo: strings.TrimPrefix(p.Backend.Package, "git+"), Ref: p.Backend.Ref,
-				Tracked: !host.IsFullSHA(p.Backend.Ref), Installed: installed[p.ID]}
+				Tracked: !host.IsFullSHA(p.Backend.Ref), Installed: installed[p.ID], Subdirectory: p.Backend.Subdirectory}
 			if g, ok := lk.Plugs[p.ID]; ok {
 				b.SHA = g.SHA
 			} else if lp.Backend != nil && lp.Backend.Ref == p.Backend.Ref {
@@ -382,7 +392,8 @@ func fillComponents(lk *lock.Lock, cfg *config.Config, des *render.Plan, sl *sol
 			pc.Backend = &b
 		}
 		if f := p.Frontend; f != nil {
-			pf := lock.PlugFrontend{Slug: f.Slug, Repo: f.Repo, Ref: f.Ref, Entry: f.EntryPath(), Tracked: !host.IsFullSHA(f.Ref)}
+			pf := lock.PlugFrontend{Slug: f.Slug, Repo: f.RepoURL(), Ref: f.Ref, Entry: f.EntryPath(), Tracked: !host.IsFullSHA(f.Ref),
+				Path: f.Path}
 			lf := lp.Frontend
 			switch {
 			case lf != nil && lf.Source == solution.FrontendBuilt && (lf.Ref == nil || *lf.Ref == f.Ref):
@@ -390,7 +401,7 @@ func fillComponents(lk *lock.Lock, cfg *config.Config, des *render.Plan, sl *sol
 				pf.SHA256, pf.Entry = deref(lf.SHA256), firstNonEmpty(deref(lf.Entry), pf.Entry)
 			case lf != nil && lf.Source == solution.FrontendExternal:
 				pf.Source, pf.URL, pf.Tracked = solution.FrontendExternal, lf.URL, false
-				pf.Ref, pf.Repo = "", ""
+				pf.Ref, pf.Repo, pf.Path = "", "", ""
 			case f.Repo != "" && host.IsFullSHA(f.Ref) && p.Custom:
 				pf.Source, pf.SHA = solution.FrontendLocalBuild, f.Ref
 			case f.URL != "":

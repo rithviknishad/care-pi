@@ -9,7 +9,9 @@
 # 2. Read the host name that Imager set. Restart avahi, so that it announces that name.
 # 3. Check the memory cgroup controller and the zram swap (plans/09-handoff.md, section 3).
 # 4. Run "care-pi bootstrap --from-image": setup mode (the console claim), or a full apply when
-#    the user-data had a pre-seed (/etc/care-pi/preseed.yaml). A pre-seed that bootstrap cannot use gives
+#    the user-data had a pre-seed (/etc/care-pi/preseed.yaml). bootstrap runs "care-pi clock detect" (S75):
+#    clock.policy rtc when the RTC kept the time through the boot (a battery), else ntp; a pre-seed that sets
+#    clock.policy keeps its value. A pre-seed that bootstrap cannot use gives
 #    setup mode with the error on the setup pages. The exit code of bootstrap is the exit code of this script
 #    (care-firstboot.service does not start again after exit code 2).
 set -eu

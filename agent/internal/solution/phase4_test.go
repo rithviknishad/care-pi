@@ -63,7 +63,7 @@ func lockInput(t *testing.T) LockInput {
 			"care_fasterappointments_fe": {},
 			"care_filly":                 {BackendSHA: sha},
 		}, Images: map[string]LockImg{}}
-	in.Care.Digest = d
+	in.Care.Digest, in.Care.GitSHA = d, sha
 	in.SolutionImage.Image, in.SolutionImage.Tag, in.SolutionImage.Digest = "ghcr.io/rithviknishad/care-pi/care", "care-clinic-2026.11.0", d
 	in.FE = LockFE{BuildID: "0123456789abcdef", URL: "fe-care-clinic-bbbbbbbbbbbb-0123456789abcdef/care_fe.tar.gz", SHA256: strings.Repeat("d", 64), SizeBytes: 5, EnvKeys: []string{"REACT_CARE_API_URL"}}
 	for _, n := range []string{"postgres", "caddy", "redis", "s3", "node"} {
@@ -122,6 +122,16 @@ func TestAssembleLockAndIndex(t *testing.T) {
 	}
 	if kind, err := Validate(ix); err != nil || kind != KindIndex {
 		t.Fatalf("validate %s %v", kind, err)
+	}
+	// S71: care.source git records the source, the repository, and the commit; the image is the base that CI built.
+	if !l.Care.IsGit() || l.Care.Repo != "https://github.com/ohcnetwork/care" || l.Care.Image != CareBase || l.Care.GitSHA == nil ||
+		l.Care.BaseRef() != CareBase+":bbbbbbbbbbbb" || l.Care.Ref != "ENG-737-backup-backup" {
+		t.Fatalf("care %+v", l.Care)
+	}
+	noSHA := lockInput(t)
+	noSHA.Care.GitSHA = ""
+	if _, err := AssembleLock(noSHA); err == nil || !strings.Contains(err.Error(), "git_sha") {
+		t.Fatalf("a git source needs the commit: %v", err)
 	}
 	// A bad lock: the schema rejects it.
 	bad := strings.Replace(string(data), "digest: sha256:", "digest: md5:", 1)

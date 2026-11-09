@@ -104,7 +104,7 @@ Never use --insecure-dev on a clinic device.`,
 			svc.ApplyHook = func(o *apply.Options) { o.PollInterval = 10 * time.Millisecond }
 			svc.AfterPower = func(d time.Duration, _ func()) { log.Info("fake host: no power action", "delay", d) }
 		} else {
-			svc.Internet = &service.Internet{}
+			svc.Internet = &service.Internet{Log: log}
 		}
 		if f.insecureDev {
 			if err := devRoot(cmd, svc); err != nil {

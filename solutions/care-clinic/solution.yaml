@@ -6,14 +6,16 @@ name: care-clinic
 title: CARE Clinic
 description: Outpatient clinic. Appointments, encounters, prescriptions, and invoices.
 
-# Both refs are tracked. The agent resolves them to a digest and a sha at each update check.
-# Upstream semver tags stopped in February 2025, so Clinic tracks "latest" and "develop".
+# Both refs are tracked branches of the Care 3.1 development line (S71). Upstream publishes no image of the
+# care branch, so CI builds docker/prod.Dockerfile of the resolved sha (source git) into
+# ghcr.io/rithviknishad/care-pi/care-base:<sha12>, and the solution image is built FROM it.
 care:
-  image: ghcr.io/ohcnetwork/care
-  ref: latest
+  source: git
+  repo: https://github.com/ohcnetwork/care
+  ref: ENG-737-backup-backup
 care_fe:
   repo: https://github.com/ohcnetwork/care_fe
-  ref: develop
+  ref: 3.1/base
 
 # The plug repositories, bundle hosts, and settings keys come from the plugin catalog of care_clinic.
 plugs:

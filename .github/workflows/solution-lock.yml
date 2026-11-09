@@ -1,7 +1,9 @@
 name: solution-lock
 
 # Make one solution lock (docs/solutions.md, sections 3 and 5): resolve the refs of solution.yaml,
-# build the solution image (each backend plug of the solution), the default FE bundle (the components of
+# build the CARE image from its git source when care.source is git (care-base.yml: docker/prod.Dockerfile of the
+# resolved sha, arm64 and amd64, S71), build the solution image (each backend plug of the solution), the default FE
+# bundle (the components of
 # each plug registered), and each FE plug bundle at its sha, assemble and validate the lock, publish it
 # as the release lock-<solution>-<version> (the lock and its .sha256), and write index.json again from
 # each lock release into the single release index (solution-index.yml).
@@ -43,6 +45,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     outputs:
       version: ${{ steps.version.outputs.version }}
+      care_source: ${{ steps.resolve.outputs.care_source }}
+      care_repo: ${{ steps.resolve.outputs.care_repo }}
       care_image: ${{ steps.resolve.outputs.care_image }}
       care_digest: ${{ steps.resolve.outputs.care_digest }}
       care_git_sha: ${{ steps.resolve.outputs.care_git_sha }}
@@ -54,6 +58,10 @@ jobs:
       images: ${{ steps.resolve.outputs.images }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # In-repo plugs (repo ".", or package of this repository with a subdirectory) pin the last commit
+          # that changed their directory; that needs the history.
+          fetch-depth: 0
 
       - uses: actions/setup-go@v7
         with:
@@ -103,12 +111,23 @@ jobs:
           sha_of() { gh api "repos/$(ghslug "$1")/commits/$2" --jq .sha; }
           digest_of() { skopeo inspect --raw "docker://$1" > manifest.json && skopeo manifest-digest manifest.json; }
 
-          care_image="$(jq -r '.care.image // "ghcr.io/ohcnetwork/care"' solution.json)"
+          care_source="$(jq -r '.care.source // "image"' solution.json)"
           care_ref="$(jq -r '.care.ref // "latest"' solution.json)"
-          if [[ "$care_ref" == sha256:* ]]; then care="${care_image}@${care_ref}"; else care="${care_image}:${care_ref}"; fi
-          care_digest="$(digest_of "$care")"
-          care_git_sha="$(skopeo inspect --override-os linux --override-arch arm64 --format '{{index .Labels "org.opencontainers.image.revision"}}' "docker://${care_image}@${care_digest}" || true)"
-          [[ "$care_git_sha" =~ ^[0-9a-f]{40}$ ]] || care_git_sha=""
+          care_repo=""
+          if [ "$care_source" = git ]; then
+            # S71: the job care-base builds docker/prod.Dockerfile of this sha into <care_image>:<sha12>.
+            care_repo="$(ghslug "$(jq -r .care.repo solution.json)")"
+            care_image="$(jq -r '.care.image // "ghcr.io/rithviknishad/care-pi/care-base"' solution.json)"
+            care_git_sha="$(sha_of "$care_repo" "$care_ref")"
+            [[ "$care_git_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Cannot resolve care ${care_ref} in ${care_repo}"; exit 1; }
+            care_digest=""
+          else
+            care_image="$(jq -r '.care.image // "ghcr.io/ohcnetwork/care"' solution.json)"
+            if [[ "$care_ref" == sha256:* ]]; then care="${care_image}@${care_ref}"; else care="${care_image}:${care_ref}"; fi
+            care_digest="$(digest_of "$care")"
+            care_git_sha="$(skopeo inspect --override-os linux --override-arch arm64 --format '{{index .Labels "org.opencontainers.image.revision"}}' "docker://${care_image}@${care_digest}" || true)"
+            [[ "$care_git_sha" =~ ^[0-9a-f]{40}$ ]] || care_git_sha=""
+          fi
           care_fe_sha="$(sha_of "$(jq -r .care_fe.repo solution.json)" "$(jq -r .care_fe.ref solution.json)")"
 
           plugs='{}'
@@ -120,19 +139,37 @@ jobs:
             id="$(jq -r .id <<< "$p")"
             entry='{}'
             if jq -e .backend <<< "$p" > /dev/null; then
-              bsha="$(sha_of "$(jq -r .backend.package <<< "$p")" "$(jq -r .backend.ref <<< "$p")")"
+              bsub="$(jq -r '.backend.subdirectory // ""' <<< "$p")"
+              if [ "$(ghslug "$(jq -r .backend.package <<< "$p")")" = "$GITHUB_REPOSITORY" ] && [ -n "$bsub" ]; then
+                # In-repo backend plug: the last commit of this run that changed its directory.
+                bsha="$(git log -1 --format=%H HEAD -- "$bsub")"
+              else
+                bsha="$(sha_of "$(jq -r .backend.package <<< "$p")" "$(jq -r .backend.ref <<< "$p")")"
+              fi
               entry="$(jq -c --arg s "$bsha" '. + {backend_sha: $s}' <<< "$entry")"
-              plug="$(jq -c --arg s "$bsha" '{name: .backend.name, package_name: .backend.package, version: ("@" + $s), configs: (.backend.configs // {})}' <<< "$p")"
+              # pip needs the fragment after the ref: @<sha>#subdirectory=<dir> (docs/onboarding.md, section 6).
+              plug="$(jq -c --arg s "$bsha" '{name: .backend.name, package_name: .backend.package,
+                version: ("@" + $s + (if .backend.subdirectory then "#subdirectory=" + .backend.subdirectory else "" end)),
+                configs: (.backend.configs // {})}' <<< "$p")"
               install="$(jq -c --argjson x "$plug" '. + [$x]' <<< "$install")"
               if [ "$(jq -r .enabled <<< "$p")" = "true" ]; then
                 additional="$(jq -c --argjson x "$plug" '. + [$x]' <<< "$additional")"
               fi
             fi
             if jq -e '.frontend.repo' <<< "$p" > /dev/null; then
-              fsha="$(sha_of "$(jq -r .frontend.repo <<< "$p")" "$(jq -r .frontend.ref <<< "$p")")"
+              frepo="$(jq -r .frontend.repo <<< "$p")"
+              fpath="$(jq -r '.frontend.path // ""' <<< "$p")"
+              if [ "$frepo" = "." ]; then
+                # In-repo FE plug: this repository, at the last commit of this run that changed its directory.
+                frepo="$GITHUB_REPOSITORY"
+                fsha="$(git log -1 --format=%H HEAD -- "$fpath")"
+              else
+                fsha="$(sha_of "$frepo" "$(jq -r .frontend.ref <<< "$p")")"
+                frepo="$(ghslug "$frepo")"
+              fi
               entry="$(jq -c --arg s "$fsha" '. + {frontend_sha: $s}' <<< "$entry")"
-              m="$(jq -c --arg s "$fsha" --arg repo "$(ghslug "$(jq -r .frontend.repo <<< "$p")")" \
-                '{slug: .frontend.slug, repo: $repo, sha: $s, entry: (.frontend.entry // "assets/remoteEntry.js"), script: (.frontend.build.script // "build"), out: (.frontend.build.out // "dist")}' <<< "$p")"
+              m="$(jq -c --arg s "$fsha" --arg repo "$frepo" --arg path "$fpath" \
+                '{slug: .frontend.slug, repo: $repo, path: $path, sha: $s, entry: (.frontend.entry // "assets/remoteEntry.js"), script: (.frontend.build.script // "build"), out: (.frontend.build.out // "dist")}' <<< "$p")"
               fe_plugs="$(jq -c --argjson x "$m" '. + [$x]' <<< "$fe_plugs")"
             fi
             plugs="$(jq -c --arg id "$id" --argjson e "$entry" '. + {($id): $e}' <<< "$plugs")"
@@ -146,6 +183,8 @@ jobs:
             images="$(jq -c --arg n "$name" --arg r "$ref" --arg d "$(digest_of "$ref")" '. + {($n): {ref: $r, digest: $d}}' <<< "$images")"
           done
           {
+            echo "care_source=${care_source}"
+            echo "care_repo=${care_repo}"
             echo "care_image=${care_image}"
             echo "care_digest=${care_digest}"
             echo "care_git_sha=${care_git_sha}"
@@ -157,8 +196,19 @@ jobs:
             echo "images=${images}"
           } >> "$GITHUB_OUTPUT"
 
-  image:
+  # S71: the CARE image from its git source (care.source git). Skipped for an upstream image.
+  care-base:
     needs: resolve
+    if: needs.resolve.outputs.care_source == 'git'
+    uses: ./.github/workflows/care-base.yml
+    with:
+      repo: ${{ needs.resolve.outputs.care_repo }}
+      sha: ${{ needs.resolve.outputs.care_git_sha }}
+      image: ${{ needs.resolve.outputs.care_image }}
+
+  image:
+    needs: [resolve, care-base]
+    if: ${{ !cancelled() && needs.resolve.result == 'success' && (needs.care-base.result == 'success' || needs.care-base.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
@@ -194,11 +244,11 @@ jobs:
           push: true
           provenance: false
           build-args: |
-            BASE=${{ needs.resolve.outputs.care_image }}@${{ needs.resolve.outputs.care_digest }}
+            BASE=${{ needs.resolve.outputs.care_image }}@${{ needs.care-base.outputs.digest || needs.resolve.outputs.care_digest }}
             ADDITIONAL_PLUGS=${{ needs.resolve.outputs.additional }}
           tags: ghcr.io/rithviknishad/care-pi/care:${{ inputs.solution }}-${{ needs.resolve.outputs.version }}
           labels: |
-            org.opencontainers.image.base.digest=${{ needs.resolve.outputs.care_digest }}
+            org.opencontainers.image.base.digest=${{ needs.care-base.outputs.digest || needs.resolve.outputs.care_digest }}
           cache-from: type=gha,scope=care
           cache-to: type=gha,scope=care,mode=max
 
@@ -226,7 +276,7 @@ jobs:
       out: ${{ matrix.plug.out }}
 
   lock:
-    needs: [resolve, image, fe, plugs]
+    needs: [resolve, care-base, image, fe, plugs]
     if: ${{ !cancelled() && needs.resolve.result == 'success' && needs.image.result == 'success' && needs.fe.result == 'success' && (needs.plugs.result == 'success' || needs.plugs.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -249,8 +299,10 @@ jobs:
 
       - name: Assemble and validate the lock
         env:
-          CARE_DIGEST: ${{ needs.resolve.outputs.care_digest }}
+          CARE_DIGEST: ${{ needs.care-base.outputs.digest || needs.resolve.outputs.care_digest }}
           CARE_GIT_SHA: ${{ needs.resolve.outputs.care_git_sha }}
+          CARE_SOURCE: ${{ needs.resolve.outputs.care_source }}
+          CARE_IMAGE: ${{ needs.resolve.outputs.care_image }}
           CARE_FE_SHA: ${{ needs.resolve.outputs.care_fe_sha }}
           PLUGS: ${{ needs.resolve.outputs.plugs }}
           FE_PLUGS: ${{ needs.resolve.outputs.fe_plugs }}
@@ -288,13 +340,14 @@ jobs:
             --arg commit "$GITHUB_SHA" \
             --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --arg care_digest "$CARE_DIGEST" --arg care_git_sha "$CARE_GIT_SHA" \
+            --arg care_source "$CARE_SOURCE" --arg care_image "$CARE_IMAGE" \
             --arg si_tag "${SOLUTION}-${VERSION}" --arg si_digest "$IMAGE_DIGEST" \
             --arg care_fe_sha "$CARE_FE_SHA" \
             --arg fe_build_id "$FE_BUILD_ID" --arg fe_url "$FE_URL" --arg fe_sha256 "$FE_SHA256" --argjson fe_size "$FE_SIZE" \
             --arg fe_env_keys "$FE_ENV_KEYS" \
             --argjson plugs "$plugs" --argjson images "$IMAGES" \
             '{solution_file: $solution_file, version: $version, min_agent_version: $min_agent, created_by: $created_by, notes: $notes, commit: $commit, run_url: $run_url,
-              care: {digest: $care_digest, git_sha: $care_git_sha},
+              care: ({digest: $care_digest, git_sha: $care_git_sha} + (if $care_source == "git" then {image: $care_image} else {} end)),
               solution_image: {image: "ghcr.io/rithviknishad/care-pi/care", tag: $si_tag, digest: $si_digest},
               care_fe_sha: $care_fe_sha,
               fe: {build_id: $fe_build_id, url: $fe_url, sha256: $fe_sha256, size_bytes: $fe_size, env_keys: ($fe_env_keys | split(","))},

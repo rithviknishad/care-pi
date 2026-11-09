@@ -34,20 +34,30 @@
       "maxLength": 400
     },
     "care": {
-      "description": "The upstream CARE backend image. The agent resolves the ref to an image digest and writes the digest to the lock.",
+      "description": "The CARE backend. source image (the default): an upstream image; the agent resolves the ref to an image digest and writes the digest to the lock. source git (S71): a git ref of the CARE repository; CI builds docker/prod.Dockerfile of the resolved sha into image with the tag <sha12>. care-pi solution validate checks the rules that the schema does not express: source image needs image and a ref without a slash; source git needs repo.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["image", "ref"],
+      "required": ["ref"],
       "properties": {
+        "source": {
+          "description": "Where the CARE image comes from: image (an upstream image; the default) or git (CI builds docker/prod.Dockerfile of repo at the resolved sha; S71).",
+          "enum": ["image", "git"],
+          "default": "image"
+        },
         "image": {
-          "description": "The image name without a tag or a digest, for example ghcr.io/ohcnetwork/care.",
+          "description": "The image name without a tag or a digest, for example ghcr.io/ohcnetwork/care. With source git: the repository of the images that CI builds from the source (default ghcr.io/rithviknishad/care-pi/care-base).",
           "type": "string",
           "pattern": "^[a-z0-9]+([._-][a-z0-9]+)*(:[0-9]+)?(/[a-z0-9]+([._-][a-z0-9]+)*)+$"
         },
-        "ref": {
-          "description": "An image tag to track (for example latest) or a digest to pin (for example sha256:<64 hex characters>). The agent re-resolves a tag at each update check. The agent never re-resolves a digest.",
+        "repo": {
+          "description": "source git: the HTTPS URL of the CARE repository, for example https://github.com/ohcnetwork/care.",
           "type": "string",
-          "pattern": "^([A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|sha256:[a-f0-9]{64})$"
+          "pattern": "^https://\\S+$"
+        },
+        "ref": {
+          "description": "source image: an image tag to track (for example latest) or a digest to pin (for example sha256:<64 hex characters>). source git: a branch or a tag to track, or a full commit sha to pin. The agent re-resolves a tag or a branch at each update check. The agent never re-resolves a digest or a sha.",
+          "type": "string",
+          "pattern": "^([A-Za-z0-9_][A-Za-z0-9_./-]{0,254}|sha256:[a-f0-9]{64})$"
         }
       }
     },

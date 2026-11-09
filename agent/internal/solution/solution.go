@@ -33,10 +33,48 @@ type Solution struct {
 	Doc map[string]any `yaml:"-"`
 }
 
-// Care is the upstream backend image.
+// Care is the CARE backend: an upstream image (source image), or a git ref that CI builds (source git, S71).
 type Care struct {
 	Image string `yaml:"image"`
 	Ref   string `yaml:"ref"`
+	// Source is image (or empty) or git. Repo is the git repository of source git.
+	Source string `yaml:"source"`
+	Repo   string `yaml:"repo"`
+	// Resolved is the image tag of a source git after the resolution of Ref (the first 12 hex digits of the sha);
+	// the agent sets it, it is not in solution.yaml.
+	Resolved string `yaml:"-"`
+}
+
+// The CARE images.
+const (
+	// CareUpstream is the upstream image (source image).
+	CareUpstream = "ghcr.io/ohcnetwork/care"
+	// CareBase is the repository of the images that CI builds from the git source (source git, S71).
+	CareBase = "ghcr.io/rithviknishad/care-pi/care-base"
+	// CareBaseLocal is the repository of a local build from the git source (track custom, 4 GB or more).
+	CareBaseLocal = "localhost/care-pi/care-base"
+)
+
+// IsGit reports whether CI builds the CARE image from the git source.
+func (c Care) IsGit() bool { return c.Source == "git" }
+
+// ImageRepo returns the image repository: Image, or the default of the source.
+func (c Care) ImageRepo() string {
+	switch {
+	case c.Image != "":
+		return c.Image
+	case c.IsGit():
+		return CareBase
+	}
+	return CareUpstream
+}
+
+// GitTag returns the image tag of a commit of the git source: its first 12 hex digits.
+func GitTag(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }
 
 // CareFE is the frontend source.
@@ -78,7 +116,23 @@ type BackendPlug struct {
 	Package string         `yaml:"package"`
 	Ref     string         `yaml:"ref"`
 	Configs map[string]any `yaml:"configs"`
+	// Subdirectory is the directory of the package in the repository, when it is not the root (wave 13, S73: the
+	// in-repo plug plugs/care_pi_onboarding). Package stays the bare repository URL; pip needs the fragment after the
+	// ref (Version).
+	Subdirectory string `yaml:"subdirectory"`
 }
+
+// PipVersion returns the version of an ADDITIONAL_PLUGS entry: @<ref>, and #subdirectory=<dir> after it when the
+// package is not at the root of its repository. pip reads a fragment in package_name as a part of the path.
+func PipVersion(ref, subdirectory string) string {
+	if subdirectory == "" {
+		return "@" + ref
+	}
+	return "@" + ref + "#subdirectory=" + subdirectory
+}
+
+// Version returns the version of the ADDITIONAL_PLUGS entry of the plug at ref (a sha or a ref).
+func (b *BackendPlug) Version(ref string) string { return PipVersion(ref, b.Subdirectory) }
 
 // FrontendPlug is the module federation bundle of a plug.
 type FrontendPlug struct {
@@ -91,6 +145,23 @@ type FrontendPlug struct {
 	Entry string `yaml:"entry"`
 	// Build tells how CI and the local builder build the bundle (Phase 4).
 	Build *FrontendBuild `yaml:"build"`
+	// Path is the directory of the plug in Repo, when it is not the root (wave 13, S73). Repo "." is this repository
+	// (care-pi): RepoURL.
+	Path string `yaml:"path"`
+}
+
+// SelfRepo is the repository of care-pi: the frontend repo "." of an in-repo plug (S73).
+const SelfRepo = "https://github.com/rithviknishad/care-pi"
+
+// RepoURL returns the repository of the bundle: Repo, or SelfRepo for ".".
+func (f *FrontendPlug) RepoURL() string {
+	if f == nil {
+		return ""
+	}
+	if f.Repo == "." {
+		return SelfRepo
+	}
+	return f.Repo
 }
 
 // FrontendBuild is the npm script and the output directory of a plug bundle.
@@ -170,7 +241,24 @@ func Parse(data []byte, src string) (*Solution, error) {
 	if err := checkPlugIDs(&s); err != nil {
 		return nil, fmt.Errorf("%s is not valid: %w", src, err)
 	}
+	if err := checkCare(s.Care); err != nil {
+		return nil, fmt.Errorf("%s is not valid: %w", src, err)
+	}
 	return &s, nil
+}
+
+// checkCare checks the rules of care that the schema does not express (S71): source git needs repo; source image
+// needs image and an image tag (no slash) or a digest.
+func checkCare(c Care) error {
+	switch {
+	case c.IsGit() && c.Repo == "":
+		return errors.New("care.source git needs care.repo")
+	case !c.IsGit() && c.Image == "":
+		return errors.New("care needs image (or source git with repo)")
+	case !c.IsGit() && (strings.Contains(c.Ref, "/") || len(c.Ref) > 128):
+		return fmt.Errorf("care.ref %q is not an image tag or a digest", c.Ref)
+	}
+	return nil
 }
 
 // checkPlugIDs checks the rule that the schema cannot express: each plug id occurs one time.

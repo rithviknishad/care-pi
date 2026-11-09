@@ -135,6 +135,8 @@ jobs:
           LOCK: ${{ steps.v.outputs.lock }}
         run: image/scripts/fetch-dist.sh --solution "$SOLUTION" --lock-version "$LOCK" --out "${RUNNER_TEMP}/dist" --care-pi bin/care-pi_linux_arm64
 
+      # build.sh makes the database seed first (S72, image/scripts/make-seed.sh): docker runs the CARE image and the
+      # postgres image of the lock on this runner.
       - name: Build and check the image
         env:
           SOLUTION: ${{ steps.v.outputs.solution }}

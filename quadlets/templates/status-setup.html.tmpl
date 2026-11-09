@@ -9,6 +9,7 @@
 <p>Complete the setup in the console of the device:</p>
 <p><a id="console" href="https://{{.Canonical}}:{{.ConsolePort}}/">https://{{.Canonical}}:{{.ConsolePort}}/</a></p>
 <p id="state" aria-live="polite"></p>
+<p id="internet"></p>
 <p id="failed" class="problem" hidden>The last setup job failed. Open the console to see why and to try again.</p>
 <p id="firstboot" style="color:#b42318" hidden></p>
 {{template "status-job" .}}
@@ -43,6 +44,7 @@ Install the root certificate on each device that opens CARE. Then the warning do
     setup: "Open the console and continue the setup.", applying: "The device installs CARE now.", ready: "Setup is complete." };
   function show(s) {
     document.getElementById("state").textContent = t[s.setup_state] || "";
+    document.getElementById("internet").textContent = carePiInternet(s);
     if (s.firstboot_error) {
       var fb = document.getElementById("firstboot");
       fb.textContent = s.firstboot_error;

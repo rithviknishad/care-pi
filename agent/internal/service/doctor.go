@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rithviknishad/care-pi/agent/internal/clockgate"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/hostcheck"
 	"github.com/rithviknishad/care-pi/agent/internal/paths"
@@ -172,10 +173,37 @@ func (s *Service) Doctor(ctx context.Context) (*DoctorReport, error) {
 		add(DoctorCheck{ID: "mdns", Title: "mDNS name", Status: DoctorOK, Detail: st.Network.MDNSConfigured})
 	}
 
+	// The internet (S74): the live check of the agent.
+	if r := st.Network.InternetReachable; r != nil {
+		ist := InternetState{Reachable: r}
+		if p := st.Network.InternetProblem; p != nil {
+			ist.Problem = *p
+		}
+		switch {
+		case *r:
+			add(DoctorCheck{ID: "internet", Title: "Internet", Status: DoctorOK, Detail: ist.Detail()})
+		case ist.Problem == InternetNoDNS:
+			add(DoctorCheck{ID: "internet", Title: "Internet", Status: DoctorWarn, Detail: ist.Detail(),
+				Fix: fix("Check the DNS server that the router gives (DHCP) and /etc/resolv.conf")})
+		default:
+			add(DoctorCheck{ID: "internet", Title: "Internet", Status: DoctorWarn, Detail: ist.Detail(),
+				Fix: fix("Updates and backups to the cloud need the internet: check the router")})
+		}
+	}
+
 	// The clock (S52).
+	rtcCheck, rtcChecked := clockgate.LastRTCCheck(s.Paths)
 	switch {
+	case st.Clock.Synchronized && rtcChecked && !rtcCheck.OK:
+		// S75: NTP corrected the RTC by more than 5 minutes: the RTC battery is flat or missing.
+		add(DoctorCheck{ID: "clock", Title: "Clock", Status: DoctorWarn,
+			Detail: fmt.Sprintf("NTP synchronized; clock drift: the RTC was %.0f s off at boot (%s)", rtcCheck.DriftS, rtcCheck.CheckedAt.Format(time.RFC3339)),
+			Fix:    fix("Check the RTC battery, or set clock.policy to ntp: care-pi config set clock.policy=ntp")})
 	case st.Clock.Synchronized:
 		add(DoctorCheck{ID: "clock", Title: "Clock", Status: DoctorOK, Detail: "NTP synchronized"})
+	case st.Clock.Source == "rtc" && st.Clock.Policy == "rtc":
+		add(DoctorCheck{ID: "clock", Title: "Clock", Status: DoctorWarn, Detail: "the RTC set the clock (policy rtc); NTP did not confirm it yet",
+			Fix: fix("Connect the device to the internet, or give it an NTP server of the LAN")})
 	case st.Clock.Source == "browser":
 		add(DoctorCheck{ID: "clock", Title: "Clock", Status: DoctorWarn, Detail: "the browser set the clock at the claim; NTP did not synchronize it yet",
 			Fix: fix("Connect the device to the internet, or give it an NTP server of the LAN")})

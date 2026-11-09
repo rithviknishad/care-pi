@@ -1084,3 +1084,71 @@ End state of lumine: the dev build `v0.1.1-dev` (`7c51065`, with the helper), th
 9100 and 9256 on `tailscale0`; the rest as in §8r.
 
 Next: the tag `v0.1.1`, the install of lumine from the release; then the hardware tests (§8k, "Remaining").
+
+### 8t. Wave 13 agent (2026-11-09): internet check, RTC policy, Care 3.1 from git, pre-baked database
+
+Branch `w13-agent` (worktree `care-pi-w13a`, from `main` at `9ac7c9b`). The onboarding plugs (S73) are the other
+branch of the wave (`w13-onboarding`). Contract `docs/api/openapi.yaml` 0.9.1 (additive: each new member is optional);
+the console only regenerated `src/api/types.gen.ts`.
+
+| Item | Decision | Commit |
+|---|---|---|
+| A. The internet check | S74 | `614c2a9`, `0ff2aaf` (the CLI doctor) |
+| B. The RTC clock policy | S75, SP9 | `25338de` |
+| C. Care 3.1 refs from the git source | S71 | `5c02da8`, `9efb69f` (the rules of care in Go, not in the schema) |
+| D. The pre-baked database and no pull of a present image | S72 | `ad3d4cf` |
+| The record: `08` (SP9, care.local findings), this section | — | `c099588` |
+| In-repo plugs of `w13-onboarding` (S73): the lock pipeline; `backend.subdirectory`, `frontend.path`, `@<sha>#subdirectory=` | S73 | `35851cd` (CI), `9a662ac` (agent) |
+
+What changed for an operator:
+
+- **Internet (S74).** The agent checks at its start, after 15 s, 30 s, 60 s, then every 2 minutes until the first
+  success, then every 5 minutes; `github.com`, then `1.1.1.1`, so "the internet is reachable, but DNS does not work"
+  differs from "not reachable". The hardware probe, `care-pi host check`, and `care-pi doctor` check now. The hardware
+  step never keeps a stale failure. The status pages of Caddy show the live check (`docs/api/README.md` section 19.1).
+- **Clock (S75).** `care-pi clock detect` (in bootstrap: the installer and the first boot) sets `clock.policy: rtc` only
+  when the RTC kept the time through the boot and the Pi 5 reports a battery voltage; care.local has no battery
+  (`ntp`). With `rtc` the gate passes from the RTC, and NTP confirms it later (`docs/image.md` section 6.4).
+- **Care 3.1 (S71).** `solutions/care-clinic/solution.yaml`: `care: {source: git, repo: https://github.com/ohcnetwork/care,
+  ref: ENG-737-backup-backup}`, `care_fe.ref: 3.1/base`. CI (`care-base.yml`) builds `docker/prod.Dockerfile` of the
+  commit for arm64 and amd64 on native runners into `ghcr.io/rithviknishad/care-pi/care-base:<sha12>`; the solution
+  image is `FROM` it. A host builds CARE itself only on the track `custom` with 4 GB of RAM or more
+  (`docs/solutions.md` section 13.4).
+- **Image (S72).** The image has `/var/lib/care-pi/seed/pg-<sha12>.tar.zst` (7.5 MB for lock 2026.11.1); the first
+  start restores it and sets the password of the device, so `migrate` has nothing or only the difference to do
+  (`docs/image.md` section 6.5). The job logs say "image present, no pull".
+
+Decisions of wave 13 (owner informed; override in `00` if wrong):
+
+- **The care branch resolves with the smart-HTTP ref list (`info/refs`), not the GitHub API.** The brief asked for
+  `api.github.com/repos/…/commits/<ref>` with a 1-hour cache for the limit of 60 requests an hour. The agent resolves
+  `care_fe` and the plugs with the ref list already: no rate limit, no token, no cache. CI uses `gh api` (it has a token).
+- **Both architectures of `care-base`, each on its own runner**, then a manifest list. QEMU for the Python wheels of
+  CARE would take hours; arm64 only would break the amd64 solution image.
+- **The battery check uses `battery_voltage`** (a Pi 5 reports 0 without a battery) next to the RTC time at boot from
+  the kernel message: a warm reboot keeps the RTC time also without a battery, so the time alone gives a false `rtc`.
+- **The seed is made on the build host with docker**, not in the chroot and not with podman in the build container
+  (the cgroup limits of SP10). `pi-image.yml` and the Mac both have docker.
+- **The new contract members are optional** in the schema (the agent always sends them), so console fixtures of 0.9.0
+  stay valid without an edit.
+
+Not done, with the reason:
+
+- **The lock `2026.11.3` was not dispatched.** `workflow_dispatch --ref w13-agent` needs the branch on GitHub, and this
+  wave does not push. After the merge (or a push of the branch): `gh workflow run solution-lock.yml --ref <branch> -f
+  solution=care-clinic -f version=2026.11.3`, then `image/build.sh --dist <fetch-dist of 2026.11.3> --lock-version
+  2026.11.3 --reuse-base`. The git-source image was built and checked on the Mac instead: `docker/prod.Dockerfile` of
+  `28211e29a359` (4 min 17 s, 772 MB), the solution image `FROM` it (52 s), and `migrate` + `sync_*` of an empty
+  database (847 migrations) pass.
+- **lumine** was offline the whole wave: its RTC (`clock detect --dry-run`) is still to read.
+- The hardware page of the wizard on care.local: the setup is `ready`, so the page is closed; the API, the CLI, and the
+  public status show the live check.
+
+For the merge with `w13-onboarding`: add `path: ${{ matrix.plug.path }}` to the call of `plug-bundle.yml` in
+`solution-lock.yml` (this branch has no such input of `plug-bundle.yml`, so actionlint refuses the line here), and
+apply `local/wave13/patches/onboarding/agent-tests-care_pi_onboarding.patch` of that branch. Checked in a merged
+work tree: the merge has no conflict, `go test ./...` passes, actionlint passes, `care-pi solution validate` passes;
+Redocly gives one warning for the `if`/`then` of `frontendPlug` in `solution.schema.json` (as for `care` here, `9efb69f`).
+
+End state of care.local: the dev build `v0.3.0-dev` at `9a662ac`, the earlier binary at
+`/usr/local/bin/care-pi.v0.2.0.bak`, `clock.policy: ntp`, setup `ready`, Care running (not restarted).

@@ -71,18 +71,27 @@
       "$ref": "solution.schema.json"
     },
     "care": {
-      "description": "The upstream CARE image. The solution image is built FROM image@digest.",
+      "description": "The CARE image. The solution image is built FROM image@digest. With source git (S71), CI built image@digest from docker/prod.Dockerfile of repo at git_sha.",
       "type": "object",
       "additionalProperties": false,
       "required": ["image", "ref", "digest", "git_sha"],
       "properties": {
+        "source": {
+          "description": "solution.care.source: git. Absent for an upstream image.",
+          "enum": ["image", "git"]
+        },
+        "repo": {
+          "description": "source git: the git repository of CARE.",
+          "type": "string",
+          "minLength": 1
+        },
         "image": {
           "description": "The image name without a tag, for example ghcr.io/ohcnetwork/care.",
           "type": "string",
           "minLength": 1
         },
         "ref": {
-          "description": "The tag or digest that solution.care.ref asked for.",
+          "description": "The tag or digest that solution.care.ref asked for; with source git, the branch, the tag, or the sha.",
           "type": "string",
           "minLength": 1
         },
@@ -91,7 +100,7 @@
           "$ref": "#/$defs/digest"
         },
         "git_sha": {
-          "description": "The label org.opencontainers.image.revision of the image. null when the image has no such label.",
+          "description": "The label org.opencontainers.image.revision of the image, or (source git) the commit that CI built. null when the image has no such label.",
           "oneOf": [{ "$ref": "#/$defs/gitSha" }, { "type": "null" }]
         }
       }
@@ -199,6 +208,12 @@
     }
   },
   "$defs": {
+    "repoPath": {
+      "description": "A relative directory in a repository: segments of letters, digits, dot, hyphen, and underscore; a segment does not start with a dot. No leading or trailing slash.",
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*$"
+    },
     "lockVersion": {
       "type": "string",
       "pattern": "^[0-9]{4}\\.(0[1-9]|1[0-2])\\.[0-9]+$"
@@ -267,6 +282,10 @@
               "description": "The resolved commit.",
               "$ref": "#/$defs/gitSha"
             },
+            "subdirectory": {
+              "description": "Wave 13: backend.subdirectory of solution.yaml, the directory of the package in its repository. The version of additional_plug ends with #subdirectory=<subdirectory>.",
+              "$ref": "#/$defs/repoPath"
+            },
             "additional_plug": {
               "description": "The ADDITIONAL_PLUGS entry with the default configs (upstream plugs/plug.py). The device merges the operator settings into configs.",
               "type": "object",
@@ -284,9 +303,9 @@
                   "pattern": "^git\\+https://[^\\s@]+$"
                 },
                 "version": {
-                  "description": "@<sha>.",
+                  "description": "@<sha>; with backend.subdirectory, @<sha>#subdirectory=<subdirectory> (pip reads the fragment after the ref, wave 13).",
                   "type": "string",
-                  "pattern": "^@[0-9a-f]{40}$"
+                  "pattern": "^@[0-9a-f]{40}(#subdirectory=[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*)?$"
                 },
                 "configs": {
                   "description": "The default configs of the plug.",
@@ -318,7 +337,8 @@
         "url": { "description": "The bundle (tar.gz), relative to dist_base.", "$ref": "#/$defs/artefactUrl" },
         "sha256": { "description": "The SHA-256 of the bundle file.", "$ref": "#/$defs/sha256" },
         "entry": { "description": "The path of remoteEntry.js in the bundle.", "type": "string", "pattern": "^[A-Za-z0-9_][A-Za-z0-9._/-]*\\.js$" },
-        "size_bytes": { "description": "The size of the bundle file.", "type": "integer", "minimum": 1 }
+        "size_bytes": { "description": "The size of the bundle file.", "type": "integer", "minimum": 1 },
+        "path": { "description": "Wave 13: frontend.path of solution.yaml, the directory of the plug in its repository.", "$ref": "#/$defs/repoPath" }
       }
     },
     "frontendExternal": {

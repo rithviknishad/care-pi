@@ -245,12 +245,12 @@ The full example is in `solutions/schema/lock.schema.json` (`examples`).
 | `min_agent_version` | An older agent refuses the lock (`agent-too-old`). |
 | `source` | The care-pi commit, the SHA-256 of `solution.yaml` at that commit, and the CI run. |
 | `solution` | `solution.yaml` at `source.commit`, as data. The agent reads the plugs, labels, settings forms, env, and defaults of a lock from here. A lock that is newer than the agent thus shows the correct forms. |
-| `care` | The upstream image, the ref, the digest, and the git sha (label `org.opencontainers.image.revision`, `null` when absent). |
+| `care` | The upstream image, the ref, the digest, and the git sha (label `org.opencontainers.image.revision`, `null` when absent). With `care.source: git` (S71, section 13.4): `source: git`, `repo`, the ref (a branch), `git_sha` (the commit that CI built), `image` (`ghcr.io/rithviknishad/care-pi/care-base`), and `digest` (the manifest list `care-base:<sha12>`). |
 | `solution_image` | The image that api, worker, and beat run. `installed_plugs`: each plug with a backend part (section 1.5). |
 | `care_fe` | The repo, the ref, and the resolved sha. |
 | `fe` | The default FE bundle: build id, URL, SHA-256, size, and the names of the env keys. |
-| `plugs.<id>.backend` | The ref, the sha, and the `ADDITIONAL_PLUGS` entry with the default `configs` (`version: "@<sha>"`). |
-| `plugs.<id>.frontend` | `source: built`: the bundle URL, SHA-256, entry, and size. `source: external`: the absolute URL of `remoteEntry.js`; `sha`, `sha256`, `entry`, and `size_bytes` are `null`. |
+| `plugs.<id>.backend` | The ref, the sha, and the `ADDITIONAL_PLUGS` entry with the default `configs` (`version: "@<sha>"`). A package in a directory of its repository (`backend.subdirectory`, wave 13, S73) adds `subdirectory`, and the version is `@<sha>#subdirectory=<dir>`: pip reads the fragment only after the ref (in `package_name` it becomes a part of the path). |
+| `plugs.<id>.frontend` | `source: built`: the bundle URL, SHA-256, entry, and size, and `path` (wave 13) for a plug in a directory of its repository. `source: external`: the absolute URL of `remoteEntry.js`; `sha`, `sha256`, `entry`, and `size_bytes` are `null`. |
 | `images` | `postgres`, `caddy`, `redis`, `s3`, `node`: the ref and the digest. |
 
 Each plug of `solution.plugs` has an entry in `plugs`, on or off. The settings form of a plug is
@@ -334,11 +334,12 @@ The schema is `solutions/schema/index.schema.json`. Its `examples` has the full 
 
 | Workflow | Triggers | What it does |
 |---|---|---|
-| `solution-lock.yml` (new) | `workflow_dispatch` (inputs `solution`, `version` (empty: the next version of the month), `notes`) | Jobs `resolve` (care tag → digest and git sha with `skopeo inspect` and the label `org.opencontainers.image.revision`; care_fe and plug refs → shas with `gh api`; base image tags → digests), `image` (the solution image), `fe` (calls `fe-bundle.yml`), `plugs` (calls `plug-bundle.yml`, a matrix over the FE plugs with `repo`), `lock` (`care-pi solution lock --input`, validate, workflow artifact, **published** release `lock-<solution>-<version>`, job summary with the lock file), `index` (calls `solution-index.yml`). |
+| `solution-lock.yml` (new) | `workflow_dispatch` (inputs `solution`, `version` (empty: the next version of the month), `notes`) | Jobs `resolve` (care tag → digest and git sha with `skopeo inspect` and the label `org.opencontainers.image.revision`; with `care.source: git`, the care ref → sha with `gh api`; care_fe and plug refs → shas with `gh api`; an in-repo plug of care-pi (S73: `frontend.repo: "."`, or `backend.package` of this repository with a `subdirectory`) → the last commit of the run that changed its directory (`git log -1`; the checkout has the history); base image tags → digests), `care-base` (only `care.source: git`: calls `care-base.yml`, section 13.4), `image` (the solution image, `FROM` the care image or `care-base`), `fe` (calls `fe-bundle.yml`), `plugs` (calls `plug-bundle.yml`, a matrix over the FE plugs with `repo`), `lock` (`care-pi solution lock --input`, validate, workflow artifact, **published** release `lock-<solution>-<version>`, job summary with the lock file), `index` (calls `solution-index.yml`). |
 | `solution-image.yml` (changed) | `workflow_dispatch`; push to `main` | `install-plugs.json` in the build context has each backend plug of the solution (the superset rule). Push builds keep `<solution>-latest` and `0.0.0-dev`. `solution-lock.yml` builds the versioned image itself with the same Containerfile. |
 | `plug-bundle.yml` (new) | `workflow_call` (inputs `slug`, `repo`, `sha`, `entry`, `script`, `out`); `workflow_dispatch` | Skip when the release `plug-<slug>-<sha12>` exists (the name is the identity). Else check out the plug at the sha, Node 22, `npm ci`, `npm run <script> -- --base /plugs/<slug>/<sha12>/`, check that `<out>/<entry>` exists, add `care-pi-plug.json`, pack, write the `.sha256`, create the release. Output: URL, SHA-256, size. |
 | `fe-bundle.yml` (changed) | `workflow_call` (new; inputs `solution`, `care_fe_sha`); `workflow_dispatch`; push to `main` | Unchanged recipe and names. `care-pi fe env` applies the superset rule of section 1.5. Output: build id, URL, SHA-256, size, env keys. |
 | `solution-index.yml` (new) | `workflow_call`; `workflow_dispatch`; push to `main` that changes `solutions/*/locks/withdrawn.yaml` | Download the lock of each release `lock-*`, read `solutions/*/locks/withdrawn.yaml`, write `index.json` with `care-pi solution index`, validate it, write its `.sha256`, and upload both to the release `index` (`gh release upload --clobber`; create the release on the first run). |
+| `care-base.yml` (S71) | `workflow_call` (inputs `repo`, `sha`, `image`); `workflow_dispatch` | Section 13.4: skip when `<image>:<sha12>` exists; else check out the CARE repository at the sha and build `docker/prod.Dockerfile` for `linux/arm64` on `ubuntu-24.04-arm` and `linux/amd64` on `ubuntu-latest` (natively, no QEMU), push each by digest, and make the manifest list `<image>:<sha12>`. Output: its digest. `solution-image.yml` calls it too. |
 | `images.yml` | unchanged | Base images. |
 
 The release `index` and the releases `lock-*`, `fe-*`, and `plug-*` use `--latest=false`, so the "latest release"
@@ -537,6 +538,7 @@ What the agent builds itself (section 13):
 
 | Component | CI artefact | Else |
 |---|---|---|
+| care with `care.source: git` and a ref (or `care_ref`) of a commit that CI did not build (section 13.4) | `care-base:<sha12>` | a local build of `docker/prod.Dockerfile` on a host with 4 GB of RAM or more; else `unsupported-config` |
 | care image with a plug set that the solution image does not have (another care digest, a plug not in `installed_plugs`, or another sha) | none | local `.build` |
 | FE plug with an operator ref | `plug-<slug>-<sha12>` when CI built that sha (`HEAD` request) | local plug build |
 | care_fe with an operator ref | `fe-<solution>-<sha12>-<build id>` when it exists | the `fe.provider` (`local`, or `fe.artifact_url`) |
@@ -731,6 +733,9 @@ A boot during a cutover starts `care.target` with the tree on disk. The checkpoi
 tree on disk has a checkpoint.
 
 ### 8.7 Image retention
+
+Each pull is by the digest of the lock, and an image that is in the storage is not pulled again: the job log says
+`image present, no pull: <repo>@<digest>` (S72; the pre-pulled images of the Raspberry Pi image, `docs/image.md`).
 
 The images of the previous lock stay until the next successful update (`03` §4). `prune-images` removes each image
 that the agent pulled or built (`state/images.json`) and that neither the current lock nor `history.previous` uses.
@@ -931,7 +936,10 @@ and have tests. The build was not run on a Pi.
 
 - Unit: `care-plug-build.container`, the shape of `care-fe-build.container` (`docs/fe.md`): `images.node`, `MemoryHigh=768M`,
   `MemoryMax=1700M`, `MemorySwapMax=1500M`, `OOMScoreAdjust=900`, and the scale-down rule.
-- Script `plug-build.sh`: fetch `https://codeload.github.com/<repo>/tar.gz/<sha>` into `/var/lib/care-pi/build/plugs/<slug>/src`;
+- An in-repo plug (wave 13, S73): `frontend.repo: "."` is the repository of care-pi, and `frontend.path` is its directory;
+  the on-device lock and `GET /plugs` give the repository URL, and the build sets `PLUG_PATH`.
+- Script `plug-build.sh`: fetch `https://codeload.github.com/<repo>/tar.gz/<sha>` into `/var/lib/care-pi/build/plugs/<slug>/src`
+  (the checkout root), `cd` to `PLUG_PATH` when it is set;
   `npm ci --no-audit --no-fund --prefer-offline` (cache `/var/lib/care-pi/build/plugs/npm-cache`); `npm run <build.script> -- --base /plugs/<slug>/<sha12>/`;
   copy `<build.out>` to `/var/lib/care-pi/plugs/<slug>/<sha12>.tmp`, write `care-pi-plug.json`, rename to `<sha12>`.
 - The same recipe runs in `plug-bundle.yml`, as `fe-build.sh` runs in `fe-bundle.yml`.
@@ -943,6 +951,42 @@ and have tests. The build was not run on a Pi.
 The providers of `docs/fe.md` stay. One Phase 4 rule: when the FE build id of the device equals `fe.build_id` of
 the solution lock, the agent downloads `fe.url` of the lock, with any provider except `none`. Thus a device with
 the default env never builds care_fe for an update.
+
+### 13.4 CARE from its git source (`care.source: git`, S71)
+
+Upstream publishes no image of a development branch. The Clinic solution tracks the Care 3.1 line: `care` branch
+`ENG-737-backup-backup` and `care_fe` branch `3.1/base`:
+
+```yaml
+care:
+  source: git
+  repo: https://github.com/ohcnetwork/care
+  ref: ENG-737-backup-backup        # a branch or a tag (tracked), or a 40-digit sha (pinned)
+  # image: ghcr.io/rithviknishad/care-pi/care-base   (the default of source git)
+```
+
+- **CI** (`care-base.yml`): `docker/prod.Dockerfile` of the repository at the resolved sha, built natively for
+  `linux/arm64` (`ubuntu-24.04-arm`) and `linux/amd64` (`ubuntu-latest`), then one manifest list
+  `ghcr.io/rithviknishad/care-pi/care-base:<sha12>` with the labels `org.opencontainers.image.revision=<sha>` and
+  `org.opencontainers.image.url=https://github.com/<repo>`. A sha that has its image builds nothing. The solution image
+  is `FROM care-base@<digest>`, as before `FROM ghcr.io/ohcnetwork/care@<digest>`. Decision: both architectures, each
+  on its own runner (QEMU for the Python wheels of CARE takes hours); the manifest list keeps one reference for both.
+- **The lock** records `care.source: git`, `care.repo`, `care.ref` (the branch), `care.git_sha` (the commit), and
+  `care.image` and `care.digest` of `care-base` (`make-lock.sh --care-git-sha SHA --care-base-image REPO`).
+- **The agent**: on the tracks `stable` and `pinned` the solution lock pins everything (no network). Without a lock,
+  and on the track `custom`, the agent resolves the ref (or `solution.custom.care_ref`) to its commit with the
+  smart-HTTP ref list of the repository (`info/refs`, the resolver of `care_fe` and the plugs: no API rate limit, so no
+  cache is necessary), then runs `care-base:<sha12>` at its digest. The component `care` of the on-device lock has the
+  branch and the commit.
+- **No image of the commit** in the registry (CI did not run for it): a host with 4 GB of RAM or more builds it: the
+  agent downloads `<repo>/archive/<sha>.tar.gz` to `/var/lib/care-pi/build/care-src/<sha12>/` and starts
+  `care-build-<solution>-base-build.service` (`docker/prod.Dockerfile`, `ImageTag=localhost/care-pi/care-base:<sha12>`,
+  `MemoryHigh=2560M`, `MemoryMax=3G`, the scale-down rule). A host with less RAM stops with `unsupported-config`:
+  "CARE `<sha12>` has no image: CI builds it. A local build of CARE needs 4 GB of RAM or more". A Pi with 2 GB cannot
+  build CARE (the pip install of the dependencies); run the workflow `care-base.yml` (or `solution-lock.yml`) instead.
+
+Measured on the Mac (Docker Desktop, native arm64, 14 CPUs): `docker/prod.Dockerfile` of `28211e29a359` builds in
+4 min 17 s (cold cache); the image is 772 MB.
 
 ## 14. Files on the device
 

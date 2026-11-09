@@ -41,6 +41,8 @@ type Prepared struct {
 	SolutionLock *solution.Lock
 	// CareBuild is the local image build of care (track custom), or nil.
 	CareBuild *render.CareBuild
+	// CareSource is the local build of CARE from its git source (S71), or nil.
+	CareSource *render.CareSource
 	// DistBase resolves the artefact references of SolutionLock.
 	DistBase string
 	// ACMEDNS is the value of the podman secret care-pi-acme-dns (secrets/acme_dns.json), or "" (Phase 6).
@@ -139,6 +141,19 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 	if o.Warn != nil {
 		r.Warn = func(m string) { _, _ = fmt.Fprintln(o.Warn, "care-pi: warning:", m) }
 	}
+	var gc *gitCare
+	if !bootstrap && o.PinnedLock == nil {
+		if sol, gc, err = resolveGitCare(ctx, o, cfg, sol, sl, prev, r, o.Update); err != nil {
+			if o.Resolved != nil {
+				o.Resolved(err)
+			}
+			return nil, err
+		}
+	}
+	var careSource *render.CareSource
+	if gc != nil {
+		careSource = gc.Source
+	}
 	var cb *render.CareBuild
 	if !bootstrap && o.PinnedLock == nil {
 		if cb, err = careBuild(ctx, cfg, sol, sl, prev, r, o.Update); err != nil {
@@ -213,7 +228,7 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 		}
 	}
 	m, err := render.NewModel(render.Input{Config: cfg, Solution: sol, Lock: lk, IPs: ips, Bootstrap: bootstrap,
-		SolutionLock: sl, PlugSecrets: plugSecrets, CareBuild: cb,
+		SolutionLock: sl, PlugSecrets: plugSecrets, CareBuild: cb, CareSource: careSource,
 		CARoot: conn.caRoot, PublicIssued: conn.publicIssued, ACMEDNS: conn.acmeDNS != "", TailscaleIP: conn.tailscaleIP,
 		TelemetryPassword: telemetryPassword != "", FirewallDropConfirmed: firewall.Read(o.Paths).DropConfirmed()})
 	if err != nil {
@@ -222,6 +237,10 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 	distBase := solution.DistBase(o.Paths)
 	if o.PinnedLock == nil {
 		fillComponents(lk, cfg, des, sl, cb, m, distBase)
+		if c := lk.Components.Care; gc != nil && c != nil && (cb != nil || sl == nil) {
+			// A git source (S71): the component names the ref and the commit, not the tag of the image.
+			c.Ref, c.GitSHA, c.Tracked = gc.Ref, gc.SHA, !host.IsFullSHA(gc.Ref)
+		}
 		lk.FE = lock.FE{Provider: cfg.FE.Provider, BuildID: m.FEBuildID}
 		// Keep the record of the build (url, sha256, built_at) while the build id is the same.
 		if prev != nil && prev.FE.Provider == lk.FE.Provider && prev.FE.BuildID == lk.FE.BuildID {
@@ -233,7 +252,7 @@ func Prepare(ctx context.Context, o PrepareOptions) (*Prepared, error) {
 		return nil, err
 	}
 	return &Prepared{Config: cfg, Solution: sol, Desire: des, PrevLock: prev, Lock: lk, IPs: ips, Model: m, Tree: tree,
-		Phase: o.Phase, SolutionLock: sl, CareBuild: cb, DistBase: distBase,
+		Phase: o.Phase, SolutionLock: sl, CareBuild: cb, CareSource: careSource, DistBase: distBase,
 		ACMEDNS: conn.acmeDNS, EnsureCA: conn.caRoot && !conn.caExists, HostAddrs: netinfo.HostIPv4(o.IPs),
 		TelemetryPassword: telemetryPassword}, nil
 }
@@ -252,9 +271,6 @@ func checkImplemented(p paths.Paths, cfg *config.Config, _ *solution.Solution, _
 		if _, err := os.Stat(p.Abs(paths.ACMEDNSFile)); err != nil {
 			errs = append(errs, fmt.Errorf("tls.public.enabled is true, but this device has no registration with the DNS service (%s); run: care-pi tls public enable", paths.ACMEDNSFile))
 		}
-	}
-	if cfg.Clock.Policy == "rtc" {
-		errs = append(errs, fmt.Errorf("clock.policy rtc is %w (SP9); use ntp", config.ErrNotImplemented))
 	}
 	return errors.Join(errs...)
 }

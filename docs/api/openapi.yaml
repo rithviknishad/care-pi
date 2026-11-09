@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: care-pi agent API
-  version: 0.9.0
+  version: 0.9.1
   summary: The HTTP API between the care-pi agent and the console.
   description: |
     This document is the contract between the care-pi agent (`care-pi serve`) and the console.
@@ -5128,7 +5128,23 @@ components:
             Contract 0.7.1. Why the first boot of the Raspberry Pi image did not use the pre-seed
             (`/etc/care-pi/preseed.yaml`: not valid, or a feature that this version does not have), and what to do. The
             first boot then starts setup mode (`docs/image.md` section 5). `null` without such an error, and after the setup.
-          examples: ['The first boot did not use the pre-seed: the pre-seed asks for something that this version cannot do: clock.policy rtc is not implemented in this version (SP9); use ntp. The device starts setup mode: claim it in the console. Or correct the user-data and flash the card again.']
+          examples: ['The first boot did not use the pre-seed: the pre-seed asks for something that this version cannot do: tls.local_ca.enabled: false is not implemented in this version; the local CA mode serves the LAN addresses and the offline fallback (S36). The device starts setup mode: claim it in the console. Or correct the user-data and flash the card again.']
+        internet:
+          type: object
+          additionalProperties: false
+          description: |
+            Contract 0.9.1 (S74). The live internet check (`Hardware.internet_reachable`). The setup page, the maintenance
+            page, and the clock page of Caddy show it, and "Copy status" copies it.
+          required: [reachable, problem]
+          properties:
+            reachable:
+              type: [boolean, 'null']
+              description: The last check worked. `null` before the first check.
+            problem:
+              description: Why the check failed. `null` when `reachable` is not `false`.
+              oneOf:
+                - $ref: '#/components/schemas/InternetProblem'
+                - type: 'null'
       examples:
         - site: setup
           setup_state: unclaimed
@@ -5147,6 +5163,7 @@ components:
           time: '2026-10-30T10:15:00Z'
           maintenance: {active: false, kind: null, job_id: null, step: null, started_at: null}
           firstboot_error: null
+          internet: {reachable: false, problem: dns}
         - site: maintenance
           setup_state: ready
           claim_methods: []
@@ -5166,6 +5183,7 @@ components:
           time: '2026-11-22T02:06:10Z'
           maintenance: {active: true, kind: update-apply, job_id: 20261122T020300.000Z-update-apply, step: migrate, started_at: '2026-11-22T02:04:55Z'}
           firstboot_error: null
+          internet: {reachable: true, problem: null}
     PublicJobProgress:
       type: object
       additionalProperties: false
@@ -5463,6 +5481,7 @@ components:
               speed_mbps: 1000
               address: 192.168.1.10
             internet_reachable: true
+            internet_problem: null
             clock_synchronized: true
             disk_probe: null
     HostCheckItem:
@@ -5569,7 +5588,19 @@ components:
               examples: [192.168.1.10]
         internet_reachable:
           type: [boolean, 'null']
-          description: A HTTPS request to the internet worked. Setup does not need it. `null` when not checked.
+          description: |
+            A HTTPS request to the internet worked. Setup does not need it. `null` when not checked.
+            Contract 0.9.1 (S74): the agent checks at the start, after 15 s, 30 s, 60 s, then every 2 minutes until the
+            first success, then every 5 minutes. `probe=true` checks again (at most 5 s), and a request without `probe`
+            checks again when the last check failed more than 15 s ago. `false` when the name `github.com` does not
+            resolve, also when the address `1.1.1.1` answers (`internet_problem` is `dns`).
+        internet_problem:
+          description: |
+            Contract 0.9.1 (S74). Why the internet check failed. `null` when `internet_reachable` is not `false`. The agent
+            always sends it; it is optional in the schema so that a client of contract 0.9.0 stays valid.
+          oneOf:
+            - $ref: '#/components/schemas/InternetProblem'
+            - type: 'null'
         clock_synchronized:
           type: boolean
           description: systemd-timesyncd reports a synchronized clock.
@@ -5595,6 +5626,7 @@ components:
             speed_mbps: 1000
             address: 192.168.1.10
           internet_reachable: true
+          internet_problem: null
           clock_synchronized: true
           disk_probe:
             write_mb_s: 312.4
@@ -6933,6 +6965,7 @@ components:
             mdns_configured: care.local
             mdns_advertised: care.local
             internet_reachable: true
+            internet_problem: null
           tls:
             local_ca: {enabled: true, fingerprint_sha256: 3f1d6c0e5a2b9e4d7c8f1a0b2c3d4e5f60718293a4b5c6d7e8f9011223344556, not_after: '2036-10-27T10:00:00Z'}
             public: {enabled: false, hostname: null}
@@ -7307,9 +7340,18 @@ components:
       description: |
         Contract 0.7.1 (S52). Where the clock of the host comes from now:
         `ntp` NTP synchronized it; `browser` the agent set it from the time of the browser at the claim (no NTP since);
-        `rtc` the host has an RTC (`/dev/rtc0`) and no NTP (the battery is not verified, SP9); `none` none of them (the
-        clock gate waits).
+        `rtc` the host has an RTC (`/dev/rtc0`) and no NTP. Contract 0.9.1 (S75, SP9): with `clock.policy: rtc` the gate
+        passes when the RTC time is after the build time of the agent; the clock is `trusted` only after NTP confirms the
+        RTC within 5 minutes. `none` none of them (the clock gate waits).
       examples: [browser]
+    InternetProblem:
+      type: string
+      enum: [dns, route]
+      description: |
+        Contract 0.9.1 (S74). Why the internet check failed. The check sends a HTTPS request to `github.com` (a name), then
+        to `1.1.1.1` (an address, no DNS). `dns`: the address answers, but the name does not resolve ("the internet is
+        reachable, but DNS does not work"). `route`: no target answers ("the internet is not reachable").
+      examples: [dns]
     NetworkSummary:
       type: object
       additionalProperties: false
@@ -7326,11 +7368,17 @@ components:
           examples: [care-2.local]
         internet_reachable:
           type: [boolean, 'null']
-          description: The last internet check (every 5 minutes). `null` before the first check.
+          description: The last internet check (`Hardware.internet_reachable`). `null` before the first check.
+        internet_problem:
+          description: Contract 0.9.1 (S74). Why the last internet check failed. `null` when `internet_reachable` is not `false`.
+          oneOf:
+            - $ref: '#/components/schemas/InternetProblem'
+            - type: 'null'
       examples:
         - mdns_configured: care.local
           mdns_advertised: care-2.local
           internet_reachable: true
+          internet_problem: null
     TlsSummary:
       type: object
       additionalProperties: false
@@ -8784,7 +8832,7 @@ components:
         internet:
           type: object
           additionalProperties: false
-          description: The last internet check (every 5 minutes).
+          description: The last internet check (`Hardware.internet_reachable`).
           required: [reachable, checked_at]
           properties:
             reachable:
@@ -8794,6 +8842,11 @@ components:
               type: [string, 'null']
               format: date-time
               description: The time of the check.
+            problem:
+              description: Contract 0.9.1 (S74). Why the check failed. `null` when `reachable` is not `false`.
+              oneOf:
+                - $ref: '#/components/schemas/InternetProblem'
+                - type: 'null'
         dhcp_hint:
           description: The address to reserve in the DHCP server of the router. `null` when the address is static.
           oneOf:
@@ -8843,7 +8896,7 @@ components:
           gateway: 192.168.1.1
           default_interface: eth0
           dns_servers: [192.168.1.1]
-          internet: {reachable: true, checked_at: '2026-10-30T10:55:00Z'}
+          internet: {reachable: true, checked_at: '2026-10-30T10:55:00Z', problem: null}
           dhcp_hint: {interface: eth0, mac: 'd8:3a:dd:00:11:22', address: 192.168.1.10}
           dhcp_hints: [{interface: eth0, mac: 'd8:3a:dd:00:11:22', address: 192.168.1.10}]
           tailscale_address: null

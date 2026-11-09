@@ -179,7 +179,7 @@ Tailscale name. Caddy never sends HSTS for the local CA names. Read `docs/connec
 
 | Key | Type | Default | Phase | Description |
 |---|---|---|---|---|
-| `clock.policy` | `ntp`, `rtc` | `ntp` | Phase 1 (`ntp`); validate (`rtc`) | The boot gate. `ntp` waits until systemd-timesyncd reports a synchronized clock, or (without internet) passes 20 s after the clock that the browser set at the claim (S52, `docs/api/README.md` section 16). `rtc` needs spike SP9: `apply` stops with exit code 2 and `care-pi clock wait` stops with an error. |
+| `clock.policy` | `ntp`, `rtc` | `ntp` | Phase 1 (`ntp`); wave 13 (`rtc`, S75) | The boot gate. `ntp` waits until systemd-timesyncd reports a synchronized clock, or (without internet) passes 20 s after the clock that the browser set at the claim (S52, `docs/api/README.md` section 16). `rtc` (S75): the gate passes at once when the RTC time is after the build time of the agent; NTP confirms it later (the clock is trusted then; more than 5 minutes of difference gives the doctor warning "clock drift"); an RTC time before the build time waits as `ntp`. `care-pi clock detect` (bootstrap runs it) sets `rtc` when the RTC kept the time through the boot (`docs/image.md`, section 6.4). |
 
 ## `backups`
 

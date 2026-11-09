@@ -128,6 +128,8 @@ type PlugBackend struct {
 	SHA       string `yaml:"sha"`
 	Tracked   bool   `yaml:"tracked"`
 	Installed bool   `yaml:"installed"`
+	// Subdirectory is the directory of the package in Repo (wave 13): the pip version is @<sha>#subdirectory=<dir>.
+	Subdirectory string `yaml:"subdirectory,omitempty"`
 }
 
 // PlugFrontend is the frontend part of a plug.
@@ -142,6 +144,8 @@ type PlugFrontend struct {
 	SHA256  string `yaml:"sha256,omitempty"`
 	Entry   string `yaml:"entry,omitempty"`
 	MetaURL string `yaml:"meta_url"`
+	// Path is the directory of the plug in Repo (wave 13).
+	Path string `yaml:"path,omitempty"`
 }
 
 // History points at the previous lock.

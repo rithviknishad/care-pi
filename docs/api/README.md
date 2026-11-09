@@ -1772,7 +1772,8 @@ without internet has no NTP, and a Pi 4 has no RTC, so the install at the end of
 | Trusted | `clock.source` (`ClockSource`: `ntp`, `browser`, `rtc`, `none`) and `clock.trusted` in `GET /status` (`ClockStatus`) and `GET /_care-pi/status`. `trusted` is `true` only with `source: ntp`. At each read of the status (and in `clock wait`), a synchronized clock deletes the record. |
 | The console | The banner "Clock not trusted" in the slot of the maintenance banner of the top bar (the slot is always there, so the banner moves nothing). It shows with a session while `clock.trusted` is `false`, and it goes at the next status read after NTP. The operator cannot close it. |
 
-The RTC policy (`clock.policy: rtc`, SP9) comes later. An NTP server on the LAN also works: then the gate passes on NTP.
+The RTC policy (`clock.policy: rtc`, S75) is in section 19.2. An NTP server on the LAN also works: then the gate passes
+on NTP.
 
 ### 16.1 Changes of contract 0.7.1
 
@@ -1890,3 +1891,59 @@ All changes are additive.
 - `GET /jobs/{job_id}/export`, `GET /logs/{unit}/export`, and `GET /doctor/export` (`text/plain`).
 - The status pages of Caddy (`docs/apply.md`, "Status pages and modes") follow the job of the public status, show the
   steps, the progress, and the next step, link to `https://<host>:8443/jobs/<id>`, and have "Copy status".
+
+## 19. The internet check and the RTC clock (S74, S75)
+
+### 19.1 The internet check (S74)
+
+The agent checks the internet with a HTTPS `HEAD` request to `https://github.com/` (a name), then to
+`https://1.1.1.1/` (an address: no DNS). Each check uses a new HTTP client, so no connection and no state of an earlier
+check stay. A response of any status counts, and so does a certificate that a wrong clock cannot check yet (the server
+answered). The result:
+
+| `github.com` | `1.1.1.1` | `reachable` | `problem` | Detail |
+|---|---|---|---|---|
+| answers | not asked | `true` | `null` | the internet is reachable |
+| no DNS | answers | `false` | `dns` | the internet is reachable, but DNS does not work |
+| other error | answers | `true` | `null` | the internet is reachable |
+| fails | fails | `false` | `route` | the internet is not reachable |
+
+When it checks:
+
+- `care-pi serve` checks at its start, then after 15 s, 30 s, 60 s, and then every 2 minutes until the first success,
+  then every 5 minutes. On care.local (a fresh image) the agent started 10 s after boot and `/etc/resolv.conf` came at
+  16 s: the first check failed, and before S74 the next one came 5 minutes later.
+- `GET /host/check?probe=true` and `care-pi host check --probe` check again now (at most 5 s), at the same time as the
+  disk probe. `GET /host/check` without `probe` checks again when the last check failed more than 15 s ago: the
+  hardware step of the console reads it when it opens. `care-pi host check` (without `--probe` too) checks one time:
+  the CLI has no background check.
+- The hardware step (`PUT /setup/steps/hardware`) records the result and its time in the setup record, but
+  `GET /setup` gives the warning `no-internet` from the live check, and `POST /setup/finish` keeps in the record only
+  the warnings that are still true. A failed check at the step does not stay in the wizard.
+
+`PublicStatus.internet`, `Status.network.internet_problem`, `Network.internet.problem`, and
+`Hardware.internet_problem` give the cause. The setup page, the maintenance page, and the clock page of Caddy show the
+live check, and "Copy status" copies it.
+
+### 19.2 The RTC clock policy (S75, SP9)
+
+`care-pi clock detect` (bootstrap runs it: the installer and the first boot of the image) sets `clock.policy: rtc` when
+`/dev/rtc0` exists, the RTC time at boot (the kernel message "setting system clock to") is after the build time of the
+agent, and the host does not report a battery voltage of 0; else `ntp`. It does not change a value that the operator
+set. With `rtc`, `care-pi clock wait` passes at once when the RTC time is after the build time of the agent: the marker
+`state/clock-trusted.json` has `source: rtc` and `trusted: false`, so `ClockStatus.source` is `rtc` and the console
+shows its "clock not trusted" banner. `systemd-timesyncd` still runs. When NTP synchronizes the clock, the agent records
+the difference between the RTC and NTP (`state/clock-rtc-check.json`), deletes the marker (`source: ntp`,
+`trusted: true`), and a difference of more than 5 minutes gives the doctor warning "clock drift". An RTC time before
+the build time (no battery) waits as `ntp`. `apply` and the pre-seed accept `rtc` now.
+
+### 19.3 Changes of contract 0.9.1
+
+All changes are additive. Each new member is optional in the schema: a client of contract 0.9.0 stays valid.
+
+- The schema `InternetProblem` (`dns`, `route`), and `Hardware.internet_problem`, `NetworkSummary.internet_problem`,
+  `Network.internet.problem`, `PublicStatus.internet` (section 19.1).
+- `ClockSource` `rtc`: with `clock.policy: rtc` the gate passes from the RTC; trusted only after NTP confirms it
+  (section 19.2). The values do not change.
+- The doctor check `internet`, and the warning "clock drift" of the doctor check `clock`.
+

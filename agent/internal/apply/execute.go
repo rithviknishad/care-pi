@@ -106,11 +106,19 @@ func (x *executor) run(ctx context.Context, a plan.Action) error {
 				}
 				continue
 			}
+			if cs := x.pr.CareSource; cs != nil && ref == cs.Image() {
+				if _, err := ensureCareSource(ctx, x.o, x.pr); err != nil {
+					return err
+				}
+				continue
+			}
 			ok, err := h.Podman.ImageExists(ctx, ref)
 			if err != nil {
 				return err
 			}
 			if ok {
+				// S72: the image of the Raspberry Pi image (or of an earlier pull) is in the storage by its digest.
+				_, _ = fmt.Fprintln(x.o.Out, "    image present, no pull:", ref)
 				continue
 			}
 			_, _ = fmt.Fprintln(x.o.Out, "    pull", ref)
@@ -267,7 +275,11 @@ func stackUnits() []string { return render.Units }
 
 func (x *executor) startTarget(ctx context.Context) error {
 	h := x.o.Host
-	_, _ = fmt.Fprintln(x.o.Out, "    wait until the units are healthy; the start waits for the clock gate, and a new database runs the migrations (about 4 minutes on a Pi 5)")
+	// S72: the first start on a device of the image restores the pre-migrated database.
+	if err := seedDB(ctx, x.o, x.pr); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(x.o.Out, "    wait until the units are healthy; the start waits for the clock gate, and a new database without the seed of the image runs the migrations (about 4 minutes on a Pi 5)")
 	if err := h.Systemd.ResetFailed(ctx, stackUnits()...); err != nil {
 		return err
 	}

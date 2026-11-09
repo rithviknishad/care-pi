@@ -118,6 +118,9 @@ func (s *Service) SetupState() (*SetupState, error) {
 		if st.ID == setup.StepBackups && st.Status != setup.Done && st.Status != setup.Skipped && v.State != setup.Ready {
 			st.Errors = s.backupsStepIssues(cfg)
 		}
+		if st.ID == setup.StepHardware && st.Status == setup.Done && v.State != setup.Ready {
+			st.Warnings = s.liveHardwareWarnings(st.Warnings)
+		}
 	}
 	out.Restore.Available = (v.State == setup.Claimed || v.State == setup.InSetup) && !applock.Held(s.Paths)
 	if id := in.Record.RestoreJobID; id != "" {
@@ -233,8 +236,31 @@ func (s *Service) StepHardware(ctx context.Context) (*SetupState, error) {
 	if err := hostCheckProblem(hc); err != nil {
 		return nil, err
 	}
-	var warn []setup.Issue
 	hw := hc.Hardware
+	probe := &setup.ProbeResult{Reachable: hw.InternetReachable}
+	if hw.InternetProblem != nil {
+		probe.Problem = *hw.InternetProblem
+	}
+	if s.Internet != nil {
+		probe.CheckedAt = s.Internet.Snapshot().CheckedAt
+	}
+	_, err := s.Setup.Update(func(r *setup.Record) error {
+		r.Steps[setup.StepHardware] = &setup.StepRecord{Status: setup.Done, UpdatedAt: s.now(), Warnings: hardwareWarnings(hw),
+			Internet: probe}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.SetupState()
+}
+
+// The code of the warning of the hardware step that depends on the internet check.
+const warnNoInternet = "no-internet"
+
+// hardwareWarnings returns the warnings of the hardware step for the hardware facts.
+func hardwareWarnings(hw Hardware) []setup.Issue {
+	var warn []setup.Issue
 	if hw.RootDisk.Kind == "sd" {
 		warn = append(warn, setup.Issue{Code: "sd-card", Message: "the root disk is an SD card"})
 	}
@@ -244,13 +270,66 @@ func (s *Service) StepHardware(ctx context.Context) (*SetupState, error) {
 	if hw.DiskProbe != nil && hw.DiskProbe.WriteMBs < 20 {
 		warn = append(warn, setup.Issue{Code: "slow-disk", Message: "the root disk writes less than 20 MB/s"})
 	}
-	if hw.InternetReachable != nil && !*hw.InternetReachable {
-		warn = append(warn, setup.Issue{Code: "no-internet", Message: "the device cannot reach the internet; the first apply needs it for the images"})
+	if w := internetWarning(hw.InternetReachable, hw.InternetProblem); w != nil {
+		warn = append(warn, *w)
 	}
-	if err := s.markStep(setup.StepHardware, setup.Done, warn); err != nil {
-		return nil, err
+	return warn
+}
+
+func internetWarning(reachable *bool, problem *string) *setup.Issue {
+	if reachable == nil || *reachable {
+		return nil
 	}
-	return s.SetupState()
+	msg := "the device cannot reach the internet; the first apply needs it for the images"
+	if problem != nil && *problem == InternetNoDNS {
+		msg = "the device reaches the internet, but DNS does not work; the first apply needs it for the images"
+	}
+	return &setup.Issue{Code: warnNoInternet, Message: msg}
+}
+
+// liveHardwareWarnings replaces the internet warning of the stored hardware step with the live internet check (S74):
+// a check that failed at the step does not stay in the wizard after the internet works.
+func (s *Service) liveHardwareWarnings(stored []setup.Issue) []setup.Issue {
+	if s.Internet == nil {
+		return stored
+	}
+	st := s.Internet.Snapshot()
+	if st.Reachable == nil {
+		return stored
+	}
+	out := []setup.Issue{}
+	for _, w := range stored {
+		if w.Code != warnNoInternet {
+			out = append(out, w)
+		}
+	}
+	if w := internetWarning(st.Reachable, st.ProblemPtr()); w != nil {
+		out = append(out, *w)
+	}
+	return out
+}
+
+// refreshHardwareStep keeps in the record of the hardware step only the warnings that are still true now (the finish).
+func (s *Service) refreshHardwareStep(hw Hardware) error {
+	now := map[string]bool{}
+	for _, w := range hardwareWarnings(hw) {
+		now[w.Code] = true
+	}
+	_, err := s.Setup.Update(func(r *setup.Record) error {
+		st := r.Steps[setup.StepHardware]
+		if st == nil {
+			return nil
+		}
+		var keep []setup.Issue
+		for _, w := range st.Warnings {
+			if now[w.Code] {
+				keep = append(keep, w)
+			}
+		}
+		st.Warnings = keep
+		return nil
+	})
+	return err
 }
 
 func hostCheckProblem(hc *HostCheck) error {
@@ -521,7 +600,11 @@ func (s *Service) FinishSetup(ctx context.Context, source string) (*jobs.Job, er
 	if p := unsupported(cfg, ""); p != nil {
 		return nil, p
 	}
-	if err := hostCheckProblem(s.HostCheckView(ctx, false)); err != nil {
+	hc := s.HostCheckView(ctx, false)
+	if err := hostCheckProblem(hc); err != nil {
+		return nil, err
+	}
+	if err := s.refreshHardwareStep(hc.Hardware); err != nil {
 		return nil, err
 	}
 	s.mu.Lock()

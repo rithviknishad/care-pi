@@ -13,7 +13,7 @@ func TestEmbeddedCareClinic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Care.Image == "" || s.CareFE.Repo == "" {
+	if !s.Care.IsGit() || s.Care.Repo == "" || s.Care.ImageRepo() != CareBase || s.CareFE.Repo == "" {
 		t.Fatalf("incomplete solution: %+v", s)
 	}
 	cfg := config.Default()

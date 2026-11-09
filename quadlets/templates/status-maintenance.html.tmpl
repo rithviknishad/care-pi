@@ -8,6 +8,7 @@
 <p>The device updates or restarts CARE. Your data is safe.</p>
 <p id="step" aria-live="polite">Wait a few minutes. This page opens CARE again when the maintenance is complete.</p>
 <p><small id="since"></small></p>
+<p><small id="internet"></small></p>
 {{template "status-job" .}}
 <p><small>This page checks the device every 5 seconds.</small></p>
 </main>
@@ -36,6 +37,7 @@
         if (!s) { return; }
         if (s.site === "care") { window.location.reload(); return; }
         show(s.maintenance);
+        document.getElementById("internet").textContent = carePiInternet(s);
         carePiJob.update(s);
       })
       .catch(function () {})

@@ -25,8 +25,12 @@ Options:
   --notes TEXT              release notes (the first line is the summary of the index)
   --out DIR                 the dist directory (default ./dist-local)
   --dist-base URL           dist_base of index.json (default file://<absolute OUT>/)
-  --care-digest DIGEST      the upstream care image digest (default: resolve care.image:care.ref)
-  --care-git-sha SHA        the git sha of that image (default: the label org.opencontainers.image.revision)
+  --care-digest DIGEST      the care image digest (default: resolve care.image:care.ref; with
+                            care.source git: resolve --care-base-image:<sha12>)
+  --care-git-sha SHA        the git sha of that image (default: the label org.opencontainers.image.revision;
+                            with care.source git: resolve care.ref in care.repo)
+  --care-base-image REPO    care.source git: the repository of the image that CI built from the source
+                            (default: care.image, else ghcr.io/rithviknishad/care-pi/care-base)
   --solution-image REF      the solution image with a digest, REPO@sha256:... (default: resolve
                             ghcr.io/rithviknishad/care-pi/care:NAME-latest)
   --care-fe-sha SHA         the care_fe sha (default: resolve care_fe.ref)
@@ -44,7 +48,7 @@ EOF
 }
 
 SOLUTION="" VERSION="" SOLUTION_FILE="" NOTES="" OUT="./dist-local" DIST_BASE=""
-CARE_DIGEST="" CARE_GIT_SHA="" SOLUTION_IMAGE="" CARE_FE_SHA="" FE_BUNDLE="" FE_URL="" FE_SHA256="" FE_SIZE=""
+CARE_DIGEST="" CARE_GIT_SHA="" CARE_BASE_IMAGE="" SOLUTION_IMAGE="" CARE_FE_SHA="" FE_BUNDLE="" FE_URL="" FE_SHA256="" FE_SIZE=""
 MIN_AGENT="" OFFLINE=0 CARE_PI="" PLUG_ARGS="" PLUG_BUNDLES="" IMAGE_ARGS=""
 
 while [ $# -gt 0 ]; do
@@ -57,6 +61,7 @@ while [ $# -gt 0 ]; do
     --dist-base) DIST_BASE="$2"; shift 2 ;;
     --care-digest) CARE_DIGEST="$2"; shift 2 ;;
     --care-git-sha) CARE_GIT_SHA="$2"; shift 2 ;;
+    --care-base-image) CARE_BASE_IMAGE="$2"; shift 2 ;;
     --solution-image) SOLUTION_IMAGE="$2"; shift 2 ;;
     --care-fe-sha) CARE_FE_SHA="$2"; shift 2 ;;
     --fe-bundle) FE_BUNDLE="$2"; shift 2 ;;
@@ -99,7 +104,8 @@ lookup() {
     if [ "${kv%%=*}" = "$1" ]; then echo "${kv#*=}"; return; fi
   done
 }
-# field EXPR: a field of solution.yaml ("care.image"), or "plugs" (one line per plug: id, backend repo, backend ref).
+# field EXPR: a field of solution.yaml ("care.image"), or "plugs" (one line per plug: id, backend repo, backend ref,
+# backend subdirectory).
 # care-pi validates the file and prints it as JSON.
 field() {
   [ -f "$WORK/solution.json" ] || carepi solution validate --json "$SOLUTION_FILE" > "$WORK/solution.json"
@@ -109,7 +115,7 @@ doc = json.load(open(sys.argv[1]))
 if sys.argv[2] == "plugs":
     for p in doc.get("plugs") or []:
         b = p.get("backend") or {}
-        print("\t".join([p["id"], b.get("package", "").removeprefix("git+") or "-", b.get("ref") or "-"]))
+        print("\t".join([p["id"], b.get("package", "").removeprefix("git+") or "-", b.get("ref") or "-", b.get("subdirectory") or "-"]))
 else:
     v = doc
     for k in sys.argv[2].split("."):
@@ -133,16 +139,27 @@ git_sha_of() {
   git ls-remote "$1" "refs/heads/$2" "refs/tags/$2^{}" "refs/tags/$2" | head -1 | cut -f1
 }
 
-CARE_IMAGE="$(field care.image)"; CARE_IMAGE="${CARE_IMAGE:-ghcr.io/ohcnetwork/care}"
+CARE_SOURCE="$(field care.source)"; CARE_SOURCE="${CARE_SOURCE:-image}"
+CARE_IMAGE="$(field care.image)"
 CARE_REF="$(field care.ref)"; CARE_REF="${CARE_REF:-latest}"
 CARE_FE_REPO="$(field care_fe.repo)"; CARE_FE_REF="$(field care_fe.ref)"
 MIN_AGENT="${MIN_AGENT:-$(field min_agent_version)}"; MIN_AGENT="${MIN_AGENT:-v0.1.0}"
 
-[ -n "$CARE_DIGEST" ] || CARE_DIGEST="$(digest_of "$CARE_IMAGE:$CARE_REF")"
-if [ -z "$CARE_GIT_SHA" ] && [ "$OFFLINE" = 0 ]; then
-  CARE_GIT_SHA="$(skopeo inspect --override-os linux --override-arch arm64 --format '{{index .Labels "org.opencontainers.image.revision"}}' "docker://$CARE_IMAGE@$CARE_DIGEST" || true)"
+if [ "$CARE_SOURCE" = git ]; then
+  # S71: CI builds docker/prod.Dockerfile of the resolved sha into <base image>:<sha12> (solution-lock.yml).
+  CARE_IMAGE="${CARE_BASE_IMAGE:-${CARE_IMAGE:-ghcr.io/rithviknishad/care-pi/care-base}}"
+  [ -n "$CARE_GIT_SHA" ] || CARE_GIT_SHA="$(git_sha_of "$(field care.repo)" "$CARE_REF")"
+  [[ "$CARE_GIT_SHA" =~ ^[0-9a-f]{40}$ ]] || die "cannot resolve care $CARE_REF in $(field care.repo)"
+  [ -n "$CARE_DIGEST" ] || CARE_DIGEST="$(digest_of "$CARE_IMAGE:${CARE_GIT_SHA:0:12}")"
+else
+  [ -z "$CARE_BASE_IMAGE" ] || die "--care-base-image needs care.source git"
+  CARE_IMAGE="${CARE_IMAGE:-ghcr.io/ohcnetwork/care}"
+  [ -n "$CARE_DIGEST" ] || CARE_DIGEST="$(digest_of "$CARE_IMAGE:$CARE_REF")"
+  if [ -z "$CARE_GIT_SHA" ] && [ "$OFFLINE" = 0 ]; then
+    CARE_GIT_SHA="$(skopeo inspect --override-os linux --override-arch arm64 --format '{{index .Labels "org.opencontainers.image.revision"}}' "docker://$CARE_IMAGE@$CARE_DIGEST" || true)"
+  fi
+  [[ "$CARE_GIT_SHA" =~ ^[0-9a-f]{40}$ ]] || CARE_GIT_SHA=""
 fi
-[[ "$CARE_GIT_SHA" =~ ^[0-9a-f]{40}$ ]] || CARE_GIT_SHA=""
 [ -n "$SOLUTION_IMAGE" ] || SOLUTION_IMAGE="ghcr.io/rithviknishad/care-pi/care@$(digest_of "ghcr.io/rithviknishad/care-pi/care:$SOLUTION-latest")"
 SI_REPO="${SOLUTION_IMAGE%@*}"
 SI_DIGEST="${SOLUTION_IMAGE#*@}"
@@ -161,9 +178,13 @@ for pair in postgres=ghcr.io/rithviknishad/care-pi/postgres-pgbackrest:17 caddy=
 done
 
 : > "$WORK/plugs.tsv"
-while IFS=$'\t' read -r id repo ref; do
+while IFS=$'\t' read -r id repo ref sub; do
   [ "$repo" != "-" ] || { printf '%s\t\n' "$id" >> "$WORK/plugs.tsv"; continue; }
   s="$(lookup "$id" "$PLUG_ARGS")"
+  if [ -z "$s" ] && [ "$sub" != "-" ] && [ "${repo%.git}" = "https://github.com/rithviknishad/care-pi" ]; then
+    # An in-repo backend plug (S73): the last commit of this checkout that changed its directory, as solution-lock.yml.
+    s="$(git -C "$ROOT" log -1 --format=%H HEAD -- "$sub")"
+  fi
   [ -n "$s" ] || s="$(git_sha_of "$repo" "$ref")"
   [[ "$s" =~ ^[0-9a-f]{40}$ ]] || die "cannot resolve the plug $id ($repo@$ref)"
   printf '%s\t%s\n' "$id" "$s" >> "$WORK/plugs.tsv"
@@ -218,7 +239,7 @@ PY
   printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$psha" "$tag/$tag.tar.gz" "$psum" "$(size_of "$OUT/$tag/$tag.tar.gz")" >> "$WORK/plugfe.tsv"
 done
 
-export SOLUTION VERSION NOTES MIN_AGENT CARE_DIGEST CARE_GIT_SHA SI_REPO SI_DIGEST CARE_FE_SHA BUILD_ID FE_URL FE_SHA256 FE_SIZE WORK
+export SOLUTION VERSION NOTES MIN_AGENT CARE_DIGEST CARE_GIT_SHA CARE_IMAGE CARE_SOURCE SI_REPO SI_DIGEST CARE_FE_SHA BUILD_ID FE_URL FE_SHA256 FE_SIZE WORK
 COMMIT="$(cd "$ROOT" && git rev-parse HEAD)"
 export COMMIT
 python3 - <<'PY'
@@ -245,7 +266,7 @@ data = {
     "notes": e["NOTES"],
     "min_agent_version": e["MIN_AGENT"],
     "commit": e["COMMIT"],
-    "care": {"digest": e["CARE_DIGEST"], "git_sha": e["CARE_GIT_SHA"]},
+    "care": {"digest": e["CARE_DIGEST"], "git_sha": e["CARE_GIT_SHA"]} | ({"image": e["CARE_IMAGE"]} if e["CARE_SOURCE"] == "git" else {}),
     "solution_image": {"image": e["SI_REPO"], "tag": e["SOLUTION"] + "-" + e["VERSION"], "digest": e["SI_DIGEST"]},
     "care_fe_sha": e["CARE_FE_SHA"],
     "fe": {"build_id": e["BUILD_ID"], "url": e["FE_URL"], "sha256": e["FE_SHA256"], "size_bytes": int(e["FE_SIZE"]), "env_keys": keys},

@@ -9,7 +9,7 @@ Image name: `ghcr.io/rithviknishad/care-pi/care`
 
 | Build argument | Required | Meaning |
 |---|---|---|
-| `BASE` | yes (CI and the agent always set it) | The upstream image. Use a digest reference, for example `ghcr.io/ohcnetwork/care@sha256:...`. The default is `ghcr.io/ohcnetwork/care:latest`. |
+| `BASE` | yes (CI and the agent always set it) | The upstream image. Use a digest reference, for example `ghcr.io/ohcnetwork/care@sha256:...`. The default is `ghcr.io/ohcnetwork/care:latest`. With `care.source: git` (S71) the base is `ghcr.io/rithviknishad/care-pi/care-base@sha256:...`: `docker/prod.Dockerfile` of the CARE commit that `care-base.yml` built (`docs/solutions.md` section 13.4). |
 | `INSTALL_PLUGS` | no | A JSON list of the backend plugs to install. When it is empty, the build reads `install-plugs.json` of the build context (the committed file is `[]`). CI installs each backend plug of the solution, on or off (the superset rule, `docs/solutions.md` section 1.5). |
 | `ADDITIONAL_PLUGS` | no | A JSON list of the plugs that are on by default: the `ENV` of the image. The default is `[]`. The device always sets `ADDITIONAL_PLUGS` at run time (the podman secret `care-additional-plugs`). |
 
