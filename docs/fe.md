@@ -285,14 +285,18 @@ Steps:
 2. Resolve `care_fe_ref` to a sha: `gh api repos/<owner>/<name>/commits/<ref> --jq .sha`.
 3. Build `care-pi`. Write `fe-build.sh` (`care-pi fe script`) and `frontend.env` (`care-pi fe env`).
    Calculate the build id (`care-pi fe build-id`).
-4. Check out care_fe at the sha into `care_fe/`. Set up Node 22 with the npm cache.
-5. Run `fe-build.sh` with `SRC=care_fe`. The script sees `.care-pi-sha` and does not fetch the tarball.
-6. Check the bundle: `index.html`, no `careapi.ohc.network` (same origin), and the build id in `care-pi-build.json`.
-7. Write `care_fe-<solution>-<sha12>-<build id>.tar.gz` and `care_fe-<solution>-<sha12>-<build id>.tar.gz.sha256`.
+4. Check for the release `fe-<solution>-<sha12>-<build id>`. When it exists, the workflow stops here: it does not
+   build or upload the bundle again, and its outputs (URL, SHA-256, size) come from the published asset. The name
+   is the identity. A second build of the same inputs gives other bytes (the tar.gz is not reproducible), and a lock
+   pins the SHA-256 of the first upload. Before v0.3.1 the workflow uploaded again with `--clobber`; a push to
+   `main` then changed the asset of lock 2026.11.4 and broke its hash (`plans/09-handoff.md`, 8u).
+5. Check out care_fe at the sha into `care_fe/`. Set up Node 22 with the npm cache.
+6. Run `fe-build.sh` with `SRC=care_fe`. The script sees `.care-pi-sha` and does not fetch the tarball.
+7. Check the bundle: `index.html`, no `careapi.ohc.network` (same origin), and the build id in `care-pi-build.json`.
+8. Write `care_fe-<solution>-<sha12>-<build id>.tar.gz` and `care_fe-<solution>-<sha12>-<build id>.tar.gz.sha256`.
    Upload them as a workflow artifact.
-8. Create or update the release `fe-<solution>-<sha12>-<build id>`. The notes and the job summary give the solution,
-   the care_fe sha, the build id, and the env keys (not the values).
-   The build id is in the tag and in the file name. Thus `--clobber` replaces only a bundle with the same build id.
+9. Create the release `fe-<solution>-<sha12>-<build id>` and upload the two files (no `--clobber`). The notes and the
+   job summary give the solution, the care_fe sha, the build id, and the env keys (not the values).
 
 One recipe has two entry points: `care-fe-build.service` on the Pi, and the workflow on a runner.
 

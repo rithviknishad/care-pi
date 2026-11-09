@@ -63,9 +63,11 @@ jobs:
     timeout-minutes: 45
     outputs:
       build_id: ${{ steps.fe.outputs.build_id }}
-      url: ${{ steps.package.outputs.url }}
-      sha256: ${{ steps.package.outputs.sha256 }}
-      size_bytes: ${{ steps.package.outputs.size_bytes }}
+      # The name is the identity (docs/fe.md): a published bundle is never built or uploaded again, so a lock that
+      # pins its SHA-256 stays valid. When the release exists, its asset gives the outputs.
+      url: ${{ steps.check.outputs.exists == 'true' && steps.check.outputs.url || steps.package.outputs.url }}
+      sha256: ${{ steps.check.outputs.exists == 'true' && steps.check.outputs.sha256 || steps.package.outputs.sha256 }}
+      size_bytes: ${{ steps.check.outputs.exists == 'true' && steps.check.outputs.size_bytes || steps.package.outputs.size_bytes }}
       env_keys: ${{ steps.fe.outputs.env_keys }}
     env:
       SOLUTION: ${{ inputs.solution || 'care-clinic' }}
@@ -142,7 +144,44 @@ jobs:
             echo "env_keys=${keys}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Check for a published bundle
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA12: ${{ steps.source.outputs.sha12 }}
+          BUILD_ID: ${{ steps.fe.outputs.build_id }}
+        run: |
+          tag="fe-${SOLUTION}-${SHA12}-${BUILD_ID}"
+          name="care_fe-${SOLUTION}-${SHA12}-${BUILD_ID}.tar.gz"
+          exists=false
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then exists=true; fi
+          if [ "$exists" = true ]; then
+            # shellcheck disable=SC2016 # $n is a jq variable
+            size=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
+              | jq -r --arg n "$name" '.assets[] | select(.name == $n) | .size')
+            [ -n "$size" ] || { echo "::error::The release ${tag} exists without the asset ${name}"; exit 1; }
+            sum=$(gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "${name}.sha256" --output - | cut -d' ' -f1)
+            [[ "$sum" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::The release ${tag} has no valid ${name}.sha256"; exit 1; }
+            {
+              echo "## care_fe bundle: ${SOLUTION}"
+              echo
+              echo "The release \`${tag}\` exists. The bundle is not built or uploaded again (the name is the identity)."
+              echo
+              echo "| Field | Value |"
+              echo "|---|---|"
+              echo "| Bundle | \`${name}\` (${size} bytes) |"
+              echo "| SHA-256 | \`${sum}\` |"
+            } >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo "url=${tag}/${name}"
+              echo "sha256=${sum}"
+              echo "size_bytes=${size}"
+            } >> "$GITHUB_OUTPUT"
+          fi
+          echo "exists=${exists}" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v7
+        if: steps.check.outputs.exists == 'false'
         with:
           repository: ${{ steps.source.outputs.repo }}
           ref: ${{ steps.source.outputs.sha }}
@@ -150,6 +189,7 @@ jobs:
           persist-credentials: false
 
       - uses: actions/setup-node@v7
+        if: steps.check.outputs.exists == 'false'
         with:
           # The major version of the node image of the local provider (images.node: node:22-bookworm-slim).
           node-version: "22"
@@ -157,6 +197,7 @@ jobs:
           cache-dependency-path: care_fe/package-lock.json
 
       - name: Build care_fe with fe-build.sh
+        if: steps.check.outputs.exists == 'false'
         env:
           CARE_FE_REPO: ${{ steps.source.outputs.repo }}
           CARE_FE_SHA: ${{ steps.source.outputs.sha }}
@@ -172,6 +213,7 @@ jobs:
             bash "${ENV_DIR}/fe-build.sh"
 
       - name: Check the bundle
+        if: steps.check.outputs.exists == 'false'
         env:
           BUILD_ID: ${{ steps.fe.outputs.build_id }}
         run: |
@@ -185,6 +227,7 @@ jobs:
           jq -e --arg id "$BUILD_ID" '.build_id == $id' "${out}/care-pi-build.json"
 
       - name: Package the bundle
+        if: steps.check.outputs.exists == 'false'
         id: package
         env:
           BUILD_ID: ${{ steps.fe.outputs.build_id }}
@@ -203,12 +246,14 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v7
+        if: steps.check.outputs.exists == 'false'
         with:
           name: ${{ steps.package.outputs.name }}
           path: dist/
           if-no-files-found: error
 
       - name: Write the release notes and the job summary
+        if: steps.check.outputs.exists == 'false'
         env:
           REPO: ${{ steps.source.outputs.repo }}
           REF: ${{ steps.source.outputs.ref }}
@@ -239,18 +284,15 @@ jobs:
           cat release-notes.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish the release
-        if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+        if: steps.check.outputs.exists == 'false' && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
         env:
           GH_TOKEN: ${{ github.token }}
           SHA12: ${{ steps.source.outputs.sha12 }}
           BUILD_ID: ${{ steps.fe.outputs.build_id }}
         run: |
           tag="fe-${SOLUTION}-${SHA12}-${BUILD_ID}"
-          if gh release view "$tag" > /dev/null 2>&1; then
-            gh release edit "$tag" --notes-file release-notes.md
-          else
-            gh release create "$tag" --target "$GITHUB_SHA" --latest=false \
-              --title "care_fe bundle ${SOLUTION} ${SHA12}" --notes-file release-notes.md
-          fi
-          gh release upload "$tag" dist/* --clobber
+          # The check step saw no release. A race with another run gets the error of gh here, not a second upload.
+          gh release create "$tag" --target "$GITHUB_SHA" --latest=false \
+            --title "care_fe bundle ${SOLUTION} ${SHA12}" --notes-file release-notes.md
+          gh release upload "$tag" dist/*
           echo "Published release ${tag}" >> "$GITHUB_STEP_SUMMARY"

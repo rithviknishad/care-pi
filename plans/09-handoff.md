@@ -1199,3 +1199,11 @@ End state of care.local: the dev build `v0.3.0-dev` at `9a662ac`, the earlier bi
 - **v0.3.0** tagged on `e52e301` (signed), release with 5 assets, "latest"; the notes have a summary at the top.
   care.local runs the release build (`install.sh --version v0.3.0`), doctor clean. `pi-image.yml` dispatched on the
   tag for lock 2026.11.4 (run 42601543761), its first run in CI; it publishes the release `image-2026.11.4`.
+- **Release integrity defect (fixed).** The first CI run of `pi-image.yml` failed in `fetch-dist.sh`: the care_fe
+  bundle `fe-care-clinic-f7a4b424d67f-7502e51944595062` did not match the SHA-256 of lock 2026.11.4. Cause: the push
+  of `077688f` to `main` (paths `solutions/**`) ran `fe-bundle.yml`, which built the same build id again and uploaded
+  the asset with `--clobber`; the tar.gz is not byte-reproducible, so the hash changed 20 min after the lock was cut.
+  Repair: the original tarball (from the local `fetch-dist` of 2026.11.4) was uploaded again, so the asset matches the
+  lock. Fix: `fe-bundle.yml` now checks for the release first and never builds or uploads a published bundle again
+  (as `plug-bundle.yml` already did); its outputs come from the published asset (`docs/fe.md`, "The fe-bundle
+  workflow"). `pi-image.yml` dispatched again on the tag.
