@@ -1213,3 +1213,13 @@ End state of care.local: the dev build `v0.3.0-dev` at `9a662ac`, the earlier bi
   mode of `/out` at exit; `pi-image.yml` has a `sudo chmod` fallback. The workflow checks out the tag, so **v0.3.1**
   (`f8d447d`, release with 5 assets, notes) carries both pipeline fixes; `pi-image.yml` dispatched on v0.3.1 (run
   42605544412). care.local runs v0.3.1.
+- **Third `pi-image.yml` run** (42605544412, on v0.3.1): success; the release `image-2026.11.4` has the image
+  (1.05 GB), `.sha256`, `image-release.json`, `verify.txt`, the Imager manifest; the release `imager` has the new
+  `os_list.json` ("Care: CARE Clinic 2026.11.4").
+- **lumine** (2026-11-09 16:45 IST, powered on again): loop device reattached (`losetup -f -P`), `usb` back to `ok`
+  after one run; agent v0.3.1 from the release; `clock detect --dry-run`: RTC present, **no battery** (0 V) → `ntp`,
+  so the `rtc` policy stays untested on hardware (neither Pi 5 has a battery); `host check --probe`: internet
+  reachable. `updates.index_url` set to the default (it pointed at the wave-10 local dist); `update stage` 54 s
+  (4 pulls, 1 present), `update apply --now` 92 s from 2026.11.2 to 2026.11.4: checkpoint, migrate, `plug-config:
+  1 row(s)`, doctor 0 warnings. The plug bundle serves on all 3 names with CORS. Care had no facility, so the
+  wizard runs a true first-time setup there (next item).
