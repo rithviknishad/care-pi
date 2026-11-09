@@ -29,6 +29,9 @@ type LockInput struct {
 	Care            struct {
 		Digest string `json:"digest"`
 		GitSHA string `json:"git_sha,omitempty"`
+		// Image is the repository of the care image (source git: the image that CI built; default
+		// solution.care.image, else the default of the source).
+		Image string `json:"image,omitempty"`
 	} `json:"care"`
 	SolutionImage struct {
 		Image  string `json:"image"`
@@ -137,8 +140,15 @@ func AssembleLock(in LockInput) ([]byte, error) {
 	add("min_agent_version", minAgent)
 	add("source", map[string]any{"commit": in.Commit, "solution_sha256": hex.EncodeToString(sum[:]), "run_url": runURL})
 	add("solution", sol.Doc)
-	add("care", map[string]any{"image": firstOr(sol.Care.Image, "ghcr.io/ohcnetwork/care"), "ref": firstOr(sol.Care.Ref, "latest"),
-		"digest": in.Care.Digest, "git_sha": gitSHA})
+	care := map[string]any{"image": firstOr(in.Care.Image, sol.Care.ImageRepo()), "ref": firstOr(sol.Care.Ref, "latest"),
+		"digest": in.Care.Digest, "git_sha": gitSHA}
+	if sol.Care.IsGit() {
+		if in.Care.GitSHA == "" {
+			return nil, fmt.Errorf("care.source is git: the input needs care.git_sha (the commit that CI built)")
+		}
+		care["source"], care["repo"] = "git", sol.Care.Repo
+	}
+	add("care", care)
 	add("solution_image", map[string]any{"image": in.SolutionImage.Image, "tag": in.SolutionImage.Tag, "digest": in.SolutionImage.Digest,
 		"installed_plugs": installed})
 	add("care_fe", map[string]any{"repo": sol.CareFE.Repo, "ref": sol.CareFE.Ref, "sha": in.CareFESHA})

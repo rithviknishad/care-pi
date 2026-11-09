@@ -1,0 +1,202 @@
+name: care-base
+
+# The CARE image from its git source (S71, docs/solutions.md section 13.4): docker/prod.Dockerfile of the repository at
+# one commit, for linux/arm64 (natively on ubuntu-24.04-arm) and linux/amd64 (on ubuntu-latest), then one manifest list
+# <image>:<sha12>. Upstream publishes no image of a development branch (Care 3.1: ENG-737-backup-backup), so the
+# solution image is built FROM this image. A commit that has its image already builds nothing.
+#
+# solution-lock.yml and solution-image.yml call it; a person can run it for one commit.
+
+on:
+  workflow_call:
+    inputs:
+      repo:
+        description: The CARE repository, owner/name
+        type: string
+        default: ohcnetwork/care
+      sha:
+        description: The full commit sha
+        type: string
+        required: true
+      image:
+        description: The image repository without a tag
+        type: string
+        default: ghcr.io/rithviknishad/care-pi/care-base
+    outputs:
+      digest:
+        description: The manifest list digest of <image>:<sha12>
+        value: ${{ jobs.merge.outputs.digest }}
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: The CARE repository, owner/name
+        type: string
+        default: ohcnetwork/care
+      sha:
+        description: The full commit sha
+        type: string
+        required: true
+      image:
+        description: The image repository without a tag
+        type: string
+        default: ghcr.io/rithviknishad/care-pi/care-base
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+      digest: ${{ steps.check.outputs.digest }}
+      build: ${{ steps.check.outputs.build }}
+    steps:
+      - name: Install skopeo
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends skopeo
+
+      - name: Check the inputs and the registry
+        id: check
+        env:
+          REPO: ${{ inputs.repo }}
+          SHA: ${{ inputs.sha }}
+          IMAGE: ${{ inputs.image }}
+          GH_USER: ${{ github.actor }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::Invalid repo: $REPO"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::The sha must be 40 hex digits: $SHA"; exit 1; }
+          [[ "$IMAGE" =~ ^[a-z0-9./_-]+$ ]] || { echo "::error::Invalid image: $IMAGE"; exit 1; }
+          tag="${SHA:0:12}"
+          digest=""
+          if skopeo inspect --creds "${GH_USER}:${GH_TOKEN}" --raw "docker://${IMAGE}:${tag}" > manifest.json 2> /dev/null; then
+            digest="$(skopeo manifest-digest manifest.json)"
+            echo "::notice::${IMAGE}:${tag} exists (${digest}); no build."
+          fi
+          {
+            echo "tag=${tag}"
+            echo "digest=${digest}"
+            if [ -n "$digest" ]; then echo "build=false"; else echo "build=true"; fi
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
+          - platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - name: Check out CARE at the commit
+        uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.repo }}
+          ref: ${{ inputs.sha }}
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build docker/prod.Dockerfile and push it by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/prod.Dockerfile
+          platforms: ${{ matrix.platform }}
+          provenance: false
+          build-args: |
+            APP_VERSION=${{ needs.check.outputs.tag }}
+          labels: |
+            org.opencontainers.image.title=care-pi care-base
+            org.opencontainers.image.description=CARE built from its git source (docker/prod.Dockerfile)
+            org.opencontainers.image.source=https://github.com/rithviknishad/care-pi
+            org.opencontainers.image.url=https://github.com/${{ inputs.repo }}
+            org.opencontainers.image.revision=${{ inputs.sha }}
+            org.opencontainers.image.licenses=MIT
+          outputs: type=image,name=${{ inputs.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=care-base-${{ matrix.arch }}
+          cache-to: type=gha,scope=care-base-${{ matrix.arch }},mode=max
+
+      - name: Record the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p digests
+          touch "digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: care-base-digest-${{ matrix.arch }}
+          path: digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    needs: [check, build]
+    if: ${{ !cancelled() && needs.check.result == 'success' && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      digest: ${{ steps.merge.outputs.digest }}
+    steps:
+      - uses: actions/download-artifact@v7
+        if: needs.check.outputs.build == 'true'
+        with:
+          path: digests
+          pattern: care-base-digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v4
+        if: needs.check.outputs.build == 'true'
+
+      - name: Log in to ghcr.io
+        if: needs.check.outputs.build == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Make the manifest list <image>:<sha12>
+        id: merge
+        env:
+          IMAGE: ${{ inputs.image }}
+          TAG: ${{ needs.check.outputs.tag }}
+          BUILD: ${{ needs.check.outputs.build }}
+          EXISTING: ${{ needs.check.outputs.digest }}
+        run: |
+          if [ "$BUILD" != true ]; then
+            echo "digest=${EXISTING}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          refs=()
+          for f in digests/*; do refs+=("${IMAGE}@sha256:$(basename "$f")"); done
+          [ "${#refs[@]}" -eq 2 ] || { echo "::error::Want 2 platform digests, got ${#refs[@]}"; exit 1; }
+          docker buildx imagetools create -t "${IMAGE}:${TAG}" "${refs[@]}"
+          digest="$(docker buildx imagetools inspect "${IMAGE}:${TAG}" --format '{{json .Manifest}}' | jq -r .digest)"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::No manifest list digest"; exit 1; }
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
+          {
+            echo "## care-base ${TAG}"
+            echo
+            echo "\`${IMAGE}:${TAG}\` = \`${digest}\` (linux/arm64, linux/amd64)"
+          } >> "$GITHUB_STEP_SUMMARY"

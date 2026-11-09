@@ -175,6 +175,8 @@ type Model struct {
 	Timers Timers
 	// CareBuild is the local image build of care (track custom), or nil.
 	CareBuild *CareBuild
+	// CareSource is the local build of CARE from its git source (S71), or nil.
+	CareSource *CareSource
 	// PlugBuild renders the FE plug builder unit (experimental, track custom).
 	PlugBuild    bool
 	SolutionName string
@@ -343,6 +345,33 @@ type CareBuild struct {
 // Image returns the image reference of the build.
 func (b *CareBuild) Image() string { return "localhost/care-pi/care:" + b.ID }
 
+// CareSource is a local build of CARE from its git source (care.source git, S71): the registry has no image of the
+// commit, and the host has 4 GB of RAM or more.
+type CareSource struct {
+	// Repo is the git repository; SHA is the commit.
+	Repo string
+	SHA  string
+}
+
+// Tag is the image tag of the commit (its first 12 hex digits).
+func (c *CareSource) Tag() string { return solution.GitTag(c.SHA) }
+
+// Image is the reference of the local image.
+func (c *CareSource) Image() string { return solution.CareBaseLocal + ":" + c.Tag() }
+
+// Dir is the directory of the extracted source.
+func (c *CareSource) Dir() string { return paths.BuildDir + "/care-src/" + c.Tag() }
+
+// Unit returns the service unit that quadlet makes from the .build file.
+func (c *CareSource) Unit(solutionName string) string {
+	return "care-build-" + solutionName + "-base-build.service"
+}
+
+// TarballURL is the archive of the commit. A GitHub repository serves it at /archive/<sha>.tar.gz.
+func (c *CareSource) TarballURL() string {
+	return strings.TrimSuffix(strings.TrimSuffix(c.Repo, "/"), ".git") + "/archive/" + c.SHA + ".tar.gz"
+}
+
 // Unit returns the service unit that quadlet makes from the .build file.
 func (b *CareBuild) Unit(solutionName string) string {
 	return "care-build-" + solutionName + "-build.service"
@@ -379,6 +408,8 @@ type Input struct {
 	PlugSecrets map[string]map[string]any
 	// CareBuild is the local image build of care, or nil.
 	CareBuild *CareBuild
+	// CareSource is the local build of CARE from its git source (S71), or nil.
+	CareSource *CareSource
 
 	// Phase 6 (docs/connectivity.md). Prepare reads these values from the host.
 	// CARoot is true when the root of the agent exists, or when ensure-ca makes it in this apply.
@@ -442,8 +473,12 @@ type Plan struct {
 	Frontend map[string]string
 }
 
-// careRef returns the ref of the care image.
+// careRef returns the ref of the care image. For a git source (S71), the agent resolved the ref (and
+// solution.custom.care_ref) to the tag of the commit before.
 func careRef(cfg *config.Config, sol *solution.Solution) string {
+	if sol.Care.Resolved != "" {
+		return sol.Care.Resolved
+	}
 	if cfg.Solution.Track == "custom" && cfg.Solution.Custom.CareRef != "" {
 		return cfg.Solution.Custom.CareRef
 	}
@@ -505,7 +540,7 @@ func DesireLock(cfg *config.Config, sol *solution.Solution, sl *solution.Lock, c
 	case sl != nil:
 		care = sl.SolutionImage.Ref()
 	case backendPlugs == 0:
-		care = joinImage(firstNonEmpty(sol.Care.Image, ImageCareUpstream), careRef(cfg, sol))
+		care = joinImage(sol.Care.ImageRepo(), careRef(cfg, sol))
 	default:
 		care = ImageCareSolution + ":" + cfg.Solution.Name + "-latest"
 	}
@@ -597,6 +632,7 @@ func NewModel(in Input) (*Model, error) {
 	m := &Model{
 		SolutionName:       cfg.Solution.Name,
 		CareBuild:          in.CareBuild,
+		CareSource:         in.CareSource,
 		MaintenanceSteps:   MaintenanceSteps,
 		MaintenanceRestart: MaintenanceRestart,
 		JobTitles:          JobTitles,

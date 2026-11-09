@@ -106,6 +106,12 @@ func (x *executor) run(ctx context.Context, a plan.Action) error {
 				}
 				continue
 			}
+			if cs := x.pr.CareSource; cs != nil && ref == cs.Image() {
+				if _, err := ensureCareSource(ctx, x.o, x.pr); err != nil {
+					return err
+				}
+				continue
+			}
 			ok, err := h.Podman.ImageExists(ctx, ref)
 			if err != nil {
 				return err

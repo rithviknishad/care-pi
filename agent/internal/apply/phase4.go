@@ -225,7 +225,12 @@ func (x *executor) buildCare(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !base {
+	if !base && x.pr.CareSource != nil && cb.Base == x.pr.CareSource.Image() {
+		// The base is the local build of CARE from its git source (S71).
+		if _, err := ensureCareSource(ctx, x.o, x.pr); err != nil {
+			return false, err
+		}
+	} else if !base {
 		_, _ = fmt.Fprintln(x.o.Out, "    pull", cb.Base)
 		if err := h.Podman.Pull(ctx, cb.Base); err != nil {
 			return false, fmt.Errorf("cannot pull %s: %w", cb.Base, err)
@@ -291,6 +296,16 @@ func EnsureImages(ctx context.Context, o Options, pr *Prepared) (pulled, built [
 		if cb := pr.CareBuild; cb != nil && ref == cb.Image() {
 			continue
 		}
+		if cs := pr.CareSource; cs != nil && ref == cs.Image() {
+			ok, err := ensureCareSource(ctx, o, pr)
+			if err != nil {
+				return pulled, built, err
+			}
+			if ok {
+				built = append(built, ref)
+			}
+			continue
+		}
 		if lock.IsLocalImage(ref) {
 			continue
 		}
@@ -312,7 +327,15 @@ func EnsureImages(ctx context.Context, o Options, pr *Prepared) (pulled, built [
 		if err != nil {
 			return pulled, built, err
 		}
-		if !ok {
+		if cs := pr.CareSource; !ok && cs != nil && pr.CareBuild.Base == cs.Image() {
+			b, err := ensureCareSource(ctx, o, pr)
+			if err != nil {
+				return pulled, built, err
+			}
+			if b {
+				built = append(built, cs.Image())
+			}
+		} else if !ok {
 			_, _ = fmt.Fprintln(o.Out, "    pull", pr.CareBuild.Base)
 			if err := o.Host.Podman.Pull(ctx, pr.CareBuild.Base); err != nil {
 				return pulled, built, fmt.Errorf("cannot pull %s: %w", pr.CareBuild.Base, err)

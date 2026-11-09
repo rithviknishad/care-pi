@@ -33,10 +33,48 @@ type Solution struct {
 	Doc map[string]any `yaml:"-"`
 }
 
-// Care is the upstream backend image.
+// Care is the CARE backend: an upstream image (source image), or a git ref that CI builds (source git, S71).
 type Care struct {
 	Image string `yaml:"image"`
 	Ref   string `yaml:"ref"`
+	// Source is image (or empty) or git. Repo is the git repository of source git.
+	Source string `yaml:"source"`
+	Repo   string `yaml:"repo"`
+	// Resolved is the image tag of a source git after the resolution of Ref (the first 12 hex digits of the sha);
+	// the agent sets it, it is not in solution.yaml.
+	Resolved string `yaml:"-"`
+}
+
+// The CARE images.
+const (
+	// CareUpstream is the upstream image (source image).
+	CareUpstream = "ghcr.io/ohcnetwork/care"
+	// CareBase is the repository of the images that CI builds from the git source (source git, S71).
+	CareBase = "ghcr.io/rithviknishad/care-pi/care-base"
+	// CareBaseLocal is the repository of a local build from the git source (track custom, 4 GB or more).
+	CareBaseLocal = "localhost/care-pi/care-base"
+)
+
+// IsGit reports whether CI builds the CARE image from the git source.
+func (c Care) IsGit() bool { return c.Source == "git" }
+
+// ImageRepo returns the image repository: Image, or the default of the source.
+func (c Care) ImageRepo() string {
+	switch {
+	case c.Image != "":
+		return c.Image
+	case c.IsGit():
+		return CareBase
+	}
+	return CareUpstream
+}
+
+// GitTag returns the image tag of a commit of the git source: its first 12 hex digits.
+func GitTag(sha string) string {
+	if len(sha) > 12 {
+		return sha[:12]
+	}
+	return sha
 }
 
 // CareFE is the frontend source.

@@ -110,13 +110,19 @@ func careBuild(ctx context.Context, cfg *config.Config, sol *solution.Solution, 
 	if !needs {
 		return nil, nil
 	}
-	image := firstNonEmpty(sol.Care.Image, render.ImageCareUpstream)
+	image := sol.Care.ImageRepo()
 	baseRef := image + ":" + firstNonEmpty(sol.Care.Ref, "latest")
 	if strings.HasPrefix(sol.Care.Ref, "sha256:") {
 		baseRef = image + "@" + sol.Care.Ref
 	}
 	var seedDigest string
 	switch {
+	case sol.Care.Resolved != "":
+		// A git source (S71): resolveGitCare resolved the ref (or solution.custom.care_ref) to the image of the commit.
+		baseRef = image + ":" + sol.Care.Resolved
+		if sl != nil && sl.Care.IsGit() && sl.Care.BaseRef() == baseRef {
+			seedDigest = sl.Care.Digest
+		}
 	case cfg.Solution.Custom.CareRef != "" && strings.HasPrefix(cfg.Solution.Custom.CareRef, "sha256:"):
 		baseRef = image + "@" + cfg.Solution.Custom.CareRef
 	case cfg.Solution.Custom.CareRef != "":
@@ -164,11 +170,15 @@ func careBuild(ctx context.Context, cfg *config.Config, sol *solution.Solution, 
 		return nil, err
 	}
 	base := res.Images["care-base"]
-	if base.Digest == "" {
+	if base.Digest == "" && !base.Local {
 		return nil, fmt.Errorf("the local image build needs the digest of %s; connect the device to the internet", baseRef)
 	}
 	cb := &render.CareBuild{Base: image + "@" + base.Digest, Refs: map[string]lock.GitRef{}, BaseImage: image,
 		BaseRef: strings.TrimPrefix(strings.TrimPrefix(baseRef, image), ":"), BaseDigest: base.Digest}
+	if base.Local {
+		// The base is the local build of CARE from its git source (S71): no digest.
+		cb.Base = baseRef
+	}
 	ids := make([]string, 0, len(byID))
 	for id := range byID {
 		ids = append(ids, id)
