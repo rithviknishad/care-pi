@@ -1193,3 +1193,9 @@ End state of care.local: the dev build `v0.3.0-dev` at `9a662ac`, the earlier bi
   opens the wizard with 1 status call; one run end to end in 1.5 s with 22 requests and 0 created (demo_data 5);
   the invitation option is off without a mail server; the demo data deleted cleanly; 19 log lines, no stack trace.
   One UX note O1 in `8k`. Results in `care-pi-w13b/local/wave13/wizard-live/run2/`.
+- **CI on main after the merge** failed twice: shellcheck SC2015 (`image/build.sh`, `image/scripts/make-seed.sh`,
+  CI's shellcheck reports info notes that the local 0.11.0 does not), and the offline make-lock e2e without a bundle of
+  `care_pi_onboarding_fe`. Fixed in `077688f` and `e52e301`; CI green.
+- **v0.3.0** tagged on `e52e301` (signed), release with 5 assets, "latest"; the notes have a summary at the top.
+  care.local runs the release build (`install.sh --version v0.3.0`), doctor clean. `pi-image.yml` dispatched on the
+  tag for lock 2026.11.4 (run 42601543761), its first run in CI; it publishes the release `image-2026.11.4`.

@@ -164,7 +164,16 @@ rotation, the WAF, telemetry, and `care-pi doctor`, with 9 fixes.
 | WAF false positives (file uploads, rich text) | Care requests blocked | medium in `block` mode | off by default; `detect` first; per-rule tuning after the exit test |
 | The signing key is lost or leaks | no signed release, or forged locks accepted | low | `require_signed` opt-in; two keys during a rotation; the ceremony in `docs/solutions.md` §18 |
 
-## Status (2026-11-02, after the final acceptance)
+## Status (2026-11-09, v0.3.0)
+
+**v0.3.0 released** (`09-handoff.md` §8t, §8u; decisions S71–S76): Care 3.1 from the git source (lock `2026.11.4`),
+the clinic setup plugs `care_pi_onboarding` and `care_pi_onboarding_fe` of this repository, the pre-migrated database
+seed in the image, the internet check with retries, and `clock detect`. care.local runs the release build on lock
+2026.11.4; the wizard ran end to end there twice. **Remaining (owner hardware):** the seeded first boot with the v0.3.0
+image (release `image-2026.11.4`), lumine's update to 2026.11.4 and its RTC battery, Wi-Fi and the cable pull, DR to a
+second Pi, the installer ISO (S70). v0.2.0 (console v2, S65–S70) was released on 2026-11-06.
+
+### Status (2026-11-02, after the final acceptance)
 
 **v0.1.0 released; all phases complete on lumine; remaining: image flash test on hardware (owner), Wi-Fi test (owner),
 a second Pi for DR-to-new-device.** The final acceptance on lumine (wave 10, `09-handoff.md` §8r) ran the release
