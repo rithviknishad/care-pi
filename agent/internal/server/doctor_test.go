@@ -132,7 +132,7 @@ func TestDoctorRTCDriftOnlyWithPolicyRTC(t *testing.T) {
 	setPolicy("rtc")
 	must(t, os.WriteFile(drift, []byte(`{"checked_at":"2026-11-08T06:00:00Z","drift_s":420,"ok":false}`), 0o600))
 	e.clock.add(3 * time.Second) // the status cache
-	if got := doctorCheck(t, e, "clock"); !strings.HasPrefix(got, "warn: NTP synchronized; clock drift:") || !strings.Contains(got, "420 s") {
+	if got := doctorCheck(t, e, "clock"); got != "warn: NTP synchronized; clock drift: the RTC time at boot differs from NTP by 420 s (2026-11-08T06:00:00Z)" {
 		t.Fatalf("policy rtc with a drift: %s", got)
 	}
 
