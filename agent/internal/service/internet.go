@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"log/slog"
@@ -145,12 +144,19 @@ func probe(ctx context.Context, c *http.Client, url string) error {
 		_ = resp.Body.Close()
 		return nil
 	}
-	var cert x509.CertificateInvalidError
-	var verify *tls.CertificateVerificationError
-	if errors.As(err, &cert) || errors.As(err, &verify) {
+	if wrongClock(err) {
 		return nil
 	}
 	return err
+}
+
+// wrongClock reports whether a certificate failed only because of the clock of the host: x509 gives the reason
+// Expired also to a certificate that is "not yet valid" (a clock before NTP). Go wraps the x509 error in
+// tls.CertificateVerificationError; errors.As unwraps it. An unknown authority or a wrong name (a captive portal, a
+// proxy with its own certificate) is not the internet.
+func wrongClock(err error) bool {
+	var cert x509.CertificateInvalidError
+	return errors.As(err, &cert) && cert.Reason == x509.Expired
 }
 
 func isDNSError(err error) bool {

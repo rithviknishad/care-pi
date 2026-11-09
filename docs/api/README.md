@@ -1899,7 +1899,9 @@ All changes are additive.
 The agent checks the internet with a HTTPS `HEAD` request to `https://github.com/` (a name), then to
 `https://1.1.1.1/` (an address: no DNS). Each check uses a new HTTP client, so no connection and no state of an earlier
 check stay. A response of any status counts, and so does a certificate that a wrong clock cannot check yet (the server
-answered). The result:
+answered; x509 gives the reason "expired" to a certificate that is not valid yet). A certificate of an unknown
+authority or with another name (a captive portal, a proxy) does not count. A check whose time limit ends before a
+target answers is not a failed check: the last result stays. The result:
 
 | `github.com` | `1.1.1.1` | `reachable` | `problem` | Detail |
 |---|---|---|---|---|
