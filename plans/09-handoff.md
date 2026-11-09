@@ -1097,7 +1097,8 @@ the console only regenerated `src/api/types.gen.ts`.
 | B. The RTC clock policy | S75, SP9 | `25338de` |
 | C. Care 3.1 refs from the git source | S71 | `5c02da8`, `9efb69f` (the rules of care in Go, not in the schema) |
 | D. The pre-baked database and no pull of a present image | S72 | `ad3d4cf` |
-| The record: `08` (SP9, care.local findings), this section | — | the commit after `ad3d4cf` |
+| The record: `08` (SP9, care.local findings), this section | — | `c099588` |
+| In-repo plugs of `w13-onboarding` (S73): the lock pipeline; `backend.subdirectory`, `frontend.path`, `@<sha>#subdirectory=` | S73 | `35851cd` (CI), `9a662ac` (agent) |
 
 What changed for an operator:
 
@@ -1143,6 +1144,11 @@ Not done, with the reason:
 - The hardware page of the wizard on care.local: the setup is `ready`, so the page is closed; the API, the CLI, and the
   public status show the live check.
 
-End state of care.local: the dev build `v0.3.0-dev` (built at `5c02da8` with the work tree of item D; `ad3d4cf` only
-changed a log text after it), the earlier binary at `/usr/local/bin/care-pi.v0.2.0.bak`, `clock.policy: ntp`, setup
-`ready`, Care running (not restarted).
+For the merge with `w13-onboarding`: add `path: ${{ matrix.plug.path }}` to the call of `plug-bundle.yml` in
+`solution-lock.yml` (this branch has no such input of `plug-bundle.yml`, so actionlint refuses the line here), and
+apply `local/wave13/patches/onboarding/agent-tests-care_pi_onboarding.patch` of that branch. Checked in a merged
+work tree: the merge has no conflict, `go test ./...` passes, actionlint passes, `care-pi solution validate` passes;
+Redocly gives one warning for the `if`/`then` of `frontendPlug` in `solution.schema.json` (as for `care` here, `9efb69f`).
+
+End state of care.local: the dev build `v0.3.0-dev` at `9a662ac`, the earlier binary at
+`/usr/local/bin/care-pi.v0.2.0.bak`, `clock.policy: ntp`, setup `ready`, Care running (not restarted).
