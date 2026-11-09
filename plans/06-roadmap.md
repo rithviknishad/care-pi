@@ -164,9 +164,10 @@ rotation, the WAF, telemetry, and `care-pi doctor`, with 9 fixes.
 | WAF false positives (file uploads, rich text) | Care requests blocked | medium in `block` mode | off by default; `detect` first; per-rule tuning after the exit test |
 | The signing key is lost or leaks | no signed release, or forged locks accepted | low | `require_signed` opt-in; two keys during a rotation; the ceremony in `docs/solutions.md` §18 |
 
-## Status (2026-11-09, v0.3.1)
+## Status (2026-11-09, v0.3.2)
 
-**v0.3.0 and v0.3.1 released** (v0.3.1 = v0.3.0 plus two release-pipeline fixes: `fe-bundle.yml` never replaces a
+**v0.3.0, v0.3.1, and v0.3.2 released** (v0.3.2: the WAF allows PUT, PATCH, and DELETE; in `block` mode
+Care's API would have got `403`) (v0.3.1 = v0.3.0 plus two release-pipeline fixes: `fe-bundle.yml` never replaces a
 published bundle; the image outputs are readable). **v0.3.0:** (`09-handoff.md` §8t, §8u; decisions S71–S76): Care 3.1 from the git source (lock `2026.11.4`),
 the clinic setup plugs `care_pi_onboarding` and `care_pi_onboarding_fe` of this repository, the pre-migrated database
 seed in the image, the internet check with retries, and `clock detect`. care.local runs the release build on lock

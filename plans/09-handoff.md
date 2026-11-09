@@ -1218,7 +1218,7 @@ End state of care.local: the dev build `v0.3.0-dev` at `9a662ac`, the earlier bi
   `os_list.json` ("Care: CARE Clinic 2026.11.4").
 - **lumine** (2026-11-09 16:45 IST, powered on again): loop device reattached (`losetup -f -P`), `usb` back to `ok`
   after one run; agent v0.3.1 from the release; `clock detect --dry-run`: RTC present, **no battery** (0 V) → `ntp`,
-  so the `rtc` policy stays untested on hardware (neither Pi 5 has a battery); `host check --probe`: internet
+  so the `rtc` policy stays untested on hardware (the owner's Pi 5 has no battery); `host check --probe`: internet
   reachable. `updates.index_url` set to the default (it pointed at the wave-10 local dist); `update stage` 54 s
   (4 pulls, 1 present), `update apply --now` 92 s from 2026.11.2 to 2026.11.4: checkpoint, migrate, `plug-config:
   1 row(s)`, doctor 0 warnings. The plug bundle serves on all 3 names with CORS. Care had no facility, so the
@@ -1238,3 +1238,10 @@ End state of care.local: the dev build `v0.3.0-dev` at `9a662ac`, the earlier bi
 - **O1 (open):** `plug_config` holds the bundle URL with the public name, so `lumine.local` and the Tailscale name
   load the bundle from the public name; without internet DNS the wizard and the dashboard redirect are lost on
   `lumine.local`. This is the known O7 of `00-decisions.md` (care_fe rejects a root-relative `meta.url`).
+- **One Pi 5, two disks.** lumine and care.local are the same machine, booted from different disks (owner,
+  2026-11-09 17:15 IST). The RTC result (no battery) is one measurement, not two. The two cannot run at the same
+  time: the v0.3.2 install to care.local did not connect because the lumine disk was booted. The care.local disk
+  stays on v0.3.1 and lock 2026.11.4 until it boots again. DR "to a second Pi" needs a second board.
+- **v0.3.2** (`da0f290`, signed tag, release with 5 assets and notes): the WAF fix. lumine runs v0.3.2 (`apply`
+  rendered `id:900200`, doctor 0 warnings). The image `image-2026.11.4` carries v0.3.1; the notes of v0.3.2 say to
+  run the installer once before `block` mode.
