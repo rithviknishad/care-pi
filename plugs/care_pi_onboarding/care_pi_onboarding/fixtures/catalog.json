@@ -1,0 +1,220 @@
+{
+  "note": "Units, dose forms, routes, and product codes are those of the CARE fixtures (care/fixtures/constants.py). Items without a code have only a name and a strength.",
+  "medications": [
+    {
+      "slug_value": "paracetamol-500-mg",
+      "name": "Paracetamol 500 mg",
+      "product_type": "medication",
+      "status": "active",
+      "base_unit": {
+        "code": "{tbl}",
+        "system": "http://unitsofmeasure.org",
+        "display": "tablets"
+      },
+      "definitional": {
+        "dosage_form": {
+          "code": "421026006",
+          "system": "http://snomed.info/sct",
+          "display": "Oral tablet"
+        },
+        "intended_routes": [
+          {
+            "code": "26643006",
+            "system": "http://snomed.info/sct",
+            "display": "Oral route"
+          }
+        ]
+      },
+      "code": {
+        "code": "90332006",
+        "system": "http://snomed.info/sct",
+        "display": "Paracetamol-containing product"
+      }
+    },
+    {
+      "slug_value": "ibuprofen-400-mg",
+      "name": "Ibuprofen 400 mg",
+      "product_type": "medication",
+      "status": "active",
+      "base_unit": {
+        "code": "{tbl}",
+        "system": "http://unitsofmeasure.org",
+        "display": "tablets"
+      },
+      "definitional": {
+        "dosage_form": {
+          "code": "421026006",
+          "system": "http://snomed.info/sct",
+          "display": "Oral tablet"
+        },
+        "intended_routes": [
+          {
+            "code": "26643006",
+            "system": "http://snomed.info/sct",
+            "display": "Oral route"
+          }
+        ]
+      },
+      "code": {
+        "code": "38268001",
+        "system": "http://snomed.info/sct",
+        "display": "Ibuprofen-containing product"
+      }
+    },
+    {
+      "slug_value": "amoxicillin-500-mg",
+      "name": "Amoxicillin 500 mg",
+      "product_type": "medication",
+      "status": "active",
+      "base_unit": {
+        "code": "{tbl}",
+        "system": "http://unitsofmeasure.org",
+        "display": "tablets"
+      },
+      "definitional": {
+        "dosage_form": {
+          "code": "421026006",
+          "system": "http://snomed.info/sct",
+          "display": "Oral tablet"
+        },
+        "intended_routes": [
+          {
+            "code": "26643006",
+            "system": "http://snomed.info/sct",
+            "display": "Oral route"
+          }
+        ]
+      },
+      "code": {
+        "code": "27658006",
+        "system": "http://snomed.info/sct",
+        "display": "Amoxicillin-containing product"
+      }
+    },
+    {
+      "slug_value": "cetirizine-10-mg",
+      "name": "Cetirizine 10 mg",
+      "product_type": "medication",
+      "status": "active",
+      "base_unit": {
+        "code": "{tbl}",
+        "system": "http://unitsofmeasure.org",
+        "display": "tablets"
+      },
+      "definitional": {
+        "dosage_form": {
+          "code": "421026006",
+          "system": "http://snomed.info/sct",
+          "display": "Oral tablet"
+        },
+        "intended_routes": [
+          {
+            "code": "26643006",
+            "system": "http://snomed.info/sct",
+            "display": "Oral route"
+          }
+        ]
+      }
+    },
+    {
+      "slug_value": "pantoprazole-40-mg",
+      "name": "Pantoprazole 40 mg",
+      "product_type": "medication",
+      "status": "active",
+      "base_unit": {
+        "code": "{tbl}",
+        "system": "http://unitsofmeasure.org",
+        "display": "tablets"
+      },
+      "definitional": {
+        "dosage_form": {
+          "code": "421026006",
+          "system": "http://snomed.info/sct",
+          "display": "Oral tablet"
+        },
+        "intended_routes": [
+          {
+            "code": "26643006",
+            "system": "http://snomed.info/sct",
+            "display": "Oral route"
+          }
+        ]
+      }
+    },
+    {
+      "slug_value": "metformin-500-mg",
+      "name": "Metformin 500 mg",
+      "product_type": "medication",
+      "status": "active",
+      "base_unit": {
+        "code": "{tbl}",
+        "system": "http://unitsofmeasure.org",
+        "display": "tablets"
+      },
+      "definitional": {
+        "dosage_form": {
+          "code": "421026006",
+          "system": "http://snomed.info/sct",
+          "display": "Oral tablet"
+        },
+        "intended_routes": [
+          {
+            "code": "26643006",
+            "system": "http://snomed.info/sct",
+            "display": "Oral route"
+          }
+        ]
+      }
+    },
+    {
+      "slug_value": "amlodipine-5-mg",
+      "name": "Amlodipine 5 mg",
+      "product_type": "medication",
+      "status": "active",
+      "base_unit": {
+        "code": "{tbl}",
+        "system": "http://unitsofmeasure.org",
+        "display": "tablets"
+      },
+      "definitional": {
+        "dosage_form": {
+          "code": "421026006",
+          "system": "http://snomed.info/sct",
+          "display": "Oral tablet"
+        },
+        "intended_routes": [
+          {
+            "code": "26643006",
+            "system": "http://snomed.info/sct",
+            "display": "Oral route"
+          }
+        ]
+      }
+    },
+    {
+      "slug_value": "azithromycin-500-mg",
+      "name": "Azithromycin 500 mg",
+      "product_type": "medication",
+      "status": "active",
+      "base_unit": {
+        "code": "{tbl}",
+        "system": "http://unitsofmeasure.org",
+        "display": "tablets"
+      },
+      "definitional": {
+        "dosage_form": {
+          "code": "421026006",
+          "system": "http://snomed.info/sct",
+          "display": "Oral tablet"
+        },
+        "intended_routes": [
+          {
+            "code": "26643006",
+            "system": "http://snomed.info/sct",
+            "display": "Oral route"
+          }
+        ]
+      }
+    }
+  ]
+}

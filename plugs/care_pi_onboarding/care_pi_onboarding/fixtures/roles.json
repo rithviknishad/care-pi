@@ -1,0 +1,63 @@
+{
+  "roles": [
+    {
+      "key": "doctor",
+      "label": "Doctor",
+      "care_role": "Doctor",
+      "description": "Consults patients, writes prescriptions, and orders tests."
+    },
+    {
+      "key": "nurse",
+      "label": "Nurse",
+      "care_role": "Nurse",
+      "description": "Records vitals and triage, and gives medicines."
+    },
+    {
+      "key": "pharmacist",
+      "label": "Pharmacist",
+      "care_role": "Pharmacist",
+      "description": "Dispenses medicines and keeps the medicine stock."
+    },
+    {
+      "key": "receptionist",
+      "label": "Receptionist",
+      "description": "Registers patients, books appointments, starts visits, and collects payments. Cannot see clinical notes.",
+      "custom": {
+        "name": "Receptionist",
+        "contexts": ["FACILITY"],
+        "permissions": [
+          "can_create_patient",
+          "can_write_patient",
+          "can_list_patients",
+          "can_create_encounter",
+          "can_list_schedule",
+          "can_list_booking",
+          "can_write_booking",
+          "can_reschedule_booking",
+          "can_list_token_category",
+          "can_list_token",
+          "can_write_token",
+          "can_read_invoice",
+          "can_write_invoice",
+          "can_read_account",
+          "can_read_charge_item",
+          "can_create_charge_item",
+          "can_read_payment_reconciliation",
+          "can_write_payment_reconciliation",
+          "can_read_facility",
+          "can_list_facility_locations",
+          "can_view_facility_organization",
+          "can_list_user",
+          "can_read_questionnaire",
+          "can_read_healthcare_service"
+        ]
+      }
+    },
+    {
+      "key": "admin",
+      "label": "Clinic administrator",
+      "care_role": "Facility Admin",
+      "description": "Manages the facility, its staff, and its settings."
+    }
+  ]
+}

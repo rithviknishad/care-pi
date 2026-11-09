@@ -1,0 +1,249 @@
+{
+  "questionnaires": [
+    {
+      "slug": "care-pi-vitals",
+      "title": "Vitals",
+      "description": "Temperature, pulse, breathing, blood pressure, oxygen, weight, height, and blood sugar.",
+      "subject_type": "encounter",
+      "status": "active",
+      "departments": "*",
+      "questions": [
+        {
+          "id": "7961f248-a490-4076-822d-ce55a5fea0b6",
+          "link_id": "1",
+          "text": "Vitals",
+          "type": "group",
+          "questions": [
+            {
+              "id": "d2104ef4-f9c2-45f5-82f4-938f3e73f4a1",
+              "link_id": "1.1",
+              "text": "Temperature (°C)",
+              "type": "decimal"
+            },
+            {
+              "id": "7c681081-7518-4033-8732-fc8456c51ab8",
+              "link_id": "1.2",
+              "text": "Pulse (beats per minute)",
+              "type": "integer"
+            },
+            {
+              "id": "22ab9a84-f05a-41d5-a040-5584fd1b1145",
+              "link_id": "1.3",
+              "text": "Respiratory rate (breaths per minute)",
+              "type": "integer"
+            },
+            {
+              "id": "23f3b3f8-7f2e-4c89-bdd4-f64f96caba62",
+              "link_id": "1.4",
+              "text": "Blood pressure, systolic (mmHg)",
+              "type": "integer"
+            },
+            {
+              "id": "6d83cff6-7c9a-4b39-af2d-96146d76f6d3",
+              "link_id": "1.5",
+              "text": "Blood pressure, diastolic (mmHg)",
+              "type": "integer"
+            },
+            {
+              "id": "a5c81fd2-1eb9-4971-9801-4b68f45a16da",
+              "link_id": "1.6",
+              "text": "Oxygen saturation, SpO2 (%)",
+              "type": "integer"
+            },
+            {
+              "id": "8b949f47-0c56-4b70-8924-38620df3a046",
+              "link_id": "1.7",
+              "text": "Weight (kg)",
+              "type": "decimal"
+            },
+            {
+              "id": "419736e0-65e2-4445-9ee0-027cfe619381",
+              "link_id": "1.8",
+              "text": "Height (cm)",
+              "type": "decimal"
+            },
+            {
+              "id": "d37ee1b0-1ba7-4a13-bb83-4b42c4c3045d",
+              "link_id": "1.9",
+              "text": "Blood glucose, random (mg/dL)",
+              "type": "decimal"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "slug": "care-pi-soap-note",
+      "title": "Consultation note (SOAP)",
+      "description": "Subjective, objective, assessment, and plan of one consultation.",
+      "subject_type": "encounter",
+      "status": "active",
+      "departments": [
+        "General Medicine"
+      ],
+      "questions": [
+        {
+          "id": "2c992dfb-45ac-4c71-a4a0-31db29c42660",
+          "link_id": "1",
+          "text": "Subjective: complaints and history",
+          "type": "text",
+          "required": true
+        },
+        {
+          "id": "f30b9b5a-faa4-421d-98e4-9f7de299c1f3",
+          "link_id": "2",
+          "text": "Objective: examination findings",
+          "type": "text"
+        },
+        {
+          "id": "9fb60090-4d19-4c6e-aaa9-fc108efa5a67",
+          "link_id": "3",
+          "text": "Assessment",
+          "type": "text"
+        },
+        {
+          "id": "fa305a76-7e5c-46c8-95de-fad3e2db70f5",
+          "link_id": "4",
+          "text": "Plan: treatment and advice",
+          "type": "text"
+        },
+        {
+          "id": "f176fdbe-8c55-423a-8569-b99c3db24ff4",
+          "link_id": "5",
+          "text": "Follow-up date",
+          "type": "date"
+        }
+      ]
+    },
+    {
+      "slug": "care-pi-triage",
+      "title": "Triage",
+      "description": "The urgency of a patient at arrival.",
+      "subject_type": "encounter",
+      "status": "active",
+      "departments": "*",
+      "questions": [
+        {
+          "id": "05d55b8e-0185-4e39-9b29-9fbdfe85db3e",
+          "link_id": "1",
+          "text": "Triage category",
+          "type": "choice",
+          "required": true,
+          "answer_option": [
+            {
+              "value": "Red: see now"
+            },
+            {
+              "value": "Yellow: see soon"
+            },
+            {
+              "value": "Green: routine"
+            }
+          ]
+        },
+        {
+          "id": "10c234a6-b983-48eb-a572-462907faa129",
+          "link_id": "2",
+          "text": "Main complaint",
+          "type": "string",
+          "required": true
+        },
+        {
+          "id": "3586b3c4-a44b-4eee-878c-deec10d817f4",
+          "link_id": "3",
+          "text": "Duration of the complaint",
+          "type": "string"
+        },
+        {
+          "id": "704770c2-cc89-41e0-b9c2-cb9ec6829663",
+          "link_id": "4",
+          "text": "Danger signs present",
+          "type": "boolean"
+        },
+        {
+          "id": "3900c0df-388f-4bda-b642-4c63d59fa03d",
+          "link_id": "5",
+          "text": "Pain score (0 to 10)",
+          "type": "integer"
+        },
+        {
+          "id": "22b1de63-052d-4a4b-9ae7-f271070da873",
+          "link_id": "6",
+          "text": "Notes",
+          "type": "text"
+        }
+      ]
+    },
+    {
+      "slug": "care-pi-pharmacy-intake",
+      "title": "Pharmacy intake",
+      "description": "The checks of the pharmacist before dispensing.",
+      "subject_type": "encounter",
+      "status": "active",
+      "departments": [
+        "Pharmacy"
+      ],
+      "questions": [
+        {
+          "id": "58b195f1-3aeb-4ecc-881e-68b1700eb35c",
+          "link_id": "1",
+          "text": "Prescription source",
+          "type": "choice",
+          "required": true,
+          "answer_option": [
+            {
+              "value": "This clinic"
+            },
+            {
+              "value": "Another clinic or hospital"
+            },
+            {
+              "value": "No prescription"
+            }
+          ]
+        },
+        {
+          "id": "1ffd7e58-dcc0-47ca-9a73-23e06ba2d9f9",
+          "link_id": "2",
+          "text": "Known drug allergies",
+          "type": "text"
+        },
+        {
+          "id": "ae1c18ba-811f-4b1d-b842-a3cae6e969e4",
+          "link_id": "3",
+          "text": "Pregnant or breastfeeding",
+          "type": "choice",
+          "answer_option": [
+            {
+              "value": "Yes"
+            },
+            {
+              "value": "No"
+            },
+            {
+              "value": "Not applicable"
+            }
+          ]
+        },
+        {
+          "id": "d596c9ea-25a0-47ae-b3d5-6a93e9eb6272",
+          "link_id": "4",
+          "text": "Current medicines",
+          "type": "text"
+        },
+        {
+          "id": "e98be3cf-25d9-48cf-8674-a30ed6eaeac5",
+          "link_id": "5",
+          "text": "Counselling given",
+          "type": "boolean"
+        },
+        {
+          "id": "12c0a2e0-c9cb-430e-9b13-be8c3f4311a6",
+          "link_id": "6",
+          "text": "Notes",
+          "type": "text"
+        }
+      ]
+    }
+  ]
+}

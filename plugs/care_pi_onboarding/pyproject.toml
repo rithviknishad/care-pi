@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "care_pi_onboarding"
+version = "0.1.0"
+description = "CARE backend plug: clinic onboarding steps as idempotent, server-side APIs with the fixture data in the backend."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "care-pi" }]
+requires-python = ">=3.12"
+# Django, DRF, and pydantic come from CARE. The plug adds no dependencies.
+dependencies = []
+
+[project.urls]
+Source = "https://github.com/rithviknishad/care-pi/tree/main/plugs/care_pi_onboarding"
+
+[tool.setuptools.packages.find]
+include = ["care_pi_onboarding", "care_pi_onboarding.*"]
+
+[tool.setuptools.package-data]
+care_pi_onboarding = ["fixtures/*.json", "fixtures/*.md", "fixtures/locales/*.json", "fixtures/locales/*.txt"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "DJ", "S", "SIM", "RUF"]
+# The same ignores as CARE: long lines (strings and comments) and contextlib.suppress.
+ignore = ["E501", "SIM105", "RUF012"]
+
+[tool.ruff.lint.per-file-ignores]
+"care_pi_onboarding/tests/*" = ["S101", "S105", "S106"]
+"care_pi_onboarding/migrations/*" = ["E501", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["care_pi_onboarding"]
+known-third-party = ["care", "config"]

@@ -1,0 +1,61 @@
+{
+  "clinic": {
+    "label": "Clinic",
+    "description": "An outpatient clinic: consultation, nursing, a small pharmacy, and sample collection.",
+    "facility_type": "Private Hospital",
+    "features": [],
+    "departments": [
+      {"name": "General Medicine", "description": "Doctors and consultations."},
+      {"name": "Nursing", "description": "Nurses, triage, and observation."},
+      {"name": "Front Desk", "description": "Registration, appointments, and billing."},
+      {"name": "Pharmacy", "description": "Dispensing and the medicine store."},
+      {"name": "Laboratory", "description": "Sample collection and tests."}
+    ],
+    "locations": [
+      {"name": "Reception", "form": "ro", "mode": "kind", "description": "Registration and billing counter.", "departments": ["Front Desk"]},
+      {"name": "Consultation Room 1", "form": "ro", "mode": "kind", "description": "", "departments": ["General Medicine"]},
+      {"name": "Consultation Room 2", "form": "ro", "mode": "kind", "description": "", "departments": ["General Medicine"]},
+      {
+        "name": "Observation",
+        "form": "wa",
+        "mode": "kind",
+        "description": "Short stay under nursing care.",
+        "departments": ["Nursing", "General Medicine"],
+        "children": [
+          {"name": "Observation Bed 1", "form": "bd", "mode": "instance", "description": ""},
+          {"name": "Observation Bed 2", "form": "bd", "mode": "instance", "description": ""}
+        ]
+      },
+      {"name": "Pharmacy Store", "form": "ro", "mode": "kind", "description": "", "departments": ["Pharmacy"]},
+      {"name": "Sample Collection", "form": "ro", "mode": "kind", "description": "", "departments": ["Laboratory"]}
+    ],
+    "staff_departments": {
+      "doctor": "General Medicine",
+      "nurse": "Nursing",
+      "pharmacist": "Pharmacy",
+      "receptionist": "Front Desk",
+      "admin": "Administration"
+    }
+  },
+  "pharmacy": {
+    "label": "Pharmacy",
+    "description": "A stand-alone pharmacy: a counter and a store.",
+    "facility_type": "Other",
+    "features": [],
+    "departments": [
+      {"name": "Pharmacy", "description": "Dispensing and the medicine store."},
+      {"name": "Front Desk", "description": "Billing."}
+    ],
+    "locations": [
+      {"name": "Counter", "form": "ro", "mode": "kind", "description": "Dispensing and billing.", "departments": ["Pharmacy", "Front Desk"]},
+      {"name": "Medicine Store", "form": "ro", "mode": "kind", "description": "", "departments": ["Pharmacy"]}
+    ],
+    "staff_departments": {
+      "doctor": "Pharmacy",
+      "nurse": "Pharmacy",
+      "pharmacist": "Pharmacy",
+      "receptionist": "Front Desk",
+      "admin": "Administration"
+    }
+  }
+}

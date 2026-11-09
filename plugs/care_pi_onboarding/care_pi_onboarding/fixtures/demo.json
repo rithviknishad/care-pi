@@ -1,0 +1,12 @@
+{
+  "note": "Synthetic people for the try-it mode. Each name starts with Demo. DELETE /api/care_pi_onboarding/demo_data/ removes them.",
+  "department": "General Medicine",
+  "encounter": {"encounter_class": "amb", "status": "in_progress", "priority": "routine"},
+  "patients": [
+    {"key": "demo-1", "name": "Demo Asha Menon", "gender": "female", "age": 34, "phone_number": "+919000000001", "blood_group": "O_positive"},
+    {"key": "demo-2", "name": "Demo Ravi Kumar", "gender": "male", "age": 58, "phone_number": "+919000000002", "blood_group": "B_positive"},
+    {"key": "demo-3", "name": "Demo Fathima Rahman", "gender": "female", "age": 7, "phone_number": "+919000000003", "blood_group": "A_positive"},
+    {"key": "demo-4", "name": "Demo Joseph Thomas", "gender": "male", "age": 71, "phone_number": "+919000000004", "blood_group": "AB_positive"},
+    {"key": "demo-5", "name": "Demo Lakshmi Nair", "gender": "female", "age": 26, "phone_number": "+919000000005", "blood_group": "O_negative"}
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "valuesets": [
+    {
+      "slug": "care-pi-clinic-complaints",
+      "name": "Clinic: common complaints",
+      "description": "The complaints that a general clinic sees most. SNOMED CT clinical findings.",
+      "status": "active",
+      "compose": {
+        "include": [
+          {
+            "system": "http://snomed.info/sct",
+            "concept": [
+              {"code": "386661006", "display": "Fever"},
+              {"code": "49727002", "display": "Cough"},
+              {"code": "25064002", "display": "Headache"},
+              {"code": "162397003", "display": "Pain in throat"},
+              {"code": "21522001", "display": "Abdominal pain"},
+              {"code": "422400008", "display": "Vomiting"},
+              {"code": "62315008", "display": "Diarrhea"},
+              {"code": "404640003", "display": "Dizziness"},
+              {"code": "84229001", "display": "Fatigue"},
+              {"code": "267036007", "display": "Dyspnea"},
+              {"code": "29857009", "display": "Chest pain"},
+              {"code": "161891005", "display": "Backache"},
+              {"code": "57676002", "display": "Pain of joint"},
+              {"code": "271807003", "display": "Eruption of skin"}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "slug": "care-pi-clinic-conditions",
+      "name": "Clinic: common conditions",
+      "description": "The diagnoses that a general clinic records most. SNOMED CT disorders.",
+      "status": "active",
+      "compose": {
+        "include": [
+          {
+            "system": "http://snomed.info/sct",
+            "concept": [
+              {"code": "38341003", "display": "Hypertensive disorder"},
+              {"code": "44054006", "display": "Diabetes mellitus type 2"},
+              {"code": "195967001", "display": "Asthma"},
+              {"code": "54150009", "display": "Upper respiratory infection"},
+              {"code": "68566005", "display": "Urinary tract infectious disease"},
+              {"code": "25374005", "display": "Gastroenteritis"},
+              {"code": "271737000", "display": "Anemia"},
+              {"code": "40930008", "display": "Hypothyroidism"},
+              {"code": "37796009", "display": "Migraine"},
+              {"code": "396275006", "display": "Osteoarthritis"}
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
