@@ -1207,3 +1207,9 @@ End state of care.local: the dev build `v0.3.0-dev` at `9a662ac`, the earlier bi
   lock. Fix: `fe-bundle.yml` now checks for the release first and never builds or uploads a published bundle again
   (as `plug-bundle.yml` already did); its outputs come from the published asset (`docs/fe.md`, "The fe-bundle
   workflow"). `pi-image.yml` dispatched again on the tag.
+- **Second `pi-image.yml` run** (42602228610, on the tag v0.3.0): the image built and passed `verify.sh` in CI in
+  20 min on `ubuntu-24.04-arm`; then `upload-artifact` failed with EACCES on `<name>.install.log` (root 0600 from
+  the chroot). Fix `f8d447d`: `image/builder/run.sh` sets the owner (`OUT_UID`/`OUT_GID` from `build.sh`) and the
+  mode of `/out` at exit; `pi-image.yml` has a `sudo chmod` fallback. The workflow checks out the tag, so **v0.3.1**
+  (`f8d447d`, release with 5 assets, notes) carries both pipeline fixes; `pi-image.yml` dispatched on v0.3.1 (run
+  42605544412). care.local runs v0.3.1.
