@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -168,3 +169,42 @@ func TestInternetCheckOnce(t *testing.T) {
 type roundTrip func(*http.Request) (*http.Response, error)
 
 func (f roundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestInternetCheckCancelledKeepsTheResult: a check whose context ends before a target answers (the 5 s limit of a
+// host check on a slow link, or an aborted request) is not a failed check: the last result and its time stay, and the
+// first check of the agent stays "not checked yet". The next check runs.
+func TestInternetCheckCancelledKeepsTheResult(t *testing.T) {
+	f := &fakeNet{}
+	i := &Internet{Transport: f}
+	first := i.Check(context.Background())
+	if first.Reachable == nil || !*first.Reachable {
+		t.Fatalf("the first check: %+v", first)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	slow := roundTrip(func(r *http.Request) (*http.Response, error) {
+		return nil, &url.Error{Op: "Head", URL: r.URL.String(), Err: r.Context().Err()}
+	})
+	i.Transport = slow
+	st := i.Check(ctx)
+	if st.Reachable == nil || !*st.Reachable || st.Problem != "" || st.CheckedAt == nil || !st.CheckedAt.Equal(*first.CheckedAt) {
+		t.Fatalf("a cancelled check changed the result: %+v", st)
+	}
+	if i.running != nil {
+		t.Fatal("the check did not release running")
+	}
+
+	// Before the first result, a cancelled check keeps "not checked yet".
+	j := &Internet{Transport: slow}
+	if st := j.Check(ctx); st.Reachable != nil || st.CheckedAt != nil || st.Detail() != "not checked yet" {
+		t.Fatalf("a cancelled first check gave a result: %+v", st)
+	}
+	// The same limit on a network that fails fast is a failed check.
+	f.set("github.com", errNoRoute)
+	f.set("1.1.1.1", errNoRoute)
+	j.Transport = f
+	if st := j.Check(context.Background()); st.Reachable == nil || *st.Reachable || st.Problem != InternetNoRoute {
+		t.Fatalf("a failed check: %+v", st)
+	}
+}

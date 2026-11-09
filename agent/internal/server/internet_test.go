@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/rithviknishad/care-pi/agent/internal/service"
 	"github.com/rithviknishad/care-pi/agent/internal/setup"
@@ -50,6 +51,66 @@ func warningCodes(t *testing.T, st map[string]any, step string) []string {
 	}
 	return out
 }
+
+// TestHostCheckProbeOutlivesAnAbortedRequest: the internet check of GET /host/check?probe=true has its own time
+// limit, not the one of the request. A browser that aborts the request does not cancel the check in flight, so the
+// result of the check is a real result, not "no route".
+func TestHostCheckProbeOutlivesAnAbortedRequest(t *testing.T) {
+	e := newEnv(t)
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	e.svc.Internet = &service.Internet{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		once.Do(func() { close(entered) })
+		<-release
+		if err := r.Context().Err(); err != nil {
+			return nil, err
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})}
+	e.claim()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(ctx, "GET", e.hs.URL+"/api/v1/host/check?probe=true", nil)
+	must(t, err)
+	req.Host = "care.local:8443"
+	req.Header.Set("X-Forwarded-For", e.addr)
+	req.AddCookie(&http.Cookie{Name: CookieName, Value: e.cookie})
+	done := make(chan error, 1)
+	go func() {
+		_, err := http.DefaultClient.Do(req)
+		done <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the host check did not check the internet")
+	}
+	// The browser goes away. The server sees the closed connection before the check ends.
+	cancel()
+	if err := <-done; err == nil {
+		t.Fatal("the request did not abort")
+	}
+	time.Sleep(200 * time.Millisecond)
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		st := e.svc.Internet.Snapshot()
+		if st.Reachable != nil {
+			if !*st.Reachable {
+				t.Fatalf("the aborted request made the check fail: %+v", st)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the check did not end")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 // TestInternetCheckNotFrozen (S74): a failed internet check at the hardware step does not stay in the setup state
 // after the internet works; the host check checks again; the finish keeps only the warnings that are still true.

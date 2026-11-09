@@ -159,6 +159,9 @@ func isDNSError(err error) bool {
 }
 
 // Check runs one check now and returns its result. A caller that comes while a check runs waits for that check.
+//
+// A check whose context ends before a target answers (the 5 s limit of a host check on a slow link, or a caller that
+// goes away) tells nothing about the network: the result stays as it was, and the check does not count as a check.
 func (i *Internet) Check(ctx context.Context) InternetState {
 	i.mu.Lock()
 	if ch := i.running; ch != nil {
@@ -186,6 +189,13 @@ func (i *Internet) Check(ctx context.Context) InternetState {
 			break
 		}
 		dnsFailed = dnsFailed || isDNSError(err)
+	}
+	if !ok && ctx.Err() != nil {
+		i.mu.Lock()
+		i.running = nil
+		i.mu.Unlock()
+		close(ch)
+		return i.Snapshot()
 	}
 	switch {
 	case ok && dnsFailed:
