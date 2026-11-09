@@ -231,7 +231,8 @@ process as `failed` ("interrupted"). An apply is idempotent, so the operator can
 The hardware step and the internet check (S74, `docs/api/README.md` section 19.1): the agent checks the internet
 at its start, after 15 s, 30 s, 60 s, then every 2 minutes until the first success, then every 5 minutes. The probe of
 the hardware step (`GET /host/check?probe=true`) checks again at once. The step records the result, but the wizard and
-the dashboard show the live check, and the finish keeps only the warnings that are still true.
+the dashboard show the live check, and the finish replaces the warning `no-internet` of the record with the live
+check (the disk warnings stay).
 
 Only a dev build can skip the `backups` step. A dev build has a version that is not `vX.Y.Z`
 (`Makefile`: `git describe --tags --match 'v[0-9]*'`). Thus a release build of Phase 2 cannot finish the setup.

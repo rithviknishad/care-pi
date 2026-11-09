@@ -95,7 +95,7 @@ type StepRecord struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	Warnings  []Issue   `json:"warnings,omitempty"`
 	// Internet is the internet check when the hardware step was done (S74). It is a record only: the setup state
-	// shows the live check, and the finish keeps only the warnings that are still true.
+	// shows the live check, and the finish replaces the warning no-internet with the live check.
 	Internet *ProbeResult `json:"internet,omitempty"`
 }
 

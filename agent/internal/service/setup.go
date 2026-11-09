@@ -309,22 +309,24 @@ func (s *Service) liveHardwareWarnings(stored []setup.Issue) []setup.Issue {
 	return out
 }
 
-// refreshHardwareStep keeps in the record of the hardware step only the warnings that are still true now (the finish).
+// refreshHardwareStep replaces the internet warning of the record of the hardware step with the live check (the
+// finish). The other warnings stay: the disk does not change between the step and the finish, and the disk probe of
+// the step is not in memory after a restart of the agent (then slow-disk would go although the disk is the same).
+// Without a live check (no check yet) the stored internet warning stays.
 func (s *Service) refreshHardwareStep(hw Hardware) error {
-	now := map[string]bool{}
-	for _, w := range hardwareWarnings(hw) {
-		now[w.Code] = true
-	}
 	_, err := s.Setup.Update(func(r *setup.Record) error {
 		st := r.Steps[setup.StepHardware]
-		if st == nil {
+		if st == nil || hw.InternetReachable == nil {
 			return nil
 		}
 		var keep []setup.Issue
 		for _, w := range st.Warnings {
-			if now[w.Code] {
+			if w.Code != warnNoInternet {
 				keep = append(keep, w)
 			}
+		}
+		if w := internetWarning(hw.InternetReachable, hw.InternetProblem); w != nil {
+			keep = append(keep, *w)
 		}
 		st.Warnings = keep
 		return nil

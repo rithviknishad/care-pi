@@ -113,7 +113,8 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 // TestInternetCheckNotFrozen (S74): a failed internet check at the hardware step does not stay in the setup state
-// after the internet works; the host check checks again; the finish keeps only the warnings that are still true.
+// after the internet works; the host check checks again; the finish refreshes the internet warning of the record and
+// keeps the disk warnings (the disk probe of the step is not in memory after a restart of the agent).
 func TestInternetCheckNotFrozen(t *testing.T) {
 	e := newEnv(t)
 	writeRootCA(t, e.p)
@@ -175,9 +176,11 @@ func TestInternetCheckNotFrozen(t *testing.T) {
 		t.Fatalf("status network %v", n)
 	}
 
-	// The finish keeps in the record only the warnings that are still true.
+	// The finish refreshes the internet warning of the record (no-internet goes: the internet works) and keeps the
+	// disk warnings, also after a restart of the agent that lost the disk probe of the step.
 	_, err = e.svc.Setup.Update(func(r *setup.Record) error {
-		r.Steps[setup.StepHardware].Warnings = append(r.Steps[setup.StepHardware].Warnings, setup.Issue{Code: "sd-card", Message: "x"})
+		r.Steps[setup.StepHardware].Warnings = append(r.Steps[setup.StepHardware].Warnings,
+			setup.Issue{Code: "slow-disk", Message: "the root disk writes less than 20 MB/s"})
 		return nil
 	})
 	must(t, err)
@@ -192,7 +195,7 @@ func TestInternetCheckNotFrozen(t *testing.T) {
 	e.waitJob(r.json(t)["id"].(string))
 	rec, _, err = e.svc.Setup.Load()
 	must(t, err)
-	if w := rec.Steps[setup.StepHardware].Warnings; len(w) != 0 {
-		t.Fatalf("the record keeps warnings that are not true: %v", w)
+	if w := rec.Steps[setup.StepHardware].Warnings; len(w) != 1 || w[0].Code != "slow-disk" {
+		t.Fatalf("the record must keep slow-disk and drop no-internet: %v", w)
 	}
 }

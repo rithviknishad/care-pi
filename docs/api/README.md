@@ -1920,8 +1920,9 @@ When it checks:
   hardware step of the console reads it when it opens. `care-pi host check` (without `--probe` too) checks one time:
   the CLI has no background check.
 - The hardware step (`PUT /setup/steps/hardware`) records the result and its time in the setup record, but
-  `GET /setup` gives the warning `no-internet` from the live check, and `POST /setup/finish` keeps in the record only
-  the warnings that are still true. A failed check at the step does not stay in the wizard.
+  `GET /setup` gives the warning `no-internet` from the live check, and `POST /setup/finish` replaces the warning
+  `no-internet` of the record with the live check. The other warnings of the step (`sd-card`, `small-disk`,
+  `slow-disk`) stay: the disk does not change. A failed check at the step does not stay in the wizard.
 
 `PublicStatus.internet`, `Status.network.internet_problem`, `Network.internet.problem`, and
 `Hardware.internet_problem` give the cause. The setup page, the maintenance page, and the clock page of Caddy show the
