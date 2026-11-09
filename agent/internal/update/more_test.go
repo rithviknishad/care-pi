@@ -83,15 +83,16 @@ func TestPlugPlans(t *testing.T) {
 		err    string
 	}{
 		{"care_fasterappointments_fe", PlugChange{SetEnabled: true, Enabled: &on}, PathPlugConfig, ""},
-		{"care_onboarding_fe", PlugChange{Frontend: map[string]any{"config.redirect_after_login": false}}, PathPlugConfig, ""},
-		{"care_onboarding_fe", PlugChange{SetEnabled: true, Enabled: &off}, PathPlugConfig, ""},
+		{"care_pi_onboarding", PlugChange{Frontend: map[string]any{"config.redirect_after_login": false}}, PathPlugConfig, ""},
+		// S73: the onboarding plug has a backend part, so turning it off changes ADDITIONAL_PLUGS too.
+		{"care_pi_onboarding", PlugChange{SetEnabled: true, Enabled: &off}, PathRestart, ""},
 		{"care_multihost_files_be", PlugChange{SetEnabled: true, Enabled: &on}, PathCutover, ""},
 		{"care_filly", PlugChange{SetEnabled: true, Enabled: &on}, "", problem.PlugSettingsInvalid},
 		{"care_filly", PlugChange{SetEnabled: true, Enabled: &on, Backend: map[string]any{"MEDISPEAK_API_KEY": "msk_live_x", "MEDISPEAK_BASE_URL": "https://m.example/api/v2"}}, PathCutover, ""},
 		{"care_filly", PlugChange{Backend: map[string]any{"MEDISPEAK_BASE_URL": "https://m.example/api/v2"}}, PathNone, ""},
 		{"care_filly", PlugChange{Backend: map[string]any{"NOPE": "x"}}, "", problem.PlugSettingsInvalid},
 		{"care_scribe", PlugChange{SetEnabled: true, Enabled: &on}, "", problem.PlugUnknown},
-		{"care_onboarding_fe", PlugChange{SetEnabled: true}, PathNone, ""},
+		{"care_pi_onboarding", PlugChange{SetEnabled: true}, PathNone, ""},
 		// A setting of a plug that is off: path none (no runtime effect; the value counts when the plug turns on).
 		{"care_fasterappointments_fe", PlugChange{Frontend: map[string]any{"config.auto_create_invoice": true}}, PathNone, ""},
 		{"care_filly", PlugChange{Backend: map[string]any{"MEDISPEAK_API_KEY": "msk_live_off"}}, PathNone, ""},
@@ -143,7 +144,7 @@ func TestPlugPlanExistingValue(t *testing.T) {
 	backend := func(v []any) map[string]config.PlugChoice {
 		return map[string]config.PlugChoice{
 			"care_multihost_files_be": {Enabled: &on, Settings: &config.PlugSettings{Backend: map[string]any{"ALLOWED_HOSTS": v}}},
-			"care_onboarding_fe":      {Settings: &config.PlugSettings{Frontend: map[string]any{"config.redirect_after_login": false}}},
+			"care_pi_onboarding":      {Settings: &config.PlugSettings{Frontend: map[string]any{"config.redirect_after_login": false}}},
 		}
 	}
 	cases := []struct {
@@ -154,8 +155,8 @@ func TestPlugPlanExistingValue(t *testing.T) {
 		{"care_multihost_files_be", PlugChange{Backend: map[string]any{"ALLOWED_HOSTS": nil}}, PathRestart},
 		{"care_multihost_files_be", PlugChange{Backend: map[string]any{"ALLOWED_HOSTS": []any{"*.lan", "*.home"}}}, PathRestart},
 		{"care_multihost_files_be", PlugChange{Backend: map[string]any{"ALLOWED_HOSTS": []any{"*.lan"}}}, PathNone},
-		{"care_onboarding_fe", PlugChange{Frontend: map[string]any{"config.redirect_after_login": true}}, PathPlugConfig},
-		{"care_onboarding_fe", PlugChange{Frontend: map[string]any{"config.redirect_after_login": nil}}, PathPlugConfig},
+		{"care_pi_onboarding", PlugChange{Frontend: map[string]any{"config.redirect_after_login": true}}, PathPlugConfig},
+		{"care_pi_onboarding", PlugChange{Frontend: map[string]any{"config.redirect_after_login": nil}}, PathPlugConfig},
 	}
 	for _, c := range cases {
 		cfg.Solution.Plugs = backend([]any{"*.lan"})

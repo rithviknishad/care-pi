@@ -58,7 +58,7 @@ func lockInput(t *testing.T) LockInput {
 	sha := strings.Repeat("b", 40)
 	in := LockInput{Solution: data, Version: "2026.11.0", CreatedAt: "2026-11-14T10:00:00Z", CreatedBy: "test", MinAgentVersion: "v0.4.0",
 		Commit: sha, CareFESHA: sha, Plugs: map[string]PlugInput{
-			"care_onboarding_fe":         {FrontendSHA: sha, FrontendURL: "plug-care_onboarding_fe-bbbbbbbbbbbb/plug-care_onboarding_fe-bbbbbbbbbbbb.tar.gz", FrontendSHA256: strings.Repeat("c", 64), FrontendSizeBytes: 10},
+			"care_pi_onboarding":         {BackendSHA: sha, FrontendSHA: sha, FrontendURL: "plug-care_pi_onboarding_fe-bbbbbbbbbbbb/plug-care_pi_onboarding_fe-bbbbbbbbbbbb.tar.gz", FrontendSHA256: strings.Repeat("c", 64), FrontendSizeBytes: 10},
 			"care_multihost_files_be":    {BackendSHA: sha},
 			"care_fasterappointments_fe": {},
 			"care_filly":                 {BackendSHA: sha},
@@ -84,13 +84,13 @@ func TestAssembleLockAndIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(l.SolutionImage.InstalledPlugs, ","); got != "care_filly,care_multihost_files_be" {
+	if got := strings.Join(l.SolutionImage.InstalledPlugs, ","); got != "care_filly,care_multihost_files_be,care_pi_onboarding" {
 		t.Fatalf("installed plugs %s", got)
 	}
 	if f := l.Plugs["care_fasterappointments_fe"].Frontend; f == nil || f.Source != FrontendExternal || f.SHA != nil {
 		t.Fatalf("an FE plug without a CI bundle is external: %+v", f)
 	}
-	if f := l.Plugs["care_onboarding_fe"].Frontend; f == nil || f.Source != FrontendBuilt || *f.Entry != "assets/remoteEntry.js" {
+	if f := l.Plugs["care_pi_onboarding"].Frontend; f == nil || f.Source != FrontendBuilt || *f.Entry != "assets/remoteEntry.js" {
 		t.Fatalf("built FE plug %+v", f)
 	}
 	if b := l.Plugs["care_filly"].Backend; b == nil || b.AdditionalPlug.Version != "@"+strings.Repeat("b", 40) {
@@ -150,7 +150,7 @@ func TestOperatorChoiceAndSuperset(t *testing.T) {
 	cfg := config.Default()
 	cfg.Solution.Name = "care-clinic"
 	on, off := true, false
-	cfg.Solution.Plugs = map[string]config.PlugChoice{"care_filly": {Enabled: &on}, "care_onboarding_fe": {Enabled: &off}}
+	cfg.Solution.Plugs = map[string]config.PlugChoice{"care_filly": {Enabled: &on}, "care_pi_onboarding": {Enabled: &off}}
 	plugs, err := sol.Effective(cfg, 2)
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +162,7 @@ func TestOperatorChoiceAndSuperset(t *testing.T) {
 	if p := by["care_filly"]; !p.On || p.Reason != ReasonOperator {
 		t.Fatalf("filly %+v", p)
 	}
-	if p := by["care_onboarding_fe"]; p.On || p.Reason != ReasonOperator {
+	if p := by["care_pi_onboarding"]; p.On || p.Reason != ReasonOperator {
 		t.Fatalf("onboarding %+v", p)
 	}
 	if p := by["care_multihost_files_be"]; !p.On || p.Reason != ReasonAuto || !p.AutoActive {

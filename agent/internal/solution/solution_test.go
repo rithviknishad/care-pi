@@ -22,8 +22,9 @@ func TestEmbeddedCareClinic(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, p := range plugs {
-		if p.On && p.HasBackend() {
-			t.Errorf("care-clinic must have no backend plug on one hostname, got %s", p.ID)
+		// S73: the onboarding plug is the only backend plug on by default; the solution image has it.
+		if p.On && p.HasBackend() && p.ID != "care_pi_onboarding" {
+			t.Errorf("care-clinic must have no other backend plug on one hostname, got %s", p.ID)
 		}
 	}
 	two, _ := s.Effective(cfg, 2)

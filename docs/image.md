@@ -360,7 +360,7 @@ The image needs no internet for the first boot and for the setup:
 | Setup mode (Caddy, console, claim) | Works. The Caddy image comes from the solution lock in the cache. In setup mode, `care.target` does not wait for the clock gate. |
 | Install at the end of the setup | The lock comes from the dist snapshot. No pull (each image is in the storage: the job log says "image present, no pull"), no FE build (the FE build of the lock exists), no migration of an empty database (the seed, section 6.5), only the first user. The clock gate passes with the time of the browser (S52): the console sends it at the claim, and the agent sets the clock when NTP is not synchronized (`docs/api/README.md` section 16). The console shows "Clock not trusted" until the device reaches an NTP server. |
 | FE plugs with a built bundle | Work (pre-seeded). |
-| FE plugs with only a `url` (`requires_internet: true`, for example `care_onboarding_fe` today) | The browser cannot load them. Care works without them. |
+| FE plugs with only a `url` (`requires_internet: true`; the Clinic solution has none today) | The browser cannot load them. Care works without them. |
 | A change of the frontend env (another FE build id) | Needs internet for the local FE build (`docs/fe.md`). |
 | `update check` | Fails with `index-unavailable`. The device keeps running. |
 | Public certificates, Tailscale | Phase 6. |

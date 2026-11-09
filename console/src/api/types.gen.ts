@@ -13226,6 +13226,8 @@ export interface components {
         /** @description s3: a key prefix inside the bucket, without a slash at the start or at the end. */
         prefix: string;
         gitRef: string;
+        /** @description A relative directory in a repository: segments of letters, digits, dot, hyphen, and underscore. A segment starts with a letter, a digit, or an underscore, so . and .. cannot occur. No leading or trailing slash. */
+        repoPath: string;
         /** @description The backend part of a plug. It is a Python package that CI installs into the CARE image. It becomes one entry of ADDITIONAL_PLUGS. */
         backendPlug: {
             /** @description The Django app name of the plug. It becomes the field name of the ADDITIONAL_PLUGS entry. */
@@ -13234,17 +13236,21 @@ export interface components {
             package: string;
             /** @description A branch or a tag to track, or a git sha to pin. The ADDITIONAL_PLUGS entry gets the version @<ref>. The lock resolves a tracked ref to a git sha (Phase 4). */
             ref: components["schemas"]["gitRef"];
+            /** @description Wave 13. The directory of the Python package in the repository of package, when it is not the root. pip needs the fragment after the ref, so the ADDITIONAL_PLUGS entry gets the version @<sha>#subdirectory=<subdirectory> and package stays the bare repository URL. Example: the in-repo plug plugs/care_pi_onboarding of care-pi. */
+            subdirectory?: components["schemas"]["repoPath"];
             /** @description The default configuration. Each plug defines its own keys. It becomes the field configs of the ADDITIONAL_PLUGS entry. Do not store secrets here. Add an entry to settings with the type secret. */
             configs?: Record<string, never>;
         };
         /** Format: uri */
         httpsUrl: string;
-        /** @description The frontend part of a plug. It is a module federation bundle that CARE loads in the browser. Give a repo and a ref, a url, or both. With a repo, CI builds the bundle and the device serves it at /plugs/<slug>/<sha12>/. With only a url, the browser loads the bundle from that URL (external, not pinned). */
+        /** @description The frontend part of a plug. It is a module federation bundle that CARE loads in the browser. Give a repo and a ref, a url, or both. With a repo, CI builds the bundle and the device serves it at /plugs/<slug>/<sha12>/. With only a url, the browser loads the bundle from that URL (external, not pinned). With repo "." and a path (wave 13), CI builds the bundle from a directory of this repository (care-pi) and the lock pins the last commit of ref that changed path. */
         frontendPlug: {
             /** @description The slug of the plug in the plug_config table of CARE. It is also the directory name of the bundle on the device. */
             slug: string;
-            /** @description The https URL of the git repository of the plug. CI builds the bundle from this repository when url is absent. */
-            repo?: components["schemas"]["httpsUrl"];
+            /** @description The https URL of the git repository of the plug, or "." for this repository (care-pi, wave 13). CI builds the bundle from this repository when url is absent. */
+            repo?: components["schemas"]["httpsUrl"] | ".";
+            /** @description Wave 13. The directory of the plug in repo, when it is not the root: CI runs npm ci and the build script in this directory, and build.out is relative to it. Required with repo ".". Example: plugs/care_pi_onboarding_fe. */
+            path?: components["schemas"]["repoPath"];
             /** @description A branch or a tag to track, or a git sha to pin. Required when repo is set. */
             ref?: components["schemas"]["gitRef"];
             /** @description The https URL of a remoteEntry.js bundle that is already built. Without repo, the agent writes this URL to the plug_config row and CI builds nothing (an external bundle). With repo, CI builds the bundle from repo, and url only records where upstream publishes the plug (Phase 4). */
@@ -13373,11 +13379,19 @@ export interface components {
             title: string;
             /** @description One or two sentences that tell the operator what the solution is for. */
             description: string;
-            /** @description The upstream CARE backend image. The agent resolves the ref to an image digest and writes the digest to the lock. */
+            /** @description The CARE backend. source image (the default): an upstream image; the agent resolves the ref to an image digest and writes the digest to the lock. source git (S71): a git ref of the CARE repository; CI builds docker/prod.Dockerfile of the resolved sha into image with the tag <sha12>. care-pi solution validate checks the rules that the schema does not express: source image needs image and a ref without a slash; source git needs repo. */
             care: {
-                /** @description The image name without a tag or a digest, for example ghcr.io/ohcnetwork/care. */
-                image: string;
-                /** @description An image tag to track (for example latest) or a digest to pin (for example sha256:<64 hex characters>). The agent re-resolves a tag at each update check. The agent never re-resolves a digest. */
+                /**
+                 * @description Where the CARE image comes from: image (an upstream image; the default) or git (CI builds docker/prod.Dockerfile of repo at the resolved sha; S71).
+                 * @default image
+                 * @enum {unknown}
+                 */
+                source: "image" | "git";
+                /** @description The image name without a tag or a digest, for example ghcr.io/ohcnetwork/care. With source git: the repository of the images that CI builds from the source (default ghcr.io/rithviknishad/care-pi/care-base). */
+                image?: string;
+                /** @description source git: the HTTPS URL of the CARE repository, for example https://github.com/ohcnetwork/care. */
+                repo?: string;
+                /** @description source image: an image tag to track (for example latest) or a digest to pin (for example sha256:<64 hex characters>). source git: a branch or a tag to track, or a full commit sha to pin. The agent re-resolves a tag or a branch at each update check. The agent never re-resolves a digest or a sha. */
                 ref: string;
             };
             /** @description The CARE frontend source. The agent or CI builds it. The agent resolves the ref to a git sha and writes the sha to the lock. */
@@ -13415,6 +13429,8 @@ export interface components {
                 /** Format: uri */
                 httpsUrl: string;
                 gitRef: string;
+                /** @description A relative directory in a repository: segments of letters, digits, dot, hyphen, and underscore. A segment starts with a letter, a digit, or an underscore, so . and .. cannot occur. No leading or trailing slash. */
+                repoPath: string;
                 /** @description Environment variable names with string values. Quote numbers and booleans. */
                 envMap: {
                     [key: string]: string;
@@ -13459,15 +13475,19 @@ export interface components {
                     package: string;
                     /** @description A branch or a tag to track, or a git sha to pin. The ADDITIONAL_PLUGS entry gets the version @<ref>. The lock resolves a tracked ref to a git sha (Phase 4). */
                     ref: components["schemas"]["gitRef"];
+                    /** @description Wave 13. The directory of the Python package in the repository of package, when it is not the root. pip needs the fragment after the ref, so the ADDITIONAL_PLUGS entry gets the version @<sha>#subdirectory=<subdirectory> and package stays the bare repository URL. Example: the in-repo plug plugs/care_pi_onboarding of care-pi. */
+                    subdirectory?: components["schemas"]["repoPath"];
                     /** @description The default configuration. Each plug defines its own keys. It becomes the field configs of the ADDITIONAL_PLUGS entry. Do not store secrets here. Add an entry to settings with the type secret. */
                     configs?: Record<string, never>;
                 };
-                /** @description The frontend part of a plug. It is a module federation bundle that CARE loads in the browser. Give a repo and a ref, a url, or both. With a repo, CI builds the bundle and the device serves it at /plugs/<slug>/<sha12>/. With only a url, the browser loads the bundle from that URL (external, not pinned). */
+                /** @description The frontend part of a plug. It is a module federation bundle that CARE loads in the browser. Give a repo and a ref, a url, or both. With a repo, CI builds the bundle and the device serves it at /plugs/<slug>/<sha12>/. With only a url, the browser loads the bundle from that URL (external, not pinned). With repo "." and a path (wave 13), CI builds the bundle from a directory of this repository (care-pi) and the lock pins the last commit of ref that changed path. */
                 frontendPlug: {
                     /** @description The slug of the plug in the plug_config table of CARE. It is also the directory name of the bundle on the device. */
                     slug: string;
-                    /** @description The https URL of the git repository of the plug. CI builds the bundle from this repository when url is absent. */
-                    repo?: components["schemas"]["httpsUrl"];
+                    /** @description The https URL of the git repository of the plug, or "." for this repository (care-pi, wave 13). CI builds the bundle from this repository when url is absent. */
+                    repo?: components["schemas"]["httpsUrl"] | ".";
+                    /** @description Wave 13. The directory of the plug in repo, when it is not the root: CI runs npm ci and the build script in this directory, and build.out is relative to it. Required with repo ".". Example: plugs/care_pi_onboarding_fe. */
+                    path?: components["schemas"]["repoPath"];
                     /** @description A branch or a tag to track, or a git sha to pin. Required when repo is set. */
                     ref?: components["schemas"]["gitRef"];
                     /** @description The https URL of a remoteEntry.js bundle that is already built. Without repo, the agent writes this URL to the plug_config row and CI builds nothing (an external bundle). With repo, CI builds the bundle from repo, and url only records where upstream publishes the plug (Phase 4). */
@@ -13543,6 +13563,8 @@ export interface components {
         };
         digest: string;
         gitSha: string;
+        /** @description A relative directory in a repository: segments of letters, digits, dot, hyphen, and underscore; a segment does not start with a dot. No leading or trailing slash. */
+        "repoPath-2": string;
         slug: string;
         /** @description A URL reference (RFC 3986). CI writes a relative reference for each artefact of care-pi: <tag>/<asset>. The agent resolves it against dist_base of index.json. An absolute https URL is also valid. */
         artefactUrl: string;
@@ -13568,6 +13590,8 @@ export interface components {
             entry: string;
             /** @description The size of the bundle file. */
             size_bytes: number;
+            /** @description Wave 13: frontend.path of solution.yaml, the directory of the plug in its repository. */
+            path?: components["schemas"]["repoPath-2"];
         };
         /** @description A frontend bundle that the browser loads from url. Not pinned: sha, sha256, entry, and size_bytes are null. */
         frontendExternal: {
@@ -13602,13 +13626,15 @@ export interface components {
                 ref: string;
                 /** @description The resolved commit. */
                 sha: components["schemas"]["gitSha"];
+                /** @description Wave 13: backend.subdirectory of solution.yaml, the directory of the package in its repository. The version of additional_plug ends with #subdirectory=<subdirectory>. */
+                subdirectory?: components["schemas"]["repoPath-2"];
                 /** @description The ADDITIONAL_PLUGS entry with the default configs (upstream plugs/plug.py). The device merges the operator settings into configs. */
                 additional_plug: {
                     /** @description The Django app name. */
                     name: string;
                     /** @description The pip requirement without a version. */
                     package_name: string;
-                    /** @description @<sha>. */
+                    /** @description @<sha>; with backend.subdirectory, @<sha>#subdirectory=<subdirectory> (pip reads the fragment after the ref, wave 13). */
                     version: string;
                     /** @description The default configs of the plug. */
                     configs: Record<string, never>;
@@ -13851,15 +13877,22 @@ export interface components {
             };
             /** @description The solution.yaml document at source.commit, as data. The agent reads the plugs, labels, settings, env, and defaults of the lock from here, not from its embedded copy. Thus a lock that is newer than the agent shows the correct forms. */
             solution: components["schemas"]["solution.schema"];
-            /** @description The upstream CARE image. The solution image is built FROM image@digest. */
+            /** @description The CARE image. The solution image is built FROM image@digest. With source git (S71), CI built image@digest from docker/prod.Dockerfile of repo at git_sha. */
             care: {
+                /**
+                 * @description solution.care.source: git. Absent for an upstream image.
+                 * @enum {unknown}
+                 */
+                source?: "image" | "git";
+                /** @description source git: the git repository of CARE. */
+                repo?: string;
                 /** @description The image name without a tag, for example ghcr.io/ohcnetwork/care. */
                 image: string;
-                /** @description The tag or digest that solution.care.ref asked for. */
+                /** @description The tag or digest that solution.care.ref asked for; with source git, the branch, the tag, or the sha. */
                 ref: string;
                 /** @description The manifest list digest that CI resolved. */
                 digest: components["schemas"]["digest"];
-                /** @description The label org.opencontainers.image.revision of the image. null when the image has no such label. */
+                /** @description The label org.opencontainers.image.revision of the image, or (source git) the commit that CI built. null when the image has no such label. */
                 git_sha: components["schemas"]["gitSha"] | null;
             };
             /** @description The image that care-api, care-worker, and care-beat run: the upstream image plus the backend part of each plug of the solution. */
@@ -13910,6 +13943,8 @@ export interface components {
                 [key: string]: components["schemas"]["imageLock"];
             };
             $defs: {
+                /** @description A relative directory in a repository: segments of letters, digits, dot, hyphen, and underscore; a segment does not start with a dot. No leading or trailing slash. */
+                repoPath: string;
                 lockVersion: string;
                 semver: string;
                 gitSha: string;
@@ -13932,13 +13967,15 @@ export interface components {
                         ref: string;
                         /** @description The resolved commit. */
                         sha: components["schemas"]["gitSha"];
+                        /** @description Wave 13: backend.subdirectory of solution.yaml, the directory of the package in its repository. The version of additional_plug ends with #subdirectory=<subdirectory>. */
+                        subdirectory?: components["schemas"]["repoPath-2"];
                         /** @description The ADDITIONAL_PLUGS entry with the default configs (upstream plugs/plug.py). The device merges the operator settings into configs. */
                         additional_plug: {
                             /** @description The Django app name. */
                             name: string;
                             /** @description The pip requirement without a version. */
                             package_name: string;
-                            /** @description @<sha>. */
+                            /** @description @<sha>; with backend.subdirectory, @<sha>#subdirectory=<subdirectory> (pip reads the fragment after the ref, wave 13). */
                             version: string;
                             /** @description The default configs of the plug. */
                             configs: Record<string, never>;
@@ -13968,6 +14005,8 @@ export interface components {
                     entry: string;
                     /** @description The size of the bundle file. */
                     size_bytes: number;
+                    /** @description Wave 13: frontend.path of solution.yaml, the directory of the plug in its repository. */
+                    path?: components["schemas"]["repoPath-2"];
                 };
                 /** @description A frontend bundle that the browser loads from url. Not pinned: sha, sha256, entry, and size_bytes are null. */
                 frontendExternal: {

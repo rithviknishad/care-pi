@@ -1,7 +1,7 @@
 // The environment defaults of this version, shown read-only next to the env editors.
 // The API has no operation for them, so the console keeps this copy.
 // Sources: docs/config.md ("env": care-pi defaults that env.backend can change),
-// solutions/care-clinic/solution.yaml (env and the plug care_onboarding_fe).
+// solutions/care-clinic/solution.yaml (env and the plug care_pi_onboarding).
 // Keep this list in step with those files.
 
 export interface EnvDefault {

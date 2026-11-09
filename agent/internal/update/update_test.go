@@ -197,11 +197,11 @@ func TestUpdateCheckStageApplyRollback(t *testing.T) {
 	if fe.Current(e.p) != e.fx.FEBuildID["2026.11.0"] {
 		t.Fatalf("fe/current %q", fe.Current(e.p))
 	}
-	onb := n.Components.Plugs["care_onboarding_fe"].Frontend
-	if onb == nil || onb.Source != "built" || !strings.HasPrefix(onb.MetaURL, "https://care.local/plugs/care_onboarding_fe/") {
+	onb := n.Components.Plugs["care_pi_onboarding"].Frontend
+	if onb == nil || onb.Source != "built" || !strings.HasPrefix(onb.MetaURL, "https://care.local/plugs/care_pi_onboarding_fe/") {
 		t.Fatalf("onboarding frontend %+v", onb)
 	}
-	if _, err := os.Stat(e.p.Abs(paths.PlugsDir + "/care_onboarding_fe/" + onb.SHA[:12] + "/assets/remoteEntry.js")); err != nil {
+	if _, err := os.Stat(e.p.Abs(paths.PlugsDir + "/care_pi_onboarding_fe/" + onb.SHA[:12] + "/assets/remoteEntry.js")); err != nil {
 		t.Fatalf("plug bundle: %v", err)
 	}
 

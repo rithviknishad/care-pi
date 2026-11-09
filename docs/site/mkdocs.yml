@@ -57,6 +57,7 @@ nav:
       - Connectivity and the certificate: connectivity.md
       - Backups and restore: backups.md
       - Updates and solutions: solutions.md
+      - Clinic setup (onboarding): onboarding.md
       - Configuration: config.md
       - Telemetry: telemetry.md
       - Troubleshooting (doctor): troubleshooting.md

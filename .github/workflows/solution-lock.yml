@@ -270,6 +270,7 @@ jobs:
     with:
       slug: ${{ matrix.plug.slug }}
       repo: ${{ matrix.plug.repo }}
+      path: ${{ matrix.plug.path }}
       sha: ${{ matrix.plug.sha }}
       entry: ${{ matrix.plug.entry }}
       script: ${{ matrix.plug.script }}

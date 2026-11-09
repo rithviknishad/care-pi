@@ -204,7 +204,7 @@ var unitList = strings.Join(render.Units, " ")
 const (
 	pgIsReady    = "podman exec --user postgres care-db pg_isready --quiet"
 	stanzaCreate = "podman exec --user postgres care-db pgbackrest --stanza=main stanza-create"
-	// plugConfigShell writes the plug_config rows (Phase 4): care_onboarding_fe is on in the solution.
+	// plugConfigShell writes the plug_config rows (Phase 4): care_pi_onboarding is on in the solution.
 	plugConfigShell = "podman exec -i care-api python manage.py shell"
 )
 

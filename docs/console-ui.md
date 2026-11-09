@@ -334,7 +334,7 @@ for `maintenance.step` (`docs/api/README.md` section 14.3), and so does the bann
 | Key | Sentence | Second line (when the step does not run) |
 |---|---|---|
 | `cutover` (plan action) | Install the new version behind the maintenance page | the argument |
-| `plug-config` (plan action and step) | Send the plug settings to Care | `care_onboarding_fe` |
+| `plug-config` (plan action and step) | Send the plug settings to Care | `care_pi_onboarding` |
 | `fetch-index` | Download the list of versions | the URL of `index.json` |
 | `fetch-lock` | Download the description of the version | `care-clinic 2026.11.1` |
 | `resolve-refs` | Resolve the custom versions | the argument |
