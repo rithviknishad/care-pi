@@ -158,8 +158,10 @@ jobs:
           fi
           # The superset rule (docs/solutions.md, section 1.5): the image installs each backend plug of the
           # solution, on or off. ADDITIONAL_PLUGS (the ENV of the image) lists the plugs that are on by default.
-          install=$(yq -o=json -I=0 '[(.plugs // [])[] | select(.backend) | {"name": .backend.name, "package_name": .backend.package, "version": "@" + .backend.ref, "configs": (.backend.configs // {})}]' "$FILE")
-          plugs=$(yq -o=json -I=0 '[(.plugs // [])[] | select(.enabled == true and .backend) | {"name": .backend.name, "package_name": .backend.package, "version": "@" + .backend.ref, "configs": (.backend.configs // {})}]' "$FILE")
+          # pip needs the fragment of a package in a directory after the ref: @<ref>#subdirectory=<dir> (S73).
+          version='"@" + .backend.ref + ((.backend.subdirectory | select(. != null) | "#subdirectory=" + .) // "")'
+          install=$(yq -o=json -I=0 "[(.plugs // [])[] | select(.backend) | {\"name\": .backend.name, \"package_name\": .backend.package, \"version\": ${version}, \"configs\": (.backend.configs // {})}]" "$FILE")
+          plugs=$(yq -o=json -I=0 "[(.plugs // [])[] | select(.enabled == true and .backend) | {\"name\": .backend.name, \"package_name\": .backend.package, \"version\": ${version}, \"configs\": (.backend.configs // {})}]" "$FILE")
           {
             echo "image=${image}"
             echo "reference=${reference}"

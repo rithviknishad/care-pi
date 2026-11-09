@@ -104,7 +104,8 @@ lookup() {
     if [ "${kv%%=*}" = "$1" ]; then echo "${kv#*=}"; return; fi
   done
 }
-# field EXPR: a field of solution.yaml ("care.image"), or "plugs" (one line per plug: id, backend repo, backend ref).
+# field EXPR: a field of solution.yaml ("care.image"), or "plugs" (one line per plug: id, backend repo, backend ref,
+# backend subdirectory).
 # care-pi validates the file and prints it as JSON.
 field() {
   [ -f "$WORK/solution.json" ] || carepi solution validate --json "$SOLUTION_FILE" > "$WORK/solution.json"
@@ -114,7 +115,7 @@ doc = json.load(open(sys.argv[1]))
 if sys.argv[2] == "plugs":
     for p in doc.get("plugs") or []:
         b = p.get("backend") or {}
-        print("\t".join([p["id"], b.get("package", "").removeprefix("git+") or "-", b.get("ref") or "-"]))
+        print("\t".join([p["id"], b.get("package", "").removeprefix("git+") or "-", b.get("ref") or "-", b.get("subdirectory") or "-"]))
 else:
     v = doc
     for k in sys.argv[2].split("."):
@@ -177,9 +178,13 @@ for pair in postgres=ghcr.io/rithviknishad/care-pi/postgres-pgbackrest:17 caddy=
 done
 
 : > "$WORK/plugs.tsv"
-while IFS=$'\t' read -r id repo ref; do
+while IFS=$'\t' read -r id repo ref sub; do
   [ "$repo" != "-" ] || { printf '%s\t\n' "$id" >> "$WORK/plugs.tsv"; continue; }
   s="$(lookup "$id" "$PLUG_ARGS")"
+  if [ -z "$s" ] && [ "$sub" != "-" ] && [ "${repo%.git}" = "https://github.com/rithviknishad/care-pi" ]; then
+    # An in-repo backend plug (S73): the last commit of this checkout that changed its directory, as solution-lock.yml.
+    s="$(git -C "$ROOT" log -1 --format=%H HEAD -- "$sub")"
+  fi
   [ -n "$s" ] || s="$(git_sha_of "$repo" "$ref")"
   [[ "$s" =~ ^[0-9a-f]{40}$ ]] || die "cannot resolve the plug $id ($repo@$ref)"
   printf '%s\t%s\n' "$id" "$s" >> "$WORK/plugs.tsv"

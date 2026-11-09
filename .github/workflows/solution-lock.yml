@@ -58,6 +58,10 @@ jobs:
       images: ${{ steps.resolve.outputs.images }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # In-repo plugs (repo ".", or package of this repository with a subdirectory) pin the last commit
+          # that changed their directory; that needs the history.
+          fetch-depth: 0
 
       - uses: actions/setup-go@v7
         with:
@@ -135,19 +139,37 @@ jobs:
             id="$(jq -r .id <<< "$p")"
             entry='{}'
             if jq -e .backend <<< "$p" > /dev/null; then
-              bsha="$(sha_of "$(jq -r .backend.package <<< "$p")" "$(jq -r .backend.ref <<< "$p")")"
+              bsub="$(jq -r '.backend.subdirectory // ""' <<< "$p")"
+              if [ "$(ghslug "$(jq -r .backend.package <<< "$p")")" = "$GITHUB_REPOSITORY" ] && [ -n "$bsub" ]; then
+                # In-repo backend plug: the last commit of this run that changed its directory.
+                bsha="$(git log -1 --format=%H HEAD -- "$bsub")"
+              else
+                bsha="$(sha_of "$(jq -r .backend.package <<< "$p")" "$(jq -r .backend.ref <<< "$p")")"
+              fi
               entry="$(jq -c --arg s "$bsha" '. + {backend_sha: $s}' <<< "$entry")"
-              plug="$(jq -c --arg s "$bsha" '{name: .backend.name, package_name: .backend.package, version: ("@" + $s), configs: (.backend.configs // {})}' <<< "$p")"
+              # pip needs the fragment after the ref: @<sha>#subdirectory=<dir> (docs/onboarding.md, section 6).
+              plug="$(jq -c --arg s "$bsha" '{name: .backend.name, package_name: .backend.package,
+                version: ("@" + $s + (if .backend.subdirectory then "#subdirectory=" + .backend.subdirectory else "" end)),
+                configs: (.backend.configs // {})}' <<< "$p")"
               install="$(jq -c --argjson x "$plug" '. + [$x]' <<< "$install")"
               if [ "$(jq -r .enabled <<< "$p")" = "true" ]; then
                 additional="$(jq -c --argjson x "$plug" '. + [$x]' <<< "$additional")"
               fi
             fi
             if jq -e '.frontend.repo' <<< "$p" > /dev/null; then
-              fsha="$(sha_of "$(jq -r .frontend.repo <<< "$p")" "$(jq -r .frontend.ref <<< "$p")")"
+              frepo="$(jq -r .frontend.repo <<< "$p")"
+              fpath="$(jq -r '.frontend.path // ""' <<< "$p")"
+              if [ "$frepo" = "." ]; then
+                # In-repo FE plug: this repository, at the last commit of this run that changed its directory.
+                frepo="$GITHUB_REPOSITORY"
+                fsha="$(git log -1 --format=%H HEAD -- "$fpath")"
+              else
+                fsha="$(sha_of "$frepo" "$(jq -r .frontend.ref <<< "$p")")"
+                frepo="$(ghslug "$frepo")"
+              fi
               entry="$(jq -c --arg s "$fsha" '. + {frontend_sha: $s}' <<< "$entry")"
-              m="$(jq -c --arg s "$fsha" --arg repo "$(ghslug "$(jq -r .frontend.repo <<< "$p")")" \
-                '{slug: .frontend.slug, repo: $repo, sha: $s, entry: (.frontend.entry // "assets/remoteEntry.js"), script: (.frontend.build.script // "build"), out: (.frontend.build.out // "dist")}' <<< "$p")"
+              m="$(jq -c --arg s "$fsha" --arg repo "$frepo" --arg path "$fpath" \
+                '{slug: .frontend.slug, repo: $repo, path: $path, sha: $s, entry: (.frontend.entry // "assets/remoteEntry.js"), script: (.frontend.build.script // "build"), out: (.frontend.build.out // "dist")}' <<< "$p")"
               fe_plugs="$(jq -c --argjson x "$m" '. + [$x]' <<< "$fe_plugs")"
             fi
             plugs="$(jq -c --arg id "$id" --argjson e "$entry" '. + {($id): $e}' <<< "$plugs")"
