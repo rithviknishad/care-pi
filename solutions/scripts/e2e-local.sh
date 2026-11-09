@@ -28,11 +28,18 @@ printf 'export {};\n' > "$WORK/plug/assets/remoteEntry.js"
 printf '{"slug": "care_fasterappointments_fe", "repo": "https://github.com/ohcnetwork/care_fasterappointments_fe", "sha": "%s", "entry": "assets/remoteEntry.js", "built_at": "2026-11-01T00:00:00Z"}\n' \
   "$sha1" > "$WORK/plug/care-pi-plug.json"
 tar -czf "$WORK/plug.tar.gz" -C "$WORK/plug" .
+# The in-repo plug care_pi_onboarding (S73) is on by default: its frontend needs a built bundle too.
+mkdir -p "$WORK/plug-onb/assets"
+printf 'export {};\n' > "$WORK/plug-onb/assets/remoteEntry.js"
+printf '{"slug": "care_pi_onboarding_fe", "repo": "https://github.com/rithviknishad/care-pi", "path": "plugs/care_pi_onboarding_fe", "sha": "%s", "entry": "assets/remoteEntry.js", "built_at": "2026-11-01T00:00:00Z"}\n' \
+  "$sha1" > "$WORK/plug-onb/care-pi-plug.json"
+tar -czf "$WORK/plug-onb.tar.gz" -C "$WORK/plug-onb" .
 
 common=(--solution care-clinic --out "$WORK/dist" --offline --care-pi "$WORK/care-pi"
   --care-digest "$digest" --care-git-sha "$sha1" --solution-image "ghcr.io/rithviknishad/care-pi/care@$digest"
   --care-fe-sha "$sha2" --fe-bundle "$WORK/care_fe.tar.gz"
-  --plug "care_multihost_files_be=$sha1" --plug "care_filly=$sha2"
+  --plug "care_multihost_files_be=$sha1" --plug "care_filly=$sha2" --plug "care_pi_onboarding=$sha1"
+  --plug-bundle "care_pi_onboarding=$WORK/plug-onb.tar.gz"
   --image "postgres=$digest" --image "caddy=$digest" --image "redis=$digest" --image "s3=$digest" --image "node=$digest")
 solutions/scripts/make-lock.sh "${common[@]}" --version 2026.11.0 --notes "Lock N."
 solutions/scripts/make-lock.sh "${common[@]}" --solution-file "$WORK/solution-n1.yaml" --version 2026.11.1 --notes "Lock N+1." \

@@ -104,7 +104,9 @@ if [ "${SEED}" = make ]; then
 	fi
 fi
 if [ "${SEED}" != none ]; then
-	[ -f "${SEED}" ] && [ -f "${SEED%.tar.zst}.json" ] || die "no seed ${SEED} with its .json"
+	if [ ! -f "${SEED}" ] || [ ! -f "${SEED%.tar.zst}.json" ]; then
+		die "no seed ${SEED} with its .json"
+	fi
 	SEED="$(cd "$(dirname "${SEED}")" && pwd)/$(basename "${SEED}")"
 	seed_args=(-v "${SEED}:/in/seed/$(basename "${SEED}"):ro" -v "${SEED%.tar.zst}.json:/in/seed/$(basename "${SEED%.tar.zst}").json:ro")
 fi
