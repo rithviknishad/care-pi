@@ -119,7 +119,9 @@ func careSHAOf(pr *Prepared) string {
 // of care-db (S72). It does nothing when the data directory has a database (PG_VERSION) and no password change is
 // pending, or when the image has no seed. When the password change fails right after the restore, it removes the
 // restored data: care-db then initializes an empty database, as without a seed. A pending password change of an
-// earlier run (an interrupted apply) never removes data: it fails, and the next apply tries again.
+// earlier run (an interrupted apply) never removes data: care-db can run on the seeded directory since a boot, so
+// seedDB stops care-db.service first (postgres --single needs the directory alone), then sets the password; the start
+// that follows starts care-db again. When the change fails, the next apply tries again.
 func seedDB(ctx context.Context, o Options, pr *Prepared) error {
 	p := o.Paths
 	pg := p.Abs(paths.PGData)
@@ -128,6 +130,10 @@ func seedDB(ctx context.Context, o Options, pr *Prepared) error {
 	if _, err := os.Stat(filepath.Join(pg, "PG_VERSION")); err == nil {
 		if !recOK || rec.PasswordSet {
 			return nil
+		}
+		_, _ = fmt.Fprintln(o.Out, "    seed-db: the password change of an earlier run is pending; stop care-db.service first")
+		if err := o.Host.Systemd.Stop(ctx, "care-db.service"); err != nil {
+			return fmt.Errorf("seed-db: the password change of an earlier run is pending, and care-db.service did not stop: %w", err)
 		}
 	} else {
 		if entries, err := os.ReadDir(pg); err == nil && len(entries) > 0 {
@@ -164,7 +170,8 @@ func seedDB(ctx context.Context, o Options, pr *Prepared) error {
 	_, _ = fmt.Fprintln(o.Out, "    seed-db: set the database password of this device")
 	if out, err := o.Host.Runner.Run(ctx, SeedPasswordCmd(image)); err != nil {
 		if !restored {
-			return fmt.Errorf("seed-db: the password change failed: %w: %s", err, strings.TrimSpace(string(out)))
+			return fmt.Errorf("seed-db: the pending password change of an earlier run failed again: %w: %s (the data directory %s stays; the next apply tries again)",
+				err, strings.TrimSpace(string(out)), paths.PGData)
 		}
 		_, _ = fmt.Fprintf(o.Out, "    seed-db: the password change failed (%v): %s; remove the seed, and care-db initializes an empty database\n",
 			err, strings.TrimSpace(string(out)))

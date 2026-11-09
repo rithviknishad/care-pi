@@ -344,7 +344,10 @@ The migrations of an empty CARE database take about 3 min 20 s on a Pi 5. The im
   away; CARE keeps neither in the database), no CARE user (the setup makes the superuser), no session. The roles and
   the value sets of `sync_*` are the same rows on each device of one image.
 - **A failure** of the password change right after the restore removes the restored files: `care-db` then
-  initializes an empty database, as without a seed.
+  initializes an empty database, as without a seed. A change that an interrupted apply left pending
+  (`password_set: false` in `state/seed-db.json`) runs at the next apply that starts `care.target`: the agent stops
+  `care-db.service` first (the next boot can have started it on the seeded directory; `postgres --single` needs the
+  directory alone), sets the password, and the start follows. The data stays.
 - **Measured** (Docker Desktop on the Mac, arm64, CARE `28211e29a359` of the branch `ENG-737-backup-backup`): the seed
   is 7.8 MB (`zstd -19`; 81 MB extracted, 117 tables, 847 migrations); `migrate` and the `sync_*` commands of an empty
   database took 60 s, with the seed 7 s (restore 1 s, password change below 1 s, `migrate` "No migrations to apply"
