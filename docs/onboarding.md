@@ -35,7 +35,7 @@ The wizard shows the steps in this order. Each step is `POST /api/care_pi_onboar
 | `organization` | superuser | The government organisations of the clinic area: state, district, and an optional local body. With `all_districts`, each district of the state, in one insert. With `parent`, a district under an existing organisation. | The name (without case) under the same parent. |
 | `facility` | superuser, or a user with `can_create_facility`; a facility admin to apply again | The facility from a template (`clinic` or `pharmacy`): the facility, its departments, its rooms and beds, and the links between rooms and departments. CARE makes the root organisation Administration and makes the caller its Facility Admin. | The facility of the last run, else the facility name (as CARE compares names). Departments and rooms: the name under the same parent. |
 | `roles` | superuser | The custom role Receptionist with its permission list, and one role organisation for each job. The jobs Doctor, Nurse, Pharmacist, and Clinic administrator use the CARE system roles. | The role name; the permission slug; the name of the role organisation. |
-| `staff` | facility admin with `can_create_user` | The user accounts, one membership in a department for each person, and a membership of the role organisation of the job. The response gives each new initial password once. With `invite`, CARE sends a link to set the password instead; then `email` is required. | The username; the membership of the user in the department. |
+| `staff` | facility admin with `can_create_user` | The user accounts, one membership in a department for each person, and a membership of the role organisation of the job. The response gives each new initial password once. With `invite`, CARE sends a link to set the password instead; then `email` is required, and CARE must have a mail server (`ONBOARDING_INVITES`). | The username; the membership of the user in the department. |
 | `valuesets` | superuser | The CARE system value sets that are missing (as `sync_valueset` without `--overwrite`), and the short coded lists of the clinic. | The value set slug. |
 | `questionnaires` | facility admin | The clinic forms (vitals, consultation note, triage, pharmacy intake) as facility questionnaires, each linked to its departments. | The slug in the facility. |
 | `catalog` (optional) | facility admin | Eight starter medicines in the facility product catalog. CARE checks their codes on its terminology server, so this step needs internet access. | The slug in the facility. |
@@ -92,6 +92,9 @@ The full table of the inputs is in `plugs/care_pi_onboarding/README.md`.
 - Rate limits (DRF `ScopedRateThrottle`, for each user): 30 write calls a minute (`ONBOARDING_APPLY_RATE`) and 120
   read calls a minute (`ONBOARDING_READ_RATE`). The wizard shows one sentence on HTTP 429.
 - One staff call takes at most 50 people (`ONBOARDING_MAX_STAFF`).
+- The staff step offers invitations only when CARE has a mail server (`ONBOARDING_INVITES`, default `auto`). The
+  default email settings of CARE (SMTP on `localhost`) are not a mail server on care-pi, so the wizard turns the
+  option off and each person gets an initial password.
 
 ## 4. The fixtures
 

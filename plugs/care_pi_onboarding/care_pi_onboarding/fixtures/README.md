@@ -32,7 +32,9 @@ with the CARE resource spec (the same validation as the CARE API) before it save
 3. Set `levels`. Each level has a `label` and the name of its child level (`children`). The `organization` step
    writes the level names to `metadata.govt_org_type` and `metadata.govt_org_children_type` of each organisation.
 4. Replace `states`. Each state has a `name`, a `kind` (`state` or `union_territory`), and `districts` (a list of
-   names). Names must be unique within their parent, without regard to case.
+   names). Names must be unique within their parent, without regard to case. A state can also have `aliases`: other
+   names of the same root organisation in CARE. The `organization` step uses a root with an alias name and does not
+   make a second root.
 5. Set `ONBOARDING_LOCALE` to `<code>` in the plug configs (`ADDITIONAL_PLUGS[].configs`) or in the environment.
 6. Run the tests: `python manage.py test care_pi_onboarding`.
 
@@ -41,7 +43,8 @@ with the CARE resource spec (the same validation as the CARE API) before it save
 - `locales/in.json`: the states and districts come from `data_source/states-and-districts.json` of
   [ohcnetwork/care_onboarding_fe](https://github.com/ohcnetwork/care_onboarding_fe) (MIT licence,
   Copyright (c) 2026 Open Healthcare Network), which took them from `ohcnetwork/care_desktop`. The suffixes `(UT)` and
-  `(NCT)` became `"kind": "union_territory"`. The licence text is `locales/LICENSE-care_onboarding_fe.txt`.
+  `(NCT)` became `"kind": "union_territory"`, and the names with the suffix are the `aliases`, because a CARE that
+  care_onboarding_fe set up has roots with these names. The licence text is `locales/LICENSE-care_onboarding_fe.txt`.
 - `catalog.json`: the units, dose form, route, and the three product codes come from `care/fixtures/constants.py` of
   [ohcnetwork/care](https://github.com/ohcnetwork/care) (MIT licence).
 - The other files are original to care-pi.

@@ -96,7 +96,12 @@ const getUrl = (
       path,
     );
   }
-  const url = new URL(path, baseUrl || window.CARE_API_URL);
+  // CARE_API_URL is "" when care_fe and the API share one origin (care-pi): new URL(path, "") throws, so
+  // the origin of the page is the base then.
+  const url = new URL(
+    path,
+    baseUrl || window.CARE_API_URL || window.location.origin,
+  );
   if (query) {
     url.search = getQueryParams(query);
   }

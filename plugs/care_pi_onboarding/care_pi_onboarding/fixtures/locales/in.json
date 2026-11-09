@@ -22,6 +22,9 @@
   {
    "name": "Andaman and Nicobar Islands",
    "kind": "union_territory",
+   "aliases": [
+    "Andaman and Nicobar Islands (UT)"
+   ],
    "districts": [
     "Nicobar",
     "North and Middle Andaman",
@@ -160,6 +163,9 @@
   {
    "name": "Chandigarh",
    "kind": "union_territory",
+   "aliases": [
+    "Chandigarh (UT)"
+   ],
    "districts": [
     "Chandigarh"
    ]
@@ -200,6 +206,9 @@
   {
    "name": "Dadra and Nagar Haveli and Daman & Diu",
    "kind": "union_territory",
+   "aliases": [
+    "Dadra and Nagar Haveli and Daman & Diu (UT)"
+   ],
    "districts": [
     "Dadra & Nagar Haveli",
     "Daman",
@@ -209,6 +218,9 @@
   {
    "name": "Delhi",
    "kind": "union_territory",
+   "aliases": [
+    "Delhi (NCT)"
+   ],
    "districts": [
     "Central Delhi",
     "East Delhi",
@@ -318,6 +330,9 @@
   {
    "name": "Jammu & Kashmir",
    "kind": "union_territory",
+   "aliases": [
+    "Jammu & Kashmir (UT)"
+   ],
    "districts": [
     "Anantnag",
     "Bandipore",
@@ -430,6 +445,9 @@
   {
    "name": "Ladakh",
    "kind": "union_territory",
+   "aliases": [
+    "Ladakh (UT)"
+   ],
    "districts": [
     "Leh",
     "Kargil"
@@ -438,6 +456,9 @@
   {
    "name": "Lakshadweep",
    "kind": "union_territory",
+   "aliases": [
+    "Lakshadweep (UT)"
+   ],
    "districts": [
     "Agatti",
     "Amini",
@@ -659,6 +680,9 @@
   {
    "name": "Puducherry",
    "kind": "union_territory",
+   "aliases": [
+    "Puducherry (UT)"
+   ],
    "districts": [
     "Karaikal",
     "Mahe",

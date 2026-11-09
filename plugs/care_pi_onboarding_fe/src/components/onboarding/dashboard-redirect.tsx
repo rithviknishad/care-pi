@@ -3,6 +3,7 @@ import { type ComponentType, useEffect, useState } from "react";
 
 import { onboardingApi } from "@/lib/api";
 import { plugConfig, useHostUser } from "@/lib/host";
+import { handOffStatus } from "@/lib/status-handoff";
 
 const SEEN = "care_pi_onboarding_redirected";
 
@@ -31,6 +32,7 @@ export default function DashboardRedirect(
       .then((status) => {
         if (status.wizard?.redirect) {
           sessionStorage.setItem(SEEN, "1");
+          handOffStatus(status);
           navigate("/onboarding");
           return;
         }

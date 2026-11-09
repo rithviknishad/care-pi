@@ -167,6 +167,36 @@ test("a rate limit answer shows one sentence", async ({ page }) => {
   );
 });
 
+test("without a mail server, the invite option is off", async ({ page }) => {
+  const backend = new MockBackend();
+  backend.state.organization = "done";
+  backend.state.facility = "done";
+  backend.state.roles = "done";
+  backend.facility = { id: FACILITY_ID, name: "Kochi Family Clinic" };
+  backend.options.staff = { invite_available: false };
+  await backend.install(page);
+  await page.goto("/");
+
+  await expect(page.getByTestId("screen-staff")).toBeVisible();
+  const invite = page.getByRole("checkbox", {
+    name: "Send an invitation email instead of a password",
+  });
+  await expect(invite).toBeDisabled();
+  await expect(invite).not.toBeChecked();
+  await expect(page.getByTestId("screen-staff")).toContainText(
+    "CARE has no mail server and cannot send an invitation.",
+  );
+  await page.getByTestId("member-0-first-name").fill("Anil");
+  await page.getByTestId("member-0-username").fill("dr-anil");
+  await page.getByTestId("member-0-phone").fill("+919446000001");
+  await page.getByTestId("apply").click();
+  await expect(page.getByTestId("result-done")).toBeVisible();
+  const staff = backend.bodies.find((b) => b.step === "staff") as {
+    members: Record<string, unknown>[];
+  };
+  expect(staff.members[0]).toMatchObject({ invite: false });
+});
+
 test("the invite option needs an email", async ({ page }) => {
   const backend = new MockBackend();
   backend.state.organization = "done";

@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/hooks/use-translation";
 import {
   blankMember,
+  inviteAvailable,
   type Member,
   memberBody,
   memberProblem,
@@ -22,6 +23,7 @@ export function StaffForm({ preview, facility, busy, onApply }: StepFormProps) {
   const roles: { key: string; label: string }[] = preview.options?.roles ?? [];
   const genders: string[] = preview.options?.genders ?? [];
   const departments: string[] = preview.options?.departments ?? [];
+  const canInvite = inviteAvailable(preview.options);
   const roleDepartments: Record<string, string> =
     preview.defaults?.departments ?? {};
   const max: number = preview.defaults?.max_members ?? 50;
@@ -143,8 +145,13 @@ export function StaffForm({ preview, facility, busy, onApply }: StepFormProps) {
             </div>
             <CheckRow
               label={t("field_invite")}
-              description={t("field_invite_help")}
-              checked={m.invite}
+              description={
+                canInvite
+                  ? t("field_invite_help")
+                  : t("field_invite_unavailable")
+              }
+              checked={canInvite && m.invite}
+              disabled={!canInvite}
               onChange={(on) => update(index, { invite: on })}
             />
           </li>

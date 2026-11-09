@@ -178,6 +178,8 @@ export class MockBackend {
     >;
   facility: { id: string; name: string } | null = null;
   closed = "";
+  /** Extra preview options for a step, for example { staff: { invite_available: false } }. */
+  options: Partial<Record<StepName, Record<string, unknown>>> = {};
 
   async install(page: Page) {
     await page.route("**/api/care_pi_onboarding/**", async (route) => {
@@ -245,6 +247,12 @@ export class MockBackend {
             runs: 0,
             result: {},
             ...PREVIEWS[step],
+            ...(this.options[step] && {
+              options: {
+                ...(PREVIEWS[step].options as Record<string, unknown>),
+                ...this.options[step],
+              },
+            }),
           },
         ];
       }

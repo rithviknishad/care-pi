@@ -25,6 +25,11 @@ export const blankMember = (role = "doctor"): Member => ({
   invite: false,
 });
 
+/** False when CARE cannot send the invitation email (options.invite_available of the staff preview). */
+export const inviteAvailable = (options?: {
+  invite_available?: boolean;
+}): boolean => options?.invite_available !== false;
+
 /** The first problem of a row, or null when the backend accepts it. */
 export function memberProblem(m: Member): MemberProblem | null {
   if (!m.username.trim() || !m.first_name.trim() || !m.phone_number.trim()) {
