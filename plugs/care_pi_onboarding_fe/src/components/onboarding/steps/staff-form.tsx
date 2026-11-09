@@ -3,35 +3,19 @@ import { useState } from "react";
 
 import {
   ApplyButton,
+  CheckRow,
   SelectField,
   type StepFormProps,
   TextField,
 } from "@/components/onboarding/form-parts";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/hooks/use-translation";
-
-interface Member {
-  username: string;
-  first_name: string;
-  last_name: string;
-  phone_number: string;
-  gender: string;
-  role: string;
-  department: string;
-}
-
-const blank = (role = "doctor"): Member => ({
-  username: "",
-  first_name: "",
-  last_name: "",
-  phone_number: "",
-  gender: "female",
-  role,
-  department: "",
-});
-
-const complete = (m: Member) =>
-  m.username.trim() && m.first_name.trim() && m.phone_number.trim();
+import {
+  blankMember,
+  type Member,
+  memberBody,
+  memberProblem,
+} from "@/lib/staff";
 
 export function StaffForm({ preview, facility, busy, onApply }: StepFormProps) {
   const { t } = useTranslation();
@@ -43,7 +27,7 @@ export function StaffForm({ preview, facility, busy, onApply }: StepFormProps) {
   const max: number = preview.defaults?.max_members ?? 50;
   const existing: { username: string; department: string; role: string }[] =
     preview.existing?.members ?? [];
-  const [members, setMembers] = useState<Member[]>([blank()]);
+  const [members, setMembers] = useState<Member[]>([blankMember()]);
 
   const update = (index: number, patch: Partial<Member>) =>
     setMembers((list) =>
@@ -57,14 +41,7 @@ export function StaffForm({ preview, facility, busy, onApply }: StepFormProps) {
         e.preventDefault();
         onApply({
           facility,
-          members: members.map((m) => ({
-            ...m,
-            username: m.username.trim(),
-            first_name: m.first_name.trim(),
-            last_name: m.last_name.trim(),
-            phone_number: m.phone_number.trim(),
-            department: m.department || roleDepartments[m.role] || "",
-          })),
+          members: members.map((m) => memberBody(m, roleDepartments)),
         });
       }}
     >
@@ -149,7 +126,27 @@ export function StaffForm({ preview, facility, busy, onApply }: StepFormProps) {
                 onChange={(v) => update(index, { department: v })}
                 options={departments.map((d) => ({ value: d, label: d }))}
               />
+              <TextField
+                label={m.invite ? t("field_email_required") : t("field_email")}
+                type="email"
+                value={m.email}
+                required={m.invite}
+                onChange={(v) => update(index, { email: v })}
+                description={m.invite ? undefined : t("field_email_help")}
+                error={
+                  memberProblem(m) === "email_for_invite"
+                    ? t("error_email_for_invite")
+                    : undefined
+                }
+                testId={`member-${index}-email`}
+              />
             </div>
+            <CheckRow
+              label={t("field_invite")}
+              description={t("field_invite_help")}
+              checked={m.invite}
+              onChange={(on) => update(index, { invite: on })}
+            />
           </li>
         ))}
       </ol>
@@ -159,14 +156,17 @@ export function StaffForm({ preview, facility, busy, onApply }: StepFormProps) {
           variant="outline"
           disabled={members.length >= max}
           onClick={() =>
-            setMembers((list) => [...list, blank(list.at(-1)?.role)])
+            setMembers((list) => [...list, blankMember(list.at(-1)?.role)])
           }
           data-testid="add-member"
         >
           <Plus aria-hidden="true" />
           {t("staff_add")}
         </Button>
-        <ApplyButton busy={busy} disabled={!members.every(complete)} />
+        <ApplyButton
+          busy={busy}
+          disabled={members.some((m) => memberProblem(m) !== null)}
+        />
       </div>
       <p className="text-muted-foreground text-sm">
         {t("staff_password_note")}

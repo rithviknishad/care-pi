@@ -349,6 +349,37 @@ class StaffStepTest(OnboardingTestBase):
         self.assertIn("dr-anil", body["detail"])
         self.assertFalse(User.objects.filter(username="new-person").exists())
 
+    def test_invite_needs_an_email(self):
+        from care.users.models import User
+
+        facility_id = self.setup_until("roles")
+        member = {**STAFF[0], "invite": True}
+        body = self.apply(
+            "staff", {"facility": facility_id, "members": [member]}, expect=400
+        )
+        self.assertIn("members[0].email", body["detail"])
+        self.assertFalse(User.objects.filter(username=member["username"]).exists())
+
+        body = self.apply(
+            "staff",
+            {"facility": facility_id, "members": [{**member, "email": "   "}]},
+            expect=400,
+        )
+        self.assertIn("email", body["detail"])
+
+    def test_invite_sends_the_mail_and_gives_no_password(self):
+        from care.users.models import User
+        from django.core import mail
+
+        facility_id = self.setup_until("roles")
+        member = {**STAFF[0], "invite": True, "email": "anil@clinic.example"}
+        body = self.apply("staff", {"facility": facility_id, "members": [member]})
+        self.assertNotIn("secrets", body)
+        self.assertEqual(body["result"]["invited"], ["dr-anil"])
+        user = User.objects.get(username="dr-anil")
+        self.assertFalse(user.has_usable_password())
+        self.assertEqual([m.to for m in mail.outbox], [["anil@clinic.example"]])
+
     def test_duplicate_username(self):
         facility_id = self.setup_until("roles")
         body = self.apply(

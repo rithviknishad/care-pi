@@ -41,6 +41,16 @@ class MemberInput(serializers.Serializer):
         super().__init__(*args, **kwargs)
         self.fields["role"].choices = role_keys()
 
+    def validate(self, attrs):
+        # An invited account has no password: without a real address nobody can activate it.
+        if attrs.get("invite") and not (attrs.get("email") or "").strip():
+            raise serializers.ValidationError(
+                {
+                    "email": "Give an email address when invite is on. CARE sends the invitation to this address."
+                }
+            )
+        return attrs
+
 
 class StaffInput(serializers.Serializer):
     facility = serializers.UUIDField()

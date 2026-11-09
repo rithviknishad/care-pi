@@ -2,7 +2,12 @@ import { useId } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+} from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   NativeSelect,
@@ -22,6 +27,7 @@ export function TextField({
   placeholder,
   testId,
   autoComplete = "off",
+  error,
 }: {
   label: string;
   value: string;
@@ -33,10 +39,11 @@ export function TextField({
   placeholder?: string;
   testId?: string;
   autoComplete?: string;
+  error?: string;
 }) {
   const id = useId();
   return (
-    <Field>
+    <Field data-invalid={error ? true : undefined}>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
       <Input
         id={id}
@@ -46,10 +53,20 @@ export function TextField({
         required={required}
         placeholder={placeholder}
         autoComplete={autoComplete}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? `${id}-error` : undefined}
         data-testid={testId}
         onChange={(e) => onChange(e.target.value)}
       />
       {description && <FieldDescription>{description}</FieldDescription>}
+      {error && (
+        <FieldError
+          id={`${id}-error`}
+          data-testid={testId ? `${testId}-error` : undefined}
+        >
+          {error}
+        </FieldError>
+      )}
     </Field>
   );
 }
