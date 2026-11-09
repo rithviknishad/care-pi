@@ -246,7 +246,13 @@ after it), the agent sets the clock one time (`date -s` and `fake-hwclock save` 
 `systemd-timesyncd` keeps running) and records `state/clock-trusted.json` (source `browser`, not trusted). `care-pi clock
 wait` then tries NTP for 20 s more and passes with that clock, and reloads Caddy. `GET /status` and `/_care-pi/status` show
 `clock.source` (`ntp`, `browser`, `rtc`, `none`) and `clock.trusted`; the console shows a "clock not trusted" banner until
-NTP synchronizes the clock, which deletes the record. The RTC policy (SP9) comes later.
+NTP synchronizes the clock, which deletes the record.
+
+**RTC policy (S75, SP9).** `care-pi clock detect` (in bootstrap) reads the RTC time at boot from the kernel message
+"setting system clock to" and, on a Pi 5, `battery_voltage`: an RTC time after the build time and no voltage of 0 give
+`clock.policy: rtc`, else `ntp` (care.local: 1970-01-01 at boot, no battery). The passive verification above is
+replaced by this check at boot plus the check of NTP later: with `rtc`, `clock wait` passes when the RTC time is after
+the build time; the clock is trusted only after NTP confirms it within 5 minutes (else the doctor warns "clock drift").
 
 ## 8. Memory budget and presets
 

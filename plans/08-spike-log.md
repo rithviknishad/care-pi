@@ -449,10 +449,40 @@ Raspberry Pi archives of pi-gen to HTTPS; the image keeps HTTPS sources.
 
 **Still open for SP10:** the boot on a Pi 5 and a Pi 4, and the host name of Imager in avahi (`docs/image.md`, section 9).
 
+## SP9 — the RTC of a Pi 5 and the clock policy — measured on care.local, 2026-11-09 — **RTC present, no battery (1970 at boot): `ntp`; the `rtc` policy is implemented (S75)**
+
+Host: care.local, a Raspberry Pi 5 Model B Rev 1.1 (2 GB) with a fresh flash of the image (agent v0.2.0, then the dev
+build `v0.3.0-dev` of wave 13). Read-only checks.
+
+| Fact | Value on care.local | Meaning |
+|---|---|---|
+| `/dev/rtc0` | exists (`rpi-rtc soc@107c000000:rpi_rtc: registered as rtc0`) | Each Pi 5 has the RTC. |
+| Kernel message at boot | `rpi-rtc …: setting system clock to 1970-01-01T00:00:21 UTC (21)` (3.5 s after power-on) | The RTC counted from 0 at power-on: **no battery**. |
+| `/sys/class/rtc/rtc0/battery_voltage` | `0` | The PMIC reports no battery. `charging_voltage` is 0 (trickle charge off), min 1.3 V, max 4.4 V. |
+| `since_epoch` after NTP | equal to the system time | The kernel writes the RTC after NTP synchronizes the clock (11-minute mode). So the RTC time *now* tells nothing about a battery: only the time at boot does, and a warm reboot keeps the RTC time also without a battery. |
+| The first time step | `systemd[1]: System time advanced to timestamp on /var/lib/systemd/timesync/clock` (3.6 s) | The clock file of timesyncd does what `fake-hwclock` did (the package is not installed): a monotonic but old time. On care.local it was 3 days behind until NTP. Never trusted (`01` §7). |
+| `/proc/device-tree/chosen/bootloader/rsts` | `0x00001000` | The reset reason of the bootloader exists, but it is not used: `battery_voltage` is a direct signal. |
+
+`care-pi clock detect --dry-run` (sudo, read-only) on care.local:
+
+```text
+clock detect: policy ntp: the RTC has no battery (battery_voltage 0.000 V)
+clock detect: dry run: clock.policy is ntp already (config.yaml has ntp); nothing written
+```
+
+The JSON gives `rtc.at_boot: 1970-01-01T00:00:21Z` (`at_boot_source: kernel log`), `battery_microvolts: 0`.
+
+The rule (S75, `docs/image.md` section 6.4): `rtc` when the RTC time at boot (the kernel message) is after the build time
+of the agent and the host does not report a battery voltage of 0; else `ntp`. With `rtc`, `clock wait` passes at once
+from `/sys/class/rtc/rtc0/since_epoch` (marker `source: rtc`, not trusted) and starts `systemd-timesyncd`; the first NTP
+synchronization records the drift (`state/clock-rtc-check.json`); more than 5 minutes gives the doctor warning "clock
+drift". **lumine** was not reachable (Tailscale: offline for 2 days; no answer on the LAN): its RTC is still to read.
+A Pi 5 with a battery is still to measure (expected: `battery_voltage` about 3 V, the time at boot correct).
+
 ## Still to run
 
 SP7 custom Caddy + name-constrained CA + per-device UX + browser facts F5–F7 · SP8 mDNS
-matrix · SP9 RTC battery verification · SP10 boot of the image on a Pi 5 and a Pi 4 (the build passed; see SP10) ·
+matrix · SP9 a Pi 5 with an RTC battery (care.local has none; see SP9) · SP10 boot of the image on a Pi 5 and a Pi 4 (the build passed; see SP10) ·
 SP11 NetworkManager failover.
 Also not yet measured: anything on a Pi 4, and a browser-driven file upload through Care's
 UI (SP5 used curl against the presigned URLs only). See `09-handoff.md` §4.

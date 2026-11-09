@@ -213,7 +213,8 @@ The mechanism is the cloud-init module `write_files`: it writes the file `/etc/c
 
 - The file is a `config.yaml` document (`docs/config.md`). The keys that it does not set get their defaults.
 - bootstrap validates it, and runs the checks of `apply` on it before it installs it: a feature that this version does
-  not have (for example `clock.policy: rtc`), or a mode that needs an enrol job (`tls.public`, `tls.tailscale`).
+  not have (for example `tls.local_ca.enabled: false`), or a mode that needs an enrol job (`tls.public`, `tls.tailscale`).
+- A pre-seed that sets `clock.policy` keeps its value: `care-pi clock detect` (section 6.4) does not change it.
   A file that fails is not used, and the device is never silent: bootstrap moves the file to `preseed.yaml.rejected`,
   writes the error to `/var/lib/care-pi/state/firstboot-error.json`, and starts setup mode (the claim). The claim page of
   the console and the setup page on port 443 show the error (`firstboot_error` of `GET /_care-pi/status`) until the
@@ -266,8 +267,8 @@ Without a pre-seed, the first boot starts setup mode (the default).
       (a warning below 90 % of the RAM);
    4. runs `care-pi bootstrap --from-image`: the host check, the directories, the secrets, `config.yaml` (or the
       pre-seed), the import of the dist snapshot into the update cache, the claim code, the start of
-      `care-pi.service`, and the apply of setup mode (Caddy and the console; the Caddy image of the lock, no registry);
-      then the marker `/var/lib/care-pi/state/firstboot-done`.
+      `care-pi.service`, `care-pi clock detect` (section 6.4), and the apply of setup mode (Caddy and the console; the
+      Caddy image of the lock, no registry); then the marker `/var/lib/care-pi/state/firstboot-done`.
 4. `care-pi-led.service`: the ACT LED blinks (`heartbeat`) until the claim.
 
 `care-firstboot.service` has `DefaultDependencies=no` and the usual service dependencies by hand. `cloud-final.service`
@@ -300,6 +301,22 @@ Open `https://<host name>.local:8443/` or `https://<IP address>:8443/`. The firs
 
 `care-pi-led.path` watches `/etc/care-pi/secrets/agent.json` (written by the claim). Then `care-pi-led-off.service`
 stops `care-pi-led.service` (`Conflicts=`), and the LED gets its earlier trigger back.
+
+### 6.4 The clock policy (S75, SP9)
+
+bootstrap runs `care-pi clock detect`. It reads the RTC time at boot from the kernel message
+`rpi-rtc …: setting system clock to <time> UTC (<seconds>)` (`journalctl -k -b 0`) and, on a Pi 5,
+`/sys/class/rtc/rtc0/battery_voltage`:
+
+| RTC | Policy | The clock gate at each boot |
+|---|---|---|
+| A time after the build time of the agent at boot, and no battery voltage of 0 (an RTC battery) | `rtc` | Passes at once from the RTC. NTP confirms it later: the clock is trusted then; a difference of more than 5 minutes gives the warning "clock drift" of `care-pi doctor`. |
+| `1970-01-01` at boot (no battery; care.local), a battery voltage of 0, or no `/dev/rtc0` (a Pi 4 without an RTC module) | `ntp` | Waits for NTP, or (without internet) for the time of the browser at the claim (S52). |
+
+A warm reboot keeps the RTC time also without a battery (the board keeps its power): so a Pi 5 that reports a battery
+voltage of 0 never gets `rtc`. `fake-hwclock` and the clock file of `systemd-timesyncd` restore the time of the last
+shutdown: they are never trusted. `sudo care-pi clock detect --dry-run` prints what detect would set. detect does not
+change a value that the operator set (`--force` does). `docs/config.md` has `clock.policy`.
 
 ## 7. Without internet, and later with internet
 
@@ -383,4 +400,5 @@ For each device:
 5. ~~**The clock gate without internet.**~~ Resolved by S52: at the claim, the console sends the time of the browser, and
    the agent sets the clock one time when NTP is not synchronized; the gate passes, and the console shows "Clock not
    trusted" until NTP synchronizes the clock (`docs/api/README.md` section 16). After a reboot without internet the clock
-   continues from `fake-hwclock` (the time of its last save). The `rtc` policy still waits for SP9.
+   continues from the clock file of `systemd-timesyncd` (the time of its last save). A Pi 5 with an RTC battery gets the
+   `rtc` policy (S75, section 6.4): the gate then passes from the RTC at each boot.

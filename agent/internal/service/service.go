@@ -184,11 +184,6 @@ func unsupported(cfg *config.Config, base string) *problem.Problem {
 	if !cfg.TLS.LocalCA.Enabled {
 		items = append(items, item{tls + "/local_ca/enabled", "the local CA mode stays on: it serves the LAN addresses and works offline (S36)", 7})
 	}
-	if base == "" {
-		if cfg.Clock.Policy == "rtc" {
-			items = append(items, item{"/clock/policy", "the clock policy rtc comes in Phase 7 (spike SP9)", 7})
-		}
-	}
 	if len(items) == 0 {
 		return nil
 	}

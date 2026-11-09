@@ -5128,7 +5128,7 @@ components:
             Contract 0.7.1. Why the first boot of the Raspberry Pi image did not use the pre-seed
             (`/etc/care-pi/preseed.yaml`: not valid, or a feature that this version does not have), and what to do. The
             first boot then starts setup mode (`docs/image.md` section 5). `null` without such an error, and after the setup.
-          examples: ['The first boot did not use the pre-seed: the pre-seed asks for something that this version cannot do: clock.policy rtc is not implemented in this version (SP9); use ntp. The device starts setup mode: claim it in the console. Or correct the user-data and flash the card again.']
+          examples: ['The first boot did not use the pre-seed: the pre-seed asks for something that this version cannot do: tls.local_ca.enabled: false is not implemented in this version; the local CA mode serves the LAN addresses and the offline fallback (S36). The device starts setup mode: claim it in the console. Or correct the user-data and flash the card again.']
         internet:
           type: object
           additionalProperties: false
@@ -7340,8 +7340,9 @@ components:
       description: |
         Contract 0.7.1 (S52). Where the clock of the host comes from now:
         `ntp` NTP synchronized it; `browser` the agent set it from the time of the browser at the claim (no NTP since);
-        `rtc` the host has an RTC (`/dev/rtc0`) and no NTP (the battery is not verified, SP9); `none` none of them (the
-        clock gate waits).
+        `rtc` the host has an RTC (`/dev/rtc0`) and no NTP. Contract 0.9.1 (S75, SP9): with `clock.policy: rtc` the gate
+        passes when the RTC time is after the build time of the agent; the clock is `trusted` only after NTP confirms the
+        RTC within 5 minutes. `none` none of them (the clock gate waits).
       examples: [browser]
     InternetProblem:
       type: string

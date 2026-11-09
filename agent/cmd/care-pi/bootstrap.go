@@ -146,6 +146,14 @@ bootstrap asks no questions. --yes exists for the installer.`,
 			_, _ = fmt.Fprintf(w, "==> keep %s\n", cfgPath)
 		}
 
+		// S75: clock.policy from the RTC (the installer and the first boot of the image run bootstrap). A pre-seed
+		// that sets clock.policy is the choice of the operator. A failure is a warning: policy ntp always works.
+		_, _ = fmt.Fprintln(w, "==> clock detect")
+		if _, err := clockDetect(cmd.Context(), clockDetectEnv{paths: p, host: h, configPath: cfgPath, out: w,
+			keep: preseed && preseedSetsClock(cfgPath)}, true); err != nil {
+			_, _ = fmt.Fprintf(w, "warning: clock detect: %v; clock.policy does not change\n", err)
+		}
+
 		phase, err := bootstrapPhase(w, p, f.unattended)
 		if err != nil {
 			return err

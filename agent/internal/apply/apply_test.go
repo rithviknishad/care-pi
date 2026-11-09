@@ -659,7 +659,7 @@ func TestDryRunWritesNothing(t *testing.T) {
 func TestNotImplementedIsBadInput(t *testing.T) {
 	for name, extra := range map[string]string{
 		"public tls without registration": "tls:\n  public: {enabled: true, clinic_id: sunrise}\n",
-		"rtc clock":                       "clock: {policy: rtc}\n",
+		"no local CA":                     "tls:\n  local_ca: {enabled: false}\n",
 		"no pin":                          "solution:\n  track: pinned\n",
 	} {
 		t.Run(name, func(t *testing.T) {

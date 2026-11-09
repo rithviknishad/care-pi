@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
+
+	"go.yaml.in/yaml/v3"
 )
 
 // ReservedBackendEnv lists the backend variables that care-pi sets.
@@ -204,4 +206,59 @@ func WithFirewallPolicy(data []byte, policy string) ([]byte, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// WithClockPolicy sets clock.policy in a config.yaml and keeps its comments and its key order ("care-pi clock detect",
+// S75). It adds the key when it does not exist.
+func WithClockPolicy(data []byte, policy string) ([]byte, error) {
+	if policy != "ntp" && policy != "rtc" {
+		return nil, fmt.Errorf("clock policy %q is not valid; use ntp or rtc", policy)
+	}
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	if doc.Kind != yaml.DocumentNode || len(doc.Content) != 1 || doc.Content[0].Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("config.yaml is not a YAML mapping")
+	}
+	set := func(m *yaml.Node, key string, value *yaml.Node) {
+		for i := 0; i+1 < len(m.Content); i += 2 {
+			if m.Content[i].Value == key {
+				m.Content[i+1] = value
+				return
+			}
+		}
+		m.Content = append(m.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key}, value)
+	}
+	root := doc.Content[0]
+	var clock *yaml.Node
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "clock" && root.Content[i+1].Kind == yaml.MappingNode {
+			clock = root.Content[i+1]
+		}
+	}
+	if clock == nil {
+		clock = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		set(root, "clock", clock)
+	}
+	val := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: policy}
+	for i := 0; i+1 < len(clock.Content); i += 2 {
+		if clock.Content[i].Value == "policy" {
+			val.LineComment = clock.Content[i+1].LineComment
+		}
+	}
+	set(clock, "policy", val)
+	var b bytes.Buffer
+	enc := yaml.NewEncoder(&b)
+	enc.SetIndent(2)
+	if err := enc.Encode(&doc); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	if _, err := Parse(b.Bytes(), "config.yaml"); err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
 }

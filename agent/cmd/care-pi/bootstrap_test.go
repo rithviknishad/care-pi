@@ -36,7 +36,7 @@ func TestInstallPreseed(t *testing.T) {
 	// m3: a pre-seed that bootstrap cannot use gives setup mode (not a silent device), and the error is recorded.
 	for _, bad := range []struct{ name, data, want string }{
 		{"not valid", "version: 1\nidentity: {hostname: Not_A_Label}\n", "the pre-seed is not valid"},
-		{"not implemented", "version: 1\nclock: {policy: rtc}\n", "clock.policy rtc"},
+		{"not implemented", "version: 1\ntls:\n  local_ca: {enabled: false}\n", "tls.local_ca.enabled: false is not implemented"},
 		{"needs a registration", "version: 1\ntls:\n  public: {enabled: true, clinic_id: hill-k3x9}\n", "no registration with the DNS service"},
 	} {
 		_ = os.Remove(p.Abs(paths.FirstbootError))

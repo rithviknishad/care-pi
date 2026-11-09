@@ -253,8 +253,5 @@ func checkImplemented(p paths.Paths, cfg *config.Config, _ *solution.Solution, _
 			errs = append(errs, fmt.Errorf("tls.public.enabled is true, but this device has no registration with the DNS service (%s); run: care-pi tls public enable", paths.ACMEDNSFile))
 		}
 	}
-	if cfg.Clock.Policy == "rtc" {
-		errs = append(errs, fmt.Errorf("clock.policy rtc is %w (SP9); use ntp", config.ErrNotImplemented))
-	}
 	return errors.Join(errs...)
 }
