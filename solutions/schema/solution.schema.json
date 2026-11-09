@@ -118,6 +118,12 @@
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$"
     },
+    "repoPath": {
+      "description": "A relative directory in a repository: segments of letters, digits, dot, hyphen, and underscore. A segment starts with a letter, a digit, or an underscore, so . and .. cannot occur. No leading or trailing slash.",
+      "type": "string",
+      "maxLength": 200,
+      "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*$"
+    },
     "envMap": {
       "description": "Environment variable names with string values. Quote numbers and booleans.",
       "type": "object",
@@ -207,6 +213,10 @@
           "description": "A branch or a tag to track, or a git sha to pin. The ADDITIONAL_PLUGS entry gets the version @<ref>. The lock resolves a tracked ref to a git sha (Phase 4).",
           "$ref": "#/$defs/gitRef"
         },
+        "subdirectory": {
+          "description": "Wave 13. The directory of the Python package in the repository of package, when it is not the root. pip needs the fragment after the ref, so the ADDITIONAL_PLUGS entry gets the version @<sha>#subdirectory=<subdirectory> and package stays the bare repository URL. Example: the in-repo plug plugs/care_pi_onboarding of care-pi.",
+          "$ref": "#/$defs/repoPath"
+        },
         "configs": {
           "description": "The default configuration. Each plug defines its own keys. It becomes the field configs of the ADDITIONAL_PLUGS entry. Do not store secrets here. Add an entry to settings with the type secret.",
           "type": "object"
@@ -214,7 +224,7 @@
       }
     },
     "frontendPlug": {
-      "description": "The frontend part of a plug. It is a module federation bundle that CARE loads in the browser. Give a repo and a ref, a url, or both. With a repo, CI builds the bundle and the device serves it at /plugs/<slug>/<sha12>/. With only a url, the browser loads the bundle from that URL (external, not pinned).",
+      "description": "The frontend part of a plug. It is a module federation bundle that CARE loads in the browser. Give a repo and a ref, a url, or both. With a repo, CI builds the bundle and the device serves it at /plugs/<slug>/<sha12>/. With only a url, the browser loads the bundle from that URL (external, not pinned). With repo \".\" and a path (wave 13), CI builds the bundle from a directory of this repository (care-pi) and the lock pins the last commit of ref that changed path.",
       "type": "object",
       "additionalProperties": false,
       "required": ["slug"],
@@ -224,8 +234,14 @@
       ],
       "dependentRequired": {
         "repo": ["ref"],
-        "ref": ["repo"]
+        "ref": ["repo"],
+        "path": ["repo"]
       },
+      "if": {
+        "properties": { "repo": { "const": "." } },
+        "required": ["repo"]
+      },
+      "then": { "required": ["path"] },
       "properties": {
         "slug": {
           "description": "The slug of the plug in the plug_config table of CARE. It is also the directory name of the bundle on the device.",
@@ -233,8 +249,15 @@
           "pattern": "^[a-z][a-z0-9_-]*$"
         },
         "repo": {
-          "description": "The https URL of the git repository of the plug. CI builds the bundle from this repository when url is absent.",
-          "$ref": "#/$defs/httpsUrl"
+          "description": "The https URL of the git repository of the plug, or \".\" for this repository (care-pi, wave 13). CI builds the bundle from this repository when url is absent.",
+          "anyOf": [
+            { "$ref": "#/$defs/httpsUrl" },
+            { "const": "." }
+          ]
+        },
+        "path": {
+          "description": "Wave 13. The directory of the plug in repo, when it is not the root: CI runs npm ci and the build script in this directory, and build.out is relative to it. Required with repo \".\". Example: plugs/care_pi_onboarding_fe.",
+          "$ref": "#/$defs/repoPath"
         },
         "ref": {
           "description": "A branch or a tag to track, or a git sha to pin. Required when repo is set.",

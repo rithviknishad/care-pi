@@ -16,17 +16,28 @@ care_fe:
   ref: develop
 
 # The plug repositories, bundle hosts, and settings keys come from the plugin catalog of care_clinic.
+# care_pi_onboarding is in this repository (S73, docs/onboarding.md). It replaces care_onboarding_fe.
 plugs:
-  - id: care_onboarding_fe
-    label: CARE Onboarding
-    description: Sets up a new clinic. The plug creates the geography, facility, departments, staff, number formats, questionnaires, and report templates.
+  - id: care_pi_onboarding
+    label: Clinic setup
+    description: "Sets up a new clinic in steps: the area, the facility with its departments and rooms, the roles, the staff, the coded lists, the forms, starter medicines, and demo patients. CARE does each step in one request."
     enabled: true
-    requires_internet: true
-    frontend:
-      slug: care_onboarding_fe
-      repo: https://github.com/ohcnetwork/care_onboarding_fe
+    backend:
+      name: care_pi_onboarding
+      # pip needs the fragment after the ref: the install list gets the version @<sha>#subdirectory=<subdirectory>.
+      package: git+https://github.com/rithviknishad/care-pi.git
+      subdirectory: plugs/care_pi_onboarding
       ref: main
-      url: https://ohcnetwork.github.io/care_onboarding_fe/assets/remoteEntry.js
+      configs:
+        ONBOARDING_LOCALE: in
+        ONBOARDING_DEMO_ALLOWED: true
+    frontend:
+      slug: care_pi_onboarding_fe
+      # In-repo mode: CI builds plugs/care_pi_onboarding_fe of this repository. The lock pins the last commit of
+      # main that changed the directory.
+      repo: "."
+      path: plugs/care_pi_onboarding_fe
+      ref: main
       meta:
         config:
           redirect_after_login: true
@@ -38,9 +49,23 @@ plugs:
       - part: frontend
         key: config.redirect_after_login
         label: Open the clinic setup after sign-in
-        help: After sign-in, an administrator goes to the setup. This continues until the clinic has a facility.
+        help: After sign-in, a superuser goes to the setup once. This stops when the clinic has a facility or when someone closes the setup.
         type: boolean
         default: true
+      - part: backend
+        key: ONBOARDING_DEMO_ALLOWED
+        label: Allow demo patients
+        help: The setup can add five demo patients to try CARE. Turn this off on a clinic that is in use.
+        type: boolean
+        default: true
+      - part: backend
+        key: ONBOARDING_LOCALE
+        label: Locale of the area list
+        help: The fixture of states and districts. in is India.
+        type: string
+        default: in
+        pattern: "^[a-z0-9]+$"
+        advanced: true
 
   - id: care_multihost_files_be
     label: Files on every address
