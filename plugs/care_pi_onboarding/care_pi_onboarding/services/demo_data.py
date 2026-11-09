@@ -1,5 +1,3 @@
-from contextlib import contextmanager
-
 from django.db import transaction
 from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied
@@ -35,21 +33,15 @@ class DemoInput(serializers.Serializer):
     facility = serializers.UUIDField()
 
 
-@contextmanager
-def care_lock(lock, busy: str):
-    """Hold a CARE create lock until the transaction ends, as the CARE viewsets do."""
+def _acquire(lock, busy: str, held: list):
+    """Take a CARE create lock; the caller releases each lock in held."""
     from care.utils.lock import ObjectLocked
 
     try:
         lock.acquire()
     except ObjectLocked as exc:
         raise StepError(busy) from exc
-    try:
-        yield
-    except BaseException:
-        lock.release()
-        raise
-    transaction.on_commit(lock.release)
+    held.append(lock)
 
 
 def _records(ctx: Context, model_label: str) -> dict[str, int]:
@@ -163,63 +155,74 @@ class DemoDataStep(Step):
             )
         )
 
-        patients = {}
         missing = [
             e
             for e in fixture["patients"]
             if patient_ids.get(e["key"]) not in live_patients
         ]
-        tally.found("patient", len(fixture["patients"]) - len(missing))
-        if missing:
-            with care_lock(
-                PatientCreateLock(),
-                "CARE is registering another patient now. Apply again in a minute.",
-            ):
-                for entry in missing:
-                    OnboardingRecord.objects.filter(
-                        step=STEP, scope=ctx.scope, key=entry["key"]
-                    ).delete()
-                    patient = _create_patient(ctx, entry, facility)
-                    OnboardingRecord.objects.create(
-                        step=STEP,
-                        scope=ctx.scope,
-                        model=Patient._meta.label,
-                        object_id=patient.id,
-                        key=entry["key"],
-                    )
-                    tally.made("patient")
-                    patients[entry["key"]] = patient
-        for entry in fixture["patients"]:
-            patients.setdefault(
-                entry["key"], live_patients.get(patient_ids.get(entry["key"]))
-            )
-
         need = [
-            k
-            for k in patients
-            if encounter_ids.get(f"{k}:encounter") not in live_encounters
+            e["key"]
+            for e in fixture["patients"]
+            if encounter_ids.get(f"{e['key']}:encounter") not in live_encounters
         ]
-        tally.found("encounter", len(patients) - len(need))
-        if need:
-            with care_lock(
-                FacilityEncounterCreateLock(facility.id),
-                "CARE is starting another visit in this facility now. Apply again in a minute.",
-            ):
-                for key in need:
-                    OnboardingRecord.objects.filter(
-                        step=STEP, scope=ctx.scope, key=f"{key}:encounter"
-                    ).delete()
-                    encounter = _create_encounter(
-                        ctx, patients[key], facility, department
-                    )
-                    OnboardingRecord.objects.create(
-                        step=STEP,
-                        scope=ctx.scope,
-                        model=Encounter._meta.label,
-                        object_id=encounter.id,
-                        key=f"{key}:encounter",
-                    )
-                    tally.made("encounter")
+        tally.found("patient", len(fixture["patients"]) - len(missing))
+        tally.found("encounter", len(fixture["patients"]) - len(need))
+
+        # The CARE viewsets hold these locks until the commit and release them on any error
+        # (PatientViewSet.perform_create). One try spans the whole work: a rollback discards the
+        # on_commit callbacks, so a lock registered there would stay set until LOCK_TIMEOUT.
+        held = []
+        try:
+            if missing:
+                _acquire(
+                    PatientCreateLock(),
+                    "CARE is registering another patient now. Apply again in a minute.",
+                    held,
+                )
+            if need:
+                _acquire(
+                    FacilityEncounterCreateLock(facility.id),
+                    "CARE is starting another visit in this facility now. Apply again in a minute.",
+                    held,
+                )
+            patients = {}
+            for entry in missing:
+                OnboardingRecord.objects.filter(
+                    step=STEP, scope=ctx.scope, key=entry["key"]
+                ).delete()
+                patient = _create_patient(ctx, entry, facility)
+                OnboardingRecord.objects.create(
+                    step=STEP,
+                    scope=ctx.scope,
+                    model=Patient._meta.label,
+                    object_id=patient.id,
+                    key=entry["key"],
+                )
+                tally.made("patient")
+                patients[entry["key"]] = patient
+            for entry in fixture["patients"]:
+                patients.setdefault(
+                    entry["key"], live_patients.get(patient_ids.get(entry["key"]))
+                )
+            for key in need:
+                OnboardingRecord.objects.filter(
+                    step=STEP, scope=ctx.scope, key=f"{key}:encounter"
+                ).delete()
+                encounter = _create_encounter(ctx, patients[key], facility, department)
+                OnboardingRecord.objects.create(
+                    step=STEP,
+                    scope=ctx.scope,
+                    model=Encounter._meta.label,
+                    object_id=encounter.id,
+                    key=f"{key}:encounter",
+                )
+                tally.made("encounter")
+        except BaseException:
+            for lock in held:
+                lock.release()
+            raise
+        for lock in held:
+            transaction.on_commit(lock.release)
         return StepResult(
             detail=f"The facility has {len(patients)} demo patients, each with an open visit in {department.name}.",
             data={"patients": [str(p.external_id) for p in patients.values()]},

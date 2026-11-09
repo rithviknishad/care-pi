@@ -479,6 +479,54 @@ class DemoDataStepTest(OnboardingTestBase):
         body = self.apply("demo_data", {"facility": facility_id})
         self.assertEqual(body["created"], {"patient": 5, "encounter": 5})
 
+    def test_a_failed_visit_releases_the_care_locks(self):
+        from care.emr.locks.billing import (
+            FacilityEncounterCreateLock,
+            PatientCreateLock,
+        )
+        from care.emr.models import Patient
+        from care.facility.models import Facility
+        from django.core.cache import cache
+
+        from care_pi_onboarding.services.base import StepError
+
+        facility_id = self.setup_until("facility")
+        facility = Facility.objects.get(external_id=facility_id)
+        with mock.patch(
+            "care_pi_onboarding.services.demo_data._create_encounter",
+            side_effect=StepError("The visit failed."),
+        ):
+            body = self.apply("demo_data", {"facility": facility_id}, expect=400)
+        self.assertIn("The visit failed.", body["detail"])
+        # The transaction rolled back: no demo patient stays, and CARE can register patients at once.
+        self.assertFalse(Patient.objects.filter(name__startswith="Demo ").exists())
+        self.assertIsNone(cache.get(PatientCreateLock().key))
+        self.assertIsNone(cache.get(FacilityEncounterCreateLock(facility.id).key))
+
+        body = self.apply("demo_data", {"facility": facility_id})
+        self.assertEqual(body["created"], {"patient": 5, "encounter": 5})
+        self.assertIsNone(cache.get(PatientCreateLock().key))
+
+    def test_a_busy_visit_lock_gives_back_the_patient_lock(self):
+        from care.emr.locks.billing import (
+            FacilityEncounterCreateLock,
+            PatientCreateLock,
+        )
+        from care.facility.models import Facility
+        from django.core.cache import cache
+
+        facility_id = self.setup_until("facility")
+        facility = Facility.objects.get(external_id=facility_id)
+        lock = FacilityEncounterCreateLock(facility.id)
+        lock.acquire()
+        try:
+            body = self.apply("demo_data", {"facility": facility_id}, expect=400)
+        finally:
+            lock.release()
+        self.assertIn("another visit", body["detail"])
+        # The step took the patient lock first and gave it back when the visit lock was busy.
+        self.assertIsNone(cache.get(PatientCreateLock().key))
+
     @override_settings(
         PLUGIN_CONFIGS={"care_pi_onboarding": {"ONBOARDING_DEMO_ALLOWED": False}}
     )
