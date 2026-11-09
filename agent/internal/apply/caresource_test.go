@@ -55,6 +55,12 @@ care_fe:
 
 func (e *env) prepareGit(dir string, ramKiB int64, baseInRegistry bool) (*Prepared, error) {
 	e.t.Helper()
+	return e.prepareGitRegistry(dir, ramKiB, baseInRegistry, "manifest unknown")
+}
+
+// prepareGitRegistry is prepareGit with the stderr of skopeo when the registry has no image (baseInRegistry false).
+func (e *env) prepareGitRegistry(dir string, ramKiB int64, baseInRegistry bool, skopeoErr string) (*Prepared, error) {
+	e.t.Helper()
 	if ramKiB > 0 {
 		if err := os.MkdirAll(e.p.Abs("/proc"), 0o755); err != nil {
 			e.t.Fatal(err)
@@ -67,7 +73,7 @@ func (e *env) prepareGit(dir string, ramKiB int64, baseInRegistry bool) (*Prepar
 	if baseInRegistry {
 		e.fake.On(inspect, host.Response{Out: digest(careBase) + "\n"})
 	} else {
-		e.fake.On(inspect, host.Response{Code: 1, Out: "manifest unknown"})
+		e.fake.On(inspect, host.Response{Code: 1, Out: skopeoErr})
 	}
 	h := host.New(e.fake)
 	h.Git = &host.FakeGit{Refs: map[string]map[string]string{
@@ -116,6 +122,37 @@ func TestGitCareWithoutImageOn2GB(t *testing.T) {
 	if exitcode.Code(err) != exitcode.BadInput || !errors.As(err, &p) || p.Slug != problem.UnsupportedConfig ||
 		!strings.Contains(p.Detail, "4 GB of RAM") || !strings.Contains(p.Detail, "28211e29a359") {
 		t.Fatalf("%v", err)
+	}
+}
+
+// S71: a registry that does not answer (no DNS, a timeout, a 5xx) is not a registry without the image: no refusal
+// with unsupported-config on 2 GB, and no local build of 2 hours on 4 GB. The apply stops with
+// build-required-offline, and the operator tries again.
+func TestGitCareRegistryErrorIsNotAMissingImage(t *testing.T) {
+	for _, stderr := range []string{"FATA[0000] ... dial tcp: lookup ghcr.io: no such host",
+		"FATA[0000] ... received unexpected HTTP status: 503 Service Unavailable", "FATA[0000] ... context deadline exceeded"} {
+		for _, ramKiB := range []int64{2_000_000, 8_000_000} {
+			e := newEnv(t, smallClinic)
+			pr, err := e.prepareGitRegistry(gitSolution(t), ramKiB, false, stderr)
+			var p *problem.Problem
+			if pr != nil || !errors.As(err, &p) || p.Slug != problem.BuildRequiredOffline || exitcode.Code(err) == exitcode.BadInput ||
+				!strings.Contains(p.Detail, careBase) || !strings.Contains(p.Detail, "try again") {
+				t.Fatalf("%s on %d kB: %+v %v", stderr, ramKiB, pr, err)
+			}
+			if len(e.fake.Filter("systemctl")) != 0 {
+				t.Fatalf("%s on %d kB started a unit: %q", stderr, ramKiB, e.fake.Calls)
+			}
+		}
+	}
+	// The registry says that the name or the tag does not exist: the known paths.
+	e := newEnv(t, smallClinic)
+	if _, err := e.prepareGitRegistry(gitSolution(t), 2_000_000, false, "FATA[0000] ... name unknown"); err == nil || !problem.Is(err, problem.UnsupportedConfig) {
+		t.Fatalf("name unknown on 2 GB: %v", err)
+	}
+	e = newEnv(t, smallClinic)
+	pr, err := e.prepareGitRegistry(gitSolution(t), 8_000_000, false, "FATA[0000] ... unexpected status code 404 Not Found")
+	if err != nil || pr.CareSource == nil {
+		t.Fatalf("404 on 8 GB: %+v %v", pr, err)
 	}
 }
 

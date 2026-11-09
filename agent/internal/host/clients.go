@@ -319,13 +319,37 @@ func ParseHealth(out []byte) map[string]string {
 // ExecSkopeo runs skopeo.
 type ExecSkopeo struct{ R Runner }
 
-// Digest implements Skopeo.
+// ErrImageNotFound tells that the registry answered, and has no image with that name or tag. Another error of
+// Skopeo.Digest (no DNS, a timeout, a 5xx or 429 of the registry) does not tell whether the image exists.
+var ErrImageNotFound = errors.New("the registry has no such image")
+
+// imageNotFound reports whether the error text of skopeo says that the registry has no such name or tag: the
+// registry answers "manifest unknown" or "name unknown" (the OCI error codes MANIFEST_UNKNOWN and NAME_UNKNOWN), or
+// an HTTP 404.
+func imageNotFound(err error) bool {
+	var xe *ExitError
+	if !errors.As(err, &xe) {
+		return false
+	}
+	msg := strings.ToLower(xe.Stderr)
+	for _, want := range []string{"manifest unknown", "name unknown", "manifest_unknown", "name_unknown", "status code 404", "404 not found", "status: 404"} {
+		if strings.Contains(msg, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// Digest implements Skopeo. The error wraps ErrImageNotFound when the registry has no such image.
 func (s ExecSkopeo) Digest(ctx context.Context, ref, goos, arch string) (string, error) {
 	out, err := s.R.Run(ctx, Cmd{Name: "skopeo", Args: []string{
 		"inspect", "--override-os", goos, "--override-arch", arch,
 		"--format", "{{.Digest}}", "docker://" + ref,
 	}})
 	if err != nil {
+		if imageNotFound(err) {
+			return "", fmt.Errorf("%w: %w", ErrImageNotFound, err)
+		}
 		return "", err
 	}
 	d := strings.TrimSpace(string(out))

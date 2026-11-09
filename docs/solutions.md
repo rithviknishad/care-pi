@@ -978,12 +978,16 @@ care:
   smart-HTTP ref list of the repository (`info/refs`, the resolver of `care_fe` and the plugs: no API rate limit, so no
   cache is necessary), then runs `care-base:<sha12>` at its digest. The component `care` of the on-device lock has the
   branch and the commit.
-- **No image of the commit** in the registry (CI did not run for it): a host with 4 GB of RAM or more builds it: the
+- **No image of the commit** in the registry (the registry answers "manifest unknown", "name unknown", or 404: CI did
+  not run for it): a host with 4 GB of RAM or more builds it: the
   agent downloads `<repo>/archive/<sha>.tar.gz` to `/var/lib/care-pi/build/care-src/<sha12>/` and starts
   `care-build-<solution>-base-build.service` (`docker/prod.Dockerfile`, `ImageTag=localhost/care-pi/care-base:<sha12>`,
   `MemoryHigh=2560M`, `MemoryMax=3G`, the scale-down rule). A host with less RAM stops with `unsupported-config`:
   "CARE `<sha12>` has no image: CI builds it. A local build of CARE needs 4 GB of RAM or more". A Pi with 2 GB cannot
   build CARE (the pip install of the dependencies); run the workflow `care-base.yml` (or `solution-lock.yml`) instead.
+  When the registry does not answer (no DNS, a timeout, a 5xx or 429), the image can exist: the apply stops with
+  `build-required-offline` ("Cannot ask the registry for the image …; check the internet and the registry, then try
+  again"), builds nothing, and refuses nothing.
 
 Measured on the Mac (Docker Desktop, native arm64, 14 CPUs): `docker/prod.Dockerfile` of `28211e29a359` builds in
 4 min 17 s (cold cache); the image is 772 MB.

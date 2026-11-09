@@ -92,7 +92,8 @@ func (f *Fake) Run(_ context.Context, c Cmd) ([]byte, error) {
 	}
 	r := rs[i]
 	if r.Code != 0 {
-		return []byte(r.Out), &ExitError{Cmd: line, Code: r.Code}
+		// A command that fails writes its message to stderr: Out is the stderr of the error, as with Hook.
+		return []byte(r.Out), &ExitError{Cmd: line, Code: r.Code, Stderr: r.Out}
 	}
 	return []byte(r.Out), r.Err
 }
