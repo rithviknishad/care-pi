@@ -92,12 +92,19 @@ func AssembleLock(in LockInput) ([]byte, error) {
 				configs = map[string]any{}
 			}
 			entry["backend"] = map[string]any{"ref": p.Backend.Ref, "sha": pi.BackendSHA, "additional_plug": map[string]any{
-				"name": p.Backend.Name, "package_name": p.Backend.Package, "version": "@" + pi.BackendSHA, "configs": configs}}
+				"name": p.Backend.Name, "package_name": p.Backend.Package, "version": p.Backend.Version(pi.BackendSHA), "configs": configs}}
+			if p.Backend.Subdirectory != "" {
+				entry["backend"].(map[string]any)["subdirectory"] = p.Backend.Subdirectory
+			}
 		}
 		if f := p.Frontend; f != nil {
 			if f.Repo != "" && pi.FrontendURL != "" {
-				entry["frontend"] = map[string]any{"slug": f.Slug, "source": FrontendBuilt, "ref": f.Ref, "sha": pi.FrontendSHA,
+				fr := map[string]any{"slug": f.Slug, "source": FrontendBuilt, "ref": f.Ref, "sha": pi.FrontendSHA,
 					"url": pi.FrontendURL, "sha256": pi.FrontendSHA256, "entry": f.EntryPath(), "size_bytes": pi.FrontendSizeBytes}
+				if f.Path != "" {
+					fr["path"] = f.Path
+				}
+				entry["frontend"] = fr
 			} else if f.URL != "" {
 				entry["frontend"] = map[string]any{"slug": f.Slug, "source": FrontendExternal, "ref": nil, "sha": nil,
 					"url": f.URL, "sha256": nil, "entry": nil, "size_bytes": nil}

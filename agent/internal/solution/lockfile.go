@@ -109,6 +109,8 @@ type LockPlugBackend struct {
 	Ref            string         `yaml:"ref" json:"ref"`
 	SHA            string         `yaml:"sha" json:"sha"`
 	AdditionalPlug AdditionalPlug `yaml:"additional_plug" json:"additional_plug"`
+	// Subdirectory is backend.subdirectory of the solution (wave 13); the version of AdditionalPlug has it.
+	Subdirectory string `yaml:"subdirectory,omitempty" json:"subdirectory,omitempty"`
 }
 
 // AdditionalPlug is one entry of ADDITIONAL_PLUGS (upstream plugs/plug.py).
@@ -129,6 +131,8 @@ type LockPlugFrontend struct {
 	SHA256    *string `yaml:"sha256" json:"sha256"`
 	Entry     *string `yaml:"entry" json:"entry"`
 	SizeBytes *int64  `yaml:"size_bytes" json:"size_bytes"`
+	// Path is frontend.path of the solution (wave 13): the directory of the plug in its repository.
+	Path string `yaml:"path,omitempty" json:"path,omitempty"`
 }
 
 // Frontend sources.

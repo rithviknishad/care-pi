@@ -249,8 +249,8 @@ The full example is in `solutions/schema/lock.schema.json` (`examples`).
 | `solution_image` | The image that api, worker, and beat run. `installed_plugs`: each plug with a backend part (section 1.5). |
 | `care_fe` | The repo, the ref, and the resolved sha. |
 | `fe` | The default FE bundle: build id, URL, SHA-256, size, and the names of the env keys. |
-| `plugs.<id>.backend` | The ref, the sha, and the `ADDITIONAL_PLUGS` entry with the default `configs` (`version: "@<sha>"`). |
-| `plugs.<id>.frontend` | `source: built`: the bundle URL, SHA-256, entry, and size. `source: external`: the absolute URL of `remoteEntry.js`; `sha`, `sha256`, `entry`, and `size_bytes` are `null`. |
+| `plugs.<id>.backend` | The ref, the sha, and the `ADDITIONAL_PLUGS` entry with the default `configs` (`version: "@<sha>"`). A package in a directory of its repository (`backend.subdirectory`, wave 13, S73) adds `subdirectory`, and the version is `@<sha>#subdirectory=<dir>`: pip reads the fragment only after the ref (in `package_name` it becomes a part of the path). |
+| `plugs.<id>.frontend` | `source: built`: the bundle URL, SHA-256, entry, and size, and `path` (wave 13) for a plug in a directory of its repository. `source: external`: the absolute URL of `remoteEntry.js`; `sha`, `sha256`, `entry`, and `size_bytes` are `null`. |
 | `images` | `postgres`, `caddy`, `redis`, `s3`, `node`: the ref and the digest. |
 
 Each plug of `solution.plugs` has an entry in `plugs`, on or off. The settings form of a plug is
@@ -334,7 +334,7 @@ The schema is `solutions/schema/index.schema.json`. Its `examples` has the full 
 
 | Workflow | Triggers | What it does |
 |---|---|---|
-| `solution-lock.yml` (new) | `workflow_dispatch` (inputs `solution`, `version` (empty: the next version of the month), `notes`) | Jobs `resolve` (care tag → digest and git sha with `skopeo inspect` and the label `org.opencontainers.image.revision`; with `care.source: git`, the care ref → sha with `gh api`; care_fe and plug refs → shas with `gh api`; base image tags → digests), `care-base` (only `care.source: git`: calls `care-base.yml`, section 13.4), `image` (the solution image, `FROM` the care image or `care-base`), `fe` (calls `fe-bundle.yml`), `plugs` (calls `plug-bundle.yml`, a matrix over the FE plugs with `repo`), `lock` (`care-pi solution lock --input`, validate, workflow artifact, **published** release `lock-<solution>-<version>`, job summary with the lock file), `index` (calls `solution-index.yml`). |
+| `solution-lock.yml` (new) | `workflow_dispatch` (inputs `solution`, `version` (empty: the next version of the month), `notes`) | Jobs `resolve` (care tag → digest and git sha with `skopeo inspect` and the label `org.opencontainers.image.revision`; with `care.source: git`, the care ref → sha with `gh api`; care_fe and plug refs → shas with `gh api`; an in-repo plug of care-pi (S73: `frontend.repo: "."`, or `backend.package` of this repository with a `subdirectory`) → the last commit of the run that changed its directory (`git log -1`; the checkout has the history); base image tags → digests), `care-base` (only `care.source: git`: calls `care-base.yml`, section 13.4), `image` (the solution image, `FROM` the care image or `care-base`), `fe` (calls `fe-bundle.yml`), `plugs` (calls `plug-bundle.yml`, a matrix over the FE plugs with `repo`), `lock` (`care-pi solution lock --input`, validate, workflow artifact, **published** release `lock-<solution>-<version>`, job summary with the lock file), `index` (calls `solution-index.yml`). |
 | `solution-image.yml` (changed) | `workflow_dispatch`; push to `main` | `install-plugs.json` in the build context has each backend plug of the solution (the superset rule). Push builds keep `<solution>-latest` and `0.0.0-dev`. `solution-lock.yml` builds the versioned image itself with the same Containerfile. |
 | `plug-bundle.yml` (new) | `workflow_call` (inputs `slug`, `repo`, `sha`, `entry`, `script`, `out`); `workflow_dispatch` | Skip when the release `plug-<slug>-<sha12>` exists (the name is the identity). Else check out the plug at the sha, Node 22, `npm ci`, `npm run <script> -- --base /plugs/<slug>/<sha12>/`, check that `<out>/<entry>` exists, add `care-pi-plug.json`, pack, write the `.sha256`, create the release. Output: URL, SHA-256, size. |
 | `fe-bundle.yml` (changed) | `workflow_call` (new; inputs `solution`, `care_fe_sha`); `workflow_dispatch`; push to `main` | Unchanged recipe and names. `care-pi fe env` applies the superset rule of section 1.5. Output: build id, URL, SHA-256, size, env keys. |
@@ -936,7 +936,10 @@ and have tests. The build was not run on a Pi.
 
 - Unit: `care-plug-build.container`, the shape of `care-fe-build.container` (`docs/fe.md`): `images.node`, `MemoryHigh=768M`,
   `MemoryMax=1700M`, `MemorySwapMax=1500M`, `OOMScoreAdjust=900`, and the scale-down rule.
-- Script `plug-build.sh`: fetch `https://codeload.github.com/<repo>/tar.gz/<sha>` into `/var/lib/care-pi/build/plugs/<slug>/src`;
+- An in-repo plug (wave 13, S73): `frontend.repo: "."` is the repository of care-pi, and `frontend.path` is its directory;
+  the on-device lock and `GET /plugs` give the repository URL, and the build sets `PLUG_PATH`.
+- Script `plug-build.sh`: fetch `https://codeload.github.com/<repo>/tar.gz/<sha>` into `/var/lib/care-pi/build/plugs/<slug>/src`
+  (the checkout root), `cd` to `PLUG_PATH` when it is set;
   `npm ci --no-audit --no-fund --prefer-offline` (cache `/var/lib/care-pi/build/plugs/npm-cache`); `npm run <build.script> -- --base /plugs/<slug>/<sha12>/`;
   copy `<build.out>` to `/var/lib/care-pi/plugs/<slug>/<sha12>.tmp`, write `care-pi-plug.json`, rename to `<sha12>`.
 - The same recipe runs in `plug-bundle.yml`, as `fe-build.sh` runs in `fe-bundle.yml`.

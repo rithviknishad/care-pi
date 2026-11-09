@@ -23,7 +23,9 @@ import (
 type PlugBuildRequest struct {
 	Slug string
 	// Repo is OWNER/NAME on github.com.
-	Repo   string
+	Repo string
+	// Path is the directory of the plug in Repo, or "" for the root (wave 13, an in-repo plug of care-pi).
+	Path   string
 	SHA    string
 	Script string
 	Out    string
@@ -57,6 +59,9 @@ func (LocalPlugProvider) Name() string { return "local" }
 func (l LocalPlugProvider) Ensure(ctx context.Context, r PlugBuildRequest) error {
 	env := fmt.Sprintf("PLUG_REPO=%s\nPLUG_SHA=%s\nPLUG_SLUG=%s\nPLUG_SCRIPT=%s\nPLUG_OUT=%s\nPLUG_ENTRY=%s\n",
 		r.Repo, r.SHA, r.Slug, r.Script, r.Out, r.Entry)
+	if r.Path != "" {
+		env += "PLUG_PATH=" + r.Path + "\n"
+	}
 	if err := lock.WriteFileAtomic(l.Paths.Abs(paths.BuildPlugs+"/current.env"), []byte(env), 0o644); err != nil {
 		return err
 	}
@@ -90,11 +95,16 @@ func (b PlugBuilder) Requests(pr *apply.Prepared) ([]PlugBuildRequest, error) {
 			return nil, problem.Newf(problem.BuildRequiredOffline, "The FE plug %s has no resolved sha; set solution.custom.plugs[].frontend.ref to a 40-digit sha.", id)
 		}
 		p := plugs[id]
-		repo := render.GitHubSlug(strings.TrimSuffix(f.Repo, ".git"))
+		src := f.Repo
+		if src == "." {
+			// An in-repo plug (S73): the repository of care-pi.
+			src = solution.SelfRepo
+		}
+		repo := render.GitHubSlug(strings.TrimSuffix(src, ".git"))
 		if repo == "" {
 			return nil, problem.Newf(problem.ArtefactInvalid, "The FE plug %s needs a github.com repository for a local build.", id)
 		}
-		r := PlugBuildRequest{Slug: f.Slug, Repo: repo, SHA: f.SHA, Script: p.Frontend.BuildScript(), Out: p.Frontend.BuildOut(),
+		r := PlugBuildRequest{Slug: f.Slug, Repo: repo, Path: f.Path, SHA: f.SHA, Script: p.Frontend.BuildScript(), Out: p.Frontend.BuildOut(),
 			Entry: f.Entry, Image: pr.Model.Images["node"]}
 		if _, err := os.Stat(b.Paths.Abs(r.Dir() + "/" + r.Entry)); err == nil {
 			continue

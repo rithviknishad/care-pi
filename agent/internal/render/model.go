@@ -743,9 +743,9 @@ func NewModel(in Input) (*Model, error) {
 		if !p.On || !p.HasBackend() {
 			continue
 		}
-		version := "@" + p.Backend.Ref
+		version := p.Backend.Version(p.Backend.Ref)
 		if g, ok := in.Lock.Plugs[p.ID]; ok && g.SHA != "" {
-			version = "@" + g.SHA
+			version = p.Backend.Version(g.SHA)
 		}
 		full, red := PlugConfigs(cfg, p.Plug, in.PlugSecrets[p.ID])
 		m.Plugs = append(m.Plugs, AdditionalPlug{

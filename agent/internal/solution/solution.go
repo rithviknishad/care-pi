@@ -116,7 +116,23 @@ type BackendPlug struct {
 	Package string         `yaml:"package"`
 	Ref     string         `yaml:"ref"`
 	Configs map[string]any `yaml:"configs"`
+	// Subdirectory is the directory of the package in the repository, when it is not the root (wave 13, S73: the
+	// in-repo plug plugs/care_pi_onboarding). Package stays the bare repository URL; pip needs the fragment after the
+	// ref (Version).
+	Subdirectory string `yaml:"subdirectory"`
 }
+
+// PipVersion returns the version of an ADDITIONAL_PLUGS entry: @<ref>, and #subdirectory=<dir> after it when the
+// package is not at the root of its repository. pip reads a fragment in package_name as a part of the path.
+func PipVersion(ref, subdirectory string) string {
+	if subdirectory == "" {
+		return "@" + ref
+	}
+	return "@" + ref + "#subdirectory=" + subdirectory
+}
+
+// Version returns the version of the ADDITIONAL_PLUGS entry of the plug at ref (a sha or a ref).
+func (b *BackendPlug) Version(ref string) string { return PipVersion(ref, b.Subdirectory) }
 
 // FrontendPlug is the module federation bundle of a plug.
 type FrontendPlug struct {
@@ -129,6 +145,23 @@ type FrontendPlug struct {
 	Entry string `yaml:"entry"`
 	// Build tells how CI and the local builder build the bundle (Phase 4).
 	Build *FrontendBuild `yaml:"build"`
+	// Path is the directory of the plug in Repo, when it is not the root (wave 13, S73). Repo "." is this repository
+	// (care-pi): RepoURL.
+	Path string `yaml:"path"`
+}
+
+// SelfRepo is the repository of care-pi: the frontend repo "." of an in-repo plug (S73).
+const SelfRepo = "https://github.com/rithviknishad/care-pi"
+
+// RepoURL returns the repository of the bundle: Repo, or SelfRepo for ".".
+func (f *FrontendPlug) RepoURL() string {
+	if f == nil {
+		return ""
+	}
+	if f.Repo == "." {
+		return SelfRepo
+	}
+	return f.Repo
 }
 
 // FrontendBuild is the npm script and the output directory of a plug bundle.

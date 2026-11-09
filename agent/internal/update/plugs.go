@@ -232,7 +232,7 @@ func (u *Updater) plugView(pc *plugsContext, p solution.EffectivePlug) Plug {
 		v.Backend = b
 	}
 	if p.Frontend != nil {
-		f := &PlugFrontendState{Slug: p.Frontend.Slug, Repo: strp(p.Frontend.Repo), Ref: strp(p.Frontend.Ref), Tracked: p.Frontend.Repo != "" && !isSHA(p.Frontend.Ref),
+		f := &PlugFrontendState{Slug: p.Frontend.Slug, Repo: strp(p.Frontend.RepoURL()), Ref: strp(p.Frontend.Ref), Tracked: p.Frontend.Repo != "" && !isSHA(p.Frontend.Ref),
 			Source: solution.FrontendExternal, Bundle: BundleState{State: "external"}, PlugConfig: PlugConfigState{State: "missing"}}
 		if p.Frontend.Repo != "" {
 			f.Source = solution.FrontendBuilt
