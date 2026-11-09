@@ -1152,3 +1152,36 @@ Redocly gives one warning for the `if`/`then` of `frontendPlug` in `solution.sch
 
 End state of care.local: the dev build `v0.3.0-dev` at `9a662ac`, the earlier binary at
 `/usr/local/bin/care-pi.v0.2.0.bak`, `clock.policy: ntp`, setup `ready`, Care running (not restarted).
+
+### 8u. Wave 13 merge, lock 2026.11.3 and 2026.11.4, care.local (2026-11-09)
+
+- **Merge.** `w13-agent` (`1a30cb5`) and `w13-onboarding` (`19efeaa`) merged into `main` without a conflict. The merge
+  commit `b6db3fc` applied the agent-tests patch, added `path: ${{ matrix.plug.path }}` to `solution-lock.yml`,
+  regenerated `console/src/api/types.gen.ts` (contract 0.9.1), and added `docs/onboarding.md` to the docs nav.
+- **Reviews.** Two independent code reviews. Onboarding branch: 1 major (the lock pipeline, done on `w13-agent`),
+  2 minor, 1 nit (`200c8e2`, `f1e8929`, `89b18ac`). Agent branch: 1 major (a cancelled or timed-out probe was stored
+  as "no route"), 4 minor (any TLS failure counted as reachable; the pending seed password step could not run when
+  `care-db` was up; the RTC drift warning never cleared; any skopeo error counted as "no image"), 2 nits. All fixed in
+  `f8a7d7d` (7 commits, tests for each). `b8f34ab` removed a stray scp artefact (an 18 MB arm64 binary) from the root.
+- **Lock 2026.11.3** (`solution-lock.yml` run 42585236532 on `b6db3fc`): Care from git `28211e29a359`
+  (`care-base`, arm64 + amd64), care_fe `3.1/base` `c4e670c1b4fa` (3.5 MB bundle, 12.2 MB unpacked, 107 files),
+  `care_pi_onboarding` backend `@f1e8929…#subdirectory=plugs/care_pi_onboarding`, FE bundle 101 KB. `min_agent_version`
+  stays `v0.2.0`: the lock decoder is not strict, and a v0.2.0 agent uses only the digests and the URLs.
+  Lock `2026.11.2` was never a public release (lumine has a local lock).
+- **Migration path.** `develop` and `ENG-737-backup-backup` diverged (48 ahead, 6 behind); none of the develop-only
+  commits adds a migration, so the 3.1 branch holds every migration of the 2026.11.1 devices.
+- **care.local.** Dev agent `b8f34ab`: `host check --probe`, the doctor, and the journal show the internet reachable;
+  `clock detect --dry-run` keeps `ntp` (RTC present, 1970 at boot, battery 0 V). `update stage` + `update apply --now`
+  from 2026.11.1 to 2026.11.3: 3 images "present, no pull", checkpoint, 848 migrations, `plug-config: 1 row(s)`, no
+  error. `plug_config` has `care_pi_onboarding_fe` with the URL of the bundle; `remoteEntry.js` 200 with CORS.
+- **Wizard live run** (Playwright against `https://care.local`, results in
+  `care-pi-w13b/local/wave13/wizard-live/`): blocker D1, `window.CARE_API_URL` is `""` on care-pi, so the shipped
+  plug sent no request. With the fix, the first run took 8.5 s (one preview per screen, one POST per action), the
+  second run created 0 objects, `DELETE demo_data/` removed 5 patients and 5 visits only, one log line per call, no
+  stack trace. D2 to D7 (invitations without a mail server, union-territory aliases, counts, plural, deleted users)
+  fixed with D1 in `e142a96` (42 Django tests on Care 3.1, 19 Vitest, 6 Playwright). Merged `acce1ee`.
+- **Image.** `image/build.sh --reuse-base` from lock 2026.11.3 built `v0.3.0-rc1` (436 s, agent `b6db3fc`) and
+  `v0.3.0-rc2` (535 s, agent `b8f34ab`): the seed `pg-28211e29a359.tar.zst` (7.9 MB, 848 migrations), both plug
+  bundles pre-seeded, 79 checks pass. The nspawn boot test is still unreliable on Docker Desktop.
+- **Lock 2026.11.4** cut on `acce1ee` for the plug fixes. Next: update care.local to it, run the wizard without a
+  shim, rebuild the image, update lumine (offline during the wave), tag v0.3.0.
