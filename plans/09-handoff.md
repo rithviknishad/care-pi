@@ -603,6 +603,10 @@ Remaining:
 - New hardware (owner): the Phase 1 fresh-flash test (`curl | sh`, ghcr pulls, the reboot-required cgroup path, host name
   `care` and a collision), the image flash (Phase 5), Wi-Fi, and DR to a second Pi.
 - A tag `v0.1.1` with fixes 1–9, so lumine can run a release build again.
+- Wizard O1 (wave 13, `8u`): the disabled invitation checkbox of the staff form looks enabled; dim the row or hide the
+  option when `invite_available` is false. Next lock after 2026.11.4.
+- The seeded first boot (S72) on real hardware: flash the v0.3.0 image and watch the first start restore
+  `pg-<sha12>.tar.zst` ("No migrations to apply"); lumine's RTC battery (`clock detect --dry-run`).
 
 The ghcr packages are public since 2026-11-01 (S43 done). lumine pulls `care`, `caddy`, `postgres-pgbackrest`
 without a token. The recovery key words of lumine are in `local/care-recovery-key` on the owner's Mac (S39).
@@ -1185,3 +1189,7 @@ End state of care.local: the dev build `v0.3.0-dev` at `9a662ac`, the earlier bi
   bundles pre-seeded, 79 checks pass. The nspawn boot test is still unreliable on Docker Desktop.
 - **Lock 2026.11.4** cut on `acce1ee` for the plug fixes. Next: update care.local to it, run the wizard without a
   shim, rebuild the image, update lumine (offline during the wave), tag v0.3.0.
+- **Wizard run 2** on care.local with lock 2026.11.4 (shipped plug `e142a96`, no shim): the redirect after sign-in
+  opens the wizard with 1 status call; one run end to end in 1.5 s with 22 requests and 0 created (demo_data 5);
+  the invitation option is off without a mail server; the demo data deleted cleanly; 19 log lines, no stack trace.
+  One UX note O1 in `8k`. Results in `care-pi-w13b/local/wave13/wizard-live/run2/`.
