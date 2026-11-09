@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -55,6 +56,7 @@ var (
 	outputRE    = regexp.MustCompile(`^(json|cat|short-iso)$`)
 	durationRE  = regexp.MustCompile(`^[0-9]{1,6}(ms|s|m|h)?([0-9]{1,6}(ms|s|m|h))*$`)
 	descRE      = regexp.MustCompile(`^[A-Za-z0-9 ._:,()/-]{1,120}$`)
+	seedImageRE = regexp.MustCompile(`^ghcr\.io/rithviknishad/care-pi/postgres-pgbackrest@sha256:[0-9a-f]{64}$`)
 	niceRE      = regexp.MustCompile(`^-?[0-9]{1,2}$`)
 	archRE      = regexp.MustCompile(`^(arm64|amd64)$`)
 	regionRE    = regexp.MustCompile(`^s3\.region=[a-z0-9-]{1,40}$`)
@@ -419,6 +421,23 @@ func podmanRun(v view, args []string) error {
 	if len(args) == 7 && strings.Join(args[:3], " ") == "--rm --network none" && imageRE.MatchString(args[3]) &&
 		strings.Join(args[4:], " ") == "caddy list-modules --skip-standard" {
 		return nil
+	}
+	// The password change of the database seed (S72, apply.SeedPasswordCmd): the first full apply runs it before
+	// lock.yaml has the postgres image, so the image is the postgres-pgbackrest image of care-pi by digest (or
+	// images.postgres of config.yaml); the form and the script are fixed.
+	want := apply.SeedPasswordCmd("IMAGE").Args
+	if inner := want[slices.Index(want, "run")+1:]; len(args) == len(inner) {
+		img := args[len(args)-4]
+		same := true
+		for i := range inner {
+			if inner[i] != "IMAGE" && inner[i] != args[i] {
+				same = false
+				break
+			}
+		}
+		if same && (seedImageRE.MatchString(img) || v.images()[img]) {
+			return nil
+		}
 	}
 	var sources []string
 	for i := 0; i < len(args); i++ {

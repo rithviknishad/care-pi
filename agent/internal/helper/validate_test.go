@@ -385,3 +385,25 @@ func TestValidateFuzz(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// S72: the password change of the database seed runs before lock.yaml has the postgres image: only the fixed form with
+// the postgres-pgbackrest image of care-pi by digest passes.
+func TestSeedPassword(t *testing.T) {
+	root := t.TempDir()
+	img := "ghcr.io/rithviknishad/care-pi/postgres-pgbackrest@sha256:" + strings.Repeat("a", 64)
+	if err := ValidateIn(root, apply.SeedPasswordCmd(img)); err != nil {
+		t.Fatal(err)
+	}
+	other := apply.SeedPasswordCmd("docker.io/attacker/postgres@sha256:" + strings.Repeat("a", 64))
+	script := apply.SeedPasswordCmd(img)
+	script.Args[len(script.Args)-1] = "id > /var/lib/postgresql/data/x"
+	volume := apply.SeedPasswordCmd(img)
+	i := slices.Index(volume.Args, paths.PGData+":/var/lib/postgresql/data")
+	volume.Args[i] = "/:/var/lib/postgresql/data"
+	tag := apply.SeedPasswordCmd("ghcr.io/rithviknishad/care-pi/postgres-pgbackrest:17")
+	for _, c := range []host.Cmd{other, script, volume, tag} {
+		if err := ValidateIn(root, c); !errors.Is(err, ErrDenied) {
+			t.Errorf("allowed: %s", c.String())
+		}
+	}
+}

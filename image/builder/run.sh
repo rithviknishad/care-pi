@@ -4,6 +4,7 @@
 #
 # Mounts: /src (the repository, read-only), /in/dist (a dist directory with the release layout
 # <tag>/<asset>: the lock, its FE bundle, its FE plug bundles), /in/bin/care-pi (the agent, linux/arm64),
+# /in/seed (optional: pg-<sha12>.tar.zst and .json, the database seed of make-seed.sh, S72),
 # /out (the outputs), /work (a volume with an ext4 or similar file system: pi-gen and the pre-pull
 # need device nodes, extended attributes, and overlay mounts, so not a bind mount of macOS).
 #
@@ -75,13 +76,25 @@ cat "${input}/prepull.tsv"
 
 cp "${SRC}/installer/install.sh" "${input}/install.sh"
 cp "${SRC}/image/builder/preseed.py" "${input}/preseed.py"
+# S72: the database seed (stage 01b-dbseed). seed.pg of image-release.json records it, or null.
+mkdir -p "${input}/seed"
+seed_json=null
+for f in /in/seed/pg-*.tar.zst; do
+	[ -f "${f}" ] || continue
+	cp "${f}" "${f%.tar.zst}.json" "${input}/seed/"
+	seed_json="$(jq -c --arg file "/var/lib/care-pi/seed/${f##*/}" '{care_git_sha, created_at, file: $file, size_bytes, migrations}' "${f%.tar.zst}.json")"
+	if [ "$(jq -r .care_git_sha "${f%.tar.zst}.json")" != "$(jq -r '.care.git_sha // ""' "${input}/lock.json")" ]; then
+		log "warning: the seed is of another CARE commit than the lock; the first start migrates the difference"
+	fi
+done
+log "database seed: ${seed_json}"
 built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 jq -n --arg version "${IMAGE_VERSION}" --arg solution "${SOLUTION}" --arg lock_version "${LOCK_VERSION}" \
 	--arg lock_sha256 "$(sha256sum "${DIST_IN}/${lock_rel}" | cut -d' ' -f1)" --arg agent "${agent_version}" \
-	--arg built_at "${built_at}" --arg git_sha "${GIT_SHA}" --arg pi_gen "${PI_GEN_REF}" \
+	--arg built_at "${built_at}" --arg git_sha "${GIT_SHA}" --arg pi_gen "${PI_GEN_REF}" --argjson seed "${seed_json}" \
 	'{version: $version, solution: $solution, lock_version: $lock_version, lock_sha256: $lock_sha256,
 	  agent_version: $agent, built_at: $built_at, git_sha: $git_sha,
-	  base: ("Raspberry Pi OS Lite (64-bit) trixie, pi-gen arm64 " + $pi_gen)}' > "${input}/image-release.json"
+	  base: ("Raspberry Pi OS Lite (64-bit) trixie, pi-gen arm64 " + $pi_gen), seed: {pg: $seed}}' > "${input}/image-release.json"
 cat "${input}/image-release.json"
 
 # ---------------------------------------------------------------- 2. pi-gen

@@ -734,6 +734,9 @@ tree on disk has a checkpoint.
 
 ### 8.7 Image retention
 
+Each pull is by the digest of the lock, and an image that is in the storage is not pulled again: the job log says
+`image present, no pull: <repo>@<digest>` (S72; the pre-pulled images of the Raspberry Pi image, `docs/image.md`).
+
 The images of the previous lock stay until the next successful update (`03` §4). `prune-images` removes each image
 that the agent pulled or built (`state/images.json`) and that neither the current lock nor `history.previous` uses.
 It never removes an image that care-pi did not pull. Then `podman image prune -f` removes dangling layers.

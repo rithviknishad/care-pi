@@ -187,6 +187,10 @@ const (
 	// FirstbootError records why the first boot did not use the pre-seed (it started setup mode).
 	// GET /_care-pi/status shows it as firstboot_error until the setup is finished.
 	FirstbootError = "/var/lib/care-pi/state/firstboot-error.json"
+	// SeedDir holds the pre-migrated database of the image (S72): pg-<sha12>.tar.zst and pg-<sha12>.json.
+	SeedDir = "/var/lib/care-pi/seed"
+	// SeedRecord records the restore of a seed and the password change (state/seed-db.json).
+	SeedRecord = "/var/lib/care-pi/state/seed-db.json"
 )
 
 // UID and GID of the postgres user in the postgres image.

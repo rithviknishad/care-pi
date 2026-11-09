@@ -314,6 +314,8 @@ func EnsureImages(ctx context.Context, o Options, pr *Prepared) (pulled, built [
 			return pulled, built, err
 		}
 		if ok {
+			// S72: the image of the Raspberry Pi image (or of an earlier pull) is in the storage by its digest.
+			_, _ = fmt.Fprintln(o.Out, "    image present, no pull:", ref)
 			continue
 		}
 		_, _ = fmt.Fprintln(o.Out, "    pull", ref)
