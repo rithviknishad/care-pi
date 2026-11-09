@@ -317,6 +317,7 @@ stopped with `missing steps: tls`).
 | `/var/lib/care-pi/state/auth-locks.json` | The claim lock, the address locks, and the failed attempts | root 0600 |
 | `/var/lib/care-pi/state/claim-hint` | The claim method that the operator has (`claim-code` after bootstrap), until the claim | root 0600 |
 | `/var/lib/care-pi/state/clock-trusted.json` | S52: the clock that the browser set at the claim (`source: browser`), or the RTC gate (`source: rtc`, S75), until NTP synchronizes the clock | root 0600 |
+| `/var/lib/care-pi/seed/pg-<sha12>.tar.zst`, `/var/lib/care-pi/state/seed-db.json` | S72: the pre-migrated database of the image, and the record of its restore and of the password change (`docs/image.md` section 6.5) | root 0644, root 0600 |
 | `/var/lib/care-pi/state/clock-detect.json`, `clock-rtc-check.json` | S75: the last `care-pi clock detect`, and the difference between the RTC and the first NTP synchronization | root 0600 |
 | `/var/lib/care-pi/state/jobs/<id>.json`, `<id>.events.jsonl`, `<id>.cancel` | Job journals, events, cancel requests | root 0600 |
 | `/var/lib/care-pi/state/support/` | The support bundles (`.tar.gz`, redacted) | root 0700 |

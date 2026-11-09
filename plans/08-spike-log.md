@@ -2162,3 +2162,54 @@ output: `local/wave11/`.
 
 End state: policy `drop` confirmed (2026-11-03 03:06:24 UTC), `allow_ports` 9100 and 9256 on `tailscale0`,
 `systemctl --failed` empty, no `helper: denied` line. `local/LUMINE.md` has the details.
+
+## care.local fresh flash findings and wave 13 — 2026-11-09
+
+care.local is a Raspberry Pi 5 (2 GB, Rev 1.1) with a fresh flash of the image by the owner: agent `v0.2.0`, setup
+`ready`, the stable track. Wave 13 (branch `w13-agent`) fixes the internet check (S74), adds the RTC policy (S75),
+the Care 3.1 refs built from the git source (S71), and the pre-baked database (S72). Verification on care.local was
+read-only, except the dev build of the agent (`make build-linux VERSION=v0.3.0-dev`, `install -m 0755`, restart of
+`care-pi-helper.socket` and `care-pi.service`; Care did not restart). lumine was offline for the whole wave (Tailscale:
+last seen 2 days before; no answer on the LAN).
+
+### Findings on care.local (v0.2.0)
+
+| # | Finding | Fix |
+|---|---|---|
+| 1 | The agent started 10 s after boot; `/etc/resolv.conf` came at 16 s (NetworkManager). The one internet check at the start (`HEAD https://github.com/`) failed on DNS, and the next check came 5 minutes later. | S74: checks after 15 s, 30 s, 60 s, then every 2 minutes until the first success, then every 5 minutes; a new transport for each check (`614c2a9`). |
+| 2 | The hardware step stored the warning `no-internet` of that failure; `?probe=true` measured only the disk. | The step records the result and its time; `GET /setup` gives the live warning; the finish keeps only the warnings that are still true; the probe checks the internet too. |
+| 3 | `care-pi host check` showed `internet: not checked yet` as OK (the CLI has no background check). | The CLI checks once (5 s at most); `care-pi doctor` too (`0ff2aaf`). |
+| 4 | The clock was 3 days behind until NTP: `systemd[1]: System time advanced to timestamp on /var/lib/systemd/timesync/clock` (the clock file of timesyncd; `fake-hwclock` is not installed). | Never trusted (`01` §7); a wrong clock gave a TLS error, which the new check counts as an answer of the server. |
+| 5 | `rpi-rtc …: setting system clock to 1970-01-01T00:00:21 UTC (21)`, `battery_voltage` 0: an RTC without a battery. | S75, SP9 above: `clock detect` gives `ntp`. |
+
+### After the dev build (`v0.3.0-dev`, commit `5c02da8`)
+
+- `care-pi host check`: `internet  the internet is reachable` (0.9 s); `--json`: `internet_reachable: true`,
+  `internet_problem: null`.
+- `GET /_care-pi/status` (public): `internet: {reachable: true, problem: null}`; the setup and maintenance pages of
+  Caddy show it.
+- The journal of the agent: `internet check reachable=true` 0.8 s after `care-pi serve: ready`.
+- `sudo care-pi clock detect --dry-run`: `policy ntp: the RTC has no battery (battery_voltage 0.000 V)`, `clock.policy
+  is ntp already`; nothing written.
+- The setup of care.local is `ready`, so the hardware page of the wizard is closed; the API and the CLI show the live
+  values. The boot race (the DNS at 16 s) needs a reboot to repeat; the unit tests cover the schedule.
+
+### The image with the pre-migrated database (S72), on the Mac
+
+`image/build.sh --dist <fetch-dist of lock 2026.11.1> --lock-version 2026.11.1 --version 2026.11.1-w13 --reuse-base`
+(agent `v0.3.0-dev`; the lock `2026.11.3` of the Care 3.1 refs does not exist yet, see `09` §8t):
+
+| Step | Result | Time |
+|---|---|---|
+| `make-seed.sh` (docker on the Mac; the solution image and `postgres-pgbackrest` of the lock by digest, CARE `ba8c4f208b8f`) | `pg-ba8c4f208b8f.tar.zst`: 7,467,033 bytes, 100 tables, 822 migrations; a clean shutdown | migrate and sync 76 s |
+| pi-gen (stages 0 to 2 kept; stage-care with `01b-dbseed`) | the seed in `/var/lib/care-pi/seed/`, `seed.pg` in `image-release.json` | 471 s |
+| `.img.xz` | 1,211,404,920 bytes (5.3 GB extracted; 3.9 GB used of 4.4 GB) | — |
+| `verify.sh` | **all checks passed**, with the two new checks of the seed (its size, a zstd archive with `PG_VERSION`) | — |
+| **Total** (`build.sh`, with a rebuild of the builder image for `zstd`) | | **11 min 27 s** |
+| `boot-test.sh` (systemd-nspawn in the build container) | **skipped after the cap of 20 minutes**: the xz extraction took 6 minutes, nspawn booted (journald, networkd, logind, dbus), but `firstboot-done` did not appear and `systemctl` through `nsenter` hung. The known limit of Docker Desktop (Phase 5 build); not a finding of the image. The restore runs at the first full apply, which the boot test does not reach anyway | — |
+
+The gain of the seed (the Mac, Docker arm64, the git-source image of CARE `28211e29a359`; `local/wave13/measure-seed.sh`):
+`migrate` + `sync_*` of an empty database 60 s; with the seed: extract 1 s, the password change with `postgres --single`
+below 1 s, PostgreSQL ready at once, `migrate` "No migrations to apply" 2.3 s, `sync_permissions_roles` 2.5 s,
+`sync_valueset` 1.8 s: 7 s in total. The care container connected with the new password, so the change works. On a Pi 5
+the empty migrate took about 3 min 20 s; with the same ratio the first start saves about 3 minutes.
