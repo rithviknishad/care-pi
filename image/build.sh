@@ -123,4 +123,5 @@ fi
 	-e SOLUTION="${SOLUTION}" -e LOCK_VERSION="${LOCK_VERSION}" -e IMAGE_VERSION="${VERSION}" \
 	-e PI_GEN_REF="${PI_GEN_REF}" -e GIT_SHA="${GIT_SHA}" -e IMAGE_URL="${IMAGE_URL}" \
 	-e REUSE_BASE="${REUSE_BASE}" -e VERIFY="${VERIFY}" \
+	-e OUT_UID="$(id -u)" -e OUT_GID="$(id -g)" \
 	"${BUILDER}" bash /src/image/builder/run.sh

@@ -148,6 +148,11 @@ jobs:
             --image-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/image-${VERSION}/care-pi-${VERSION}-${SOLUTION}.img.xz"
           ls -la image/out
 
+      - name: Make the outputs readable
+        # The builder sets the owner and the mode (image/builder/run.sh); this is the fallback for an old builder.
+        if: ${{ always() }}
+        run: sudo chmod -R a+rX image/out 2>/dev/null || true
+
       - uses: actions/upload-artifact@v7
         if: ${{ always() }}
         with:

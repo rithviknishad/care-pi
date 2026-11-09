@@ -30,6 +30,16 @@ die() { printf '[image] ERROR: %s\n' "$*" >&2; exit 1; }
 t0=$(date +%s)
 elapsed() { echo "$(( $(date +%s) - t0 )) s"; }
 
+# The outputs must be readable by the user who ran build.sh: the install log comes from the chroot as root 0600,
+# and on a Linux host every file of /out belongs to root. build.sh gives OUT_UID and OUT_GID. Also on a failure.
+fix_out_perms() {
+	chmod -R a+rX "${OUT}" 2>/dev/null || true
+	if [ -n "${OUT_UID:-}" ]; then
+		chown -R "${OUT_UID}:${OUT_GID:-${OUT_UID}}" "${OUT}" 2>/dev/null || true
+	fi
+}
+trap fix_out_perms EXIT
+
 # ---------------------------------------------------------------- 1. inputs
 input="${WORK}/input"
 rm -rf "${input}"
