@@ -63,7 +63,7 @@ store them.
 | `organization` | `state`, `district`, `local_body`, `all_districts`, or `parent` (a govt organisation id) | superuser | govt organisations (bulk insert for all districts) |
 | `facility` | `template` (`clinic`, `pharmacy`), `name`, `address`, `pincode`, `phone_number`, optional `facility_type`, `latitude`, `longitude`, `features`, `is_public`, `geo_organization`, `departments`, `locations`; or `facility` to re-apply | superuser or `can_create_facility`; a facility admin to re-apply | the facility, departments, rooms and beds, room links |
 | `roles` | `role_organizations` | superuser | the custom role Receptionist, role organisations |
-| `staff` | `facility`, `members[]` (`username`, `first_name`, `last_name`, `phone_number`, `gender`, `role`, `department`, `email`, `password`, `invite`) | facility admin with `can_create_user` | users, department memberships, role organisation memberships |
+| `staff` | `facility`, `members[]` (`username`, `first_name`, `last_name`, `phone_number`, `gender`, `role`, `department`, `email`, `password`, `invite`) | facility admin with `can_create_user` | users, department memberships, and (when a superuser applies) role organisation memberships with the role Member |
 | `valuesets` | `system`, `selected[]` | superuser | missing CARE system value sets, clinic value sets |
 | `questionnaires` | `facility`, `selected[]` | facility admin | facility questionnaires, department links |
 | `catalog` (optional) | `facility`, `selected[]` | facility admin | facility medicines (needs the CARE terminology server) |
