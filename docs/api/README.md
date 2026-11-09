@@ -1936,8 +1936,10 @@ set. With `rtc`, `care-pi clock wait` passes at once when the RTC time is after 
 `state/clock-trusted.json` has `source: rtc` and `trusted: false`, so `ClockStatus.source` is `rtc` and the console
 shows its "clock not trusted" banner. `systemd-timesyncd` still runs. When NTP synchronizes the clock, the agent records
 the difference between the RTC and NTP (`state/clock-rtc-check.json`), deletes the marker (`source: ntp`,
-`trusted: true`), and a difference of more than 5 minutes gives the doctor warning "clock drift". An RTC time before
-the build time (no battery) waits as `ntp`. `apply` and the pre-seed accept `rtc` now.
+`trusted: true`), and a difference of more than 5 minutes gives the doctor warning "clock drift" while the policy is
+`rtc`. A new `clock detect`, or a config write that sets `clock.policy: ntp`, deletes the record: the warning does not
+stay after the operator follows its hint. An RTC time before the build time (no battery) waits as `ntp`. `apply` and
+the pre-seed accept `rtc` now.
 
 ### 19.3 Changes of contract 0.9.1
 

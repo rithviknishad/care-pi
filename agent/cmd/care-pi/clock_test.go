@@ -137,6 +137,8 @@ func TestClockDetect(t *testing.T) {
 	fake := host.NewFake()
 	fake.On(ntpQuery, host.Response{Out: "yes\n"})
 	env := clockDetectEnv{paths: p, host: host.New(fake), configPath: cfgPath, out: &bytes.Buffer{}, kernelLog: klog}
+	// The drift that an earlier boot measured: a new detection deletes it; a dry run keeps it.
+	writeFile(t, p.Abs(paths.StateDir+"/clock-rtc-check.json"), `{"checked_at":"2026-11-08T06:00:00Z","drift_s":420,"ok":false}`)
 
 	dry := env
 	dry.dryRun = true
@@ -150,10 +152,16 @@ func TestClockDetect(t *testing.T) {
 	if _, ok := clockgate.LastDetection(p); ok {
 		t.Fatal("a dry run wrote the record")
 	}
+	if _, ok := clockgate.LastRTCCheck(p); !ok {
+		t.Fatal("a dry run deleted the RTC check record")
+	}
 
 	d, err = clockDetect(ctx, env, true)
 	if err != nil || !d.Config.Written {
 		t.Fatalf("%+v %v", d, err)
+	}
+	if _, ok := clockgate.LastRTCCheck(p); ok {
+		t.Fatal("detect kept the RTC check record of an earlier boot")
 	}
 	got, _ := os.ReadFile(cfgPath)
 	cfg, err := config.Parse(got, "config.yaml")

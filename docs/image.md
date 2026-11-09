@@ -319,7 +319,7 @@ bootstrap runs `care-pi clock detect`. It reads the RTC time at boot from the ke
 
 | RTC | Policy | The clock gate at each boot |
 |---|---|---|
-| A time after the build time of the agent at boot, and no battery voltage of 0 (an RTC battery) | `rtc` | Passes at once from the RTC. NTP confirms it later: the clock is trusted then; a difference of more than 5 minutes gives the warning "clock drift" of `care-pi doctor`. |
+| A time after the build time of the agent at boot, and no battery voltage of 0 (an RTC battery) | `rtc` | Passes at once from the RTC. NTP confirms it later: the clock is trusted then; a difference of more than 5 minutes gives the warning "clock drift" of `care-pi doctor` while the policy is `rtc` (a new `clock detect` or `clock.policy: ntp` deletes the record). |
 | `1970-01-01` at boot (no battery; care.local), a battery voltage of 0, or no `/dev/rtc0` (a Pi 4 without an RTC module) | `ntp` | Waits for NTP, or (without internet) for the time of the browser at the claim (S52). |
 
 A warm reboot keeps the RTC time also without a battery (the board keeps its power): so a Pi 5 that reports a battery

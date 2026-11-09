@@ -6,11 +6,14 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"io"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rithviknishad/care-pi/agent/internal/host"
 	"github.com/rithviknishad/care-pi/agent/internal/jobs"
+	"github.com/rithviknishad/care-pi/agent/internal/paths"
 )
 
 // TestDoctor: GET /api/v1/doctor (Phase 7) and the sections of the support bundle that Phase 7 adds.
@@ -85,6 +88,62 @@ func TestDoctor(t *testing.T) {
 	}
 	if !rendered {
 		t.Fatalf("no rendered tree in the bundle: %v", len(files))
+	}
+}
+
+// doctorCheck returns "status: detail" of one check of GET /api/v1/doctor.
+func doctorCheck(t *testing.T, e *env, id string) string {
+	t.Helper()
+	r := e.do("GET", "/api/v1/doctor", nil)
+	e.want(r, 200, "")
+	var rep struct {
+		Checks []struct{ ID, Status, Detail string } `json:"checks"`
+	}
+	must(t, json.Unmarshal(r.body, &rep))
+	for _, c := range rep.Checks {
+		if c.ID == id {
+			return c.Status + ": " + c.Detail
+		}
+	}
+	t.Fatalf("no check %s", id)
+	return ""
+}
+
+// TestDoctorRTCDriftOnlyWithPolicyRTC (S75): the drift record of an earlier boot gives the warning "clock drift" only
+// with clock.policy rtc. With ntp the RTC does not set the clock: the record means nothing, and a config write that
+// sets ntp deletes it.
+func TestDoctorRTCDriftOnlyWithPolicyRTC(t *testing.T) {
+	e, _ := readyConnEnv(t)
+	drift := e.p.Abs(paths.StateDir + "/clock-rtc-check.json")
+	must(t, os.WriteFile(drift, []byte(`{"checked_at":"2026-11-08T06:00:00Z","drift_s":420,"ok":false}`), 0o600))
+	if got := doctorCheck(t, e, "clock"); got != "ok: NTP synchronized" {
+		t.Fatalf("policy ntp with an old record: %s", got)
+	}
+	if _, err := os.Stat(drift); err != nil {
+		t.Fatal("the doctor must not delete the record")
+	}
+
+	setPolicy := func(policy string) {
+		t.Helper()
+		r := e.do("GET", "/api/v1/config", nil)
+		e.want(e.do("PATCH", "/api/v1/config", map[string]any{"clock": map[string]any{"policy": policy}},
+			header("Content-Type", "application/merge-patch+json"), header("If-Match", r.header.Get("ETag"))), 200, "")
+	}
+	setPolicy("rtc")
+	must(t, os.WriteFile(drift, []byte(`{"checked_at":"2026-11-08T06:00:00Z","drift_s":420,"ok":false}`), 0o600))
+	e.clock.add(3 * time.Second) // the status cache
+	if got := doctorCheck(t, e, "clock"); !strings.HasPrefix(got, "warn: NTP synchronized; clock drift:") || !strings.Contains(got, "420 s") {
+		t.Fatalf("policy rtc with a drift: %s", got)
+	}
+
+	// The operator follows the hint and sets ntp: the record goes, and the warning with it.
+	setPolicy("ntp")
+	if _, err := os.Stat(drift); !os.IsNotExist(err) {
+		t.Fatalf("the record stays after clock.policy ntp: %v", err)
+	}
+	e.clock.add(3 * time.Second)
+	if got := doctorCheck(t, e, "clock"); got != "ok: NTP synchronized" {
+		t.Fatalf("policy ntp after the change: %s", got)
 	}
 }
 

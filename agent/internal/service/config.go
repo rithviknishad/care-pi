@@ -16,6 +16,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"github.com/rithviknishad/care-pi/agent/internal/apply"
+	"github.com/rithviknishad/care-pi/agent/internal/clockgate"
 	"github.com/rithviknishad/care-pi/agent/internal/config"
 	"github.com/rithviknishad/care-pi/agent/internal/jobs"
 	"github.com/rithviknishad/care-pi/agent/internal/lock"
@@ -334,6 +335,12 @@ func (s *Service) WriteConfig(ctx context.Context, w ConfigWrite) (*ConfigChange
 	}
 	if err := s.writeConfig(data); err != nil {
 		return nil, err
+	}
+	if cfg.Clock.Policy != "rtc" {
+		// S75: with the policy ntp the RTC does not set the clock; an old drift record would show a stale warning.
+		if err := clockgate.ClearRTCCheck(s.Paths); err != nil {
+			s.log().Warn("cannot delete the RTC check record", "error", err)
+		}
 	}
 	res.Written, res.ETag = true, etagOf(data)
 	if w.Apply {

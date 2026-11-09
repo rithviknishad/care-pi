@@ -786,7 +786,7 @@ follow the pitfalls of `plans/09-handoff.md` section 3:
 | `ports` | `ss -ltnpH`: another program than conmon on 80, 443, or 8443 of a published address or of all addresses (SP5: `tailscale serve` on 443 of the Tailscale address) | `fail` |
 | `mdns` | avahi announces another name than `<hostname>.local` (a collision: `care-2.local`) or none | `warn` |
 | `internet` | the live internet check (S74): no DNS, or no route | `warn` |
-| `clock` | NTP synchronized; the browser time of S52; the RTC gate (S75); the drift of the RTC at the first NTP synchronization | `warn` (browser, rtc, a drift of more than 5 minutes), `fail` (none) |
+| `clock` | NTP synchronized; the browser time of S52; the RTC gate (S75); the drift of the RTC at the first NTP synchronization (policy `rtc` only; `clock detect` and `clock.policy: ntp` delete the record) | `warn` (browser, rtc, a drift of more than 5 minutes), `fail` (none) |
 | `memory`, `zram` | `MemAvailable` below 256 MiB; no `/dev/zram` in `/proc/swaps` | `warn` |
 | `disk-*` | less than 2 GiB or 10 % free | `warn` |
 | `units` | a unit of Care `failed`; `inactive` after the setup | `fail`, `warn` |

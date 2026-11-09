@@ -194,8 +194,9 @@ func (s *Service) Doctor(ctx context.Context) (*DoctorReport, error) {
 	// The clock (S52).
 	rtcCheck, rtcChecked := clockgate.LastRTCCheck(s.Paths)
 	switch {
-	case st.Clock.Synchronized && rtcChecked && !rtcCheck.OK:
-		// S75: NTP corrected the RTC by more than 5 minutes: the RTC battery is flat or missing.
+	case st.Clock.Policy == "rtc" && st.Clock.Synchronized && rtcChecked && !rtcCheck.OK:
+		// S75: NTP corrected the RTC by more than 5 minutes: the RTC battery is flat or missing. Only with the policy
+		// rtc: with ntp the RTC does not set the clock, and an old record means nothing.
 		add(DoctorCheck{ID: "clock", Title: "Clock", Status: DoctorWarn,
 			Detail: fmt.Sprintf("NTP synchronized; clock drift: the RTC was %.0f s off at boot (%s)", rtcCheck.DriftS, rtcCheck.CheckedAt.Format(time.RFC3339)),
 			Fix:    fix("Check the RTC battery, or set clock.policy to ntp: care-pi config set clock.policy=ntp")})
