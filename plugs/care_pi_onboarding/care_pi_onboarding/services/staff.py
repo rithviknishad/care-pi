@@ -21,6 +21,21 @@ from care_pi_onboarding.settings import plugin_settings
 STEP = "staff"
 GENDERS = ["male", "female", "transgender", "non_binary"]
 PLACEHOLDER_EMAIL_DOMAIN = "staff.invalid"
+LOCAL_HOSTS = {"", "localhost", "127.0.0.1", "::1"}
+
+
+def invite_available() -> bool:
+    """True when CARE can send the invitation email (ONBOARDING_INVITES, else the email settings of CARE)."""
+    from django.conf import settings
+
+    mode = str(plugin_settings.ONBOARDING_INVITES).strip().lower()
+    if mode in {"on", "true", "1"}:
+        return True
+    if mode in {"off", "false", "0"}:
+        return False
+    if not settings.EMAIL_BACKEND.endswith("smtp.EmailBackend"):
+        return True
+    return str(settings.EMAIL_HOST).strip().lower() not in LOCAL_HOSTS
 
 
 class MemberInput(serializers.Serializer):
@@ -251,6 +266,11 @@ class StaffStep(Step):
 
         if not AuthorizationController.call("can_create_user", ctx.user):
             raise PermissionDenied("You cannot create users in CARE.")
+        if any(m.get("invite") for m in data["members"]) and not invite_available():
+            raise StepError(
+                "CARE has no mail server and cannot send an invitation. "
+                "Remove the invitation option to get an initial password for each person."
+            )
         facility = ctx.facility
         roles = _role_map(ctx)
         member_role = _member_role()
@@ -298,7 +318,10 @@ class StaffStep(Step):
                 }
             )
         made = tally.created.get("user", 0)
-        detail = f"The facility has {len(people)} staff members from this list. {made} accounts are new."
+        detail = (
+            f"Staff members from this list in the facility: {len(people)}. "
+            f"New accounts: {made}."
+        )
         if credentials:
             detail += (
                 " Give each person the initial password. CARE does not show it again."
@@ -327,7 +350,7 @@ class StaffStep(Step):
             members = [
                 {"username": u, "department": d, "role": r}
                 for u, d, r in FacilityOrganizationUser.objects.filter(
-                    organization__facility=facility
+                    organization__facility=facility, user__deleted=False
                 )
                 .order_by("user__username")
                 .values_list("user__username", "organization__name", "role__name")[:200]
@@ -340,6 +363,7 @@ class StaffStep(Step):
                 ],
                 "genders": GENDERS,
                 "departments": departments,
+                "invite_available": invite_available(),
             },
             "defaults": {
                 "departments": templates()
@@ -358,6 +382,6 @@ class StaffStep(Step):
             return {}
         return {
             "membership": FacilityOrganizationUser.objects.filter(
-                organization__facility=ctx.facility
+                organization__facility=ctx.facility, user__deleted=False
             ).count()
         }

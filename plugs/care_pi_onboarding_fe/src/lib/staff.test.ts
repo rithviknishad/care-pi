@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { blankMember, memberBody, memberProblem } from "@/lib/staff";
+import {
+  blankMember,
+  inviteAvailable,
+  memberBody,
+  memberProblem,
+} from "@/lib/staff";
 
 const filled = {
   ...blankMember("doctor"),
@@ -53,5 +58,14 @@ describe("memberBody", () => {
       email: "anil@clinic.example",
       department: "",
     });
+  });
+});
+
+describe("inviteAvailable", () => {
+  it("is false only when the backend says that CARE cannot send email", () => {
+    expect(inviteAvailable({ invite_available: false })).toBe(false);
+    expect(inviteAvailable({ invite_available: true })).toBe(true);
+    expect(inviteAvailable({})).toBe(true);
+    expect(inviteAvailable(undefined)).toBe(true);
   });
 });

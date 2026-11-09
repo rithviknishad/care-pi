@@ -32,6 +32,7 @@ Each setting comes from `configs` of the `ADDITIONAL_PLUGS` entry, then from the
 | `ONBOARDING_APPLY_RATE` | `30/min` | DRF rate for each user: apply, skip, delete, and close. |
 | `ONBOARDING_READ_RATE` | `120/min` | DRF rate for each user: status and preview. |
 | `ONBOARDING_MAX_STAFF` | `50` | The largest staff list of one call. |
+| `ONBOARDING_INVITES` | `auto` | `auto` offers staff invitations only when CARE has a mail server: an email backend that is not SMTP, or an SMTP host that is not `localhost`. `on` or `off` overrides the check. |
 
 ## API
 

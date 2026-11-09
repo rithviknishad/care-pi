@@ -21,5 +21,9 @@ def locale(code: str) -> dict:
 
 
 def states(loc: dict) -> dict[str, dict]:
-    """The states of a locale by their lower-case name."""
-    return {s["name"].lower(): s for s in loc.get("states", [])}
+    """The states of a locale by their lower-case name and by their lower-case aliases."""
+    index = {}
+    for s in loc.get("states", []):
+        for name in [*s.get("aliases", []), s["name"]]:
+            index[name.lower()] = s
+    return index

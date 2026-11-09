@@ -58,20 +58,27 @@ def _child_level(loc: dict, parent) -> str:
     return names[index] if names else "local_body"
 
 
-def _ensure(ctx: Context, tally: Tally, name: str, parent, level: str):
+def _ensure(ctx: Context, tally: Tally, name: str, parent, level: str, aliases=()):
+    """The organisation with this name (or one of its aliases, in that order) under parent, made if missing."""
     from care.emr.models.organization import Organization
-    from care.emr.resources.organization.spec import OrganizationWriteSpec
 
-    queryset = Organization.objects.filter(org_type="govt", name__iexact=name.strip())
+    queryset = Organization.objects.filter(org_type="govt")
     queryset = (
         queryset.filter(parent=parent)
         if parent
         else queryset.filter(parent__isnull=True)
     )
-    found = queryset.first()
-    if found:
-        tally.found("govt_organization")
-        return found
+    for candidate in [name, *aliases]:
+        found = queryset.filter(name__iexact=candidate.strip()).first()
+        if found:
+            tally.found("govt_organization")
+            return found
+    return _create(ctx, tally, name, parent, level)
+
+
+def _create(ctx: Context, tally: Tally, name: str, parent, level: str):
+    from care.emr.resources.organization.spec import OrganizationWriteSpec
+
     if parent and parent.level_cache >= settings.ORGANIZATION_MAX_DEPTH:
         raise StepError(
             f"The organisation {parent.name} is at the largest depth "
@@ -207,7 +214,9 @@ class OrganizationStep(Step):
                 )
         else:
             state = self._state(ctx, data["state"])
-            base = _ensure(ctx, tally, state["name"], None, "state")
+            base = _ensure(
+                ctx, tally, state["name"], None, "state", state.get("aliases", [])
+            )
             leaf = base
             names = []
             if data.get("all_districts"):
@@ -232,11 +241,22 @@ class OrganizationStep(Step):
     def preview(self, ctx: Context, params) -> dict:
         from care.emr.models.organization import Organization
 
-        roots = list(
-            Organization.objects.filter(org_type="govt", parent__isnull=True)
+        # A root with an alias name (for example "Delhi (NCT)") shows as its state of the fixture.
+        canonical = {
+            alias.lower(): s["name"]
+            for s in ctx.locale.get("states", [])
+            for alias in s.get("aliases", [])
+        }
+
+        def state_name(name: str) -> str:
+            return canonical.get(name.lower(), name)
+
+        roots = [
+            state_name(n)
+            for n in Organization.objects.filter(org_type="govt", parent__isnull=True)
             .order_by("name")
             .values_list("name", flat=True)[:500]
-        )
+        ]
         children: dict[str, list[str]] = {}
         for parent_name, name in (
             Organization.objects.filter(
@@ -245,7 +265,7 @@ class OrganizationStep(Step):
             .order_by("name")
             .values_list("parent__name", "name")[:5000]
         ):
-            children.setdefault(parent_name, []).append(name)
+            children.setdefault(state_name(parent_name), []).append(name)
         previous = ctx.previous(STEP)
         geo = previous.get("geo_organization") or {}
         path = geo.get("path") or []
@@ -263,7 +283,7 @@ class OrganizationStep(Step):
             },
             "existing": {"states": roots, "districts": children},
             "defaults": {
-                "state": path[0] if path else "",
+                "state": state_name(path[0]) if path else "",
                 "district": path[1] if len(path) > 1 else "",
                 "local_body": path[2] if len(path) > 2 else "",
             },

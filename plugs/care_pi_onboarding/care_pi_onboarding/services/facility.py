@@ -314,7 +314,10 @@ class FacilityStep(Step):
 
         verb = "made" if made_facility else "found"
         return StepResult(
-            detail=f"The step {verb} the facility {facility.name} with {len(departments) - 1} departments.",
+            detail=(
+                f"The step {verb} the facility {facility.name}. "
+                f"Departments of this step in the facility: {len(departments) - 1}."
+            ),
             data={
                 "facility": facility_json(facility),
                 "template": template_key,

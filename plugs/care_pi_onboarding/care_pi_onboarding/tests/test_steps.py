@@ -129,6 +129,32 @@ class OrganizationStepTest(OnboardingTestBase):
         self.assertEqual(again["created"], {"govt_organization": 1})
         self.assertEqual(again["result"]["geo_organization"]["path"][-1], "Ward 12")
 
+    def test_root_with_an_alias_name(self):
+        # care_onboarding_fe named some roots with a suffix, for example "Delhi (NCT)".
+        from care.emr.models.organization import Organization
+
+        Organization.objects.create(name="Delhi (NCT)", org_type="govt")
+        body = self.apply("organization", {"state": "Delhi", "district": "New Delhi"})
+        self.assertEqual(body["created"], {"govt_organization": 1})
+        self.assertEqual(body["existing"], {"govt_organization": 1})
+        self.assertEqual(
+            body["result"]["geo_organization"]["path"], ["Delhi (NCT)", "New Delhi"]
+        )
+        self.assertEqual(
+            Organization.objects.filter(org_type="govt", parent__isnull=True).count(),
+            1,
+        )
+        preview = self.preview("organization")
+        self.assertEqual(preview["existing"]["states"], ["Delhi"])
+        self.assertEqual(preview["existing"]["districts"], {"Delhi": ["New Delhi"]})
+        self.assertEqual(preview["defaults"]["state"], "Delhi")
+
+        again = self.apply(
+            "organization", {"state": "delhi (nct)", "district": "new delhi"}
+        )
+        self.assertEqual(again["created"], {"govt_organization": 0})
+        self.assertEqual(again["existing"], {"govt_organization": 2})
+
     def test_unknown_state_fails_and_is_recorded(self):
         body = self.apply("organization", {"state": "Atlantis"}, expect=400)
         self.assertEqual(body["status"], "failed")
@@ -315,6 +341,23 @@ class StaffStepTest(OnboardingTestBase):
         self.assertEqual(sum(again["created"].values()), 0)
         self.assertNotIn("secrets", again)
 
+    def test_deleted_user_is_not_staff(self):
+        # CARE keeps the memberships of a user that it deletes (users.deleted).
+        from care.users.models import User
+
+        facility_id = self.setup_until("roles")
+        self.apply("staff", {"facility": facility_id, "members": STAFF})
+        before = self.preview("staff", facility_id)["existing"]["members"]
+        self.assertIn("dr-anil", [m["username"] for m in before])
+        count = self.status_(facility_id)["steps"][3]["exists"]["membership"]
+        User.objects.filter(username="dr-anil").update(deleted=True)
+        after = self.preview("staff", facility_id)["existing"]["members"]
+        self.assertNotIn("dr-anil", [m["username"] for m in after])
+        self.assertEqual(len(after), len(before) - 1)
+        self.assertEqual(
+            self.status_(facility_id)["steps"][3]["exists"]["membership"], count - 1
+        )
+
     def test_given_password_and_department(self):
         from care.emr.models.organization import FacilityOrganizationUser
         from care.users.models import User
@@ -376,9 +419,38 @@ class StaffStepTest(OnboardingTestBase):
         body = self.apply("staff", {"facility": facility_id, "members": [member]})
         self.assertNotIn("secrets", body)
         self.assertEqual(body["result"]["invited"], ["dr-anil"])
+        self.assertTrue(
+            self.preview("staff", facility_id)["options"]["invite_available"]
+        )
         user = User.objects.get(username="dr-anil")
         self.assertFalse(user.has_usable_password())
         self.assertEqual([m.to for m in mail.outbox], [["anil@clinic.example"]])
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend",
+        EMAIL_HOST="localhost",
+    )
+    def test_invite_needs_a_mail_server(self):
+        # CARE's default (SMTP on localhost) is not a mail server on care-pi.
+        from care.users.models import User
+
+        facility_id = self.setup_until("roles")
+        preview = self.preview("staff", facility_id)
+        self.assertFalse(preview["options"]["invite_available"])
+        member = {**STAFF[0], "invite": True, "email": "anil@clinic.example"}
+        body = self.apply(
+            "staff", {"facility": facility_id, "members": [member]}, expect=400
+        )
+        self.assertIn("mail server", body["detail"])
+        self.assertFalse(User.objects.filter(username=member["username"]).exists())
+
+        with mock.patch(
+            "care_pi_onboarding.services.staff.plugin_settings.ONBOARDING_INVITES",
+            "on",
+        ):
+            self.assertTrue(
+                self.preview("staff", facility_id)["options"]["invite_available"]
+            )
 
     def test_duplicate_username(self):
         facility_id = self.setup_until("roles")

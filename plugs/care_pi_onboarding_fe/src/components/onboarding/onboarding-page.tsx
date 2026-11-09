@@ -18,6 +18,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { useTranslation } from "@/hooks/use-translation";
 import { onboardingApi } from "@/lib/api";
+import { takeHandedStatus } from "@/lib/status-handoff";
 import {
   initialState,
   type StepStatus,
@@ -83,8 +84,14 @@ export default function OnboardingPage() {
   const errorText = useErrorText();
   const [state, dispatch] = useReducer(wizardReducer, initialState);
 
-  // One GET when the page opens. Each step result updates the state locally; nothing polls.
+  // One GET when the page opens, unless the dashboard redirect read the status just now. Each step
+  // result updates the state locally; nothing polls.
   useEffect(() => {
+    const handed = takeHandedStatus();
+    if (handed) {
+      dispatch({ type: "status_loaded", status: handed });
+      return;
+    }
     const controller = new AbortController();
     onboardingApi
       .status(null, controller.signal)

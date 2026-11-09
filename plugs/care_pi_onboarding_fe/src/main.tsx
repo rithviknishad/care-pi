@@ -8,7 +8,8 @@ import "@/style/index.css";
 import OnboardingPage from "@/components/onboarding/onboarding-page";
 import { registerStrings } from "@/lib/i18n";
 
-window.CARE_API_URL = window.location.origin;
+// care-pi serves CARE and the API on one origin: care_fe sets CARE_API_URL to "" (REACT_CARE_API_URL empty).
+window.CARE_API_URL = "";
 if (!localStorage.getItem("care_access_token")) {
   localStorage.setItem("care_access_token", "harness-token");
 }

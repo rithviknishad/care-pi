@@ -89,6 +89,9 @@ DEFAULTS = {
     "ONBOARDING_READ_RATE": "120/min",
     # The largest staff list of one apply.
     "ONBOARDING_MAX_STAFF": 50,
+    # "auto": the staff step offers invitations only when CARE has a mail server. The default of CARE
+    # (SMTP on localhost) is not a mail server on care-pi. "on" or "off" overrides the check.
+    "ONBOARDING_INVITES": "auto",
 }
 
 plugin_settings = PluginSettings(PLUGIN_NAME, defaults=DEFAULTS)

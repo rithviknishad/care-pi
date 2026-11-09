@@ -49,6 +49,7 @@
     "field_gender": "Gender",
     "field_invite": "Send an invitation email instead of a password",
     "field_invite_help": "CARE sends a link to set the password. This needs email settings in CARE. Without this option, the setup shows an initial password once.",
+    "field_invite_unavailable": "CARE has no mail server and cannot send an invitation. The setup shows an initial password for each person.",
     "field_last_name": "Last name",
     "field_local_body": "Local body",
     "field_local_body_help": "Optional. For example, the corporation or panchayat.",
