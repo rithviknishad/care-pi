@@ -121,7 +121,7 @@ package. `fixtures/README.md` gives the format of each file, the rules, and the 
 1. The console setup wizard finishes with the job step `create-care-superuser`
    (`care-pi care create-superuser`, `docs/console-server.md`).
 2. The operator opens CARE and signs in as that superuser.
-3. The CARE dashboard (`UserDashboard`) is overridden by the plug. For a superuser, it asks `status` once. While
+3. The plug overrides the CARE dashboard (`UserDashboard`). For a superuser, it asks `status` once. While
    the facility step is not done and nobody closed the wizard, it opens `/onboarding`. It does this once in each
    browser session.
 4. The operator does the steps. **Open CARE** on the last screen closes the wizard and opens
