@@ -1223,3 +1223,18 @@ End state of care.local: the dev build `v0.3.0-dev` at `9a662ac`, the earlier bi
   (4 pulls, 1 present), `update apply --now` 92 s from 2026.11.2 to 2026.11.4: checkpoint, migrate, `plug-config:
   1 row(s)`, doctor 0 warnings. The plug bundle serves on all 3 names with CORS. Care had no facility, so the
   wizard runs a true first-time setup there (next item).
+- **Wizard on lumine** (public name, no shim, a true first-time setup: no facility existed): 3.7 s, 21 requests,
+  8 steps done ("Lumine Clinic", Kerala with all 14 districts, 2 staff, Receptionist, 4 questionnaires, 8 medicines;
+  demo data made and removed), the bundle on all 3 names, `dr-meera` signed in. Results in
+  `local/wave13/wizard-live/lumine/` (the staff passwords in `staff.json`, 0600).
+- **WAF defect L1 (fixed).** The CRS default `tx.allowed_methods` is `GET HEAD POST OPTIONS`; the rule 911100 flagged
+  the wizard's `DELETE` in `detect` mode. In `block` mode every PUT, PATCH, and DELETE of Care would have got `403`
+  (the Phase 7 WAF test used only GET). Fix: `SecAction id:900200` sets `tx.allowed_methods=GET HEAD POST OPTIONS PUT
+  PATCH DELETE` (`Caddyfile.tmpl`, the golden `hardened`, `docs/console-server.md` 15); `images/caddy/test-waf.sh`
+  now sends PUT, PATCH, DELETE in block mode (PASS with the lock's Caddy image). Checked live on lumine with a dev
+  agent in `block` mode: DELETE and PATCH reach Django (400 from Django), the SQL probe `403`, 0 hits of 911100; then
+  back to `detect` and the v0.3.1 release agent. Also noted: the WAF logs 3 "key not found in collection" warnings
+  per request (L3, cosmetic), and `podman logs` needs `2>&1` (Django and Caddy log to stderr).
+- **O1 (open):** `plug_config` holds the bundle URL with the public name, so `lumine.local` and the Tailscale name
+  load the bundle from the public name; without internet DNS the wizard and the dashboard redirect are lost on
+  `lumine.local`. This is the known O7 of `00-decisions.md` (care_fe rejects a root-relative `meta.url`).

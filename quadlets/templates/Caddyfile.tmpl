@@ -65,6 +65,8 @@
 				SecAuditLogFormat JSON
 				SecAuditLogParts AHZ
 				SecAction "id:900000,phase:1,pass,t:none,nolog,setvar:tx.blocking_paranoia_level={{.WAF.Paranoia}}"
+				# CARE uses PUT, PATCH, and DELETE (the CRS default allows GET HEAD POST OPTIONS only: rule 911100).
+				SecAction "id:900200,phase:1,pass,t:none,nolog,setvar:'tx.allowed_methods=GET HEAD POST OPTIONS PUT PATCH DELETE'"
 				Include @owasp_crs/*.conf
 			`
 		}

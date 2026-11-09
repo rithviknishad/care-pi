@@ -92,6 +92,12 @@ got=$(status "/api/v1/ping/")
 got=$(status "$sqli")
 [ "$got" = 403 ] || { echo "FAIL: the SQL injection gave $got, not 403" >&2; exit 1; }
 echo "ok: normal 200, SQL injection 403"
+# Care uses PUT, PATCH, and DELETE; the CRS default allows GET HEAD POST OPTIONS only (rule 911100, wave 13).
+for m in PUT PATCH DELETE; do
+  got=$(status "/api/v1/ping/" -X "$m" -H 'Content-Type: application/json' -d '{}')
+  [ "$got" = 200 ] || { echo "FAIL: $m gave $got, not 200 (tx.allowed_methods)" >&2; exit 1; }
+done
+echo "ok: PUT, PATCH, DELETE 200 in block mode"
 mem=$(docker stats --no-stream --format '{{.MemUsage}}' "$name")
 echo "memory of Caddy with the CRS: $mem"
 

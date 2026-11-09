@@ -766,6 +766,11 @@ security:
   image of a lock of before Phase 7), because the next start of Caddy would fail on the unknown directive and stop
   Care. Nothing is written or stopped then. When the modules cannot be listed (no podman, an image that does not
   pull), the agent writes a warning and goes on.
+- **Allowed methods.** The CRS default (`tx.allowed_methods`) allows GET, HEAD, POST, and OPTIONS only; the rule 911100
+  flags every other method. Care uses PUT, PATCH, and DELETE on its API, so the Caddyfile sets
+  `tx.allowed_methods=GET HEAD POST OPTIONS PUT PATCH DELETE` (`id:900200`). Found on lumine in `detect` mode by the
+  `DELETE` of the clinic setup wizard (wave 13); in `block` mode every PUT, PATCH, and DELETE of Care would have got
+  `403`. Checked on lumine in `block` mode: a DELETE and a PATCH reach Django; the SQL probe still gets `403`.
 - **False positives.** Expect them on file uploads, rich text (notes, prescriptions), and search with quotes. Use
   `detect` first, read the audit lines for some days, then `block`. Paranoia 1 is the right level for Care; 2 and more
   give many more false positives. Off by default, also on a 4 GB Pi.
