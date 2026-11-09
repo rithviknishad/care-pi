@@ -4,6 +4,11 @@ name: plug-bundle
 # The name is the identity: the job does nothing when the release exists.
 # The recipe is plug-build.sh of the agent (the FE plug builder of a Pi, section 13.2):
 # npm ci, npm run <script> -- --base /plugs/<slug>/<sha12>/, then <out> with care-pi-plug.json.
+#
+# In-repo mode (wave 13, docs/onboarding.md): path is the directory of the plug in repo, for example
+# repo rithviknishad/care-pi and path plugs/care_pi_onboarding_fe. The build runs in that directory, out is
+# relative to it, and the job first runs the checks of the plug (typecheck, lint, test, and test:e2e when
+# the package defines them). The caller passes the sha of the last commit that changed path.
 
 on:
   workflow_call:
@@ -27,6 +32,10 @@ on:
       out:
         type: string
         default: dist
+      path:
+        description: The directory of the plug in repo (in-repo mode). Empty is the repository root.
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       slug:
@@ -48,6 +57,10 @@ on:
       out:
         type: string
         default: dist
+      path:
+        description: The directory of the plug in repo (in-repo mode). Empty is the repository root.
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -63,6 +76,7 @@ jobs:
       ENTRY: ${{ inputs.entry }}
       SCRIPT: ${{ inputs.script }}
       OUT_DIR: ${{ inputs.out }}
+      PLUG_PATH: ${{ inputs.path }}
     steps:
       - name: Check the inputs
         id: check
@@ -72,6 +86,10 @@ jobs:
           [[ "$SLUG" =~ ^[a-z][a-z0-9_-]*$ ]] || { echo "::error::Invalid slug $SLUG"; exit 1; }
           [[ "$REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "::error::Invalid repo $REPO"; exit 1; }
           [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Invalid sha $SHA"; exit 1; }
+          if [ -n "$PLUG_PATH" ] && [[ ! "$PLUG_PATH" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*$ ]]; then
+            echo "::error::Invalid path $PLUG_PATH"
+            exit 1
+          fi
           tag="plug-${SLUG}-${SHA:0:12}"
           exists=false
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then exists=true; fi
@@ -93,15 +111,38 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Set the plug directory
+        if: steps.check.outputs.exists == 'false'
+        run: echo "PLUG_DIR=plug${PLUG_PATH:+/${PLUG_PATH}}" >> "$GITHUB_ENV"
+
+      - name: Install the dependencies
+        if: steps.check.outputs.exists == 'false'
+        working-directory: ${{ env.PLUG_DIR }}
+        run: npm ci --no-audit --no-fund
+
+      # In-repo mode only: the plug is our code, so its own checks gate the bundle.
+      - name: Check the plug (in-repo mode)
+        if: steps.check.outputs.exists == 'false' && inputs.path != ''
+        working-directory: ${{ env.PLUG_DIR }}
+        run: |
+          npm run --if-present typecheck
+          npm run --if-present lint
+          npm run --if-present format:check
+          npm run --if-present test
+          if npm run 2> /dev/null | grep -q '^  test:e2e$'; then
+            npx playwright install --with-deps chromium
+            npm run test:e2e
+          fi
+
       - name: Build the bundle
         if: steps.check.outputs.exists == 'false'
-        working-directory: plug
+        working-directory: ${{ env.PLUG_DIR }}
         run: |
-          npm ci --no-audit --no-fund
           npm run "$SCRIPT" -- --base "/plugs/${SLUG}/${SHA:0:12}/"
           test -f "${OUT_DIR}/${ENTRY}"
-          printf '{"slug": "%s", "repo": "https://github.com/%s", "sha": "%s", "entry": "%s", "built_at": "%s"}\n' \
-            "$SLUG" "$REPO" "$SHA" "$ENTRY" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${OUT_DIR}/care-pi-plug.json"
+          npm run --if-present test:single-react
+          printf '{"slug": "%s", "repo": "https://github.com/%s", "path": "%s", "sha": "%s", "entry": "%s", "built_at": "%s"}\n' \
+            "$SLUG" "$REPO" "$PLUG_PATH" "$SHA" "$ENTRY" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "${OUT_DIR}/care-pi-plug.json"
 
       - name: Package and publish
         if: steps.check.outputs.exists == 'false'
@@ -110,9 +151,9 @@ jobs:
           TAG: ${{ steps.check.outputs.tag }}
         run: |
           mkdir -p dist
-          tar --sort=name --owner=0 --group=0 --numeric-owner -czf "dist/${TAG}.tar.gz" -C "plug/${OUT_DIR}" .
+          tar --sort=name --owner=0 --group=0 --numeric-owner -czf "dist/${TAG}.tar.gz" -C "${PLUG_DIR}/${OUT_DIR}" .
           (cd dist && sha256sum "${TAG}.tar.gz" > "${TAG}.tar.gz.sha256")
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --latest=false \
-            --title "FE plug ${SLUG} ${SHA:0:12}" --notes "FE plug bundle of ${REPO} at ${SHA}, built with --base /plugs/${SLUG}/${SHA:0:12}/."
+            --title "FE plug ${SLUG} ${SHA:0:12}" --notes "FE plug bundle of ${REPO}${PLUG_PATH:+ (${PLUG_PATH})} at ${SHA}, built with --base /plugs/${SLUG}/${SHA:0:12}/."
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" dist/*
           echo "Published ${TAG}" >> "$GITHUB_STEP_SUMMARY"
