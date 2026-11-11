@@ -55,7 +55,7 @@ describe("Settings > Backups", () => {
   });
 
   // review m3: the agent takes the retention of a destination without its own numbers from backups.retention.
-  it("a destination without retention shows files_keep_daily of the config, and the save writes the numbers", async () => {
+  it("a destination without retention shows files_keep_daily of the config, and the save writes daily copies only", async () => {
     const bodies = capturePut();
     renderTab(
       configWith({
@@ -63,16 +63,15 @@ describe("Settings > Backups", () => {
         destinations: [{ id: "usb", type: "posix", path: "/mnt/usb" }],
       }),
     );
-    const daily = screen.getByLabelText("1 copy each day, for (days)");
-    expect(daily).toHaveValue(30);
-    const monthly = screen.getByLabelText("1 copy each month, for (months)");
-    await userEvent.clear(monthly);
-    await userEvent.type(monthly, "12");
+    const days = screen.getByLabelText("Keep copies for (days)");
+    expect(days).toHaveValue(30);
+    await userEvent.clear(days);
+    await userEvent.type(days, "60");
     await userEvent.click(screen.getByTestId("config-preview"));
     await waitFor(() => expect(bodies).toHaveLength(1));
     expect(bodies[0]?.backups?.destinations?.[0]).toMatchObject({
       id: "usb",
-      retention: { keep_within_days: 14, keep_daily: 30, keep_weekly: 8, keep_monthly: 12 },
+      retention: { keep_within_days: 0, keep_daily: 60, keep_weekly: 0, keep_monthly: 0 },
     });
   });
 
@@ -84,16 +83,16 @@ describe("Settings > Backups", () => {
         destinations: [{ id: "usb", type: "posix", path: "/mnt/usb" }],
       }),
     );
-    const daily = screen.getByLabelText("1 copy each day, for (days)");
-    await userEvent.clear(daily);
-    await userEvent.type(daily, "14");
+    const days = screen.getByLabelText("Keep copies for (days)");
+    await userEvent.clear(days);
+    await userEvent.type(days, "14");
     await userEvent.click(screen.getByTestId("config-preview"));
     await waitFor(() => expect(bodies).toHaveLength(1));
     expect(bodies[0]?.backups?.destinations?.[0]?.retention).toEqual({
-      keep_within_days: 14,
+      keep_within_days: 0,
       keep_daily: 14,
-      keep_weekly: 8,
-      keep_monthly: 6,
+      keep_weekly: 0,
+      keep_monthly: 0,
     });
   });
 });

@@ -35,26 +35,14 @@ export function effectiveRetention(
   return { ...defaults, ...(r ?? {}) };
 }
 
-// S66, item 2: the operator picks a frequency and a "how far back" preset, not the 4 numbers.
 export const FREQUENCY_CHOICES = [5, 15, 30, 60];
 
-export type RetentionPresetName = "standard" | "longer" | "custom";
+// The operator picks one number: how many days to keep the daily copies. The weekly and monthly copies stay off.
+export const KEEP_DAYS_DEFAULT = 14;
+export const KEEP_DAYS_MAX = 365;
 
-// Standard: each copy for 2 days, then 1 a day for 2 weeks, 1 a week for 2 months, 1 a month for 6 months.
-// Longer: each copy for 1 week, then 1 a day for 30 days, 1 a week for 6 months, 1 a month for 2 years.
-export const RETENTION_PRESETS: Record<Exclude<RetentionPresetName, "custom">, Required<DestinationRetention>> = {
-  standard: { keep_within_days: 2, keep_daily: 14, keep_weekly: 8, keep_monthly: 6 },
-  longer: { keep_within_days: 7, keep_daily: 30, keep_weekly: 24, keep_monthly: 24 },
-};
-
-// The preset of a retention, or "custom".
-export function retentionPreset(r: DestinationRetention | undefined | null): RetentionPresetName {
-  const e = effectiveRetention(r);
-  for (const [name, p] of Object.entries(RETENTION_PRESETS)) {
-    if ((Object.keys(p) as (keyof DestinationRetention)[]).every((k) => p[k] === e[k]))
-      return name as RetentionPresetName;
-  }
-  return "custom";
+export function dailyRetention(days: number): Required<DestinationRetention> {
+  return { keep_within_days: 0, keep_daily: days, keep_weekly: 0, keep_monthly: 0 };
 }
 
 // The RPO in minutes for a sentence: "20 minutes", "1 hour 5 minutes" (never seconds; console/design.md, "Copy").

@@ -800,13 +800,13 @@ numbers (workers, concurrency, shared buffers) with the live hint "≈ <preset>"
 
 ### 13.5 The backup schedule in words (S66)
 
-Each place that sets the retention (the wizard step backups, the Backups page, Settings > Backups) has 2 pickers and the
+Each place that sets the retention (the wizard step backups, the Backups page, Settings > Backups) has 2 settings and the
 Explainer:
 
 - "How often we save a copy": every 5, 15 (default), 30, or 60 minutes.
-- "How far back you can go": Standard (2 days of every copy, 2 weeks of daily copies, 2 months of weekly copies, 6 months of
-  monthly copies), Longer (7 days, 30 days, 24 weeks, 24 months), or Custom (the 4 numbers; the Explainer changes while the
-  operator types). A destination with other numbers shows Custom.
+- "Keep copies for (days)": 1 box, 14 by default. The agent keeps 1 copy each day for this number of days. The weekly and
+  monthly copies are off. The Explainer changes while the operator types. A destination with other numbers shows the
+  real policy in the Explainer. The first change in the box replaces the 4 numbers.
 - The sentence of the RPO: "If the device breaks, you lose at most N minutes of work."
 
 ### 13.6 An interrupted update (S69)

@@ -623,24 +623,8 @@ export const strings = {
       "This folder is on the root disk of this device. If the disk fails, you lose the data and the backup together. Use another disk.",
     interval: "How often we save a copy",
     intervalHelp: "We save a copy of the clinic data to this place at this interval.",
-    howFar: "How far back you can go",
-    howFarHelp: "Old copies merge: we keep fewer of them as they get older.",
-    retentionPresets: {
-      standard: "Standard",
-      longer: "Longer",
-      custom: "Custom",
-    } as Record<string, string>,
-    retentionFit: {
-      standard: "2 days of each copy, then 1 copy a day for 2 weeks, a week for 2 months, a month for 6 months.",
-      longer: "1 week of each copy, then 1 copy a day for 30 days, a week for 6 months, a month for 2 years.",
-      custom: "Set the 4 numbers yourself.",
-    } as Record<string, string>,
-    keepFor: {
-      keep_within_days: "Each copy, for (days)",
-      keep_daily: "1 copy each day, for (days)",
-      keep_weekly: "1 copy each week, for (weeks)",
-      keep_monthly: "1 copy each month, for (months)",
-    } as Record<string, string>,
+    keepDays: "Keep copies for (days)",
+    keepDaysHelp: "We keep 1 copy each day for this number of days. We delete older copies.",
     rpoSentence: "If the device breaks, you lose at most {minutes} of work.",
     intervals: {
       5: "Every 5 minutes",
@@ -966,7 +950,6 @@ export const strings = {
       "wait-certificate": "Wait for the certificate of the public name",
       "tailscale-install": "Install Tailscale",
       "tailscale-up": "Connect to the tailnet",
-      "plug-change": { activate: "Use the new plug settings" },
       "tailscale-login": "Wait for the login to Tailscale",
       "tailscale-down": "Disconnect from the tailnet",
       "tailscale-logout": "Remove the device from the tailnet",
@@ -983,6 +966,7 @@ export const strings = {
     byKind: {
       "backup-verify": { prune: "Remove the data of the old copies" },
       "restore-pitr": { checkpoint: "Record an undo point" },
+      "plug-change": { activate: "Use the new plug settings" },
     } as Record<string, Record<string, string>>,
     // The text of a step while it runs, when it is not the text above.
     running: {

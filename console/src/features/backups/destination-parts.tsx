@@ -3,18 +3,16 @@ import type { DestinationRetention } from "@/api/types";
 import { FormField } from "@/components/app/form-field";
 import { Input } from "@/components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { ChoiceCards } from "@/components/v2/choice-cards";
 import { Explainer } from "@/components/v2/explainer";
 import { fmt, strings } from "@/lib/strings";
 import {
   FREQUENCY_CHOICES,
   INTERVAL_DEFAULT_MIN,
-  RETENTION_PRESETS,
+  KEEP_DAYS_MAX,
+  dailyRetention,
   effectiveRetention,
   formatRpoMinutes,
-  retentionPreset,
   rpoMinutes,
-  type RetentionPresetName,
 } from "./backups-format";
 import { CHOICES, type Choice } from "./destination-meta";
 
@@ -45,15 +43,8 @@ export interface ScheduleValue {
   retention?: DestinationRetention | undefined;
 }
 
-const KEEP_FIELDS: { key: keyof DestinationRetention; max: number }[] = [
-  { key: "keep_within_days", max: 3650 },
-  { key: "keep_daily", max: 3650 },
-  { key: "keep_weekly", max: 520 },
-  { key: "keep_monthly", max: 120 },
-];
-
 // The schedule of a destination (S66, item 2): "How often we save a copy" (a frequency), "How far back you can go"
-// (Standard, Longer, or Custom with the 4 numbers), the RPO in one sentence, and the Explainer that draws the policy
+// (one box: the days to keep the daily copies), the RPO in one sentence, and the Explainer that draws the policy
 // and says it in plain words. It updates live. The default frequency stays out of config.yaml. The numbers that the
 // operator sets are always written: the defaults of a destination come from backups.retention, so they can change.
 export function DestinationSchedule({
@@ -72,13 +63,13 @@ export function DestinationSchedule({
   const d = strings.dest;
   const interval = value.interval_min ?? INTERVAL_DEFAULT_MIN;
   const retention = effectiveRetention(value.retention, defaults);
-  const [customOpen, setCustomOpen] = useState(false);
-  const preset: RetentionPresetName = customOpen ? "custom" : retentionPreset(retention);
   const frequencies = FREQUENCY_CHOICES.includes(interval) ? FREQUENCY_CHOICES : [...FREQUENCY_CHOICES, interval];
-  const setRetention = (next: Required<DestinationRetention>) => onChange({ ...value, retention: next });
-  const setKeep = (key: keyof DestinationRetention, raw: string) => {
-    const n = Math.max(0, Math.min(10_000, Math.round(Number(raw) || 0)));
-    setRetention({ ...retention, [key]: n });
+  // The draft lets the operator clear the box and type a new number. A valid number applies at once.
+  const [draft, setDraft] = useState<string | null>(null);
+  const setDays = (raw: string) => {
+    setDraft(raw);
+    const n = Number(raw);
+    if (Number.isInteger(n) && n >= 1 && n <= KEEP_DAYS_MAX) onChange({ ...value, retention: dailyRetention(n) });
   };
   return (
     <div className="flex min-w-0 flex-col gap-6" data-testid="dest-schedule">
@@ -107,49 +98,20 @@ export function DestinationSchedule({
           {fmt(d.rpoSentence, { minutes: formatRpoMinutes(rpoMinutes(interval, walTimeoutMin)) })}
         </p>
       </fieldset>
-      <div className="flex min-w-0 flex-col gap-3">
-        <ChoiceCards
-          name={`${id}-keep`}
-          legend={d.howFar}
-          description={d.howFarHelp}
-          value={preset}
-          columns={3}
-          onChange={(v) => {
-            if (v === "custom") {
-              setCustomOpen(true);
-              return;
-            }
-            setCustomOpen(false);
-            const next = RETENTION_PRESETS[v as Exclude<RetentionPresetName, "custom">];
-            if (next) setRetention(next);
-          }}
-          choices={(["standard", "longer", "custom"] as const).map((p) => ({
-            value: p,
-            title: d.retentionPresets[p] ?? p,
-            fit: d.retentionFit[p] ?? "",
-            recommended: p === "standard",
-            testId: `dest-keep-${p}`,
-          }))}
+      <FormField id={`${id}-days`} label={d.keepDays} help={d.keepDaysHelp}>
+        <Input
+          id={`${id}-days`}
+          type="number"
+          inputMode="numeric"
+          min={1}
+          max={KEEP_DAYS_MAX}
+          value={draft ?? String(retention.keep_daily)}
+          onChange={(e) => setDays(e.target.value)}
+          onBlur={() => setDraft(null)}
+          className="max-w-32 type-data"
+          data-testid="dest-keep-days"
         />
-        {preset === "custom" ? (
-          <div className="grid gap-x-4 sm:grid-cols-2" data-testid="dest-keep-custom">
-            {KEEP_FIELDS.map((f) => (
-              <FormField key={f.key} id={`${id}-${f.key}`} label={d.keepFor[f.key] ?? f.key}>
-                <Input
-                  id={`${id}-${f.key}`}
-                  type="number"
-                  inputMode="numeric"
-                  min={0}
-                  max={f.max}
-                  value={String(retention[f.key])}
-                  onChange={(e) => setKeep(f.key, e.target.value)}
-                  className="max-w-32 type-data"
-                />
-              </FormField>
-            ))}
-          </div>
-        ) : null}
-      </div>
+      </FormField>
       <Explainer policy={{ interval_min: interval, ...retention }} testId="dest-explainer" />
     </div>
   );

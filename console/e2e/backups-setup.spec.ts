@@ -70,18 +70,15 @@ test("setup: the recovery key ceremony and an SFTP destination with TOFU", async
   await expect(form.getByTestId("host-key-trusted")).toContainText("ecdsa-sha2-nistp256");
   // S66, item 2: the frequency, "how far back", the RPO sentence, and the explainer of the policy.
   await expect(form.getByTestId("dest-rpo")).toHaveText("If the device breaks, you lose at most 20 minutes of work.");
-  await expect(form.getByRole("radio", { name: /Standard/ })).toBeChecked();
+  await expect(form.getByTestId("dest-keep-days")).toHaveValue("14");
   await expect(form.getByTestId("dest-explainer-summary")).toContainText(
-    "Every 15 minutes we save a copy. You can go back to any moment in the last 2 days",
+    "Every 15 minutes we save a copy. You can go back to any day in the last 2 weeks.",
   );
   await form.getByTestId("dest-interval").getByRole("button", { name: "Every 30 minutes" }).click();
   await expect(form.getByTestId("dest-rpo")).toContainText("35 minutes");
   await expect(form.getByTestId("dest-explainer-summary")).toContainText("Every 30 minutes we save a copy.");
-  await form.getByTestId("dest-keep-longer").click();
-  await expect(form.getByTestId("dest-explainer-summary")).toContainText("to any month in the last 2 years");
-  await form.getByTestId("dest-keep-custom").first().click();
-  await form.getByLabel("1 copy each month, for (months)").fill("12");
-  await expect(form.getByTestId("dest-explainer-summary")).toContainText("to any month in the last year");
+  await form.getByTestId("dest-keep-days").fill("30");
+  await expect(form.getByTestId("dest-explainer-summary")).toContainText("to any day in the last 30 days");
   await form.getByTestId("dest-add").click();
 
   await expect(page.getByTestId("dest-row")).toHaveCount(1);

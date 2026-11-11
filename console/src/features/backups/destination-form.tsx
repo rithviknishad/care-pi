@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fmt, strings } from "@/lib/strings";
-import { DESTINATION_ID, RETENTION_PRESETS, destinationId } from "./backups-format";
+import { DESTINATION_ID, KEEP_DAYS_DEFAULT, dailyRetention, destinationId } from "./backups-format";
 import type { Choice } from "./destination-meta";
 import { DestinationSchedule, type ScheduleValue } from "./destination-parts";
 import { TestResultView } from "./test-result";
@@ -494,8 +494,8 @@ export function DestinationForm({
 }) {
   const fid = useId();
   const [id, setId] = useState(() => destinationId(DEFAULT_NAMES[choice], existingIds));
-  // A new destination starts with the Standard "how far back" preset (S66, item 2).
-  const [schedule, setSchedule] = useState<ScheduleValue>({ retention: RETENTION_PRESETS.standard });
+  // A new destination starts with daily copies for 14 days.
+  const [schedule, setSchedule] = useState<ScheduleValue>({ retention: dailyRetention(KEEP_DAYS_DEFAULT) });
   const [ready, setReady] = useState<Ready>(null);
   const idError = !DESTINATION_ID.test(id) ? t.nameInvalid : existingIds.includes(id) ? t.nameUsed : null;
   const type = choice === "usb" ? "posix" : choice;
