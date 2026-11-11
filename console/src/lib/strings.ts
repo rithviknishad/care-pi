@@ -932,7 +932,7 @@ export const strings = {
       "drill-check": "Check the test database",
       "drill-cleanup": "Delete the test database",
       // Phase 4 (docs/solutions.md sections 8 and 11).
-      cutover: "Install the new version behind the maintenance page",
+      cutover: "Restart Care behind the maintenance page",
       "plug-config": "Send the plug settings to Care",
       "fetch-index": "Download the list of versions",
       "fetch-lock": "Download the description of the version",
@@ -966,6 +966,7 @@ export const strings = {
       "wait-certificate": "Wait for the certificate of the public name",
       "tailscale-install": "Install Tailscale",
       "tailscale-up": "Connect to the tailnet",
+      "plug-change": { activate: "Use the new plug settings" },
       "tailscale-login": "Wait for the login to Tailscale",
       "tailscale-down": "Disconnect from the tailnet",
       "tailscale-logout": "Remove the device from the tailnet",

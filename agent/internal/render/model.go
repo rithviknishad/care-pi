@@ -1145,7 +1145,7 @@ var MaintenanceSteps = map[string]string{
 	"drill-check":             "Check the test database",
 	"drill-cleanup":           "Delete the test database",
 	// Phase 4 (docs/solutions.md sections 8 and 11).
-	"cutover":                "Install the new version behind the maintenance page",
+	"cutover":                "Restart Care behind the maintenance page",
 	"plug-config":            "Send the plug settings to Care",
 	"fetch-index":            "Download the list of versions",
 	"fetch-lock":             "Download the description of the version",

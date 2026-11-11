@@ -279,7 +279,11 @@ func (x *executor) startTarget(ctx context.Context) error {
 	if err := seedDB(ctx, x.o, x.pr); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintln(x.o.Out, "    wait until the units are healthy; the start waits for the clock gate, and a new database without the seed of the image runs the migrations (about 4 minutes on a Pi 5)")
+	if _, err := os.Stat(filepath.Join(x.o.Paths.Abs(paths.PGData), "PG_VERSION")); err != nil {
+		_, _ = fmt.Fprintln(x.o.Out, "    wait until the units are healthy; the database is new, so the start runs the migrations (about 4 minutes on a Pi 5)")
+	} else {
+		_, _ = fmt.Fprintln(x.o.Out, "    wait until the units are healthy")
+	}
 	if err := h.Systemd.ResetFailed(ctx, stackUnits()...); err != nil {
 		return err
 	}
